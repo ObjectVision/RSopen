@@ -1,0 +1,201 @@
+container NVM: using = "units"
+{ 
+	unit<uint32> RegioUnit_nl    := RegioIndelingen/NL;
+	unit<uint32> RegioUnit_buurt := RegioIndelingen/buurt/src_2021;
+	unit<uint32> RegioUnit_wijk  := RegioIndelingen/wijk/src_2019;
+	unit<uint32> RegioUnit_gem   := RegioIndelingen/Gemeente2019_single;
+	unit<uint32> RegioUnit_prov  := RegioIndelingen/provincie;
+	
+	parameter<string> csv_filename := '%SourceDataDir%/NVM/NVM_cleaned_'+/ModelParameters/nvm_filedate+'.csv';
+	parameter<string> fss_filename := '%LocalDataDir%/NVM/nvm_'+/ModelParameters/nvm_filedate;
+	
+	container TableChopper
+	{
+		unit<uint32> domain  := range(uint32, 0, count_rows);
+		parameter<string> fieldseparator := ';';
+		
+		parameter<string> filedata_src
+		:  StorageType   = "str"
+		,  StorageName = "=csv_filename"
+		,  StorageReadOnly = "true";
+		
+		parameter<string> filedata := replace(filedata_src, ',', '', '\''','');
+		parameter<uint32> count_rows := strcount(filedata, '\n') - 1;
+		parameter<string> headerline := readLines(filedata, void, 0);
+		
+		unit<uint32> field := Range(uint32, 0, strcount(headerline, fieldseparator) + 1)
+		{
+			attribute<string> name := ReadArray(headerline , field, string, 0);
+		}
+		
+		attribute<string> bodylines (domain) := readLines(filedata, domain, headerline/ReadPos);
+		
+		container data := 
+			for_each_nedv(
+				field/name
+				,'ReadElems(
+					BodyLines
+					,string
+					,'+ MakeDefined(field/name[id(field)-1] + '/ReadPos','const(0, domain)')+' 
+					,16
+				)'
+				,domain
+				,string
+			);
+	}
+	
+	parameter<string> Generate_FSS_2 := 'Ready', ExplicitSuppliers = "MakeFSS";
+		
+	container MakeFSS :=
+		for_each_nedv(
+			TableChopper/Field/name
+			, 'TableChopper/Data/' +TableChopper/Field/name
+			, TableChopper/domain
+			, string
+		), StorageName = "=fss_filename+'.fss'";
+	
+	container ReadFSS :=
+		for_each_ndv(
+			TableChopper/Field/name
+			, TableChopper/domain
+			, string
+		)
+	, StorageName     = "=fss_filename+'.fss'"
+	, StorageReadOnly = "True"
+	{
+		unit<uint32> domain := TableChopper/domain;
+		
+		attribute<int32> obsid (domain);
+		attribute<string> xcoord (domain);
+		attribute<string> ycoord (domain);
+		
+		attribute<uint32>    obsid_value          (domain) := obsid[uint32];
+		attribute<float32>   xco                  (domain) := xcoord[float32];
+		attribute<float32>   yco                  (domain) := ycoord[float32];
+		attribute<rdc_meter> geometry             (domain) := point(yco, xco, rdc_meter);
+		attribute<uint2>     d_apartment_value    (domain) := d_apartment[uint2];
+		attribute<uint2>     d_terraced_value     (domain) := d_terraced[uint2];
+		attribute<uint2>     d_semidetached_value (domain) := d_semidetached[uint2];
+		attribute<uint2>     d_detached_value     (domain) := d_detached[uint2];
+		attribute<eur>       price_value          (domain) := price[eur];
+		attribute<meter2>    size_value           (domain) := size[meter2];
+		attribute<meter2>    lotsize_value        (domain) := lotsize[meter2];
+		attribute<jaar>      trans_year_value     (domain) := value(trans_year, int16)[jaar];
+		attribute<jaar>      bouwjaar_value       (domain) := bouwjaar[jaar];
+		attribute<uint32>    nrooms_value         (domain) := nrooms[uint32];
+		attribute<uint32>    nbathrooms_value     (domain) := nbathrooms[uint32];
+		attribute<uint2>     d_maintgood_value    (domain) := d_maintgood[uint2];
+		attribute<uint2>     d_CV_value           (domain) := d_centralheating[uint2];
+		attribute<uint2>     d_privpark_value     (domain) := d_privpark[uint2];
+		attribute<uint2>     d_kk_value           (domain) := d_kk[uint2];
+		attribute<uint2>     d_erfpacht_value     (domain) := d_erfpacht[uint2];
+		attribute<uint2>     d_isol_compl_value   (domain) := d_isol_compl[uint2];
+		
+		attribute<RegioUnit_nl>  nl_rel               (domain) := point_in_polygon(geometry, RegioUnit_nl/Geometry);
+	}
+	
+	unit<uint32> points := select_with_attr_by_cond(ReadFSS, IsDefined(ReadFSS/nl_rel))
+	{
+		attribute<uint2>  d_eengezins  := NOT(d_apartment_value[bool])[uint2];
+		attribute<uint2>  d_meergezins := d_apartment_value;
+		attribute<meter2> lotsize_edit := (lotsize_value == 9999[Meter2] || lotsize_value == 99999[Meter2]) ? (0/0)[Meter2] : lotsize_value;
+		
+		attribute<rdc_100m> rdc_100m_rel     := geometry[rdc_100m];
+		attribute<uint16>   pand_hoogte_2020 := SourceData/Vastgoed/BAG/PerJaar/Y2020/Panden/pand_hoogte/hoogte[point_in_polygon(geometry, SourceData/Vastgoed/BAG/PerJaar/Y2020/Panden/pand_hoogte/Geometry)];
+		attribute<uint2>    d_highrise       := (pand_hoogte_2020 >= 1500[uint16])[uint2];
+
+		attribute<float32> Reistijd_stations_2006 := SourceData/Diversen/Per_AllocDomain/tt_Trainstation_2006_min[rdc_100m_rel];
+		attribute<uint2>   GroenNabij_2017        := SourceData/Diversen/Per_AllocDomain/bbg_groen_100mbuff[rdc_100m_rel][uint2];
+		attribute<float32> UAI_2002               := SourceData/Diversen/Per_AllocDomain/UAI_2002[rdc_100m_rel];
+		attribute<float32> UAI_2018               := SourceData/Diversen/Per_AllocDomain/UAI_2018[rdc_100m_rel];
+		attribute<float32> UAI_2021               := SourceData/Diversen/Per_AllocDomain/UAI_2021[rdc_100m_rel];
+		attribute<float32> UAI_2023               := SourceData/Diversen/Per_AllocDomain/UAI_dynamisch[rdc_100m_rel];
+		
+		attribute<km> DistTo_CargoAir                := SourceData/Diversen/Per_AllocDomain/DistTo_CargoAir[rdc_100m_rel];
+		attribute<km> DistTo_Airports_2019           := SourceData/Diversen/Per_AllocDomain/DistTo_Airports_2019[rdc_100m_rel];
+		attribute<km> DistTo_Highway_acces_exit_2018 := SourceData/Diversen/Per_AllocDomain/DistTo_Highway_acces_exit_2018[rdc_100m_rel];
+		attribute<km> DistTo_Trainstation_2001       := SourceData/Diversen/Per_AllocDomain/DistTo_Trainstation_2001[rdc_100m_rel];
+		attribute<km> DistTo_Trainstation_2019       := SourceData/Diversen/Per_AllocDomain/DistTo_Trainstation_2019[rdc_100m_rel];
+		attribute<km> DistTo_Zeehavens_2019          := SourceData/Diversen/Per_AllocDomain/DistTo_Zeehavens_2019[rdc_100m_rel];
+		attribute<km> DistTo_Urban_Contour_2000      := SourceData/Diversen/Per_AllocDomain/DistTo_Urban_Contour_2000[rdc_100m_rel];
+		attribute<km> DistTo_EHS_1990                := SourceData/Diversen/Per_AllocDomain/DistTo_EHS_1990[rdc_100m_rel];
+		attribute<km> DistTo_Natura2000_2020         := SourceData/Diversen/Per_AllocDomain/DistTo_Natura2000_2020[rdc_100m_rel];
+		attribute<km> DistTo_GroeneHart_2004         := SourceData/Diversen/Per_AllocDomain/DistTo_GroeneHart_2004[rdc_100m_rel];
+		
+		attribute<min> Reistijd_100k_inw_2017_NL := SourceData/Diversen/Per_AllocDomain/tt_100kinhab_min_2017[rdc_100m_rel];
+		attribute<min> Reistijd_500k_inw_2020_NL := SourceData/Diversen/Per_AllocDomain/tt_500kinhab_min_2020[rdc_100m_rel];
+		
+		attribute<bool> IsVinex              := SourceData/Diversen/Per_AllocDomain/IsVinex[rdc_100m_rel];
+		attribute<bool> IsNatura2000         := SourceData/Diversen/Per_AllocDomain/IsNatura2000[rdc_100m_rel];
+		attribute<bool> IsNatura2000_v2020   := SourceData/Diversen/Per_AllocDomain/IsNatura2000_v2020[rdc_100m_rel];
+		attribute<bool> IsBundelingsgebieden := SourceData/Diversen/Per_AllocDomain/IsBundelingsgebieden[rdc_100m_rel];
+		attribute<bool> IsBufferzones_2005   := SourceData/Diversen/Per_AllocDomain/IsBufferzones_2005[rdc_100m_rel];
+		attribute<bool> IsEHS_1990           := SourceData/Diversen/Per_AllocDomain/IsEHS_1990[rdc_100m_rel];
+		attribute<bool> IsGroeneHart_2004    := SourceData/Diversen/Per_AllocDomain/IsGroeneHart_2004[rdc_100m_rel];
+		
+		attribute<eur_m2> Hedonic_landprice_2007 := SourceData/Diversen/Per_AllocDomain/Hedonic_landprice_2007[rdc_100m_rel];
+		attribute<sec>    Reistijd5kInw          := SourceData/Diversen/Per_AllocDomain/Reistijd5kInw[rdc_100m_rel];
+		
+		attribute<Impl/BAG_jaren_uint8> BAG_jaren_rel := MakeDefined(rlookup(value(trans_year_value, uint32), Impl/BAG_jaren_uint8/jaar), Impl/BAG_jaren_uint8/V/Y2012);
+		
+		attribute<vbo_ha> count_residentialunits_in_100m_radius := ='merge(BAG_jaren_rel, vbo_ha, '+AsList('SourceData/Vastgoed/BAG/PerJaar/'+Impl/BAG_jaren_uint8/name+'/VBOs/GebruiksdoelSets/woon/GebruiksdoelSet/count_in_100m_radius[rdc_100m_rel]',',')+')';
+		attribute<vbo_ha> count_residentialunits_in_500m_radius := ='merge(BAG_jaren_rel, vbo_ha, '+AsList('SourceData/Vastgoed/BAG/PerJaar/'+Impl/BAG_jaren_uint8/name+'/VBOs/GebruiksdoelSets/woon/GebruiksdoelSet/count_in_500m_radius[rdc_100m_rel]',',')+')';
+		
+		attribute<RegioUnit_gem> gem_rel := point_in_polygon(geometry, RegioUnit_gem/Geometry);
+		attribute<string> gem_naam := RegioUnit_gem/label[gem_rel];
+		
+		container Impl
+		{
+			unit<uint8> BAG_jaren_uint8 := union_unit_uint8(SourceData/Vastgoed/BAG/BAG_jaren)
+			{
+				attribute<string> name  := union_data(., SourceData/Vastgoed/BAG/BAG_jaren/name);
+				attribute<uint32> jaar  := union_data(., SourceData/Vastgoed/BAG/BAG_jaren/jaar);
+				attribute<string> label := name;
+				
+				container V := for_each_nedv(name, String(ID(.))+'[..]', void, .);
+			}
+		}
+	}
+	
+	container Types_WP2 := for_each_ne(Classifications/Vastgoed/WP2/name, 'T('+quote(Classifications/Vastgoed/WP2/name)+')');
+	container Types_WP4 := for_each_ne(Classifications/Vastgoed/WP4/name, 'T('+quote(Classifications/Vastgoed/WP4/name_english)+')');
+	
+	Template T
+	{
+		//
+		parameter<string> type;
+		//
+		
+		unit<uint32> subset := ='subset(points/d_' +string(type)+ '[uint2] == 1[uint2] && points/lotsize[meter2] < 99999[meter2])'
+		{
+			attribute<rdc_meter> geometry         := points/geometry[nr_OrgEntity];
+			attribute<uint32>    obsid            := points/obsid[nr_OrgEntity];
+			attribute<meter2>    size             := points/size[nr_OrgEntity];
+			attribute<meter2>    lotsize          := points/lotsize[nr_OrgEntity];
+			attribute<jaar>      trans_year       := points/trans_year[nr_OrgEntity];
+			attribute<jaar>      bouwjaar         := points/bouwjaar[nr_OrgEntity];
+			attribute<eur>       price            := points/price[nr_OrgEntity];
+			attribute<uint2>     d_apartment      := points/d_apartment[nr_OrgEntity];
+			attribute<uint2>     d_terraced       := points/d_terraced[nr_OrgEntity];
+			attribute<uint2>     d_semidetached   := points/d_semidetached[nr_OrgEntity];
+			attribute<uint2>     d_detached       := points/d_detached[nr_OrgEntity];
+			attribute<uint32>    nrooms           := points/nrooms[nr_OrgEntity];
+			attribute<uint32>    nbathrooms       := points/nbathrooms[nr_OrgEntity];
+			attribute<uint32>    d_maintgood      := points/d_maintgood[nr_OrgEntity][uint32];
+			attribute<uint32>    d_highrise       := points/d_highrise[nr_OrgEntity][uint32];
+			attribute<uint32>    d_centralheating := points/d_centralheating[nr_OrgEntity][uint32];
+			attribute<uint32>    d_privpark       := points/d_privpark[nr_OrgEntity][uint32];
+			attribute<uint32>    d_kk             := points/d_kk[nr_OrgEntity][uint32];
+			attribute<uint32>    d_erfpacht       := points/d_erfpacht[nr_OrgEntity][uint32];
+			attribute<uint32>    d_isol_compl     := points/d_isol_compl[nr_OrgEntity][uint32];
+			
+			attribute<bool>            nl_rel    := RegioUnit_nl/IsNederland_25m[geometry[rdc_25m]];
+			attribute<RegioUnit_buurt> buurt_rel := point_in_polygon(geometry, RegioUnit_buurt/geometry);
+			attribute<RegioUnit_wijk>  wijk_rel  := point_in_polygon(geometry, RegioUnit_wijk/geometry);
+			attribute<RegioUnit_gem>   gem_rel   := point_in_polygon(geometry, RegioUnit_gem/geometry);
+			
+			attribute<rdc_100m> rdc_100m_rel := geometry[rdc_100m];
+			attribute<rdc_25m> rdc_25m_rel := geometry[rdc_25m];
+		}
+	}
+}

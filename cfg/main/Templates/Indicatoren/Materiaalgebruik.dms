@@ -1,0 +1,113 @@
+container Materiaalgebruik : using = "Classifications/MateriaalStromen"
+{
+	unit<uint8> OP := CaseClassifications/StandVar/OP;
+	
+	container Stock_Basisjaar_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, 'PrevIndicatoren/Materiaalgebruik/per_Materiaal_perAdminDomain/'+Materialen/name
+			, AdminDomain
+			, kg
+		);
+	
+	container Stock_Zichtjaar_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, replace(AsList('(BT_rel == BuildingTypes/V/'+(BuildingTypes/name)+' ? SourceData/Vastgoed/MateriaalStromen/'+ModelParameters/MateriaalStroom_Scenario+'/Per_MIBT/'+BuildingTypes/name+'[Materialen/V/@M@[Materialen]] * Stand/Gebruiksoppervlak_Totaal : 0[kg])', ' + ')
+				,'@M@', Materialen/name)
+			, AdminDomain
+			, kg
+		); 
+	
+	container Flow_plus_BAGnb_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, replace(AsList('(BT_rel == BuildingTypes/V/'+(BuildingTypes/name)+' ? SourceData/Vastgoed/MateriaalStromen/'+ModelParameters/MateriaalStroom_Scenario+'/Per_MIBT/'+BuildingTypes/name+'[Materialen/V/@M@[Materialen]] * Gebruiksoppervlak/per_WxW_BAGnieuwbouw_perAdminDomain_plus/Totaal : 0[kg])', ' + ')
+				,'@M@', Materialen/name)
+			, AdminDomain
+			, kg
+		);
+	
+	container Flow_min_BAGnb_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, replace(AsList('(BT_rel == BuildingTypes/V/'+(BuildingTypes/name)+' ? SourceData/Vastgoed/MateriaalStromen/'+ModelParameters/MateriaalStroom_Scenario+'/Per_MIBT/'+BuildingTypes/name+'[Materialen/V/@M@[Materialen]] * Gebruiksoppervlak/per_WxW_BAGnieuwbouw_perAdminDomain_min/Totaal : 0[kg])', ' + ')
+				,'@M@', Materialen/name)
+			, AdminDomain
+			, kg
+		);
+	
+	container Flow_SaldoAllocDeel_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, 'Stock_Zichtjaar_per_Materiaal_perAdminDomain/'+Materialen/name+' - Stock_Basisjaar_per_Materiaal_perAdminDomain/'+Materialen/name+' - Flow_plus_BAGnb_per_Materiaal_perAdminDomain/'+Materialen/name+' + Flow_min_BAGnb_per_Materiaal_perAdminDomain/'+Materialen/name
+			, AdminDomain
+			, kg
+		);
+	
+	container Flow_plusAllocDeel_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, 'Flow_SaldoAllocDeel_per_Materiaal_perAdminDomain/'+Materialen/name+' > 0f ? Flow_SaldoAllocDeel_per_Materiaal_perAdminDomain/'+Materialen/name+' : 0f'
+			, AdminDomain
+			, kg
+		);
+	
+	container Flow_minAllocDeel_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, 'Flow_SaldoAllocDeel_per_Materiaal_perAdminDomain/'+Materialen/name+' < 0f ? Flow_SaldoAllocDeel_per_Materiaal_perAdminDomain/'+Materialen/name+' : 0f'
+			, AdminDomain
+			, kg
+		);
+	
+	container Flow_plus_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, 'Flow_plus_BAGnb_per_Materiaal_perAdminDomain/'+Materialen/name+' + Flow_plusAllocDeel_per_Materiaal_perAdminDomain/'+Materialen/name
+			, AdminDomain
+			, kg
+		);
+	
+	container Flow_min_per_Materiaal_perAdminDomain :=
+		for_each_nedv(
+			Materialen/name
+			, 'Flow_min_BAGnb_per_Materiaal_perAdminDomain/'+Materialen/name+' + Flow_minAllocDeel_per_Materiaal_perAdminDomain/'+Materialen/name
+			, AdminDomain
+			, kg
+		);
+	
+	unit<uint32> Flow_plus_perProv := 
+		for_each_nedv(
+			Materialen/name
+			, 'sum(Flow_plus_per_Materiaal_perAdminDomain/'+Materialen/name+', geography/RegioIndelingen/Provincie/Per_AdminDomain)'
+			, geography/RegioIndelingen/Provincie
+			, kg
+		), StorageName = "='%LocalDataDir%/RSopen/Export/Materialen/Flow_plus_perProv_'+zichtjaar+'.csv'", StorageType = "gdalwrite.vect";
+	
+	unit<uint32> Flow_min_perProv := 
+		for_each_nedv(
+			Materialen/name
+			, 'sum(Flow_min_per_Materiaal_perAdminDomain/'+Materialen/name+', geography/RegioIndelingen/Provincie/Per_AdminDomain)'
+			, geography/RegioIndelingen/Provincie
+			, kg
+		), StorageName = "='%LocalDataDir%/RSopen/Export/Materialen/Flow_min_perProv_'+zichtjaar+'.csv'", StorageType = "gdalwrite.vect";
+	
+	attribute<BuildingTypes>  BT_rel (AdminDomain) := OP/WP4_rel[Stand/OP_rel] == WP4/V/Vrijstaand
+		? BuildingTypes/V/detached_house
+		: OP/WP4_rel[Stand/OP_rel] == WP4/V/Twee_onder_1_kap
+			? BuildingTypes/V/row_house
+			: OP/WP4_rel[Stand/OP_rel] == WP4/V/Rijtjeswoning
+				? BuildingTypes/V/row_house
+				: OP/WP4_rel[Stand/OP_rel] == WP4/V/Appartement
+					? BuildingTypes/V/apartment
+					: Actor/Sector/XSubsector/jobs6_rel[Stand/Subsector_rel] == Jobs6/V/detailhandel
+						? BuildingTypes/V/shop
+						: Actor/Sector/XSubsector/jobs6_rel[Stand/Subsector_rel] == Jobs6/V/zak_dienstverlening || Actor/Sector/XSubsector/jobs6_rel[Stand/Subsector_rel] == Jobs6/V/Overheid_kw_diensten 
+							? BuildingTypes/V/office
+							: Actor/Sector/XSubsector/jobs6_rel[Stand/Subsector_rel] == Jobs6/V/nijverheid || Actor/Sector/XSubsector/jobs6_rel[Stand/Subsector_rel] == Jobs6/V/logistiek
+								? BuildingTypes/V/industry
+								: Actor/Sector/XSubsector/jobs6_rel[Stand/Subsector_rel] == Jobs6/V/Ov_consumentendiensten
+									? BuildingTypes/V/services
+									: (0b/0b)[BuildingTypes];
+}

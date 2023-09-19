@@ -1,0 +1,138 @@
+container Export
+{
+	unit<uint32> Time: NrOfRows = 2
+	{
+		attribute<string> name: ['Basisjaar', 'Y2050'];
+	}
+	
+	unit<uint32> Totaal: NrOfRows = 1
+	{
+		attribute<string> name: ['Totaal'];
+	}
+	
+	unit<uint32> Provincie := /geography/RegioIndelingen/Provincie/sub
+	{
+		attribute<.> Per_AdminDomain (/AdminDomain) := poly2grid(Geometry, /AdminDomain);
+	}
+	
+	unit<uint32> ProvincieTotaal := union_unit(Provincie, Totaal)
+	{
+		attribute<string> name  := union_data(., Provincie/name, Totaal/name);
+		attribute<string> label := name, DialogType = "LabelText";
+	}
+	
+	container Grondgebruiksverandering
+	{
+		container Per_Provincie := for_each_nedv(
+			/Indicatoren/Y2050/Grondgebruik/Verandering/VeranderingK/name,
+			'/Indicatoren/Y2050/Grondgebruik/Verandering/Per_Regio/'+/Indicatoren/Y2050/Grondgebruik/Verandering/VeranderingK/name+'[Provincie/nr_OrgEntity]',
+			Provincie, ha
+		);
+		
+		container Result :=
+			for_each_nedv(
+				/Indicatoren/Y2050/Grondgebruik/Verandering/VeranderingK/name,
+				replace(
+					'union_data(
+						ProvincieTotaal, '+
+						AsItemList('Per_Provincie/@V@[Provincie/V/'+Provincie/name+']')+',
+						/Indicatoren/Y2050/Grondgebruik/Verandering/Per_NL0/@V@
+					)',
+					'@V@', /Indicatoren/Y2050/Grondgebruik/Verandering/VeranderingK/name
+				),
+				ProvincieTotaal, ha
+			)
+		{
+			attribute<string> Regio_name (ProvincieTotaal):= ProvincieTotaal/name;
+		}
+	}
+	
+	container BereikbaarheidGroen
+	{
+		parameter<string> Afstand: ['Tot500m'];
+		parameter<string> Indicator: ['Bereikbaar'];
+		
+		unit<uint32> GroenK: NrOfRows = 2
+		{
+			attribute<string> name: ['Totaal', 'TotaalExAgrarisch'];
+		}
+		
+		unit<uint32> GroenXTime := combine(GroenK, Time)
+		{
+			attribute<string> Groen_name := GroenK/name[Nr_1];
+			attribute<string> Time_name := Time/name[Nr_2];
+			attribute<string> name := Groen_name+'_'+Time_name;
+		}
+		
+		container Result :=
+			for_each_nedv(
+				GroenXTime/name,
+				'union_data(
+					ProvincieTotaal,'+
+					replace(
+						AsItemList('@T@/BereikbaarheidGroen/Regios/'+ProvincieTotaal/name+'/Afstanden/@A@/AggrGroenKlassen/@G@/Indicatoren/@I@/Groen/Aggregated/PerWoning'),
+						'@T@', GroenXTime/Time_name, '@A@', Afstand, '@G@', GroenXTime/Groen_name, '@I@', Indicator
+					)+
+				')[ha_woning]',
+				ProvincieTotaal, ha_Woning
+			)
+		{
+			attribute<string> Regio_name (ProvincieTotaal):= ProvincieTotaal/name;
+		}
+	}
+	
+	container Verharding
+	{
+		container Provincies := for_each_nedv(
+			Provincie/name,
+			'/Indicatoren/Y2050/Verharding/Per_Regio/fractie[/Indicatoren/Y2050/Verharding/Regio/V/'+Provincie/name+']',
+			void, float32
+		);
+		
+		attribute<float32> Result (ProvincieTotaal) := = 'union_data(ProvincieTotaal, '+AsItemList('Provincies/'+Provincie/name)+', /Indicatoren/Y2050/Verharding/Per_NL/fractie)';
+	}
+	
+	container Dichtheid
+	{
+		container Wonen
+		{
+			container Provincies := for_each_nedv(
+				Provincie/name,
+				'/Indicatoren/Y2050/Dichtheid/Wonen/Per_Regio[/Indicatoren/Y2050/Dichtheid/Regio/V/'+Provincie/name+']',
+				void, Woning_ha
+			);
+			
+			attribute<Woning_ha> Result (ProvincieTotaal) := = 'union_data(ProvincieTotaal, '+AsItemList('Provincies/'+Provincie/name)+', /Indicatoren/Y2050/Dichtheid/Wonen/Per_NL)';
+		}
+		
+		container Werken
+		{
+			container Provincies := for_each_nedv(
+				Provincie/name,
+				'/Indicatoren/Y2050/Dichtheid/Werken/Banen_ha/Per_Regio[/Indicatoren/Y2050/Dichtheid/Regio/V/'+Provincie/name+']',
+				void, Job_ha
+			);
+			
+			attribute<Job_ha> Result (ProvincieTotaal) := = 'union_data(ProvincieTotaal, '+AsItemList('Provincies/'+Provincie/name)+', /Indicatoren/Y2050/Dichtheid/Werken/Banen_ha/Per_NL)';
+		}
+	}
+	
+	container Woningvoorraad
+	{
+		attribute<string> name      (Provincie) := Provincie/name;
+		attribute<Woning> Basisjaar (Provincie) := sum(/Indicatoren/Basisjaar/Stand/Aantal_Woningen_Totaal, Provincie/Per_AdminDomain);
+		attribute<Woning> Zichtjaar (Provincie) := sum(/Indicatoren/Y2050/Stand/Aantal_Woningen_Totaal,     Provincie/Per_AdminDomain);
+	}
+	
+	container Bereikbaarheid := 
+		for_each_nedv(
+			Y2050/Bereikbaarheid/TTxJobs6/itemname
+			, 'Y2050/Bereikbaarheid/Output_PerBuurtPerSector/'+Y2050/Bereikbaarheid/TTxJobs6/itemname
+			, Y2050/Bereikbaarheid/Buurt 
+			, Job
+		), StorageName = "='%LocalDataDir%/RSopen/Indicatoren/Bereikbaarheid/PerBuurt_PerSector_'+Casus_name+'_Y2050.csv'", StorageType = "gdalwrite.vect"
+	{
+		attribute<string> BU_CODE (Y2050/Bereikbaarheid/Buurt) := Y2050/Bereikbaarheid/Buurt/BU_CODE;
+	}
+		parameter<string> Generate := 'Ready', ExplicitSuppliers = "='Bereikbaarheid/BU_CODE;'+AsList('Bereikbaarheid/'+Y2050/Bereikbaarheid/TTxJobs6/itemname,';')";
+}

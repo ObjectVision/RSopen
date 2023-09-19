@@ -1,0 +1,108 @@
+container Werken
+{
+	#include<NieuweNieuweKaart.dms>
+	
+	unit<uint32> Read_Noord_Holland_shp
+	:	StorageName = "%RSLDataDir%/Plancapaciteit/Noord_Holland/WerklocatiesPlabeka2019NK.shp"
+	,	StorageType = "gdal2.vect"
+	,	Source      = "Plancapaciteit.nl, via Nils Klopper (prov. Noord Holland)"
+	,	StorageReadOnly = "true"
+	//Toelichting bij de velden qua planvoorraad:
+	// H-Z: hard resp zacht
+	// B-K: bedrijventerrein resp. kantoor
+	// tr: transformatie
+	// alles tav bedrijventerreinen is in ha, tav kantoren in m2
+	// Kleegtot: Kantoren en Bedrijventerreinen: leegstand kantoorruimte in m2
+	// Kleegcou: Kantoren en Bedrijventerreinen: courante leegstand kantoorruimte in m2
+	// Kleegincou: Kantoren en Bedrijventerreinen: incourante leegstand kantoorruimte in m2
+	// 30: jaar 2030
+	{
+		attribute<geography/rdc_meter> Geometry (poly);
+	}
+	
+	unit<uint32> Noord_Holland := = /ModelParameters/BasedataOntkoppeld ? 'Read_Noord_Holland' : 'Make_Noord_Holland';
+	
+	unit<uint32> Make_Noord_Holland := Read_Noord_Holland_shp, StorageName = "%LocalDataDir%/RSopen/Basedata/Plancapaciteit/Noord_Holland/WerklocatiesPlabeka2019NK.fss"
+	{
+		attribute<rdc_meter> Geometry (poly) := Read_Noord_Holland_shp/Geometry;
+		attribute<float64> BHtm30  := Read_Noord_Holland_shp/BHtm30;
+		attribute<float64> BZtm30  := Read_Noord_Holland_shp/BZtm30;
+		attribute<float64> BZna30  := Read_Noord_Holland_shp/BZna30;
+		attribute<float64> KHtm30  := Read_Noord_Holland_shp/KHtm30;
+		attribute<float64> KZtm30  := Read_Noord_Holland_shp/KZtm30;
+		attribute<float64> KZna30  := Read_Noord_Holland_shp/KZna30;
+		attribute<float64> Btrtm30 := Read_Noord_Holland_shp/Btrtm30;
+		attribute<float64> Btrna30 := Read_Noord_Holland_shp/Btrna30;
+		attribute<float64> Ktrtm30 := Read_Noord_Holland_shp/Ktrtm30;
+		attribute<float64> Ktrna30 := Read_Noord_Holland_shp/Ktrna30;
+	}
+	
+	unit<uint32> Read_Noord_Holland: StorageName = "%LocalDataDir%/RSopen/Basedata/Plancapaciteit/Noord_Holland/WerklocatiesPlabeka2019NK.fss", StorageReadOnly = "true"
+	{
+		attribute<rdc_meter>  Geometry (poly);
+		attribute<float64> BHtm30;
+		attribute<float64> BZtm30;
+		attribute<float64> BZna30;
+		attribute<float64> KHtm30;
+		attribute<float64> KZtm30;
+		attribute<float64> KZna30;
+		attribute<float64> Btrtm30;
+		attribute<float64> Btrna30;
+		attribute<float64> Ktrtm30;
+		attribute<float64> Ktrna30;
+		
+		attribute<.> Per_Domain (AdminDomain) := poly2grid(Geometry, AdminDomain);
+		attribute<float64> Totaal_bedrijventerrein := BHtm30 + BZtm30 + BZna30; //exl herstructurering. NB hard na30 bestaat niet
+		attribute<float64> Totaal_kantoor := KHtm30 + KZtm30 + KZna30; //exl herstructurering. NB hard na30 bestaat niet
+		
+		attribute<bool> HeeftBedrijventerreinEnKantoor := Totaal_bedrijventerrein > 0[float64] && Totaal_kantoor > 0[float64];
+		attribute<bool> HeeftHardEnZacht := BHtm30 + KHtm30 > 0[float64] && BZtm30 + BZna30 + KZtm30 + KZna30 > 0[float64];
+		attribute<bool> MRAWest := OR(
+			id(.) == 177[.],
+			id(.) == 171[.],
+			id(.) == 197[.],
+			id(.) == 190[.],
+			id(.) ==  47[.],
+			id(.) == 265[.],
+			id(.) == 254[.],
+			id(.) == 238[.],
+			id(.) == 168[.],
+			id(.) == 246[.],
+			id(.) == 249[.],
+			id(.) ==  34[.],
+			id(.) ==  71[.],
+			id(.) == 278[.]
+		);//Stat gebied HDorp en HAarlemmermeer West, enkel de polugonen die nu zacht zijn en hard moeten worden 
+		
+		attribute<bool> IsHardTm30 := BHtm30 > 0[float64] || KHtm30 > 0[float64];
+		attribute<bool> IsHard     := IsHardTm30 || MRAWest; //hard na30 bestaat niet
+		attribute<bool> IsZacht    := !IsHard;
+		attribute<bool> Hard       := IsHard; //hard na30 bestaat niet
+		attribute<bool> Zacht      := IsZacht;
+		
+		attribute<float64> ShareNa30Bedrijventerrein          := BZna30 / Totaal_bedrijventerrein; // Hard na30 bestaat niet
+		attribute<float64> ShareNa30Kantoor                   := KZna30 / Totaal_kantoor; // Hard na30 bestaat niet
+		attribute<float64> ShareNa30BedrijventerreinOfKantoor := MakeDefined(ShareNa30Bedrijventerrein, 0[float64]) + MakeDefined(ShareNa30Kantoor, 0[float64]) // kan opgeteld want HeeftBedrijventerreinEnKantoor == const(false).
+		{
+			attribute<ha> ruimte_per_domain (AdminDomain) := float32(.[Per_Domain]) * AdminDomain/NrHaPerCell;
+		}
+		
+		attribute<float64> ShareNa30BedrijventerreinOfKantoorOfZacht := max_elem(ShareNa30BedrijventerreinOfKantoor, MakeDefined(float64(IsZacht), 0[float64])) // kan opgeteld want HeeftBedrijventerreinEnKantoor == const(false).
+		{
+			attribute<ha> ruimte_per_domain_grid (AdminDomain) := float32(.[Per_Domain]) * AdminDomain/NrHaPerCell;
+		}
+		
+		attribute<bool> IsHardOfZacht := IsHard || IsZacht;
+		attribute<bool> IsHardNochZacht := !IsHardOfZacht;
+		
+		attribute<bool> IsTransformatie := Btrtm30 > 0[float64] || Btrna30 > 0[float64] || Ktrtm30 > 0[float64] || Ktrna30 > 0[float64];
+	}
+	
+	unit<uint32> IBIS := ='SourceData/Grondgebruik/IBIS/'+ModelParameters/IBIS_Year
+	{
+		attribute<bool>	Zacht := const(false, .);
+		attribute<bool> Hard := IsNieuwBouwOfTransformatie;
+	}
+	
+	#include<NL.dms>
+}

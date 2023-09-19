@@ -1,0 +1,104 @@
+container Bereikbaarheid
+{
+	container Parameters
+	{
+		//distance decay parameters, ontvangen van Jeroen Bastiaansen (PBL) in 2020
+		parameter<float32> car_a   := -8.65786f;
+		parameter<float32> car_b   := 2.492099f;
+		parameter<float32> car_c   := 0.011641f;
+		parameter<float32> bike_a  := -7.95686f;
+		parameter<float32> bike_b  := 2.675059f;
+		parameter<float32> bike_c  := 0.011981f;
+		parameter<float32> ov_a    := -12.3301f;
+		parameter<float32> ov_b    := 2.907621f;
+		parameter<float32> ov_c    := 0.012824f;
+	}
+	
+	unit<uint32> Buurt   := geography/RegioIndelingen/buurt/src_2021/Land;
+	unit<uint8>  Jobs6   := Classifications/Actor/Jobs6;
+	unit<uint32> WerkenK := Classifications/Actor/Sector/XSubSectoren/Werken/Combi;
+	
+	unit<uint32> StartYear : nrofrows = 1
+	{
+		attribute<string> name  := const('Y'+string(ModelParameters/Model_StartYear),.);
+	}
+	
+	unit<uint32> Scenarios_src := combine(CaseClassifications/Scenario, CaseClassifications/VariantK)
+	{
+		attribute<string> Scenario_name := CaseClassifications/Scenario/name[Nr_1];
+		attribute<string> Variant_name  := CaseClassifications/VariantK/name[Nr_2];
+		
+		attribute<string> Name := Scenario_name + '_' + Variant_name;
+	}
+	
+	unit<uint32> Scenarios := union_unit(Scenarios_src, StartYear)
+	{
+		attribute<string> Name := union_data(., Scenarios_src/name, StartYear/name);
+	}
+	
+	unit<uint32> TransportTypes : nrofrows = 3
+	{
+		attribute<string> name  : ['W_OV_W','Bike','Car'];
+	}
+	
+	unit<uint32> TTxJobs6 := combine(TransportTypes, Jobs6)
+	{
+		attribute<string> itemname := TransportTypes/Name[nr_1]+'_'+Jobs6/name[nr_2];
+		attribute<string> tt_name := TransportTypes/name[nr_1];
+		attribute<string> Jobs5_name := Jobs6/name[nr_2];
+	}
+	
+	container MakeDecayPerSector := for_each_ne(jobs6/name, 'MakeDecayT(Read_Indicators/Stand_PerBuurt/BanenPerSector/'+jobs6/name+')');
+	
+	container MakeDecay := MakeDecayT(Read_Indicators/Stand_PerBuurt/Banen, Read_Indicators/Stand_StartYear_PerBuurt/Banen);
+	
+	container Output_PerBuurtPerSector := 
+		for_each_nedv(
+			TTxJobs6/itemname
+			,'MakeDecayPerSector/'+TTxJobs6/Jobs5_name+'/PerTransportType/'+TTxJobs6/tt_name+'/Domain/banen_decayed_org'
+			, Buurt
+			, Job
+		);
+	
+	unit<uint32> Output_PerBuurt := Buurt
+	{
+		attribute<string> BU_CODE := Buurt/BU_CODE;
+		
+		attribute<Job> Banen_W_OV_W_StartYear := MakeDecay/PerTransportType/W_OV_W/Domain/banen_StartYear_decayed_org;
+		attribute<Job> Banen_W_OV_W           := MakeDecay/PerTransportType/W_OV_W/Domain/banen_decayed_org;
+		
+		attribute<Job> Banen_BB_StartYear     := MakeDecay/PerTransportType/Bike/Domain/banen_StartYear_decayed_org;
+		attribute<Job> Banen_BB               := MakeDecay/PerTransportType/Bike/Domain/banen_decayed_org;
+		
+		attribute<Job> Banen_CAR_StartYear    := MakeDecay/PerTransportType/CAR/Domain/banen_StartYear_decayed_org;
+		attribute<Job> Banen_CAR              := MakeDecay/PerTransportType/CAR/Domain/banen_decayed_org;
+	}
+	
+	container Output_PerNederland
+	{
+		parameter<string> name := 'NL';
+		
+		parameter<Job> Banen_W_OV_W_StartYear := sum(Output_PerBuurt/Banen_W_OV_W_StartYear * Read_Indicators/Stand_StartYear_PerBuurt/Woningen) / sum(Read_Indicators/Stand_StartYear_PerBuurt/Woningen); 
+		parameter<Job> Banen_W_OV_W           := sum(Output_PerBuurt/Banen_W_OV_W           * Read_Indicators/Stand_PerBuurt/Woningen          ) / sum(Read_Indicators/Stand_PerBuurt/Woningen); 
+		
+		parameter<Job> Banen_BB_StartYear     := sum(Output_PerBuurt/Banen_BB_StartYear     * Read_Indicators/Stand_StartYear_PerBuurt/Woningen) / sum(Read_Indicators/Stand_StartYear_PerBuurt/Woningen); 
+		parameter<Job> Banen_BB               := sum(Output_PerBuurt/Banen_BB               * Read_Indicators/Stand_PerBuurt/Woningen          ) / sum(Read_Indicators/Stand_PerBuurt/Woningen); 
+		
+		parameter<Job> Banen_CAR_StartYear    := sum(Output_PerBuurt/Banen_CAR_StartYear    * Read_Indicators/Stand_StartYear_PerBuurt/Woningen) / sum(Read_Indicators/Stand_StartYear_PerBuurt/Woningen); 
+		parameter<Job> Banen_CAR              := sum(Output_PerBuurt/Banen_CAR              * Read_Indicators/Stand_PerBuurt/Woningen          ) / sum(Read_Indicators/Stand_PerBuurt/Woningen); 
+	}
+	
+	container Output_PerNederland_PerSector :=
+		for_each_nedv(
+			TTxJobs6/itemname
+			,'sum(Output_PerBuurtPerSector/'+TTxJobs6/itemname+' * Read_Indicators/Stand_PerBuurt/Woningen)
+				/ sum(Read_Indicators/Stand_PerBuurt/Woningen)'
+			, void
+			, Job
+		);
+	
+	#include<Read_Indicators.dms>
+	#include<MakeDecayT.dms>
+	#include<Impl.dms>
+	#include<ODs.dms>
+}

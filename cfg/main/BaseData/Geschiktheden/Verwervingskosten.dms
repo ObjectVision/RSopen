@@ -1,0 +1,57 @@
+container Verwervingskosten
+{
+	container BAG               := /SourceData/Vastgoed/BAG/PerJaar;
+	container BAG_ModelJaar     := = 'BAG/'+BAG_ModelYear;
+	container BAG_RecentsteJaar := = 'BAG/'+BAG_RecentYear;
+
+	unit<uint32> vbo_startjaar  := BAG_RecentsteJaar/VBOs/GebruiksdoelSets/woon/GebruiksdoelSet;
+	unit<uint32> pand_startjaar := BAG_RecentsteJaar/panden/pand;
+	
+	parameter<string> Generate := 'Ready', ExplicitSuppliers = "Woningen/Write;Niet_woningen/Write";
+	
+	container Woningen
+	{
+		container PerWP4PerWoning := for_each_nedv(
+			Vastgoed/WP4/name,
+			'Woningwaarde_perWoningType/'+Vastgoed/WP4/name+'/Basisjaar',  
+			AdminDomain, EUR_woning
+		);
+		
+		attribute<EUR> PerVBO (vbo_startjaar) :=
+			= 'max_elem(
+					merge(
+						vbo_startjaar/WP4_rel[uint16],
+						EUR_woning ,'+
+						AsItemList('PerWP4PerWoning/'+Vastgoed/WP4/name+'[vbo_startjaar/AdminDomain_rel]')+
+					'),
+					0[EUR_woning]
+				) * 1[Woning]';
+		
+		attribute<EUR> Calc   (AdminDomain) := sum(PerVBO, vbo_startjaar/AdminDomain_rel);
+		attribute<Eur> Write   (AdminDomain) := Calc, StorageName = "%LocalDataDir%/RSopen/Basedata/Vastgoed/Verwervingskosten_Woningen_AdminDomain.tif";
+		attribute<Eur> Read   (AdminDomain) : StorageName = "%LocalDataDir%/RSopen/Basedata/Vastgoed/Verwervingskosten_Woningen_AdminDomain.tif", StorageReadOnly = "True";
+		attribute<Eur> Totaal (AdminDomain) := = ModelParameters/BasedataOntkoppeld ? 'Read' : 'Write';
+	}
+	
+	container Niet_woningen
+	{
+		parameter<Eur_m2>  prijs                             := ModelParameters/Verwervingskosten/NietWoningen;
+		attribute<eur>     WOZ_totaal_2017     (AdminDomain) := SourceData/Vastgoed/WOZ/Y2017/Niet_woningen/per_AdminDomain;
+		attribute<m2_pand> oppervlakte      (pand_startjaar) := pand_startjaar/sum_vbo_pand_opp_niet_woon;
+		attribute<uint32>  per_rdc_10m             (rdc_10m) := poly2grid(pand_startjaar/geometry, rdc_10m);
+		attribute<float32> count_10m_per_pand      (rdc_10m) := (pcount(per_rdc_10m)[per_rdc_10m])[float32];
+		attribute<meter2>  opp_uitgesmeerd_op_grid (rdc_10m) := oppervlakte[per_rdc_10m] / count_10m_per_pand * 1[PandUnit];
+		attribute<meter2>  opp_per_grid        (AdminDomain) := sum(opp_uitgesmeerd_op_grid, rdc_10m/AdminDomain_rel)[meter2];
+		attribute<Eur>     kental_totaal       (AdminDomain) := opp_per_grid * prijs;
+		attribute<EUR>     per_AdminDomain     (AdminDomain) := max_elem(WOZ_totaal_2017, kental_totaal);
+		
+		attribute<EUR>     Calc   (AdminDomain) := per_AdminDomain;
+		attribute<Eur>     Write   (AdminDomain) := Calc, StorageName = "%LocalDataDir%/RSopen/Basedata/Vastgoed/Verwervingskosten_Niet_Woningen_AdminDomain.tif";
+		attribute<Eur>     Read   (AdminDomain) : StorageName = "%LocalDataDir%/RSopen/Basedata/Vastgoed/Verwervingskosten_Niet_Woningen_AdminDomain.tif", StorageReadOnly = "True";
+		attribute<Eur>     Totaal (AdminDomain) := = ModelParameters/BasedataOntkoppeld ? 'Read' : 'Write';
+	}
+	
+	attribute<Eur> Totaal (AdminDomain) := Woningen/Totaal + Niet_woningen/Totaal;
+	
+	container Classified := Templates/Classify_9K_Eur(Totaal, AdminDomain);
+}

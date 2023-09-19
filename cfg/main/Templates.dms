@@ -1,0 +1,590 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision B.V. en VU Vrije Universiteit Amsterdam.
+// Opdrachtgever/ontwikkelaar PBL: Bart Rijken
+// Contactpersoon/ontwikkelaar Object Vision B.V.: Jip Claassens (jclaassens@objectvision.nl)
+// Contacpersoon PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+//
+// Deze file bevat templates ofwel rekenschema's: stukken script die in verschillende contexten worden gebruikt
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Templates: Using = "Units;Geography;Geography/RegioIndelingen;Classifications;Classifications/Vastgoed;Classifications/Actor" 
+{
+	#include<Indicatoren.dms>
+	#include<ReadFiles.dms>
+	#include<Woningwaarde.dms>
+	#include<Woningwaarde_perWoningType.dms> //voor verwervingskosten
+	#include<Claims.dms>
+	#include<Trede.dms>
+	#include<Dichtheid.dms>
+	#include<CaseClassifications.dms>
+	#include<Zeef.dms>
+	#include<DichtheidZichtjaarT.dms>
+	#include<Zeef_AdminDomain.dms>
+	#include<BereikbaarheidGroen.dms>
+	#include<SSM2017_Overstromingsschades.dms>
+	#include<Zeef_ZichtjaarT.dms>
+	#include<SimplifyT.dms>
+	#include<Wind_BepaalGeschikteCellenPerStempel_T.dms>
+	#include<MaxWoningDichtheid.dms>
+	
+	Template Claims_TargetUnitsT
+	{
+		//
+		parameter<ZichtjaarxTXLClaimsxCase> id;
+		unit<uint32> ZichtjaarxTXLClaimsxCase;
+		//
+		
+		parameter<string> SrcStr :=
+			replace(
+				'CaseParameters/Claims/WonenEnWerken/Cases/@S@/@V@/Tables/@T@/Zichtjaren/@J@/NVM',
+				'@S@', CaseClassifications/ZichtjaarxTXLClaimsxCase/Scenario_name[id],
+				'@V@', CaseClassifications/ZichtjaarxTXLClaimsxCase/Variant_name[id],
+				'@T@', CaseClassifications/ZichtjaarxTXLClaimsxCase/TXLClaims_ref[id],
+				'@J@', CaseClassifications/ZichtjaarxTXLClaimsxCase/Zichtjaar_name[id]
+			);
+		
+		unit<uint8> AttrUnit      := = CaseClassifications/ZichtjaarxTXLClaimsxCase/Attr_ref[id];
+		unit<int32> TargetValUnit := = CaseClassifications/ZichtjaarxTXLClaimsxCase/TargetValUnitRef[id];
+		
+		container Results := for_each_nedv(AttrUnit/name, 'union_data(CaseParameters/Claims/WonenEnWerken/SrcRegio, '+SrcStr+'/'+AttrUnit/TXLTbl_Ref+'[TargetValUnit])', CaseParameters/Claims/WonenEnWerken/SrcRegio, TargetValUnit);
+	}
+	
+	Template PotentieleStateT
+	{
+		//
+		parameter<string> Zichtjaar_name;
+		container Zeef;
+		container Dichtheid;
+		//
+		
+		container SectorXSubsectoren := for_each_ne(Sector/XSubsector/name, 'SectorXSubsectorenT('+string(id(Sector/XSubsector))+'[Sector/XSubsector], Zichtjaar_name, Zeef, Dichtheid)');
+		container Per_Sector := for_each_ne(Sector/name, 'SectorT('+string(id(Sector))+'[Sector], SectorXSubsectoren)');//, Dichtheid)');
+	}
+	
+	Template SectorXSubsectorenT
+	{
+		//
+		parameter<Sector/XSubsector> id;
+		parameter<string> Zichtjaar_name;
+		container Beschikbaarheid;
+		container Dichtheid;
+		//
+		
+		attribute<bool> Beschikbaar      (CompactedAdminDomain) := = 'Beschikbaarheid/'+Sector/XSubsector/name[id]+'/Beschikbaar';
+		attribute<float32> BAG_nieuwbouw (CompactedAdminDomain) := ='select_data(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/BAG_nieuwbouw/'+Sector/XSubsector/name[id]+')';
+		
+		attribute<float32> Basisjaar (CompactedAdminDomain) := ='StateBasisjaar/'+Sector/XSubsector/name[id]+ ' * float32(Beschikbaar)'
+		{
+			attribute<float32> SubSectorShare (CompactedAllocDomain) := = 'sum(., CompactedAdminDomain/CompactedAllocDomain_rel) / sum(Per_Sector/'+Sector/XSubsector/Sector_name[id]+'/Basisjaar, CompactedAdminDomain/CompactedAllocDomain_rel)';
+		}
+		
+		attribute<float32> Zichtjaar                   (CompactedAdminDomain) := ='Dichtheid/Per_CompactedAllocDomain/'+Zichtjaar_name+'/SectorXSubsectoren/'+Sector/XSubsector/name[id]+'/Zichtjaar[CompactedAdminDomain/CompactedAllocDomain_rel] * AdminDomain/NrHaPerCell * float32(Beschikbaar)';
+		attribute<float32> Result_CompactedAdminDomain (CompactedAdminDomain) := = 'Zichtjaar - Per_Sector/'+Sector/XSubsector/Sector_name[id]+'/Basisjaar';
+		attribute<float32> Result                      (CompactedAllocDomain) := sum(Result_CompactedAdminDomain, CompactedAdminDomain/CompactedAllocDomain_rel);
+		attribute<float32> TovStateVoorAllocatie       (CompactedAllocDomain) := = 'Result / sum(Per_Sector/'+Sector/XSubsector/Sector_name[id]+'/Basisjaar, CompactedAdminDomain/CompactedAllocDomain_rel)';
+	}
+	
+	Template SectorT
+	{
+		//
+		parameter<Sector> id;
+		container SectorXSubsectoren;
+		//
+		
+		unit<uint8> SubSector := = Sector/Subsector_ref[id];
+		
+		attribute<float32> Basisjaar (CompactedAdminDomain) := = 'add('+AsItemList('SectorXSubsectoren/'+Sector/name[id]+'/'+SubSector/name+'/Basisjaar')+')';
+		attribute<float32> Zichtjaar (CompactedAdminDomain) := = 'value(add('+AsItemList('SectorXSubsectoren/'+Sector/name[id]+'/'+SubSector/name+'/Zichtjaar')+'), float32)';
+	}
+	
+	Template Provincie_T
+	{
+		//
+		parameter<string> Prov;
+		container SrcSrc;
+		unit<ipoint> domain;
+		//
+		
+		attribute<bool> Provincie (domain) := = 'RegioIndelingen/Provincie/per_AdminDomain == RegioIndelingen/Provincie/V/'+Prov;
+		
+		container Src := = 'SrcSrc/'+Prov;
+		
+		container Wonen
+		{
+			container Combis := Templates/Combis(., domain);
+		}
+		
+		container Werken
+		{
+			container Combis := Templates/Combis(., domain);
+		}
+		
+		container Verblijfsrecreatie
+		{
+			container Combis := Templates/Combis(., domain);
+		}
+		
+		container Glastuinbouw
+		{
+			container Combis := Templates/Combis(., domain);
+		}
+		
+		container Wind
+		{
+			container Combis := Templates/Combis(., domain);
+		}
+		
+		container Zon
+		{
+			container Combis := Templates/Combis(., domain);
+		}
+	}
+	
+	Template Provincie_StimuliT
+	{
+		//
+		parameter<string> Prov;
+		container SrcSrc;
+		unit<ipoint> domain;
+		//
+		
+		attribute<bool> Provincie (domain) := = 'RegioIndelingen/Provincie/per_AdminDomain == RegioIndelingen/Provincie/V/'+Prov;
+		
+		container Src := = 'SrcSrc/'+Prov;
+		
+		container Wonen
+		{
+			container Combis := Templates/Stimuli_Combis(., domain);
+		}
+		
+		container Werken
+		{
+			container Combis := Templates/Stimuli_Combis(., domain);
+		}
+		
+		container Verblijfsrecreatie
+		{
+			container Combis := Templates/Stimuli_Combis(., domain);
+		}
+		
+		container Glastuinbouw
+		{
+			container Combis := Templates/Stimuli_Combis(., domain);
+		}
+		
+		container Wind
+		{
+			container Combis := Templates/Stimuli_Combis(., domain);
+		}
+		
+		container Zon
+		{
+			container Combis := Templates/Stimuli_Combis(., domain);
+		}
+	}
+	
+	Template Combis
+	{
+		//
+		container Src;
+		unit<ipoint> domain;
+		//
+		
+		attribute<bool> Geen                    (domain) := const(false, domain);
+		attribute<bool> ZeerHard                (domain) := Src/ZeerHard/Totaal;
+		attribute<bool> ZeerHardHard            (domain) := Src/Hard/Totaal || ZeerHard;
+		attribute<bool> ZeerHardHardMiddel      (domain) := Src/Middel/Totaal || ZeerHardHard;
+		attribute<bool> ZeerHardHardMiddelZacht (domain) := Src/Zacht/Totaal || ZeerHardHardMiddel;
+	}
+	
+	Template Stimuli_Combis
+	{
+		//
+		container Src;
+		unit<ipoint> domain;
+		//
+		
+		attribute<bool> Geen            (domain) := const(false, domain);
+		attribute<bool> Hard            (domain) := Src/Hard/Totaal;
+		attribute<bool> HardMiddel      (domain) := Src/Middel/Totaal || Hard;
+		attribute<bool> HardMiddelZacht (domain) := Src/Zacht/Totaal || HardMiddel;
+	}
+	
+	Template Woningtypen
+	{
+		//
+		attribute<Woning_ha> Dichtheid (AllocDomain);
+		container Basisjaar;
+		//
+		
+		unit<uint8> TotalDensityK := BaseData/WoningenBasisjaar/TotalDensityK;
+		
+		container per_WP4
+		{
+			container Woningen := for_each_nedv(WP4/name,'(Aandeel/'+WP4/name+'[float32] / 100f * Dichtheid)', AllocDomain, Woning_ha)
+			{
+				attribute<Woning_ha> Totaal (AllocDomain) := = 'add('+AsItemList(WP4/name)+')';
+			}
+			
+			container Aandeel :=
+				for_each_nedv(
+					WP4/name,
+					replace(
+						'merge(
+							TotaalPerTotalDensityK,
+							uint8,'+
+							AsItemList('Basisjaar/AandeelWP4xPerDensityK/@W@/'+TotalDensityK/name)+
+						')',
+						'@W@', WP4/name
+					),
+					AllocDomain, uint8
+				)
+			{
+				attribute<uint8>   Totaal_src (AllocDomain) := = 'add('+AsItemList(WP4/name)+')';
+				attribute<float32> Totaal (AllocDomain) := Totaal_src[float32] / 100f;
+				attribute<bool>    IsOK      (AllocDomain) := Totaal >= 0.97f && Totaal <= 1.03f || not(AllocDomain/IsNederland);
+			}
+		}
+		
+		attribute<bool> IsOK(AllocDomain) := per_WP4/Aandeel/IsOK;
+		attribute<TotalDensityK> TotaalPerTotalDensityK (AllocDomain) := Classify(Dichtheid / AllocDomain/NrHaPerCell * 1[Ha], TotalDensityK/Classbreaks)[TotalDensityK];
+	}
+	
+	Template Banen
+	{
+		//
+		parameter<yr> Year;
+		unit<uint32> Regio;
+		//
+		
+		unit<uint32> JobsSrc := = 'Actoren/Banen/PerJaar/Y'+string(Year)+'/PerYear'
+		{
+			attribute<Regio> Regio_rel := point_in_polygon(geometry, Regio/geometry);
+		}
+		
+		container TXL7s := for_each_nedv(
+			TXLJobs7/name,
+			'sum(
+				mul(
+					int32(Actoren/Banen/PerJaar/Y'+string(Year)+'/PerYear/Banen),
+					int32(Actoren/Banen/PerJaar/Y'+string(Year)+'/PerYear/TXLJobs7_rel == '+string(id(TXLJobs7))+'[TXLJobs7])
+				),
+				JobsSrc/Regio_rel
+			)[job]',
+			Regio, Job
+		);
+	}
+	
+	Template Beschikbaar
+	{
+		//
+		parameter<Sector/XSubsector> id;
+		container Zeef;
+		//
+		
+		parameter<ha>     MinimalLandAvailability := CaseClassifications/VariantK/MinimalLandAvailability[0b];
+		parameter<string> name                    := Sector/XSubsector/name[id];
+		parameter<string> SubSector_name          := Sector/XSubsector/SubSector_name[id];
+		
+		attribute<bool> Beschikbaar (/AdminDomain ) := Src/GeeftVoldoendeRuimte[/AdminDomain /domain_grid_rel] && Src/Beschikbaar;
+		
+		container Src
+		{
+			attribute<bool> GeeftVoldoendeRuimte (domain_grid) := Ruimte >= MinimalLandAvailability;
+			attribute<ha>   Ruimte               (domain_grid) := Beschikbaar/SharePerDomain_grid * domain_grid/NrHaPerCell;
+			
+			attribute<bool> Beschikbaar (/AdminDomain ) := Zeef/Beschikbaar
+			{
+				attribute<float32> SharePerDomain_grid (domain_grid) :=
+				= replace(
+					'sum(
+						.[float32],
+						/AdminDomain /@DG@_rel
+					) /
+					value(pcount(/AdminDomain /@DG@_rel), float32)',
+					'@DG@', domain_grid_ref
+				);
+			}
+		}
+	}
+	
+	Template Classify_9K_EurHA
+	{
+		//
+		attribute<Eur_ha> target (domain);
+		unit<spoint> domain;
+		//
+		
+		attribute<Eur_ha> classifyJf (Target_9K)  := ClassifyJenksFisher(target, Target_9K);
+		
+		parameter<int32>  max        := max(classifyJf)[int32];
+		parameter<uint32> max_strlen := strlen(string(max));
+		parameter<int64>  power      := (10d^(max_strlen[float64]-4d))[int64];
+		
+		attribute<Eur_ha> classifyJf_rounded         (Target_9K) := ((classifyJf[int64] / power) * power)[Eur_ha];
+		attribute<int32>  classifyJf_rounded_integer (Target_9K) := ((classifyJf[int64] / power) * power)[int32];
+		
+		unit<uint8> Target_9K : nrofrows = 9
+		{
+			parameter<string> dash      := ' - ';
+			parameter<string> comma     := ',';
+			attribute<string> label_src := id(.) == (#target_9K[uint8] - 1b) ? string(classifyJf_rounded_integer) + ' or more' : string(classifyJf_rounded_integer) + dash + string(classifyJf_rounded_integer)[id(.) + 1b];
+			attribute<string> label     := label_src, DialogType = "LabelText";
+			attribute<uint32> PenColor  := Brushcolor, DialogType = "PenColor";
+			attribute<uint32> BrushColor:
+			[
+				rgb(255,255,229),rgb(255,247,188),rgb(254,227,145),
+				rgb(254,196,79) ,rgb(254,153,41) ,rgb(236,112,20),
+				rgb(204,76,2)   ,rgb(153,52,4)   ,rgb(102,37,6)
+			], DialogType = "BrushColor";
+			
+			attribute<Eur_ha> ClassBreaks := classifyJf_rounded , DialogType = "Classification";
+		}
+	}
+	
+	Template Classify_9K_Eur
+	{
+		//
+		attribute<Eur> target (domain);
+		unit<spoint> domain;
+		//
+		
+		attribute<Eur> classifyJf (Target_9K)  := ClassifyJenksFisher(target, Target_9K);
+		
+		parameter<int32>  max        := max(classifyJf)[int32];
+		parameter<uint32> max_strlen := strlen(string(max));
+		parameter<int64>  power      := (10d^(max_strlen[float64]-4d))[int64];
+		
+		attribute<Eur>    classifyJf_rounded         (Target_9K) := ((classifyJf[int64] / power) * power)[Eur];
+		attribute<int32>  classifyJf_rounded_integer (Target_9K) := ((classifyJf[int64] / power) * power)[int32];
+		
+		unit<uint8> Target_9K : nrofrows = 9
+		{
+			parameter<string> dash      := ' - ';
+			parameter<string> comma     := ',';
+			attribute<string> label_src := id(.) == (#target_9K[uint8] - 1b) ? string(classifyJf_rounded_integer) + ' or more' : string(classifyJf_rounded_integer) + dash + string(classifyJf_rounded_integer)[id(.) + 1b];
+			attribute<string> label     := label_src, DialogType = "LabelText";
+			attribute<uint32> PenColor  := Brushcolor, DialogType = "PenColor";
+			attribute<uint32> BrushColor:
+			[
+				rgb(255,255,229),rgb(255,247,188),rgb(254,227,145),
+				rgb(254,196,79) ,rgb(254,153,41) ,rgb(236,112,20),
+				rgb(204,76,2)   ,rgb(153,52,4)   ,rgb(102,37,6)
+			], DialogType = "BrushColor";
+			
+			attribute<Eur> ClassBreaks := classifyJf_rounded , DialogType = "Classification";
+		}
+	}
+	
+	Template Classify_9K_Eurm2
+	{
+		//
+		attribute<Eur_m2> Orgtarget (OrgDomain);
+		unit<uint32> OrgDomain;
+		//
+		
+		attribute<Eur_m2> target (/domain_grid) := Orgtarget[invert(OrgDomain/Nr_OrgEntity)];
+		
+		attribute<Eur_m2> classifyJf (Target_9K)  := ClassifyJenksFisher(target, Target_9K);
+		
+		parameter<uint32> max        := max(classifyJf)[uint32];
+		parameter<uint32> max_strlen := strlen(string(max));
+		parameter<uint64> power      := (10d^(max_strlen[float64]-4d))[uint64];
+		
+		attribute<Eur_m2> classifyJf_rounded         (Target_9K) := ((classifyJf[uint64] / power) * power)[Eur_m2];
+		attribute<uint32> classifyJf_rounded_integer (Target_9K) := ((classifyJf[uint64] / power) * power)[uint32];
+		
+		unit<uint8> Target_9K : nrofrows = 9
+		{
+			parameter<string> dash      := ' - ';
+			parameter<string> comma     := ',';
+			attribute<string> label_src := id(.) == (#target_9K[uint8] - 1b) ? string(classifyJf_rounded_integer) + ' or more' : string(classifyJf_rounded_integer) + dash + string(classifyJf_rounded_integer)[id(.) + 1b];
+			attribute<string> label     := label_src, DialogType = "LabelText";
+			attribute<uint32> PenColor  := Brushcolor, DialogType = "PenColor";
+			attribute<uint32> BrushColor:
+			[
+				rgb(255,255,229),rgb(255,247,188),rgb(254,227,145),
+				rgb(254,196,79) ,rgb(254,153,41) ,rgb(236,112,20),
+				rgb(204,76,2)   ,rgb(153,52,4)   ,rgb(102,37,6)
+			], DialogType = "BrushColor";
+			
+			attribute<Eur_m2> ClassBreaks := classifyJf_rounded , DialogType = "Classification";
+		}
+	}
+	
+	Template SectorXSubSector: using = "/Classifications/Vastgoed;classifications/actor"
+	{
+		//
+		parameter<string> sector_name;
+		parameter<string> subsector_name;
+		//
+		
+		unit<uint8> Sector    := = 'S_'+sector_name;
+		unit<uint8> SubSector := = subsector_name;
+		//
+		
+		unit<uint8> CBSAggrKlasse := Grondgebruik/CBSKlasse/Aggr;
+		unit<uint32> Combi := combine(Sector, SubSector)
+		{
+			attribute<string> Sector_name := Sector/name[first_rel];
+			attribute<string> SrcRefGeschiktheid := replace(Sector/SrcRefGeschiktheid[first_rel], '@SS@', SubSector_name);
+			attribute<string> SrcRefRestricties := Sector/SrcRefRestricties[first_rel];
+			attribute<string> SubSector_ref := Sector/Subsector_ref[first_rel];
+			attribute<string> ValUnit_ref := Sector/ValUnit_ref[first_rel];
+			attribute<string> ValUnitDens_ref:= Sector/ValUnitDens_ref[first_rel];
+			attribute<string> SubSector_name := SubSector/name[second_rel];
+			attribute<uint8>  SubSector_nr := second_rel[uint8];
+			attribute<string> name := Sector_name+'/'+SubSector_name;
+			attribute<string> Label := Sector_name+'_'+SubSector_name, DialogType = "LabelText";
+			attribute<CBSAggrKlasse> CBSKlasse_Aggr_rel := SubSector/CBSKlasse_Aggr_rel[second_rel];
+			attribute<uint32> BrushColor := SubSector/BrushColor[second_rel], DialogType = "BrushColor";
+			attribute<string> SectorAllocRegio_name  := rjoin(Sector_name, CaseClassifications/Actor/SectorAllocRegio/Sector_name, CaseClassifications/Actor/SectorAllocRegio/name);
+			attribute<string> ClaimRegio_name        := rjoin(Sector_name, CaseClassifications/Actor/SectorAllocRegio/Sector_name, CaseClassifications/Actor/SectorAllocRegio/AllocRegio_name);
+			
+			unit<uint32> ClaimRegio := =ClaimRegio_name;
+		}
+	}
+	
+	Template UnionT
+	{
+		//
+		unit<uint32> domain;
+		attribute<rdc_meter> geometry_rd (domain, poly);
+		parameter<classifications/Zonneladder/LadderTreden> Laddertrede_rel;
+		//
+	
+		parameter<rdc_mm_i32> union (poly) := union_polygon(geometry_rd[rdc_mm_i32]);
+		
+		unit<uint32> multi_polygons : nrofrows = 1
+		{
+			attribute<rdc_mm_i32> geometry (poly) := union_data(., union);
+		}
+		
+		unit<uint32> unioned_domain := split_polygon(multi_polygons/geometry), DialogType = "Map", DialogData = "unioned_geometry"
+		{
+			attribute<classifications/Zonneladder/LadderTreden> Laddertrede_rel := const(../Laddertrede_rel, ., classifications/Zonneladder/LadderTreden);
+			attribute<bool> Defined_per_rdc_10m (rdc_10m) := IsDefined(poly2grid(geometry[rdc_meter], rdc_10m));
+			attribute<bool> Defined_per_AllocDomain0 (AllocDomain) := sum(float32(Defined_per_rdc_10m), /Geography/rdc_10m/AllocDomain_rel) > 0f;
+			attribute<bool> Defined_per_AllocDomain  (AllocDomain) := Defined_per_AllocDomain0 && !BaseData/GrootWater1500mBuffer;
+		}
+		
+		attribute<rdc_meter> unioned_geometry (unioned_domain, poly) := unioned_domain/geometry[rdc_meter];
+	}
+	
+	Template Isoperimetrisch_quotient
+	{
+		attribute<meter2> area (domain);
+		attribute<meter> length (domain);
+		
+		unit<uint32> domain;
+		parameter<float32> paramPi := pi()[float32];
+		
+		attribute<float32> Isoperimetrisch_quotient (domain) :=(4f*paramPi*area)/sqr(length);//https://nl.wikipedia.org/wiki/Isoperimetrisch_quoti%C3%ABnt	IQ={4pi Area}/{arc_length^{2}
+	}
+	
+	template ProcessTilesT
+	{
+		// begin case parameters
+		parameter<string> TileName;
+		unit<uint32> targetdomain;
+		parameter<float32> minimum_opp;
+		// end case parameters
+		
+		unit<uint32> Tile_selection := subset(geography/TileDomain/name == TileName)
+		{
+			attribute<rdc_meter>  geometry (poly) := geography/tiledomain/geometry[nr_OrgEntity];
+			
+			unit<uint32> target_geom_in_tile := overlay_polygon(targetdomain/geometry[rdc_mm_i32], geometry[rdc_mm_i32])
+			{
+				attribute<rdc_meter> geometry_rd (poly) := geometry[rdc_meter];
+				attribute<meter2> area := area(geometry_rd, meter2);
+				attribute<rdc_meter> centroid := centroid_or_mid(geometry_rd);
+				attribute<uint32> bebouwde_kom_rel := point_in_polygon(centroid, /Geography/RegioIndelingen/Bevolkingskern_2011/Geometry);
+				
+				unit<uint32> buitenbebouwdekom := subset(!IsDefined(bebouwde_kom_rel) && area >= minimum_opp),	DialogType = "Map",	DialogData = "geometry_rd"
+				{
+					attribute<rdc_meter> geometry_rd (poly) := ../geometry_rd[nr_OrgEntity];
+					parameter<rdc_mm_i32> union (poly) := union_polygon(geometry_rd[rdc_mm_i32]);
+					
+					unit<uint32> multi_polygons : nrofrows = 1
+					{
+						attribute<rdc_mm_i32> geometry (poly) := union_data(., ../union);
+					}
+					
+					unit<uint32> Multi_to_singlepart_polygons := split_polygon(multi_polygons/geometry),	DialogType = "Map",	DialogData = "geometry";
+				}
+			}
+		}
+	}
+	
+	Template PointBuffer
+	{
+		//
+		unit<uint32> centre_point_set;
+		parameter<float32> radius; //in meter
+		//
+		
+		unit<uint32> Circle : nrofrows = 65
+		{
+			attribute<float32> angle := float32(id(.)) * 2f * float32(pi()) / 64f;
+			attribute<float32> x     := cos(angle);
+			attribute<float32> y     := sin(angle);
+		}
+		
+		unit<uint32> pointset := combine(centre_point_set, Circle)
+		{
+			attribute<rdc_meter> point :=
+				point(
+					 pointrow(centre_point_set/geometry[first_rel][rdc_meter]) + radius * float32(Circle/x[second_rel])
+					,pointcol(centre_point_set/geometry[first_rel][rdc_meter]) + radius * float32(Circle/y[second_rel])
+					,rdc_meter
+				);
+			
+			attribute<uint32> ordinal  := second_rel;
+			attribute<uint32> sequence := first_rel;
+		}
+		
+		attribute<rdc_meter> geometry (poly, centre_point_set) := points2sequence(pointset/point, pointset/sequence, pointset/ordinal);
+	}
+	
+	Template Buffer_gridcel_T // voor buffer points bepaling 
+	{
+		attribute<bool> TeBufferen_src (CompactedAdminDomain);
+		parameter<float32> buffersize;
+		attribute<bool> TeBufferen (AdminDomain) := TeBufferen_src[invert(CompactedAdminDomain/AdminDomain_rel)];
+		
+		parameter<int16> gridbuffersize := roundup(buffersize / AdminDomain/gridsize)[int16];
+		
+		unit<spoint> kernel_buffer  := range(spoint, point(-(gridbuffersize -1s), -(gridbuffersize -1s)), point(gridbuffersize,gridbuffersize))
+		{
+			attribute<uint32>  dist     := dist2(point(0s, 0s, .), uint32);
+			attribute<float32> distMatr := dist <= 5 ? 1f : 0f;
+		}
+		attribute<float32> proximity_arg (AdminDomain) := float32(TeBufferen);
+		parameter<bool> IsErIetsTeBufferen := sum(TeBufferen[uint32]) != 0;
+		attribute<bool> proximity_res_AdminDomain (AdminDomain) := IsErIetsTeBufferen ? bool(proximity(proximity_arg, kernel_buffer/distMatr)) : const(FALSE, AdminDomain);
+		attribute<bool> proximity_res (CompactedAdminDomain) := select_data(CompactedAdminDomain, AdminDomain/IsCompactedDomain, proximity_res_AdminDomain);
+	}
+	
+	Template OV_halte_bereikbaarheid_T
+	{
+		//
+		parameter<Classifications/bereikbaarheid/OV_halte_bereikbaarheidK/CombiK> id;
+		unit<ipoint> domain;
+		//
+		
+		parameter<string> SrcRef: ['%RSLDataDir%/Omgeving/Bereikbaarheid/OV_halte_bereikbaarheid/OD_korste_@Maat@_@HHMod@_eerstehaltevan_@OVMod@_@OVInt@.tif'];
+		
+		attribute<sec> Resultaat (domain): StorageName =
+			"= replace(SrcRef,
+				'@Maat@',  Classifications/Bereikbaarheid/OV_halte_bereikbaarheidK/CombiK/MaatK_SrcRef[id],
+				'@HHMod@', Classifications/Bereikbaarheid/OV_halte_bereikbaarheidK/CombiK/HhModK_SrcRef[id],
+				'@OVMod@', Classifications/Bereikbaarheid/OV_halte_bereikbaarheidK/CombiK/OVModK_SrcRef[id],
+				'@OVInt@', Classifications/Bereikbaarheid/OV_halte_bereikbaarheidK/CombiK/OVIntK_SrcRef[id]
+			)";
+	}
+}

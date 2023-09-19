@@ -1,0 +1,124 @@
+Template BereikbaarheidGroen
+{
+	//
+	container SrcSrc;
+	parameter<string> Ref;
+	//
+	
+	container Src := .;
+	
+	parameter<Woning_ha> MaxWoningenInGroen: [5];
+	parameter<ha> MinimumOppervlakte: [1];
+	
+	unit<uint32> Regio := /geography/RegioIndelingen/Provincie;
+	
+	unit<uint8> Indicator: NrOfRows = 3
+	{
+		attribute<string> name: ['Aanwezig', 'Beschikbaar', 'Bereikbaar'];
+		attribute<string> GroenSrc: ['float32(Src/Regio)', '(Potentiaal > 0[Woning])[float32]', 'Potentiaal[float32]'];
+	}
+	
+	unit<uint8> Totaal: NrOfRows = 1
+	{
+		attribute<string> name: ['Totaal'];
+	}
+	
+	unit<uint8> GroenK := /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen;
+	
+	unit<uint32> GroenPlusTotaal := union_unit(GroenK, Totaal)
+	{
+		attribute<string> name := union_data(., GroenK/name, Totaal/name);
+	}
+	
+	attribute<GroenK> Groen (AdminDomain) := = 'SrcSrc/Grondgebruik/'+Ref;
+	
+	attribute<Woning> Woningen0 (AdminDomain) := SrcSrc/Stand/Aantal_Woningen_Totaal[Woning];
+	
+	attribute<bool> Range (AdminDomain) := =  Ref == 'Groen/InZichtjaar' ? 'IsDefined(Stand/subsector_rel)' : 'const(true, AdminDomain)';
+	
+	attribute<Woning> Woningen (AdminDomain) := Woningen0 * float32(Range);
+	
+	container Regios := for_each_ne(Regio/name, 'T1(Regio/per_AdminDomain == Regio/V/'+Regio/name+', Woningen, Src)')
+	{
+		container Totaal := T1(const(true, AdminDomain), Woningen, Src);
+	}
+	
+	Template T1
+	{
+		//
+		attribute<bool> Regio (AdminDomain);
+		attribute<Woning> Woningen (AdminDomain);
+		container Src;
+		//
+		
+		container Afstanden := for_each_ne(Bereikbaarheid/AfstandGroen/name, 'Src/T2('+string(id(Bereikbaarheid/AfstandGroen))+'[Bereikbaarheid/AfstandGroen], Regio, Woningen, Src)');
+	}
+	
+	Template T2
+	{
+		//
+		parameter<Bereikbaarheid/AfstandGroen> id;
+		attribute<bool> Regio (AdminDomain);
+		attribute<Woning> Woningen (AdminDomain);
+		container Src;
+		//
+		
+		container AggrGroenKlassen := for_each_ne(GroenK/name, 'Src/T3(Src/Groen == GroenK/V/'+GroenK/name+', id, Regio, Woningen, Src)')
+		{
+			container Totaal := Src/T3(IsDefined(Src/Groen), id, Regio, Woningen, Src);
+			container TotaalExAgrarisch := Src/T3(IsDefined(Src/Groen) && !(Src/Groen == GroenK/V/overige_agrarisch_gebruik), id, Regio, Woningen, Src);
+		}
+	}
+	
+	Template T3
+	{
+		//
+		attribute<bool> IsGroenKlasse (AdminDomain);
+		parameter<Bereikbaarheid/AfstandGroen> AfstandGroen_id;
+		attribute<bool> Regio (AdminDomain);
+		attribute<Woning> Woningen (AdminDomain);
+		container Src;
+		//
+		
+		parameter<meter> Bovengrens := Bereikbaarheid/AfstandGroen/Bovengrens[AfstandGroen_id];
+		
+		attribute<Woning> WoningenInThisStRegio (AdminDomain) := Woningen * Regio[float32]
+		{
+			parameter<Woning> Aggregated := sum(.);
+		}
+		
+		attribute<bool> Extent0 (AdminDomain) := Woningen <= Src/MaxWoningenInGroen * AdminDomain/NrHaPerCell && IsGroenKlasse;
+		
+		unit<uint32> ExtentDistrict := district(uint32(Extent0))
+		{
+			attribute<.> per_AdminDomain (AdminDomain):= Districts;
+			attribute<ha> Oppervlakte := pcount(per_AdminDomain)[float32] * AdminDomain/NrHaPerCell;
+		}
+		
+		attribute<bool> Extent (AdminDomain) := Extent0 && ExtentDistrict/Oppervlakte[ExtentDistrict/per_AdminDomain] >= Src/MinimumOppervlakte;
+		
+		attribute<Woning> Potentiaal (AdminDomain) :=
+			= 'potential(
+				WoningenInThisStRegio,
+				geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/potrange/Flat2
+			)[Woning]';
+		
+		container Indicatoren := for_each_ne(Indicator/name, 'Src/T4('+quote(Indicator/GroenSrc)+', ..)');
+	}
+	
+	Template T4
+	{
+		//
+		parameter<string> GroenSrc;
+		container Src;
+		//
+		
+		attribute<ha> Groen (AdminDomain) := = GroenSrc+' * Src/Extent[float32] * AdminDomain/NrHaPerCell'
+		{
+			parameter<ha> Aggregated := sum(.)
+			{
+				parameter<m2_Woning> PerWoning := .[meter2] / Src/WoningenInThisStRegio/Aggregated;
+			}
+		}
+	}
+}

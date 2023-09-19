@@ -1,0 +1,193 @@
+Template Zichtjaar
+{
+	//
+	parameter<Time/Zichtjaar> id;
+	container Claims;
+	container CaseClassifications;
+	//
+	
+	parameter<string>    Zichtjaar_name := Time/Zichtjaar/name[id];
+	unit<uint8>          AllocRegio     := /Classifications/Modellering/AllocRegiosK;
+	unit<uint8>          SectorAllocRegio := CaseClassifications/Actor/SectorAllocRegio;
+	
+	container SectorAllocRegios := for_each_ne(SectorAllocRegio/name, 'AllocRegios/'+SectorAllocRegio/AllocRegio_name+'/'+SectorAllocRegio/Sector_name);
+	
+	container AllocRegios := for_each_ne(AllocRegio/name, 'AllocRegio_T('+string(id(AllocRegio))+'[AllocRegio])');
+	
+	Template AllocRegio_T
+	{
+		parameter<AllocRegio> AllocRegio_rel;
+		
+		parameter<string> AllocRegio_name := AllocRegio/name[AllocRegio_rel];
+		
+		unit<uint32> RegioUnit := = 'RegioIndelingen/'+AllocRegio_name
+		{
+			attribute<.> per_TigrisXLSrcRegio (CaseParameters/Claims/WonenEnWerken/SrcRegio) := point_in_polygon(centroid_or_mid(/CaseParameters/Claims/WonenEnWerken/SrcRegio/Geometry), geometry);
+			
+			attribute<.> per_Bevolkingskern_2011 (RegioIndelingen/Bevolkingskern_2011) := point_in_polygon(centroid_or_mid(RegioIndelingen/Bevolkingskern_2011/geometry), geometry);
+			
+			attribute<bool> Is300kPlusRegio := any(RegioIndelingen/Bevolkingskern_2011/isMeerdan300Kinw, per_Bevolkingskern_2011);
+			attribute<bool> Is75kPlusRegio  := any(RegioIndelingen/Bevolkingskern_2011/isMeerdan75Kinw, per_Bevolkingskern_2011) && !Is300kPlusRegio;
+			attribute<bool> Is50kPlusRegio  := any(RegioIndelingen/Bevolkingskern_2011/isMeerdan50Kinw, per_Bevolkingskern_2011) && !(Is75kPlusRegio || Is300kPlusRegio);
+			attribute<bool> IsRestRegio     := !(Is300kPlusRegio || Is75kPlusRegio || Is50kPlusRegio);
+		}
+		
+		unit<uint32> RegioUnit_Verblijfsrecreatie := = 'Geography/Regioindelingen/'+VariantParameters/Recreatie_AllocRegio_name;
+		
+		parameter<string> CalcStr := 'sum(src/'+Zichtjaar_name+'/@X@/'+Scenario_name+'/'+Variant_name+'/Results/@Y@, RegioUnit/per_TigrisXLSrcRegio)';
+		
+		container Wonen :=
+			for_each_nedv(
+				WP2/name
+				, replace('add('+AsItemList('WonenSrc/@W@_'+Classifications/Vastgoed/HuurKoop/name)+')','@W@', WP2/name)
+				, RegioUnit
+				, Woning
+			)
+		{
+			attribute<Woning> eengezins_VrijeSector_Proxy  (RegioUnit) := sum(/BaseData/Verdeling_VSSH/per_AdminDomain/eengezins_VrijeSector, RegioUnit/Per_AdminDomain);
+			attribute<Woning> eengezins_SocialeHuur_Proxy  (RegioUnit) := sum(/BaseData/Verdeling_VSSH/per_AdminDomain/eengezins_SocialeHuur, RegioUnit/Per_AdminDomain);
+			attribute<Woning> meergezins_VrijeSector_Proxy (RegioUnit) := sum(/BaseData/Verdeling_VSSH/per_AdminDomain/meergezins_VrijeSector, RegioUnit/Per_AdminDomain);
+			attribute<Woning> meergezins_SocialeHuur_Proxy (RegioUnit) := sum(/BaseData/Verdeling_VSSH/per_AdminDomain/meergezins_SocialeHuur, RegioUnit/Per_AdminDomain);
+			attribute<Woning> eengezins_Proxy              (RegioUnit) := eengezins_VrijeSector_Proxy  + eengezins_SocialeHuur_Proxy;
+			attribute<Woning> meergezins_Proxy             (RegioUnit) := meergezins_VrijeSector_Proxy + meergezins_SocialeHuur_Proxy;
+			
+			attribute<Woning> eengezins_VrijeSector (RegioUnit) := eengezins  * eengezins_VrijeSector_Proxy  / eengezins_Proxy;
+			attribute<Woning> eengezins_SocialeHuur (RegioUnit) := eengezins  * eengezins_SocialeHuur_Proxy  / eengezins_Proxy;
+			attribute<Woning> meergezins_VrijeSector(RegioUnit) := meergezins * meergezins_VrijeSector_Proxy / meergezins_Proxy;
+			attribute<Woning> meergezins_SocialeHuur(RegioUnit) := meergezins * meergezins_SocialeHuur_Proxy / meergezins_Proxy;
+		}
+		
+		container WonenSrc :=
+			for_each_nedv(
+				TXLHouseType/name,
+				replace(CalcStr, '@X@', 'Woningen', '@Y@', TXLHouseType/name)+'[Woning]',
+				RegioUnit, Woning
+			);
+		
+		container WerkenSrc: =
+			for_each_nedv(
+				TXLJobs6/name,
+				replace(CalcStr, '@X@', 'Banen', '@Y@', TXLJobs6/name)+'[job]',
+				RegioUnit, job
+			)
+		{
+			attribute<job> Landbouw (RegioUnit) := =replace(CalcStr, '@X@', 'Banen', '@Y@', 'Landbouw')+'[job]'; //adhoc voor werken rapportage
+			attribute<job> Totaal   (RegioUnit) := ='add('+AsList(Jobs6/name,',')+')';
+		}
+		
+		container Werken :=
+			for_each_nedv(
+				 Jobs6/name
+				,'WerkenSrc/'+Jobs6/name
+				,RegioUnit
+				,job
+			)
+		{
+			attribute<job> Totaal (RegioUnit) := ='add('+AsList(Jobs6/name,',')+')';
+		}
+		
+		container Verblijfsrecreatie := 
+			for_each_nedv(
+				VerblijfsrecreatieK/name,
+				'/BaseData/Verblijfsrecreatie/Per_AllocRegio/'+AllocRegio_name+'/Zichtjaren/'+Zichtjaar_name+'/RegioUnit/Zichtjaar_Objecten',
+				RegioUnit, Verblijfsobject
+			);
+		
+		container Wind
+		{
+			parameter<string> Variant := = 'VariantParameters/VariantK/RegEnergieVerdelingWind[VariantParameters/VariantK/V/'+Variant_name+']';
+			
+			unit<uint32> RegioUnitSub := = RegioUnit/HeeftBuitengebied ? 'subset(id(RegioUnit) <> RegioUnit/V/Buitengebied)' : 'subset(IsDefined(id(RegioUnit)))'
+			{
+				attribute<rdc_meter> Geometry (poly) := RegioUnit/Geometry[Nr_OrgEntity];
+				attribute<.> per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+				attribute<.> per_CompactedAdminDomain (CompactedAdminDomain) := select_data(CompactedAdminDomain, AdminDomain/IsCompactedDomain, per_AdminDomain);
+				attribute<string> name := RegioUnit/name[Nr_OrgEntity];
+			}
+			
+			container Nationaal
+			{
+				container Beleid
+				{
+					unit<uint8> EK: NrOfRows = 3
+					{
+						// 2040 is een lin. interpolatie van 2030 - 2050
+						attribute<GW> OpLandOfBinnenwater: [8.0, 8.5, 9.0],url= "%RSLDataDir%/Energie/Factsheet tbv Ruimtescanner.pdf";
+						attribute<GW> OpLandOfBinnenwater_Hoog: [8.0, 9.5, 11.0],url= "%RSLDataDir%/Energie/Factsheet tbv Ruimtescanner.pdf";
+						attribute<YearRange> Jaar: [2030, 2040, 2050];
+						attribute<string> name := 'Y' + string(Jaar), DialogType = "LabelText";
+					}
+					
+					unit<uint8> Zichtjaar := Time/Zichtjaar
+					{
+						attribute<GW> OpLandOfBinnenwater := rjoin(YearRange_rel, EK/Jaar, EK/OpLandOfBinnenwater);
+						attribute<GW> OpLandOfBinnenwater_Hoog := rjoin(YearRange_rel, EK/Jaar, EK/OpLandOfBinnenwater_Hoog);
+					}
+				}
+				
+				container DitScenario
+				{
+					container Totaal
+					{
+						parameter<GW> Y2050 := = 'VariantParameters/VariantK/NationaalVermogenWindOpLandEnBinnenwater2050[VariantParameters/VariantK/V/'+Variant_name+']';
+						parameter<GW> Y2030 := min_elem(Y2050, Beleid/EK/OpLandOfBinnenwater[0[Beleid/EK]]);
+						parameter<GW> Y2040 := add(Y2050, Y2030) / 2f;
+					}
+					
+					unit<uint8> EK := Beleid/EK
+					{
+						attribute<GW> OpLandOfBinnenwater := union_data(., DitScenario/Totaal/Y2030, DitScenario/Totaal/Y2040, DitScenario/Totaal/Y2050);
+					}
+					
+					unit<uint8> Zichtjaar := Beleid/Zichtjaar
+					{
+						attribute<GW> OpLandOfBinnenwater := rjoin(YearRange_rel, EK/Jaar, EK/OpLandOfBinnenwater);
+					}
+				}
+			}
+			
+			container Regionaal
+			{
+				attribute<MW> Evenredig (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] * const(1[float32] / #RegioUnitSub[float32], RegioUnitSub))[MW]';
+				attribute<MW> Ruimte    (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] * (sum(float32(Analysis/Zeef/'+Zichtjaar_name+'/SectorXSubsectoren/Wind/Totaal/Beschikbaar), RegioUnitSub/per_CompactedAdminDomain) / sum(sum(float32(Analysis/Zeef/'+Zichtjaar_name+'/SectorXSubsectoren/Wind/Totaal/Beschikbaar), RegioUnitSub/per_CompactedAdminDomain))))[MW]';
+				attribute<MW> Vraag     (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] * (sum(BaseData/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32] / sum(sum(/BaseData/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32])[float32]))[MW]';
+			}
+			
+			attribute<MW> Totaal (RegioUnit) := = 'Regionaal/'+Variant+'[invert(RegioUnitSub/Nr_OrgEntity)]';
+		}
+		
+		container Zon
+		{
+			parameter<string> Variant := = 'VariantParameters/VariantK/RegionaleVerdelingZon[VariantParameters/VariantK/V/'+Variant_name+']';
+			
+			unit<uint32> RegioUnitSub := = RegioUnit/HeeftBuitengebied ? 'subset(id(RegioUnit) <> RegioUnit/V/Buitengebied)' : 'subset(IsDefined(id(RegioUnit)))'
+			{
+				attribute<rdc_meter> Geometry (poly) := RegioUnit/Geometry[Nr_OrgEntity];
+				attribute<.> per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+				attribute<string> name := RegioUnit/name[Nr_OrgEntity];
+			}
+			
+			container Nationaal
+			{
+				parameter<TWh> Vermogen2030 := /ModelParameters/Zon/NationaalVermogenZon2030;
+				parameter<TWh> Vermogen2050 := = '/VariantParameters/VariantK/NationaalVermogenZon2050[/VariantParameters/VariantK/V/'+/Variant_name+']';
+				parameter<TWh> Vermogen2040 := (Vermogen2030 + Vermogen2050) / 2f;
+				
+				unit<uint8> Zichtjaar := Time/Zichtjaar
+				{
+					attribute<TWh> Src := ='union_data(., '+AsItemList('Vermogen'+string(Time/Zichtjaar/YearRange_rel))+')';
+					attribute<GW> Resultaat := Src[GWh] / ModelParameters/Zon/vollasturen_zonnepaneel;
+				}
+			}
+			
+			container Regionaal
+			{
+				attribute<MW> Evenredig (RegioUnitSub) := = '((Nationaal/Zichtjaar/Resultaat[id])[MW] * const(1[float32] / #RegioUnitSub[float32], RegioUnitSub))[MW]';
+				attribute<MW> Ruimte    (RegioUnitSub) := = '((Nationaal/Zichtjaar/Resultaat[id])[MW] * (sum(float32(Analysis/Zeef/'+Zichtjaar_name+'/SectorXSubsectoren/Zon/Totaal/Beschikbaar), select_data( CompactedAdminDomain , AdminDomain/IsCompactedDomain , RegioUnitSub/per_AdminDomain ) ) / sum(sum(float32(Analysis/Zeef/'+Zichtjaar_name+'/SectorXSubsectoren/Zon/Totaal/Beschikbaar), select_data( CompactedAdminDomain , AdminDomain/IsCompactedDomain , RegioUnitSub/per_AdminDomain )))))[MW]';
+				attribute<MW> Vraag     (RegioUnitSub) := = '((Nationaal/Zichtjaar/Resultaat[id])[MW] * (sum(BaseData/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32] / sum(sum(/BaseData/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32])[float32]))[MW]';
+			}
+			
+			attribute<MW> Totaal (RegioUnit) := = 'Regionaal/'+Variant+'[invert(RegioUnitSub/Nr_OrgEntity)]';
+		}
+	}
+}

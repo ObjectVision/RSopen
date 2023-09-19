@@ -1,0 +1,120 @@
+unit<uint32> src := import
+{
+	attribute<rdc_mm_i32>      geometry_mm           := import/geometry_mm;
+	attribute<rdc_meter>       geometry              := geometry_mm[rdc_meter];
+	attribute<string>          identificatie         := import/identificatie;
+	attribute<int32>           oppervlakte           := import/oppervlakte;
+	attribute<m2_Vbo>          oppervlakte_trunc     := oppervlakte[m2_Vbo] < 500000[m2_Vbo]  ? oppervlakte[m2_Vbo] : (0/0)[m2_Vbo];
+	attribute<string>          nummeraanduiding_id   := import/nummeraanduiding_id;
+	attribute<uint64>          vbo_bag_nr            := uint64(import/identificatie);
+	attribute<uint64>          pand_bag_nr           := uint64(import/pand_id);
+	attribute<string>          pand_id               := import/pand_id;
+	attribute<int16>           bouwjaar_trunc        := pand_domein/bouwjaar_trunc[pand_rel];
+	attribute<int16>           bouwjaar_trunc_uitsrc := pand_src_domein/bouwjaar_trunc[pand_src_rel];
+	attribute<int16>           bouwjaar              := !IsDefined(bouwjaar_trunc) ? bouwjaar_trunc_uitsrc : bouwjaar_trunc;
+	attribute<WP>              WP_rel                := pand_domein/WP_rel[pand_rel];
+	attribute<WP1>             WP1_rel               := pand_domein/WP1_rel[pand_rel];
+	attribute<WP2>             WP2_rel               := pand_domein/WP2_rel[pand_rel];
+	attribute<WP4>             WP4_rel               := pand_domein/WP4_rel[pand_rel];
+	attribute<uint32>          count_vbo_pand_woon   := pand_domein/count_vbo_pand_woon[pand_rel];
+	attribute<pand_src_domein> pand_src_rel          := rlookup(pand_id, pand_src_domein/identificatie);
+	attribute<pand_domein>     pand_rel              := rlookup(pand_id, pand_domein/identificatie);
+	attribute<AllocDomain>     AllocDomain_rel       := geometry[AllocDomain];
+	attribute<AdminDomain>     AdminDomain_rel       := geometry[AdminDomain];
+	
+	attribute<uint32> count_vbo_alle (AllocDomain) := count(geometry, AllocDomain_rel);
+	
+	attribute<vbo_status> status_rel := rlookup(status, vbo_status/label);
+	attribute<string> status := import/status;
+	
+	container gebruiksdoelen :=
+		for_each_nedv(
+			vbo_gebruiksdoel/name
+			, 'import/gebruiksdoelen/'+vbo_gebruiksdoel/name
+			, import
+			, bool
+		)
+	{
+		attribute<bool> Boerderij (..) := Woon && industrie && !RegioIndelingen/Bevolkingskern_2011/Is_bbg_AdminDomain[AdminDomain_rel];
+	}
+	
+	container gebruiksdoelen_cbs
+	{
+		attribute<bool>   utiliteit         (..) := ='('+AsList('gebruiksdoelen/'+vbo_gebruiksdoel/Utiliteiten/name, ' || ')+' || logistiek) && !woon';
+		attribute<uint32> Count_Utiliteiten (..) := =AsList('gebruiksdoelen/'+vbo_gebruiksdoel/Utiliteiten/name+'[uint32]', ' + ')+' + logistiek[uint32] - gebruiksdoelen/overige_gebruiks[uint32]';
+		attribute<bool>   bijeenkomst       (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/bijeenkomst;
+		attribute<bool>   cel               (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/cel;
+		attribute<bool>   gezondheidszorg   (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/gezondheidszorg;
+		attribute<bool>   industrie         (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/industrie;
+		attribute<bool>   kantoor           (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/kantoor;
+		attribute<bool>   logies            (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/logies;
+		attribute<bool>   onderwijs         (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/onderwijs;
+		attribute<bool>   overige_gebruiks  (..) := !woon && !logistiek && (Count_Utiliteiten + gebruiksdoelen/overige_gebruiks[uint32]) == 1 && gebruiksdoelen/overige_gebruiks;
+		attribute<bool>   sport             (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/sport;
+		attribute<bool>   winkel            (..) := !woon && !logistiek && Count_Utiliteiten == 1 && gebruiksdoelen/winkel;
+		attribute<bool>   woon              (..) := gebruiksdoelen/woon && !logistiek;
+		attribute<bool>   utiliteit_combi   (..) := !woon && !logistiek && Count_Utiliteiten > 1;
+		attribute<bool>   logistiek         (..) := pand_domein/IsLogistiekFunctie[pand_rel];
+	}
+	
+	container Kwetsbaarheid
+	{
+		container Geluid
+		{
+			attribute<bool> IsKwetsbaarMetBoerderij (VBOS/Src) := //Is zelfde als zonder: boerderijen zitten dus niet in onderstaande definitie.
+			!(
+				gebruiksdoelen/sport ||
+				gebruiksdoelen/industrie ||
+				gebruiksdoelen/overige_gebruiks ||
+				gebruiksdoelen/bijeenkomst ||
+				(gebruiksdoelen/winkel && Oppervlakte  < 2000i) ||
+				(gebruiksdoelen/kantoor && Oppervlakte  < 1500i)
+			);
+			
+			attribute<bool> per_AllocDomain (AllocDomain) := sum(float32(IsKwetsbaarMetBoerderij), AllocDomain_rel) > 0f;
+		}
+	}
+	
+	container totale_opp_per_functie :=
+		for_each_nedv(
+			vbo_gebruiksdoel/name
+			, 'GebruiksdoelSets/'+vbo_gebruiksdoel/name+'/GebruiksdoelSet/total_sum_opp_trunc'
+			, void
+			, int32
+		)
+	{
+		parameter<int32> Total := ='add('+AsItemList(vbo_gebruiksdoel/name)+')';
+	}
+	
+	container totale_opp_per_functie_plus :=
+		for_each_nedv(
+			vbo_gebruiksdoel_plus/name
+			, 'GebruiksdoelSets/'+vbo_gebruiksdoel_plus/name+'/GebruiksdoelSet/total_sum_opp_trunc'
+			, void
+			, int32
+		)
+	{
+		parameter<int32> Total := ='add('+AsItemList(vbo_gebruiksdoel/name)+')';
+	}
+	
+	container totale_count_per_functie :=
+		for_each_nedv(
+			vbo_gebruiksdoel/name
+			, 'sum(IsDefined(GebruiksdoelSets/'+vbo_gebruiksdoel/name+'/GebruiksdoelSet/geometry) ? 1 : 0)'
+			, void
+			, uint32
+		);
+		
+	container totale_count_per_functie_plus :=
+		for_each_nedv(
+			vbo_gebruiksdoel_plus/name
+			, 'sum(IsDefined(GebruiksdoelSets/'+vbo_gebruiksdoel_plus/name+'/GebruiksdoelSet/geometry) ? 1 : 0)'
+			, void
+			, uint32
+		);
+
+	attribute<bool> VBO_selection := src/status_rel == Classifications/Vastgoed/vbo_status/V/verblijfsobject_in_gebruik
+		|| src/status_rel == Classifications/Vastgoed/vbo_status/V/verblijfsobject_in_gebruik_niet_ingemeten
+		|| src/status_rel == Classifications/Vastgoed/vbo_status/V/verblijfsobject_buiten_gebruik
+		|| src/status_rel == Classifications/Vastgoed/vbo_status/V/Verbouwing_verblijfsobject;
+}

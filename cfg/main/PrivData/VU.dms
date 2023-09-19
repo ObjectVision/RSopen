@@ -1,0 +1,88 @@
+container VU
+{
+	#include <nvm.dms>
+	
+	container Generates
+	{
+		parameter<string> Nat_WP2 := 'Nat_WP2', ExplicitSuppliers = "/PrivData/VU/Impl/per_WP_type/WP2/MakeNationalAvgCharacteristics";
+		parameter<string> Nat_WP4 := 'Nat_WP4', ExplicitSuppliers = "/PrivData/VU/Impl/per_WP_type/WP4/MakeNationalAvgCharacteristics";
+		parameter<string> Reg_WP2 := 'Reg_WP2', ExplicitSuppliers = "/PrivData/VU/Impl/per_WP_type/WP2/MakeRegionalAvgCharacteristics";
+		parameter<string> Reg_WP4 := 'Reg_WP4', ExplicitSuppliers = "/PrivData/VU/Impl/per_WP_type/WP4/MakeRegionalAvgCharacteristics";
+	}
+	
+	container Impl
+	{
+		unit<uint32> WP_typen : nrofrows = 2
+		{
+			attribute<string> name : ['WP2', 'WP4'];
+		}
+		
+		container per_WP_type :=
+			for_each_ne(
+				WP_typen/name
+				, 'per_WP_type_T('+quote(WP_typen/name)+')'
+			);
+		Template per_WP_type_T
+		{
+			//
+			parameter<string> type_name;
+			//
+			
+			unit<uint8> domain := =type_name;
+			unit<uint32> comb   := =type_name+'xHouseChar';
+			
+			container MakeNationalAvgCharacteristics := 
+				for_each_nedv(
+					HouseCharacteristics/name,
+					replace(
+						'union_data('
+							'domain,'+
+							AsItemList(
+								replace(
+									'mean(PrivData/VU/NVM/Types_'+type_name+'/@TW@/Subset/Nl_rel ? PrivData/VU/NVM/Types_'+type_name+'/@TW@/Subset/@VT@[float32] : (0/0)[float32])',
+									'@TW@', domain/name
+								)
+							)+
+						')',
+						'@VT@', HouseCharacteristics/name
+					),
+					domain, float32
+				), StorageName = "='%RSLDataDir%/NVM_Nationalekarakteristieken/'+type_name+'.fss'";
+					
+				 
+			container CalcRegionalAvgCharacteristics := for_each_ne(comb/name, 'CalcRegionalAvgCharacteristics_T(' +quote(comb/name)+ ',' +quote(comb/WP)+ ',' +quote(comb/HouseChar)+ ',' +quote(comb/ValueType)+ ','+quote(type_name)+')');
+			
+			Template CalcRegionalAvgCharacteristics_T
+			{
+				//
+				parameter<string> HousetypeHouseChar;
+				parameter<string> WP;
+				parameter<string> HouseChar;
+				parameter<string> ValueType;
+				parameter<string> WP_type_str;
+				//
+				parameter<string> distance_decay_type := 'rev_dist_scaled';
+				
+				unit<uint32> NVM_Data := ='PrivData/VU/NVM/Types_'+WP_type_str+'/'+WP+'/Subset' 
+				{
+					attribute<float32> Sum_attribute_ha    (rdc_25m) := ='sum('+HouseChar+'[float32], rdc_25m_rel)';
+					attribute<float32> Count_attribute_ha  (rdc_25m) := ='count('+HouseChar+', rdc_25m_rel)[float32]';
+					attribute<float32> Potential_sum       (rdc_25m) := ='potential(Sum_attribute_ha, /Geography/Distmatrices_25m/pot5000m/'+distance_decay_type+')';  //Geography/Distmatrices/Impl_25m/pot5000m/potrange/rev_dist_scaled
+					attribute<float32> Potential_count     (rdc_25m) := ='potential(Count_attribute_ha, /Geography/Distmatrices_25m/pot5000m/'+distance_decay_type+')';
+					
+					attribute<float32> Potential (rdc_25m) := Potential_sum / Potential_count;
+				}
+			}
+			
+			container MakeRegionalAvgCharacteristics := 
+				for_each_nedvna(
+					comb/name
+					, 'value(CalcRegionalAvgCharacteristics/'+comb/name+'/NVM_Data/Potential,'+comb/ValueType+')'
+					, rdc_25m
+					, comb
+					, comb/ValueType
+					, '%RSLDataDir%/NVM_Regiokarakteristieken/'+type_name+'/'+comb/name+'.tif'
+				);
+		}
+	}
+}

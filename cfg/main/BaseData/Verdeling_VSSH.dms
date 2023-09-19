@@ -1,0 +1,60 @@
+container Verdeling_VSSH
+{
+	unit<uint32> pand_src_domain := ='SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/Model_Startyear)+'/panden/src';
+	unit<uint32> pand_domain     := SourceData/Vastgoed/EigendomStaat/pand
+	{
+		unit<uint32> ToedelingsMatrix := SourceData/Vastgoed/EigendomStaat/pand/ToedelingsMatrix;
+		
+		attribute<bool> panden_SocialeHuur_selection_condition := Eigendom_rel == /Classifications/vastgoed/Eigendom/V/WoonCorp;
+		attribute<bool> panden_VrijeSector_selection_condition := Eigendom_rel != /Classifications/vastgoed/Eigendom/V/WoonCorp;
+	}
+	
+	container per_AdminDomain :=
+		for_each_nedv(
+			Vastgoed/WP2xVSSH/name
+			, 'Uitsmeren_WP2_'+Vastgoed/WP2xVSSH/VSSH_name+'/'+Vastgoed/WP2xVSSH/WP_name+'/Aantal_Woningen_per_AdminDomain[woning]'
+			, AdminDomain
+			, woning
+		)
+	{
+		attribute<float32> Totaal (AdminDomain) := =AsList(Vastgoed/WP2xVSSH/name, ' + ');
+	}
+	
+	unit<uint32> per_Gemeente := RegioIndelingen/Gemeente2019_single
+	{
+		attribute<uint32>  Aantal_SH := sum(panden_SocialeHuur/count_vbo_pand_woon, point_in_polygon(centroid_or_mid(panden_SocialeHuur/geometry), geometry));
+		attribute<uint32>  Aantal_VS := sum(panden_VrijeSector/count_vbo_pand_woon, point_in_polygon(centroid_or_mid(panden_VrijeSector/geometry), geometry));
+		
+		attribute<float32> P_SH      := Aantal_SH[float32] / (Aantal_SH + Aantal_VS)[float32];
+		attribute<float32> P_SH_perAdminDomain (AdminDomain) := P_SH[per_AdminDomain];
+	}
+	
+	unit<uint32> panden_SocialeHuur := select_with_attr_by_org_rel(SourceData/Vastgoed/EigendomStaat/pand, pand_domain/panden_SocialeHuur_selection_condition);
+	unit<uint32> panden_VrijeSector := select_with_attr_by_org_rel(SourceData/Vastgoed/EigendomStaat/pand, pand_domain/panden_VrijeSector_selection_condition);
+	
+	container Uitsmeren_WP2_SocialeHuur := for_each_ne(Vastgoed/WP2/name, 'Uitsmeren_T('+quote(Vastgoed/WP2/name)+', ''WP2'', panden_SocialeHuur, pand_domain/panden_SocialeHuur_selection_condition)');
+	container Uitsmeren_WP2_VrijeSector := for_each_ne(Vastgoed/WP2/name, 'Uitsmeren_T('+quote(Vastgoed/WP2/name)+', ''WP2'', panden_VrijeSector, pand_domain/panden_VrijeSector_selection_condition)');
+	
+	container Uitsmeren_WP4_SocialeHuur := for_each_ne(Vastgoed/WP4/name, 'Uitsmeren_T('+quote(Vastgoed/WP4/name)+', ''WP4'', panden_SocialeHuur, pand_domain/panden_SocialeHuur_selection_condition)');
+	container Uitsmeren_WP4_VrijeSector := for_each_ne(Vastgoed/WP4/name, 'Uitsmeren_T('+quote(Vastgoed/WP4/name)+', ''WP4'', panden_VrijeSector, pand_domain/panden_VrijeSector_selection_condition)');
+	
+	Template Uitsmeren_T
+	{
+		//
+		parameter<string> WP_str;
+		parameter<string> WP_type;
+		unit<uint32>      pand_perVSSH_domain;
+		attribute<bool>   VSSH_cond (pand_domain);
+		//
+		
+		attribute<meter2> VBOopp_per_pand_perVSSH_domain (pand_perVSSH_domain) := ='pand_perVSSH_domain/'+WP_type+'_rel == Vastgoed/'+WP_type+'/V/'+WP_str+' ? pand_perVSSH_domain/VBOopp_inPand_'+WP_str+' : 0[meter2]';
+		attribute<meter2> VBOopp_per_pand_domain         (pand_domain) := recollect_by_cond(VSSH_cond, VBOopp_per_pand_perVSSH_domain, 0[meter2]);
+		attribute<meter2> VBOopp_per_pand_src_domain     (pand_src_domain) := recollect_by_cond(pand_src_domain/Pand_selection_condition, VBOopp_per_pand_domain, 0[meter2]);
+		attribute<meter2> VBOopp_per_AdminDomain         (AdminDomain) := sum(VBOopp_per_pand_src_domain[pand_domain/ToedelingsMatrix/pand_rel] * pand_domain/ToedelingsMatrix/ToedelingPand, pand_domain/ToedelingsMatrix/AdminDomain_rel);
+		
+		attribute<Woning> Aantal_woningen_per_pand_perVSSH_domain(pand_perVSSH_domain) := ='pand_perVSSH_domain/'+WP_type+'_rel == Vastgoed/'+WP_type+'/V/'+WP_str+' ? pand_perVSSH_domain/count_vbo_pand_woon[Woning] : 0[Woning]';
+		attribute<Woning> Aantal_woningen_per_pand_domain        (pand_domain) := recollect_by_cond(VSSH_cond, Aantal_woningen_per_pand_perVSSH_domain, 0[Woning]);
+		attribute<Woning> Aantal_woningen_per_pand_src_domain    (pand_src_domain) := recollect_by_cond(pand_src_domain/Pand_selection_condition, Aantal_woningen_per_pand_domain, 0[Woning]);
+		attribute<Woning> Aantal_woningen_per_AdminDomain        (AdminDomain) := sum(Aantal_woningen_per_pand_src_domain[pand_domain/ToedelingsMatrix/pand_rel] * pand_domain/ToedelingsMatrix/ToedelingPand, pand_domain/ToedelingsMatrix/AdminDomain_rel); 
+	}
+}
