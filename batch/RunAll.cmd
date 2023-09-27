@@ -43,13 +43,16 @@ rmdir %LocalDataProjDir%\VariantData /s /q REM deletes the old VariantData folde
 set RSL_VARIANT_NAME=MO
 call ..\batch\RunVariantData.cmd
 
-set RSL_VARIANT_NAME=GL
-call ..\batch\RunVariantData.cmd
-
 set RSL_VARIANT_NAME=RG
 call ..\batch\RunVariantData.cmd
 
 set RSL_VARIANT_NAME=SW
+call ..\batch\RunVariantData.cmd
+
+set RSL_VARIANT_NAME=GL
+call ..\batch\RunVariantData.cmd
+
+set RSL_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd
 
 :runScenarios
