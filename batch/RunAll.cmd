@@ -22,9 +22,6 @@ goto runScenarios
 
 REM rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
 
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /Geography/RegioIndelingen/Impl/Generate_Run1
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /Geography/RegioIndelingen/Impl/Generate_Run2
-
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run1
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run2
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run3
@@ -34,7 +31,6 @@ call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run6
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run7
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run8
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run9
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run10
 
 :runPrepareVariantdata
 
