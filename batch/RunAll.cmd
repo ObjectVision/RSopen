@@ -23,14 +23,23 @@ goto runScenarios
 REM rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
 
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run1
+if ErrorLevel NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run2
+if ErrorLevel NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run3
+if ErrorLevel NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run4
+if ErrorLevel NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run5
+if ErrorLevel NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run6
+if ErrorLevel NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run7
+if ErrorLevel NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run8
+if ErrorLevel NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run9
+if ErrorLevel NEQ 0 goto ErrorEnd
 
 :runPrepareVariantdata
 
@@ -60,3 +69,6 @@ REM set RSL_SCENARIO_NAME=WLO_Laag
 REM call ..\batch\RunScenarios.cmd
 
 pause "Klaar ?"
+
+:ErrorEnd
+echo "%ErrorLevel%"
