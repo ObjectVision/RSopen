@@ -1,0 +1,186 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision B.V. en VU Vrije Universiteit Amsterdam.
+// Opdrachtgever/ontwikkelaar PBL: Bart Rijken
+// Contactpersoon/ontwikkelaar Object Vision B.V.: Jip Claassens (jclaassens@objectvision.nl)
+// Contacpersoon PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+//
+// Deze file specificeert:
+// - het te evalueren (omgevings)scenario, de (beleids)variant en daarmee de casus (= combinatie van scenario en variant);
+// - De ruimtelijke resolutie waarop wordt gerekend
+// - de dms files die nodig zijn om betreffende caus te evalueren (met 'includes')
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container RSOpen
+{
+	parameter<string> Scenario_name := replace_value(expand(., '%env:RSL_SCENARIO_NAME%'), 'env:RSL_SCENARIO_NAME', 'WLO_hoog'); // Omgevingsscenario: WLO_laag,WLO_hoog
+	parameter<string> Variant_name  := replace_value(expand(., '%env:RSL_VARIANT_NAME%' ), 'env:RSL_VARIANT_NAME', 'BAU');        // (Beleids)variant: MO,GL,RG,SW,BAU
+	parameter<string> Casus_name    := Scenario_name+'_'+Variant_name;
+	
+	parameter<VariantParameters/VariantK> Variant_id := = '/VariantParameters/VariantK/V/'+Variant_name;
+	parameter<string> AllocDomain_ref := 'rdc_'+AllocDomain_ref_short;
+	parameter<string> AdminDomain_ref := 'rdc_'+AdminDomain_ref_short;
+	parameter<string> AllocDomain_ref_short := ModelParameters/AllocDomain;
+	parameter<string> AdminDomain_ref_short := ModelParameters/AdminDomain;
+	
+	parameter<bool>   Use_GeoDMS_13_ready_operators := TRUE;
+	
+	#include <../main/ModelParameters.dms>
+	#include <../main/VariantParameters.dms>
+	#include <../main/CaseParameters.dms>
+	#include <../main/Indicatoren.dms>
+	#include <../main/Analysis.dms>
+	#include <../main/BaseData.dms>
+	#include <../main/SourceData.dms>
+	#include <../main/Geography.dms>
+	#include <../main/Classifications.dms>	
+	#include <../main/Units.dms>
+	#include <../main/Templates.dms>
+	#include <../main/WriteVariantData.dms>
+	#include <../main/WriteBasedata.dms>
+	
+	container AllFinalItems
+	{
+		parameter<string> ActivateAll1 := AsList('WriteVariantData/'+VariantData/name,' + ');
+		parameter<string> ActivateAll2 := AsList('WriteBasedata/'+Basedata/name,' + ');
+		parameter<string> ActivateAll := ActivateAll1+ ' + ' +ActivateAll2+ ' + Allocatie';
+		
+		unit<uint32>      VariantData      := SubItem_PropValues(WriteVariantData,'name');
+		unit<uint32>      Basedata         := SubItem_PropValues(WriteBasedata,'name');
+		parameter<string> Allocatie        := AsList('Analysis/Allocatie/Zichtjaren/'+/Classifications/Time/Zichtjaar/name+'/Impl/Generate',' + ');
+	}
+	
+	container CaseClassifications := Templates/CaseClassificationsT(scenario_name, variant_name);
+	
+	unit<ipoint> AdminDomain := =ModelParameters/AdminDomain == '100m' ? 'Geography/rdc_100m' : 'Geography/rdc_25m' // Ruimtelijke resolutie waarop de allocatieresultaten worden geadminstreerd
+	{
+		parameter<string> name              := 'AdminDomain';
+		attribute<bool>   IsCompactedDomain := AllocDomain/IsCompactedDomain[AllocDomain_rel];
+		parameter<uint32> nr_cols           := ='uint32(/geography/perGridsize/size_'+(ModelParameters/AdminDomain == '100m' ? '100m' : '25m')+'/nr_cols)';
+	}
+	
+	unit<ipoint> AllocDomain := =ModelParameters/AllocDomain == '100m' ? 'Geography/rdc_100m' : 'Geography/rdc_25m' // Ruimtelijke resolutie waarop de allocatie plaatsvindt (keuze-eenheid)
+	{
+		parameter<string> name              := 'AllocDomain';
+		attribute<bool>   IsCompactedDomain := ./IsNederland;
+	}
+	
+	unit<uint64> CompactedAllocDomain := select_with_attr_by_org_rel(AllocDomain, AllocDomain/IsCompactedDomain), DialogType = "map", DialogData = "per_AllocDomain" // Subset van het AllocDomain, om rekentijd en geheugengebruik te beperken
+	{
+		parameter<string>               name                          := 'CompactedAllocDomain';
+		parameter<units/Ha>             NrHaPerCell                   := AllocDomain/NrHaPerCell;
+		attribute<.>                    per_AllocDomain (AllocDomain) := invert(AllocDomain_rel), KeepData = "true";
+		
+		attribute<AllocDomain>          AllocDomain_rel               := org_rel;
+		attribute<AdminDomain>          AdminDomain_rel               := AllocDomain/AdminDomain_rel[AllocDomain_rel]; 
+		attribute<CompactedAdminDomain> CompactedAdminDomain_rel      := rlookup(AdminDomain_rel, CompactedAdminDomain/AdminDomain_rel);
+		attribute<.>                    CompactedAllocDomain_rel      := id(.);
+	}
+	
+	unit<uint64> CompactedAdminDomain := select_with_attr_by_org_rel(AdminDomain, AdminDomain/IsCompactedDomain), DialogType = "map", DialogData = "per_AdminDomain" // Subset van het AdminDomain, om rekentijd en geheugengebruik te beperken
+	{
+		parameter<string>               name                          := 'CompactedAdminDomain';
+		parameter<units/Ha>             NrHaPerCell                   := AdminDomain/NrHaPerCell;
+		attribute<.>                    per_AdminDomain (AdminDomain) := invert(AdminDomain_rel), KeepData = "true";
+		attribute<AdminDomain>          AdminDomain_rel               := org_rel; 
+		attribute<AllocDomain>          AllocDomain_rel               := AdminDomain/AllocDomain_rel[AdminDomain_rel]; 
+		attribute<CompactedAllocDomain> CompactedAllocDomain_rel      := rlookup(AllocDomain_rel, CompactedAllocDomain/AllocDomain_rel), KeepData = "true";
+		attribute<.>                    CompactedAdminDomain_rel      := id(.);
+		attribute<geography/rdc_meter>  point                         := AdminDomain/point[org_rel];
+	}
+	
+	#include <../main/ConfigSettings.dms>
+	#include <../main/ExportSettings.dms>
+	
+	container t640_1_RSopen_prepare_base_data
+	{
+		parameter<string> TempDir                  := '%LocalDataDir%/Regression/log';
+		parameter<string> results_folder_filename  := TempDir + '/results_folder.txt';
+		parameter<string> results_folder           :  Storagename =  "= results_folder_filename", StorageType = "str";
+
+		parameter<string> result_html := 
+			'<description>RSLight 2021 ontwikkel 3 prepare base data, BAU, 2050 <br><I> svn revision: 9320 (pbl>sliksvn.com) </I></description>' + 
+			'<result>prepare base data: OK</result>'
+		,	StorageType = "str"
+		,	storagename = "= results_folder + '/t640_1_RSopen_prepare_base_data.txt'";
+	}
+	
+	container t640_2_RSopen_MakeVariantData
+	{
+		parameter<string> TempDir                  := '%LocalDataDir%/Regression/log';
+		parameter<string> results_folder_filename  := TempDir + '/results_folder.txt';
+		parameter<string> results_folder           :  Storagename =  "= results_folder_filename", StorageType = "str";
+
+		parameter<string> result_html := 
+			'<description>RSopen prepare variant data, BAU, 2050 <br><I> svn revision: 9320 (pbl>sliksvn.com) </I></description>' + 
+			'<result>maak variant data: OK</result>'
+		,	StorageType = "str"
+		,	storagename = "= results_folder + '/t640_2_RSopen_MakeVariantData.txt'";
+	}
+	
+	container t640_3_RSopen_indicator_results_test
+	{
+		parameter<string> TempDir                  := '%LocalDataDir%/Regression/log';
+		parameter<string> results_folder_filename  := TempDir + '/results_folder.txt';
+		parameter<string> results_folder           :  Storagename =  "= results_folder_filename", StorageType = "str";
+
+		parameter<string> result := 
+			'<description>RSopen results, BAU, 2050 <br><I> git revision: XXXX, git repo: https://github.com/ObjectVision/RSopen; branch: RegressieTest) </I></description>' + 
+			'<result>' + 
+			'<br><b>BasisJaar</b>' +
+			'<br>Woningen: ' + replace(string(RegressieTestIndicatoren/Basisjaar/Aantal_kilo_Woningen),'.',',') +' kilo woningen <br>' + 
+			'Banen: ' + replace(string(RegressieTestIndicatoren/Basisjaar/Aantal_kilo_Banen),'.',',') +' kilo banen <br>' + 
+			'Pand Footprint : ' + replace(string(RegressieTestIndicatoren/Basisjaar/haPandFootprint_Totaal),'.',',') +' ha <br>' + 
+			'Objecten Verblijfsrecreatie : ' + replace(string(sum(RegressieTestIndicatoren/Basisjaar/Objecten_Verblijfsrecreatie)),'.',',') +' objecten<br>'  + 
+			'Vermogen Wind : ' + replace(string(sum(RegressieTestIndicatoren/Basisjaar/Vermogen_Wind)),'.',',') +' mega watt<br>'  + 
+			'Vermogen Zon : ' + replace(string(sum(RegressieTestIndicatoren/Basisjaar/Vermogen_Zon)),'.',',') +' mega watt<br>'
+			'<br><b>2050</b>' +
+			'<br>Woningen: ' + replace(string(RegressieTestIndicatoren/Yr2050/Aantal_kilo_Woningen),'.',',') +' kilo woningen <br>' + 
+			'Banen: ' + replace(string(RegressieTestIndicatoren/Yr2050/Aantal_kilo_Banen),'.',',') +' kilo banen <br>' + 
+			'Pand Footprint : ' + replace(string(RegressieTestIndicatoren/Yr2050/haPandFootprint_Totaal),'.',',') +' ha <br>' + 
+			'Objecten Verblijfsrecreatie : ' + replace(string(sum(RegressieTestIndicatoren/Yr2050/Objecten_Verblijfsrecreatie)),'.',',') +' objecten<br>'  + 
+			'Vermogen Wind : ' + replace(string(sum(RegressieTestIndicatoren/Yr2050/Vermogen_Wind)),'.',',') +' mega watt<br>'  + 
+			'Vermogen Zon : ' + replace(string(sum(RegressieTestIndicatoren/Yr2050/Vermogen_Zon)),'.',',') +' mega watt</result>';
+
+		parameter<string> result_html := result
+		,	StorageType = "str"
+		,	storagename = "= results_folder + '/t640_3_RSopen_indicator_results_test.txt'";
+	}
+	
+	container RegressieTestIndicatoren : using = "units"
+	{
+		container Basisjaar
+		{
+			parameter<Woning>          Aantal_Woningen_Totaal       := sum(Indicatoren/Basisjaar/Stand/Aantal_Woningen_Totaal);
+			parameter<float32>         Aantal_kilo_Woningen         := float32(Aantal_Woningen_Totaal) / 1000f;
+
+			parameter<Job>             Aantal_Banen_Totaal          := sum(Indicatoren/Basisjaar/Stand/Aantal_Banen_Totaal);
+			parameter<float32>         Aantal_kilo_Banen            := float32(Aantal_Banen_Totaal) / 1000f;
+
+			parameter<meter2>          m2PandFootprint_Totaal       := sum(Indicatoren/Basisjaar/Stand/m2PandFootprint_Totaal);
+			parameter<float32>         haPandFootprint_Totaal       := float32(m2PandFootprint_Totaal) / 10000f;
+
+			parameter<Verblijfsobject> Objecten_Verblijfsrecreatie  := sum(Indicatoren/Basisjaar/Stand/Objecten_Verblijfsrecreatie);
+			parameter<MW>              Vermogen_Wind                := sum(Indicatoren/Basisjaar/Stand/Vermogen_Wind);
+			parameter<MW>              Vermogen_Zon                 := sum(Indicatoren/Basisjaar/Stand/Vermogen_Zon);
+		}
+		 container Yr2050
+		 {
+			parameter<Woning>          Aantal_Woningen_Totaal       := sum(Indicatoren/Y2050/Stand/Aantal_Woningen_Totaal);
+			parameter<float32>         Aantal_kilo_Woningen         := float32(Aantal_Woningen_Totaal) / 1000f;
+			
+			parameter<Job>             Aantal_Banen_Totaal          := sum(Indicatoren/Y2050/Stand/Aantal_Banen_Totaal);
+			parameter<float32>         Aantal_kilo_Banen            := float32(Aantal_Banen_Totaal) / 1000f;
+
+			parameter<meter2>          m2PandFootprint_Totaal       := sum(Indicatoren/Y2050/Stand/m2PandFootprint_Totaal);
+			parameter<float32>         haPandFootprint_Totaal       := float32(m2PandFootprint_Totaal) / 10000f;
+
+			parameter<Verblijfsobject> Objecten_Verblijfsrecreatie  := sum(Indicatoren/Y2050/Stand/Objecten_Verblijfsrecreatie);
+			parameter<MW>              Vermogen_Wind                := sum(Indicatoren/Y2050/Stand/Vermogen_Wind);
+			parameter<MW>              Vermogen_Zon                 := sum(Indicatoren/Y2050/Stand/Vermogen_Zon);
+		}
+	}
+}
