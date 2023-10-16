@@ -71,5 +71,7 @@ REM call ..\batch\RunScenarios.cmd
 
 pause "Klaar ?"
 
+
 :ErrorEnd
 echo "%ErrorLevel%"
+pause "Er gaat iets mis..."
