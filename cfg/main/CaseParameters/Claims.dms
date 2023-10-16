@@ -1,12 +1,38 @@
-container Claims
+container Claims : using = "Geography"
 {
 	container WonenEnWerken // Bron: Berekeningen van Significance B.V. in opdracht van PBL in het kader van het project Ruimtelijke Verkenningen 2023. Zie https://www.pbl.nl/publicaties/ruimtelijke-verkenning-2023-vier-scenarios-voor-de-inrichting-van-nederland-in-2050
 	{
-		parameter<String> ClaimSrcRef: ['%RSLDataDir%/Claims/TigrisXLClaimsPerNVM'];
-		parameter<String> ClaimSrcDir := ClaimSrcRef+'/@T@/@S@/@V@/@F@';
-		parameter<string> SrcRegioRef: ['NVM'];
+		parameter<String> ClaimSrcRef: ['%PrivDataDir%/Claims/TXL_20231013'];
+		parameter<String> ClaimSrcDir := ClaimSrcRef+'/@S@';
+		parameter<String> ClaimRef: ['%RSLDataDir%/Claims/TXL_20231013'];
+		parameter<String> ClaimDir := ClaimRef+'/@S@';
+		// parameter<string> SrcRegioRef: ['NVM'];
+		parameter<string> SrcRegioRef: ['LMSSubzone'];
 		
 		unit<uint32> SrcRegio := ='/geography/RegioIndelingen/'+SrcRegioRef;
+		unit<uint32> COROP_Regio    := RegioIndelingen/CBS/last/COROP;
+		
+		container MetaInfo
+		{
+			unit<uint32> Labour
+			: StorageName = "=ClaimSrcRef+'/MetaInfo/Labour.csv'"
+			, StorageType = "gdal.vect"
+			, StorageReadOnly = "true"
+			{
+				attribute<string> Name     := variable;
+				attribute<uint32> EndPos   := cumulate(Length[uint32]);
+				attribute<uint32> Startpos := EndPos - Length[uint32];
+			}
+			unit<uint32> Landuse
+			: StorageName = "=ClaimSrcRef+'/MetaInfo/Landuse.csv'"
+			, StorageType = "gdal.vect"
+			, StorageReadOnly = "true"
+			{
+				attribute<string> Name     := variable;
+				attribute<uint32> EndPos   := cumulate(Length[uint32]);
+				attribute<uint32> Startpos := EndPos - Length[uint32];
+			}
+		}
 		
 		container Cases := for_each_ne(Modellering/AllCases/name, 'CaseT('+quote(Modellering/AllCases/Scenario_name)+','+quote(Modellering/AllCases/Variant_name)+')');
 		
@@ -42,9 +68,91 @@ container Claims
 			
 			parameter<string> FileName_bare := TigrisXL/Table/name[table_id];
 			
-			parameter<string> File := replace(ClaimSrcDir, '@T@', string(jaar), '@S@', Scenario, '@V@', Variant, '@F@', FileName_bare)+'.csv';
+			parameter<string>  File_dat
+			:	StorageName = "=replace(ClaimSrcDir, '@S@', Scenario)+'_LMS/'+String(Jaar)+'/'+Variant+'_'+FileName_bare+'.dat'"
+			,	StorageType = "str";
 			
-			unit<uint32> NVM: StorageName = "= File", StorageType = "gdal.vect", StorageReadOnly = "True";
+			unit<uint32> SrcDomain := range(uint32,0,StrCount(File_dat, '\n'))
+			{
+				attribute<string> FullLine (SrcDomain) := ReadLines(File_dat, .,0);
+				attribute<uint32> EK := ReadElems(FullLine, ., const(0, .));
+			}
+			parameter<string> Validator := '\\s*-?\\d+(\\.\\d+)?';
+			
+			unit<uint32> SrcAttribute := ='MetaInfo/'+Classifications/TigrisXL/Table/name[table_id] +'' 
+			{
+				attribute<bool> is_oke := ='union_data(., '+AsItemList('all(regex_match(substr(SrcDomain/FullLine,'+string(SrcAttribute/StartPos)+','+string(SrcAttribute/Length)+'), Validator))')+')';
+			}
+			
+			unit<uint32> TargetDomain := Geography/RegioIndelingen/LMSSubzone;
+			unit<float32> TargetValues;
+			
+			container SrcAttributes_strings := 
+				for_each_nedv(
+					SrcAttribute/name
+					, 'substr(SrcDomain/FullLine,' + String(SrcAttribute/StartPos) +',' + String(SrcAttribute/Length) + ')'
+					, SrcDomain 
+					, string
+				)
+			{
+				attribute<uint32> EK(SrcDomain) := uint32(LmsSubzone);
+			}
+			
+			container SrcAttributes_oke := 
+				for_each_nedv(
+					SrcAttribute/name
+					, 'regex_match(SrcAttributes_strings/'+SrcAttribute/name+', Validator)'
+					, SrcDomain
+					, bool
+				)
+			{
+				attribute<uint32> EK (SrcDomain) := uint32(LmsSubzone);
+			}
+			
+			container SrcAttributes := 
+				for_each_neidv(
+					SrcAttribute/name
+					, 'value(SrcAttributes_strings/'+SrcAttribute/name+', TargetValues)'
+					, 'SrcAttributes_oke/'+SrcAttribute/name
+					, SrcDomain
+					, TargetValues
+				)
+			{
+				attribute<uint32> EK(SrcDomain) := uint32(LmsSubzone);
+			}
+			
+			container Attributes := 
+				for_each_nedv(
+					SrcAttribute/name
+					, SrcAttribute/is_oke
+						? 'rjoin(TargetDomain/LmsSubF, SrcAttributes/EK, SrcAttributes/'+ SrcAttribute/name +')'
+						: 'Formatting Error: MetaInfo defined a column with an unexpected number format: '
+					, TargetDomain
+					, TargetValues
+				);
+			
+			container Write_PerNVM :=
+				for_each_nedv(
+					SrcAttribute/name
+					, 'sum(Attributes/'+SrcAttribute/name+', TargetDomain/Relaties/NVM)'
+					, RegioIndelingen/NVM
+					, TargetValues
+				), StorageName = "=File_csv_NVM", StorageType = "gdalwrite.vect";
+				
+			container Write_PerCOROP :=
+				for_each_nedv(
+					SrcAttribute/name
+					, 'sum(Attributes/'+SrcAttribute/name+', TargetDomain/Relaties/COROP)'
+					, COROP_Regio
+					, TargetValues
+				), StorageName = "=File_csv_COROP", StorageType = "gdalwrite.vect";
+		
+			
+			parameter<string> File_csv_NVM   := replace(ClaimDir, '@S@', Scenario)+'_NVM/'+String(Jaar)+'/'+Variant+'_'+FileName_bare+'.csv';
+			parameter<string> File_csv_COROP := replace(ClaimDir, '@S@', Scenario)+'_COROP/'+String(Jaar)+'/'+Variant+'_'+FileName_bare+'.csv';
+			
+			unit<uint32> NVM   : StorageName = "= File_csv_NVM", StorageType = "gdal.vect", StorageReadOnly = "True";
+			unit<uint32> COROP : StorageName = "= File_csv_COROP", StorageType = "gdal.vect", StorageReadOnly = "True";
 		}
 	}
 }
