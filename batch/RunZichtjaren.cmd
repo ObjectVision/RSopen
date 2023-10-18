@@ -9,3 +9,8 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /Analysis/Allocatie/Zichtjaren/Y2050/Impl/Generate
 if %ErrorLevel% NEQ 0 goto ErrorEnd
+
+
+:ErrorEnd
+echo "%ErrorLevel%"
+pause "Er gaat iets mis..."
