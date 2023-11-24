@@ -33,16 +33,22 @@ call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run3
 echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run4
+echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run5
+echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run6
+echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run7
+echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run8
+echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run9
+echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 :runPrepareVariantdata
