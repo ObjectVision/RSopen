@@ -1,20 +1,20 @@
-Template BAG_T
+container BAG : using = "Classifications/Vastgoed"
 {
 	//
-	unit<ipoint> AllocDomain;
+	// unit<ipoint> AllocDomain;
 	//
 	
-	unit<uint32> NL        := RegioIndelingen/NL;
-	unit<uint32> nvm       := RegioIndelingen/nvm;
-	unit<uint32> Buurt     := RegioIndelingen/cbs/last/buurt;
-	unit<uint32> Wijk      := RegioIndelingen/cbs/last/wijk;
+	// unit<uint32> NL        := RegioIndelingen/NL;
+	// unit<uint32> nvm       := RegioIndelingen/nvm;
+	// unit<uint32> Buurt     := RegioIndelingen/cbs/last/buurt;
+	// unit<uint32> Wijk      := RegioIndelingen/cbs/last/wijk;
 	// unit<uint32> Buurt15   := RegioIndelingen/cbs/y2015/buurt;
 	// unit<uint32> Wijk15    := RegioIndelingen/cbs/y2015/wijk;
-	unit<uint32> Corop     := RegioIndelingen/cbs/last/Corop;
-	unit<uint32> provincie := RegioIndelingen/cbs/last/provincie;
-	unit<uint32> Gemeente  := RegioIndelingen/cbs/last/Gemeente;
+	// unit<uint32> Corop     := RegioIndelingen/cbs/last/Corop;
+	// unit<uint32> provincie := RegioIndelingen/cbs/last/provincie;
+	// unit<uint32> Gemeente  := RegioIndelingen/cbs/last/Gemeente;
 	
-	unit<uint8> WPSrc := Classifications/vastgoed/WPSrc;
+	unit<uint8> WP5 := Classifications/vastgoed/WP5;
 	unit<uint8> WP := Classifications/vastgoed/WP;
 	unit<uint8> WP2 := Classifications/vastgoed/WP2;
 	unit<uint8> WP3 := Classifications/vastgoed/WP3;
@@ -36,7 +36,7 @@ Template BAG_T
 	parameter<string> SnapshotDir2023 := '%RSo_DataDir%/Vastgoed/20230101_RS';
 	parameter<string> SnapshotDir2024 := '%RSo_DataDir%/Vastgoed/20240101_RS';
 	
-	unit<uint32> BAG_jaren := range(uint32, 2022, 2025)
+	unit<uint32> BAG_jaren := range(uint32, 2012, 2025)
 	{
 		attribute<uint32> Jaar           := id(.);
 		attribute<string> name           := 'Y' + string(jaar);
@@ -55,7 +55,349 @@ Template BAG_T
 		}
 	}
 	
-	container PerJaar := for_each_ne(BAG_jaren/name, 'PerJaarT('+string(BAG_jaren/jaar)+')');
+	container PerJaar := for_each_ne(BAG_jaren/name, 'PerJaar_T('+quote(string(BAG_jaren/jaar))+')');
+	
+	Template PerJaar_T
+	{
+		parameter<string> Jaar;
+		///
+		
+		unit<uint32> pand := select_with_attr_by_cond(VolledigeBAG/panden/pand
+														, VolledigeBAG/panden/pand/IsVoorraad 
+															&& VolledigeBAG/panden/pand/begindatum < int32(Jaar+'0101') 
+															&& VolledigeBAG/panden/pand/einddatum >= int32(Jaar+'0101'))
+		{
+			attribute<uint32> vbo_count    := pcount(vbo/pand_rel);
+			attribute<WP5>    WP5_rel      := AfleidingPandtype/results/WP5_rel;
+			attribute<WP4>    WP4_rel      := WP5/WP4_rel[WP5_rel];
+			attribute<WP3>    WP3_rel      := WP5/WP3_rel[WP5_rel];
+			attribute<WP2>    WP2_rel      := WP5/WP2_rel[WP5_rel];
+			attribute<WP1>    WP1_rel      := WP5/WP1_rel[WP5_rel];
+			
+			container AfleidingPandtype
+			{
+				container results
+				{
+					attribute<uint32>        nr_buurpanden     (pand) := functioneel_pand/NeighbourCount[invert(functioneel_pand/org_rel)]; 
+					attribute<WP5>           WP5_rel           (pand) := functioneel_pand/WP5_rel[invert(functioneel_pand/org_rel)];
+				}
+
+				container extents
+				{
+					attribute<rdc_meter>    NW     (pand) := lower_bound(geometry);
+					attribute<rdc_meter>    SE     (pand) := upper_bound(geometry);
+					attribute<float32>      X_ext  (pand) := PointCol(SE) - PointCol(NW);
+					attribute<float32>      Y_ext  (pand) := PointRow(SE) - PointRow(NW);
+				}
+				
+				
+				unit<uint32> functioneel_pand := select_with_org_rel(pand/vbo_count > 0 && extents/X_ext < 1000f && extents/Y_ext < 1000f)
+				{
+					attribute<rdc_meter>    geometry (poly) := org_rel -> geometry;
+					attribute<rdc_meter>    NW              := extents/NW[org_rel];
+					attribute<rdc_meter>    SE              := extents/SE[org_rel];
+				
+					attribute<uint32> NeighbourCount   := pcount(unique_neighbour_pair/F1) + pcount(unique_neighbour_pair/F2);
+					attribute<bool>   HasOneNeighbour  := NeighbourCount == 1;
+					attribute<bool>   IsSemiAttached   := HasOneNeighbour &&
+						HasOneNeighbour[
+							MakeDefined(
+								unique_neighbour_pair/F2[invert(unique_neighbour_pair/F1)],
+								unique_neighbour_pair/F1[invert(unique_neighbour_pair/F2)]
+							)
+						];
+
+					attribute<uint32> nr_woning := sum(uint32(vbo/gebruiksdoel_plus_rel == vbo_gebruiksdoel_plus/v/woon), vbo/pand_rel)[org_rel];
+
+					attribute<WP5> WP5_rel  :=
+						  nr_woning == 0      ? WP5/V/geen_woonpand
+						: nr_woning >  1      ? WP5/V/appartement
+						: NeighbourCount == 0 ? WP5/V/vrijstaand
+						: HasOneNeighbour
+							? IsSemiAttached
+								? WP5/V/twee_onder_1_kap
+								: WP5/V/hoekwoning
+						: WP5/V/tussenwoning;
+				}
+
+				parameter<uint32>  nr_x         :=   7;
+				parameter<uint32>  nr_y         :=  13;
+				parameter<float64> inflate_size := 0.2d; //in meters
+
+				unit<uint32> rectangle := range(uint32, 0, nr_x * nr_y)
+				{
+					attribute<uint32> seq_y  := id(.) / nr_x;
+					attribute<uint32> seq_x  := id(.) % nr_x;
+					attribute<string> name   := 'R'+string(seq_y)+'_C'+string(seq_x);
+
+					parameter<uint32> size_x := uint32(pointcol(BoundRange(rdc_meter))) / uint32(nr_x);
+					parameter<uint32> size_y := uint32(pointrow(BoundRange(rdc_meter))) / uint32(nr_y);
+
+					attribute<uint32> min_x  := uint32(pointcol(lowerbound(rdc_meter))) + seq_x * size_x;
+					attribute<uint32> max_x  := min_x + size_x;
+					attribute<uint32> min_y  := uint32(pointrow(lowerbound(rdc_meter))) + seq_y * size_y;
+					attribute<uint32> max_y  := min_y + size_y;
+				}
+
+				container rectangles := for_each_ne(rectangle/name, 'Connect_neighbours_T('+string(ID(rectangle))+')');
+
+				template Connect_neighbours_T
+				{
+					parameter<rectangle> rectangle_sel;
+					// end case parameters
+
+					unit<uint32> domain :=
+						select_with_org_rel(
+							uint32(PointCol(functioneel_pand/NW)) <= rectangle/max_x[rectangle_sel]
+						&&	uint32(PointRow(functioneel_pand/NW)) <= rectangle/max_y[rectangle_sel]
+						&&	uint32(PointCol(functioneel_pand/SE)) >= rectangle/min_x[rectangle_sel]
+						&&	uint32(PointRow(functioneel_pand/SE)) >= rectangle/min_y[rectangle_sel]
+						)
+					{
+						// attribute<rdc_meter> geometry (poly) := org_rel -> geometry;
+					}
+
+					attribute<rdc_meter> buffer (domain, poly) := bg_buffer_multi_polygon(domain/org_rel -> functioneel_pand/geometry, inflate_size, 4b); 
+
+					unit<uint32> neighbours := polygon_connectivity(buffer[rdc_cm])
+					{
+						attribute<upoint> coded_pair := point(domain/org_rel[F1], domain/org_rel[F2]);
+					}
+				}
+				
+				unit<uint32> neighbour_pair := ='union_unit('+AsItemList('rectangles/' + rectangle/name + '/neighbours')+')'
+				{
+					attribute<upoint> coded_pair := ='union_data(., '+AsItemList('rectangles/' + rectangle/name + '/neighbours/coded_pair')+')';
+				}
+				
+				unit<uint32> unique_neighbour_pair := unique(neighbour_pair/coded_pair)
+				{
+					attribute<functioneel_pand> F1 := pointrow(values)[functioneel_pand];
+					attribute<functioneel_pand> F2 := pointcol(values)[functioneel_pand];
+				}
+			}
+		}
+		
+		unit<uint32> vbo  := select_with_attr_by_cond(VolledigeBAG/vbos/vbo
+														, VolledigeBAG/vbos/vbo/IsVoorraad 
+															&& VolledigeBAG/vbos/vbo/begindatum < int32(Jaar+'0101') 
+															&& VolledigeBAG/vbos/vbo/einddatum >= int32(Jaar+'0101'))
+		{
+			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel := impl/gebruiksdoel_plus_rel;
+			attribute<pand>                  pand_rel              := rlookup(pand_bag_nr, pand/pand_bag_nr);
+		
+			container GebruiksdoelSets := for_each_ne(vbo_gebruiksdoel_plus/name, 'Templates/BAG_GebruiksdoelSets_T(' + quote(vbo_gebruiksdoel_plus/name) +')');
+			
+			container impl
+			{
+				container gebruiksdoelen :=
+					for_each_nedv(
+						vbo_gebruiksdoel/name
+						, 'bitand(functie_code,vbo_gebruiksdoel/V/'+vbo_gebruiksdoel/name+'->functie_code) > 0w' 
+						, vbo
+						, bool
+					);
+				
+				container gebruiksdoelen_cbs
+				{
+					attribute<bool>   utiliteit         (...) := ='('+AsList('gebruiksdoelen/'+vbo_gebruiksdoel/Utiliteiten/name, ' || ')+') && !woon';
+					attribute<uint32> Count_Utiliteiten (...) := =AsList('gebruiksdoelen/'+vbo_gebruiksdoel/Utiliteiten/name+'[uint32]', ' + ');
+					
+					attribute<bool>   bijeenkomst       (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/bijeenkomst;
+					attribute<bool>   cel               (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/cel;
+					attribute<bool>   gezondheidszorg   (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/gezondheidszorg;
+					attribute<bool>   industrie         (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/industrie;
+					attribute<bool>   kantoor           (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/kantoor;
+					attribute<bool>   logies            (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/logies;
+					attribute<bool>   onderwijs         (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/onderwijs;
+					attribute<bool>   overige_gebruiks  (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/overige_gebruiks;
+					attribute<bool>   sport             (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/sport;
+					attribute<bool>   winkel            (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/winkel;
+					attribute<bool>   woon              (...) := gebruiksdoelen/woon;
+					attribute<bool>   utiliteit_combi   (...) := !woon && Count_Utiliteiten > 1;
+				}
+				
+				attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel (..) := switch(
+														 case(gebruiksdoelen_cbs/woon, vbo_gebruiksdoel_plus/v/woon)
+														, case(gebruiksdoelen_cbs/bijeenkomst, vbo_gebruiksdoel_plus/v/bijeenkomst)
+														, case(gebruiksdoelen_cbs/cel, vbo_gebruiksdoel_plus/v/cel)
+														, case(gebruiksdoelen_cbs/gezondheidszorg, vbo_gebruiksdoel_plus/v/gezondheidszorg)
+														, case(gebruiksdoelen_cbs/industrie, vbo_gebruiksdoel_plus/v/industrie)
+														, case(gebruiksdoelen_cbs/kantoor, vbo_gebruiksdoel_plus/v/kantoor)
+														, case(gebruiksdoelen_cbs/logies, vbo_gebruiksdoel_plus/v/logies)
+														, case(gebruiksdoelen_cbs/onderwijs, vbo_gebruiksdoel_plus/v/onderwijs)
+														, case(gebruiksdoelen_cbs/overige_gebruiks, vbo_gebruiksdoel_plus/v/overige_gebruiks)
+														, case(gebruiksdoelen_cbs/sport, vbo_gebruiksdoel_plus/v/sport)
+														, case(gebruiksdoelen_cbs/winkel, vbo_gebruiksdoel_plus/v/winkel)
+														, vbo_gebruiksdoel_plus/v/utiliteit_combi
+														);
+			}
+		}
+	}
+	
+	
+	container PerJaar_oud := for_each_ne(BAG_jaren/name, 'PerJaarT('+string(BAG_jaren/jaar)+')');
 	
 	#include<PerJaarT.dms>
+	
+	container VolledigeBAG : using = ""
+	{ 
+		parameter<string>  Snapshot_Date_Input := '20240708';
+		parameter<string>  Result_FSS_dir      := '%RSo_DataDir%/Vastgoed/VolledigeTabel_' + Snapshot_Date_Input;
+		parameter<int32>   MaxDatum            := 20500101i;
+		parameter<string>  bouwjaar_truncation_expr        := 'bouwjaar <= 1005f || bouwjaar > @YYYY@[jaar] ? null_f : bouwjaar < 1500f ? 1500f : bouwjaar';
+		// unit<uint32>              uq_pand_bag_nr                                 := unique(vbos/vbo/pand_bag_nr); // X
+		// attribute<uq_pand_bag_nr> vbo_uq_pand_nr_rel  (vbos/vbo)                 := rlookup(vbos/vbo/pand_bag_nr, uq_pand_bag_nr/values);
+		// attribute<uq_pand_bag_nr> pand_uq_pand_nr_rel (panden/pand)              := rlookup(panden/pand/pand_bag_nr, uq_pand_bag_nr/values);
+		
+		container panden
+		{
+			unit<uint32> vbo_domein := vbos/vbo;
+			
+			unit<uint32> import
+			:	StorageName = "= Result_FSS_dir + '/pand.fss'"
+			,	StorageReadOnly = "True"
+			{
+				attribute<rdc_mm>                       geometry_mm (poly);
+				attribute<rdc_meter>                    geometry (poly) := geometry_mm[rdc_meter];
+				attribute<string>                       identificatie;
+				attribute<jaar>                         bouwjaar;
+
+				container meta := meta_src_template(., pand_status);
+			}
+			
+			unit<uint32> src := import
+			{
+				attribute<rdc_meter>                    geometry (poly)              := import/geometry;
+				attribute<uint64>                       pand_bag_nr                  := uint64(identificatie);
+				attribute<pand_status>                  status_rel                   := import/meta/status_rel;
+				attribute<int32>                        begindatum                   := impl/begindatum0 < 19600101i ? impl/TIJDSTIPREGISTRATIE : impl/begindatum0;
+				attribute<int32>                        einddatum                    := impl/einddatum0 < 19600101i ? impl/EINDREGISTRATIE : impl/einddatum0;
+				attribute<jaar>                         bouwjaar                     := import/bouwjaar;
+				attribute<jaar>                         bouwjaar_trunc               := =replace(bouwjaar_truncation_expr, '@YYYY@', '2025');
+				
+				
+				attribute<bool>                         IsVoorraad                   := pand_status/isVoorraad[status_rel];
+				
+				unit<uint32> impl := .
+				{
+					attribute<int32>                        TIJDSTIPREGISTRATIE          := int32(replace(substr(import/meta/TIJDSTIPREGISTRATIE,0,10),'-',''));
+					attribute<int32>                        EINDREGISTRATIE              := int32(replace(substr(import/meta/EINDREGISTRATIE,0,10),'-',''));
+					attribute<int32>                        begindatum0                  := import/meta/BEGINDATUM == 0i ? MaxDatum : import/meta/BEGINDATUM;
+					attribute<int32>                        einddatum0                   := import/meta/EINDDATUM == 0i ? MaxDatum : import/meta/EINDDATUM;
+					attribute<rdc_meter>                    NW                           := lower_bound(geometry);
+					attribute<rdc_meter>                    SE                           := upper_bound(geometry);
+					attribute<float32>                      X_ext                        := sub_or_null(PointCol(SE),PointCol(NW));
+					attribute<float32>                      Y_ext                        := sub_or_null(PointRow(SE),PointRow(NW));
+					
+					attribute<float32>                      lower_x := pointCol(NW);
+					attribute<float32>                      upper_x := pointCol(SE);
+					attribute<float32>                      lower_y := pointRow(NW);
+					attribute<float32>                      upper_y := pointRow(SE);
+					
+					attribute<bool>                         pand_selection_condition     := ='X_ext < 1000f && Y_ext < 1000f' //panden met een grotere x/y range dan 1km eruit
+																							'&& lower_x < 300000f && lower_x > 0f'
+																							'&& upper_x < 300000f && upper_x > 0f'
+																							'&& lower_y < 620000f && lower_y > 300000f'
+																							'&& upper_y < 620000f && upper_y > 300000f'; //binnen NL
+																							
+				}
+			}  
+				
+			unit<uint32> pand := select_with_attr_by_org_rel(src, src/Impl/pand_selection_condition);
+			// unit<uint32> pand := select_with_attr_by_org_rel(src, const(TRUE,src));
+		}
+		
+		container VBOs
+		{
+			//import the source BAG files
+			unit<uint32> import
+			:	StorageName = "= Result_FSS_dir + '/vbo.fss'"
+			,	StorageReadOnly = "True"
+			{
+				attribute<rdc_mm>                     geometry_mm;
+				attribute<rdc_meter>                  geometry  := geometry_mm[rdc_meter];
+				attribute<string>                     identificatie;
+				attribute<int32>                      oppervlakte;
+				attribute<string>                     nummeraanduiding_id;
+				
+				unit<uint32> gerelateerdPand
+				{
+					attribute<string> identificatie;
+					attribute<string> pand_id;
+				}
+				
+				container gebruiksdoelen :=
+					for_each_ndv(
+						vbo_gebruiksdoel/name
+						, import
+						, bool
+					);
+				
+				container meta := meta_src_template(., vbo_status);
+			}
+			
+			//enrich the source attributes, and prepare selection criteria.
+			unit<uint32> src := import
+			{
+				attribute<rdc_meter>                  geometry                  := import/geometry;
+				attribute<uint64>                     vbo_bag_nr                := uint64(identificatie);
+				attribute<uint64>                     pand_bag_nr               := rjoin(vbo_bag_nr, uint64(import/gerelateerdPand/identificatie), uint64(import/gerelateerdPand/pand_id));
+				attribute<int32>                      oppervlakte               := import/oppervlakte;
+				attribute<m2_Vbo>                     oppervlakte_trunc         := oppervlakte[m2_Vbo] < 500000[m2_Vbo]  ? oppervlakte[m2_Vbo] : (0/0)[m2_Vbo];
+				attribute<vbo_status>                 status_rel                := import/meta/status_rel;
+				// attribute<uint32>                     pand_rel                  := rlookup(pand_bag_nr, pand_domein/pand_bag_nr);
+				attribute<int32>                      begindatum                := import/meta/BEGINDATUM == 0i ? MaxDatum : import/meta/BEGINDATUM;
+				attribute<int32>                      einddatum                 := import/meta/EINDDATUM == 0i ? MaxDatum : import/meta/EINDDATUM;
+				
+				attribute<bool>                       IsVoorraad                := vbo_status/isVoorraad[status_rel];
+				attribute<uint16>                     functie_code              := impl/gebruiksdoelen/functie_code;
+				
+				unit<uint32> impl := .
+				{
+					container gebruiksdoelen :=
+						for_each_nedv(
+							vbo_gebruiksdoel/name
+							, 'import/gebruiksdoelen/'+vbo_gebruiksdoel/name
+							, src
+							, bool
+						)
+					{
+						attribute<uint16> functie_code (src) := ='add('+AsItemList(vbo_gebruiksdoel/name+'? '+string(vbo_gebruiksdoel/functie_code)+'w : 0w')+')';
+					}
+
+					attribute<float32>    x                         := PointCol(geometry);
+					attribute<float32>    y                         := PointRow(geometry);
+					attribute<bool>       vbo_selection_condition   := x < 300000f && x > 0f && y < 620000f && y > 300000f; //binnen NL
+				}
+			}
+
+			// We only select valid records. We omit for example all records that have a geometry outside of the bounding box of Netherlands 
+			unit<uint32> vbo := select_with_attr_by_cond(src, src/impl/vbo_selection_condition);
+			// unit<uint32> vbo := select_with_attr_by_org_rel(src, const(TRUE,src));
+		}
+		
+		template meta_src_template // Voor het inlezen van de generieke BAG attributen
+		{
+			// begin case parameters
+			unit<uint32> domain;
+			unit<uint8>  statustype;
+			// end case parameters
+
+			attribute<string>     STATUS                 (domain);
+			attribute<statustype> status_rel             (domain) := rlookup(lowercase(STATUS), lowercase(statustype/label));
+
+			attribute<int32>      BEGINDATUM             (domain);
+			attribute<int32>      EINDDATUM              (domain);
+			attribute<uint32>     VOORKOMENIDENTIFICATIE (domain); //een identificatienummer kan meerdere keren voorkomen. Dit is een volgnummer dat de versie weergeeft.
+
+			attribute<string>     TIJDSTIPREGISTRATIE    (domain);
+			attribute<string>     EINDREGISTRATIE        (domain);
+
+			attribute<int32>      DOCUMENTDATUM          (domain);
+			attribute<string>     DOCUMENTNUMMER         (domain);
+
+			attribute<bool>       IS_GECONSTATEERD       (domain);
+		}
+	}
 }
