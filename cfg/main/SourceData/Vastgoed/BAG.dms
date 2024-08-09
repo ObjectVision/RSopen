@@ -32,9 +32,9 @@ container BAG : using = "Classifications/Vastgoed"
 	// parameter<string> SnapshotDir2019 := '%RSo_DataDir%/Vastgoed/20190101_RS';
 	// parameter<string> SnapshotDir2020 := '%RSo_DataDir%/Vastgoed/20200101_RS';
 	// parameter<string> SnapshotDir2021 := '%RSo_DataDir%/Vastgoed/20210101_RS';
-	parameter<string> SnapshotDir2022 := '%RSo_DataDir%/Vastgoed/20220101_RS';
-	parameter<string> SnapshotDir2023 := '%RSo_DataDir%/Vastgoed/20230101_RS';
-	parameter<string> SnapshotDir2024 := '%RSo_DataDir%/Vastgoed/20240101_RS';
+	// parameter<string> SnapshotDir2022 := '%RSo_DataDir%/Vastgoed/20220101_RS';
+	// parameter<string> SnapshotDir2023 := '%RSo_DataDir%/Vastgoed/20230101_RS';
+	// parameter<string> SnapshotDir2024 := '%RSo_DataDir%/Vastgoed/20240101_RS';
 	
 	unit<uint32> BAG_jaren := range(uint32, 2012, 2025)
 	{
@@ -66,6 +66,7 @@ container BAG : using = "Classifications/Vastgoed"
 														, VolledigeBAG/panden/pand/IsVoorraad 
 															&& VolledigeBAG/panden/pand/begindatum < int32(JaarStr+'0101') 
 															&& VolledigeBAG/panden/pand/einddatum >= int32(JaarStr+'0101'))
+		, Descr = "set met panden op 1 januari van elk jaar die voorraad zijn volgens de CBS definitie."
 		{
 			attribute<WP5>    WP5_rel                      := AfleidingPandtype/results/WP5_rel;
 			attribute<WP4>    WP4_rel                      := WP5/WP4_rel[WP5_rel];
@@ -73,31 +74,112 @@ container BAG : using = "Classifications/Vastgoed"
 			attribute<WP2>    WP2_rel                      := WP5/WP2_rel[WP5_rel];
 			attribute<WP1>    WP1_rel                      := WP5/WP1_rel[WP5_rel];
 			
-			attribute<uint32> count_vbos_in_pand           := pcount(vbo/pand_rel);
-			attribute<uint32> count_woon_vbos_in_pand      := pcount(vbo_woon_domein/pand_rel);
 			
-			container VBOopp_inPand_perWP2 :=
-				for_each_nedv(
-					WP2/name
-					,'sum(vbo/WP2_rel == WP2/V/'+WP2/name+'[WP2] ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/pand_rel) * 1[units/verblijfsobject]'
-					, pand
-					, meter2
-				), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling.";
+			attribute<.>           per_AllocDomain (AllocDomain) := poly2grid(geometry, AllocDomain);
+			attribute<AllocDomain> AllocDomain_rel := invert(per_AllocDomain);
+			attribute<AdminDomain> AdminDomain_rel := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/AdminDomain_rel);
+			attribute<float32>     ToedelingPand   := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/ToedelingPand);
+
+			container Counts
+			{
+				attribute<uint32> vbos       (..) := pcount(vbo/pand_rel);
+				attribute<uint32> woon_vbos  (..) := pcount(VBO/Per_gebruiksdoel/woon/select/pand_rel);
 				
-			container VBOopp_inPand_perWP4 :=
-				for_each_nedv(
-					WP4/name
-					,'sum(vbo/WP4_rel == WP4/V/'+WP4/name+'[WP4] ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/pand_rel) * 1[units/verblijfsobject]'
-					, pand
-					, meter2
-				), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling.";
+				attribute<uint32> per_AllocDomain (AllocDomain) := count(centroid_or_mid(geometry), AllocDomain_rel);
+				
+				container Vbos_perGebruiksdoel :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						, 'sum_uint32(vbo/impl/gebruiksdoelen_cbs/'+vbo_gebruiksdoel_plus/name+', vbo/pand_rel)'
+						, pand
+						, uint32
+					)
+				{
+					attribute<uint32> Totaal (pand) := ='add('+AsList(vbo_gebruiksdoel_plus/name,',')+')';
+				}
+			}
+			
+			container Oppervlaktes
+			{
+				attribute<m2_pand>         vbo_opp            (..) := sum(vbo/oppervlakte_trunc, vbo/pand_rel) * 1[verblijfsobject] / 1[units/PandUnit];
+				attribute<m2_pand>         vbo_opp_niet_woon0 (..) := sum(vbo/impl/gebruiksdoelen_cbs/niet_woon ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/pand_rel) == 0[m2_vbo]
+																		? (0/0)[m2_pand]
+																		: sum(vbo/impl/gebruiksdoelen_cbs/niet_woon ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/pand_rel) * 1[verblijfsobject] < footprint[meter2] 
+																			? footprint / 1[m2PandFootprint] * 1[m2_pand]
+																			: sum(vbo/impl/gebruiksdoelen_cbs/niet_woon ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/pand_rel) * 1[verblijfsobject / units/PandUnit];
+				
+				attribute<float32>         ratio_vbo_opp_niet_woon_footprint (..) := (vbo_opp_niet_woon0 / 1[m2_pand]) / (footprint / 1[m2PandFootprint]);
+				attribute<m2_pand>         vbo_opp_niet_woon                 (..) := ratio_vbo_opp_niet_woon_footprint >= 100f ? (0/0)[m2_pand] : vbo_opp_niet_woon0;
+				
+				
+				container VBOopp_perWP2 :=
+					for_each_nedv(
+						WP2/name
+						,'sum(vbo/WP2_rel == WP2/V/'+WP2/name+'[WP2] ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/pand_rel) * 1[units/verblijfsobject]'
+						, pand
+						, meter2
+					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling.";
+					
+				container VBOopp_perWP4 :=
+					for_each_nedv(
+						WP4/name
+						,'sum(vbo/WP4_rel == WP4/V/'+WP4/name+'[WP4] ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/pand_rel) * 1[units/verblijfsobject]'
+						, pand
+						, meter2
+					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling.";
+					
+				container VBOopp_perGebruiksdoel :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						, 'sum(vbo/impl/gebruiksdoelen_cbs/'+vbo_gebruiksdoel_plus/name+' ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo], vbo/pand_rel) * 1[verblijfsobject]'
+						, pand
+						, meter2
+					), Descr = "per gebruiksdoel de vbo oppervlakte in een pand";
+				
+				container Footprint_perGebruiksdoel :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						,'IsLogistiekFunctie ? 0[m2PandFootprint] : (VBOopp_perGebruiksdoel/'+vbo_gebruiksdoel_plus/name+' / (vbo_opp * 1[units/pandUnit])) * footprint'
+						, pand
+						, m2PandFootprint
+					), Descr = "per gebruiksdoel de pand footprint obv de share van vbo oppervlaktes in het pand"
+				{
+					attribute<m2PandFootprint> Logistiek       (pand) := IsLogistiekFunctie ? footprint : 0[m2PandFootprint];
+					attribute<m2PandFootprint> Utiliteit_Combi (pand) := ((sum(vbo/gebruiksdoelen_cbs/Utiliteit_Combi ? vbo/oppervlakte_trunc : (0/0)[m2_vbo], vbo/pand_rel) * 1[units/verblijfsobject]) / (vbo_opp * 1[units/pandUnit])) * footprint;
+					attribute<vbo_gebruiksdoel_plus> ArgMax    (pand) := ='!IsDefined(bijeenkomst) ? (0/0)[vbo_gebruiksdoel_plus] : ArgMax('+AsItemList(vbo_gebruiksdoel_plus/name)+')[vbo_gebruiksdoel_plus]';
+				}
+				
+				container Fractie_VBOOpp_perGebruiksdoel :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						,'(sum(vbo/impl/gebruiksdoelen_cbs/'+vbo_gebruiksdoel_plus/name+' ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo], vbo/pand_rel) * 1[verblijfsobject]) / (vbo_opp * 1[units/pandUnit])'
+						, pand
+						, float32
+					)
+				{
+					attribute<vbo_gebruiksdoel_plus> ArgMax (...) := ='argmax_alldefined('+AsItemList(vbo_gebruiksdoel_plus/name)+')[vbo_gebruiksdoel_plus]';
+				}
+				
+			}
+			
+			attribute<bool> met_vbo_selection_condition := counts/vbos > 0;
+			unit<uint32>    met_vbo := select_with_attr_by_cond(., met_vbo_selection_condition)
+			{
+				container Counts
+				{
+					container Vbos_perGebruiksdoel      := collect_attr_by_cond(Pand/Counts/Vbos_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					
+				}
+				container oppervlaktes
+				{
+					container Footprint_perGebruiksdoel      := collect_attr_by_cond(Pand/Oppervlaktes/Footprint_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					container VBOopp_perGebruiksdoel         := collect_attr_by_cond(Pand/Oppervlaktes/VBOopp_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					container Fractie_VBOOpp_perGebruiksdoel := collect_attr_by_cond(Pand/Oppervlaktes/Fractie_VBOOpp_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					attribute<m2_pand> vbo_opp (..) := collect_by_cond(met_vbo, pand/met_vbo_selection_condition, Pand/oppervlaktes/vbo_opp);
+				}
+			}
 			
 			#include<AfleidingPandtype.dms>
-	
-
-			unit<uint32>  vbo_woon_domein      := VBO/GebruiksdoelSets/woon/GebruiksdoelSet;
-			// unit<uint32>  vbo_kwetsbaar_domein := VBO/GebruiksdoelSets/KwetsbaarGebouwFuncties;
-			// unit<uint32>  vbo_niet_woon_domein := VBO/GebruiksdoelSets/niet_woon;
 		}
 		
 		unit<uint32> vbo  := select_with_attr_by_cond(VolledigeBAG/vbos/vbo
@@ -118,23 +200,104 @@ container BAG : using = "Classifications/Vastgoed"
 			attribute<AllocDomain>           AllocDomain_rel       := geometry[AllocDomain];
 			attribute<AdminDomain>           AdminDomain_rel       := geometry[AdminDomain];
 			
-			container Per_Gebruiksdoel := 
-				for_each_ne(
-					vbo_gebruiksdoel_plus/name
-					, 'Templates/BAG_GebruiksdoelSets_T(' + quote(vbo_gebruiksdoel_plus/name) +')'
-				);
+			container Per_Gebruiksdoel := for_each_ne(vbo_gebruiksdoel_plus/name, 'Templates/BAG_GebruiksdoelSets_T(' + quote(vbo_gebruiksdoel_plus/name) +')');
+			
+			container Oppervlaktes
+			{
+				container per_WP2_AllocDomain :=
+					for_each_nedv(
+						WP2/name,
+						'mean(WP2_rel == ' + string(id(WP2)) + '[WP2] ? oppervlakte_trunc : (0/0)[m2_vbo], geometry[AllocDomain])',
+						AllocDomain, m2_vbo
+					);
+					
+				container per_WP2_AdminDomain :=
+					for_each_nedv(
+						WP2/name,
+						'mean(WP2_rel == ' + string(id(WP2)) + '[WP2] ? oppervlakte_trunc : (0/0)[m2_vbo], geometry[AdminDomain])',
+						AdminDomain, m2_vbo
+					);
 				
-			// container Per_Gebruiksdoel := 
-				// for_each_nex(
-					// vbo_gebruiksdoel_plus/name
-					// , 'select_with_org_rel(vbo/gebruiksdoel_plus_rel == vbo_gebruiksdoel_plus/v/'+vbo_gebruiksdoel_plus/name+')'
-					// , Templates/BAG_GebruiksdoelSets_T(org_rel)
-					// , uint32
-				// )
-			// {
-			// }
+				container per_WP4_AllocDomain :=
+					for_each_nedv(
+						WP4/name,
+						'mean(WP4_rel == ' + string(id(WP4)) + '[WP4] ? oppervlakte_trunc : (0/0)[m2_vbo], geometry[AllocDomain])',
+						AllocDomain, m2_vbo
+					);
 				
+				// container Oppervlakte_2WP_per_AllocDomain :=
+					// for_each_nedv(
+						// WP2/name 
+						// , 'sum(WP2_rel == ' + string(id(WP2)) + '[WP2] ? (oppervlakte_trunc * 1[verblijfsobject] / 1[ha]) : (0/0)[m2_ha], geometry[AllocDomain])'
+						// , AllocDomain, m2_ha
+					// );
 				
+				container per_WP4_AdminDomain :=
+					for_each_nedv(
+						WP4/name,
+						'mean(WP4_rel == ' + string(id(WP4)) + '[WP4] ? oppervlakte_trunc : (0/0)[m2_vbo], geometry[AdminDomain])',
+						AdminDomain, m2_vbo
+					);
+				
+				// container Oppervlakte_4WP_per_AllocDomain :=
+					// for_each_nedv(
+						// WP4/name 
+						// , 'sum(WP4_rel == ' + string(id(WP4)) + '[WP4] ? (oppervlakte_trunc * 1[verblijfsobject] / 1[ha]) : (0/0)[m2_ha], geometry[AllocDomain])'
+						// , AllocDomain, m2_ha
+					// );
+			}
+			container Counts
+			{
+				container per_WP1_AllocDomain :=
+					for_each_nedv(
+						WP1/name
+						, 'sum(WP1_rel == ' + string(id(WP1)) + '[WP1] ? 1 : 0, geometry[AllocDomain])'
+						, AllocDomain, uint32
+					)
+				{
+					attribute<uint32> totaal (AllocDomain) := ='add(' + AsItemList(WP1/name) + ')';
+				}
+				
+				container per_WP2_AllocDomain :=
+					for_each_nedv(
+						WP2/name 
+						, 'sum(WP2_rel == ' + string(id(WP2)) + '[WP2] ? 1 : 0, geometry[AllocDomain])'
+						, AllocDomain, uint32
+					)
+				{
+					attribute<uint32> totaal (AllocDomain) := ='add(' + AsItemList(WP2/name) + ')';
+				}
+				
+				container per_WP2_AdminDomain :=
+					for_each_nedv(
+						WP2/name
+						, 'sum(WP2_rel == ' + string(id(WP2)) + '[WP2] ? 1 : 0, geometry[AdminDomain])'
+						, AdminDomain, uint32
+					)
+				{
+					attribute<uint32> totaal (AdminDomain) := ='add(' + AsItemList(WP2/name) + ')';
+				}
+				
+				container per_WP4_AllocDomain :=
+					for_each_nedv(
+						WP4/name 
+						, 'sum(WP4_rel == ' + string(id(WP4)) + '[WP4] ? 1 : 0, geometry[AllocDomain])'
+						, AllocDomain, uint32
+					)
+				{
+					attribute<uint32> totaal (AllocDomain) := ='add(' + AsItemList(WP4/name) + ')';
+				}
+				
+				container per_WP4_AdminDomain :=
+					for_each_nedv(
+						WP4/name 
+						, 'sum(WP4_rel == ' + string(id(WP4)) + '[WP4] ? 1 : 0, geometry[AdminDomain])'
+						, AdminDomain, uint32
+					)
+				{
+					attribute<uint32> totaal (AdminDomain) := ='add(' + AsItemList(WP4/name) + ')';
+				}
+			}
 			
 			container impl
 			{
@@ -163,6 +326,8 @@ container BAG : using = "Classifications/Vastgoed"
 					attribute<bool>   winkel            (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/winkel;
 					attribute<bool>   woon              (...) := gebruiksdoelen/woon;
 					attribute<bool>   utiliteit_combi   (...) := !woon && Count_Utiliteiten > 1;
+					attribute<bool>   logistiek         (...) := pand/IsLogistiekFunctie[pand_rel];
+					attribute<bool>   niet_woon         (...) := !woon;
 				}
 				
 				attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel (..) := switch(
@@ -181,12 +346,63 @@ container BAG : using = "Classifications/Vastgoed"
 														);
 			}
 		}
+		
+		unit<uint32> pand_alle_statussen := select_with_attr_by_cond(VolledigeBAG/panden/pand
+														, VolledigeBAG/panden/pand/begindatum < int32(JaarStr+'0101') 
+															&& VolledigeBAG/panden/pand/einddatum >= int32(JaarStr+'0101'))
+		, Descr = "set met panden op 1 januari van elk jaar met alle statussen. Tbv BAG Nieuwbouw identificatie"
+		{
+			attribute<WP5>    WP5_rel                      := AfleidingPandtype/results/WP5_rel;
+			attribute<WP4>    WP4_rel                      := WP5/WP4_rel[WP5_rel];
+			attribute<WP3>    WP3_rel                      := WP5/WP3_rel[WP5_rel];
+			attribute<WP2>    WP2_rel                      := WP5/WP2_rel[WP5_rel];
+			attribute<WP1>    WP1_rel                      := WP5/WP1_rel[WP5_rel];
+		
+		}
+		
+		unit<uint32> vbo_alle_statussen  := select_with_attr_by_cond(VolledigeBAG/vbos/vbo
+														, VolledigeBAG/vbos/vbo/begindatum < int32(JaarStr+'0101') 
+															&& VolledigeBAG/vbos/vbo/einddatum >= int32(JaarStr+'0101'))
+		, Descr = "set met verblijfsobjecten op 1 januari van elk jaar met alle statussen. Tbv BAG Nieuwbouw identificatie"
+		{
+			container impl
+			{
+				container gebruiksdoelen :=
+					for_each_nedv(
+						vbo_gebruiksdoel/name
+						, 'bitand(functie_code,vbo_gebruiksdoel/V/'+vbo_gebruiksdoel/name+'->functie_code) > 0w' 
+						, vbo
+						, bool
+					);
+				
+				container gebruiksdoelen_cbs
+				{
+					attribute<bool>   utiliteit         (...) := ='('+AsList('gebruiksdoelen/'+vbo_gebruiksdoel/Utiliteiten/name, ' || ')+') && !woon';
+					attribute<uint32> Count_Utiliteiten (...) := =AsList('gebruiksdoelen/'+vbo_gebruiksdoel/Utiliteiten/name+'[uint32]', ' + ');
+					
+					attribute<bool>   bijeenkomst       (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/bijeenkomst;
+					attribute<bool>   cel               (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/cel;
+					attribute<bool>   gezondheidszorg   (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/gezondheidszorg;
+					attribute<bool>   industrie         (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/industrie;
+					attribute<bool>   kantoor           (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/kantoor;
+					attribute<bool>   logies            (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/logies;
+					attribute<bool>   onderwijs         (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/onderwijs;
+					attribute<bool>   overige_gebruiks  (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/overige_gebruiks;
+					attribute<bool>   sport             (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/sport;
+					attribute<bool>   winkel            (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/winkel;
+					attribute<bool>   woon              (...) := gebruiksdoelen/woon;
+					attribute<bool>   utiliteit_combi   (...) := !woon && Count_Utiliteiten > 1;
+					attribute<bool>   logistiek         (...) := pand/IsLogistiekFunctie[pand_rel];
+					attribute<bool>   niet_woon         (...) := !woon;
+				}
+			}
+		}
 	}
 	
 	
-	container PerJaar_oud := for_each_ne(BAG_jaren/name, 'PerJaarT('+string(BAG_jaren/jaar)+')');
+	// container PerJaar_oud := for_each_ne(BAG_jaren/name, 'PerJaarT('+string(BAG_jaren/jaar)+')');
 	
-	#include<PerJaarT.dms>
+	// #include<PerJaarT.dms>
 	
 	container VolledigeBAG : using = ""
 	{ 
@@ -223,8 +439,10 @@ container BAG : using = "Classifications/Vastgoed"
 				attribute<int32>                        einddatum                    := impl/einddatum0 < 19600101i ? impl/EINDREGISTRATIE : impl/einddatum0;
 				attribute<jaar>                         bouwjaar                     := import/bouwjaar;
 				attribute<jaar>                         bouwjaar_trunc               := =replace(bouwjaar_truncation_expr, '@YYYY@', '2025');
+				attribute<m2PandFootprint>              footprint                    := area(geometry, meter2)[m2PandFootprint];
 				
-				
+				attribute<bool>                         LigtInCBSVerblijfsrecreatie  := IsDefined(point_in_polygon(centroid_or_mid(geometry), SourceData/Grondgebruik/VerblijfsrecreatieBuffer/geometry_rd));
+				attribute<bool>                         IsLogistiekFunctie           := IsDefined(rlookup(pand_bag_nr, /SourceData/Vastgoed/Logistiek_panden/Logistics/pand_bag_nr));
 				attribute<bool>                         IsVoorraad                   := pand_status/isVoorraad[status_rel];
 				
 				unit<uint32> impl := .
@@ -303,7 +521,7 @@ container BAG : using = "Classifications/Vastgoed"
 				
 				attribute<bool>                       IsVoorraad                := vbo_status/isVoorraad[status_rel];
 				attribute<uint16>                     functie_code              := impl/gebruiksdoelen/functie_code;
-				
+				attribute<bool>                       LigtInCBSVerblijfsrecreatie  := IsDefined(point_in_polygon(geometry, SourceData/Grondgebruik/VerblijfsrecreatieBuffer/geometry_rd));
 				unit<uint32> impl := .
 				{
 					container gebruiksdoelen :=
