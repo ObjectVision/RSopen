@@ -34,7 +34,7 @@ container BAG : using = "Classifications/Vastgoed"
 	// parameter<string> SnapshotDir2021 := '%RSo_DataDir%/Vastgoed/20210101_RS';
 	// parameter<string> SnapshotDir2022 := '%RSo_DataDir%/Vastgoed/20220101_RS';
 	// parameter<string> SnapshotDir2023 := '%RSo_DataDir%/Vastgoed/20230101_RS';
-	// parameter<string> SnapshotDir2024 := '%RSo_DataDir%/Vastgoed/20240101_RS';
+	parameter<string> SnapshotDir2024 := '%RSo_DataDir%/Vastgoed/20240101_RS';
 	
 	unit<uint32> BAG_jaren := range(uint32, 2012, 2025)
 	{
@@ -61,11 +61,10 @@ container BAG : using = "Classifications/Vastgoed"
 	{
 		parameter<string> JaarStr;
 		///
-		
-		unit<uint32> pand := select_with_attr_by_cond(VolledigeBAG/panden/pand
-														, VolledigeBAG/panden/pand/IsVoorraad 
+		attribute<bool> pand_selection_condition (VolledigeBAG/panden/pand) := VolledigeBAG/panden/pand/IsVoorraad 
 															&& VolledigeBAG/panden/pand/begindatum < int32(JaarStr+'0101') 
-															&& VolledigeBAG/panden/pand/einddatum >= int32(JaarStr+'0101'))
+															&& VolledigeBAG/panden/pand/einddatum >= int32(JaarStr+'0101');
+		unit<uint32> pand := select_with_attr_by_cond(VolledigeBAG/panden/pand, pand_selection_condition)
 		, Descr = "set met panden op 1 januari van elk jaar die voorraad zijn volgens de CBS definitie."
 		{
 			attribute<WP5>    WP5_rel                      := AfleidingPandtype/results/WP5_rel;
@@ -74,11 +73,13 @@ container BAG : using = "Classifications/Vastgoed"
 			attribute<WP2>    WP2_rel                      := WP5/WP2_rel[WP5_rel];
 			attribute<WP1>    WP1_rel                      := WP5/WP1_rel[WP5_rel];
 			
-			
+			attribute<bool>   pand_selection_condition (VolledigeBAG/panden/pand) := ../pand_selection_condition;
+
 			attribute<.>           per_AllocDomain (AllocDomain) := poly2grid(geometry, AllocDomain);
 			attribute<AllocDomain> AllocDomain_rel := invert(per_AllocDomain);
 			attribute<AdminDomain> AdminDomain_rel := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/AdminDomain_rel);
 			attribute<float32>     ToedelingPand   := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/ToedelingPand);
+			attribute<bool>        Is_VrijeSector  := rjoin(pand_bag_nr, SourceData/Vastgoed/EigendomStaat/pand/pand_bag_nr, SourceData/Vastgoed/EigendomStaat/pand/Is_VS_pand);
 
 			container Counts
 			{
@@ -200,7 +201,7 @@ container BAG : using = "Classifications/Vastgoed"
 			attribute<AllocDomain>           AllocDomain_rel       := geometry[AllocDomain];
 			attribute<AdminDomain>           AdminDomain_rel       := geometry[AdminDomain];
 			
-			container Per_Gebruiksdoel := for_each_ne(vbo_gebruiksdoel_plus/name, 'Templates/BAG_GebruiksdoelSets_T(' + quote(vbo_gebruiksdoel_plus/name) +')');
+			container Per_Gebruiksdoel := for_each_ne(vbo_gebruiksdoel_plus/name, 'Templates/BAG_GebruiksdoelSets_T(' + quote(vbo_gebruiksdoel_plus/name) +',..)');
 			
 			container Oppervlaktes
 			{
@@ -357,7 +358,15 @@ container BAG : using = "Classifications/Vastgoed"
 			attribute<WP3>    WP3_rel                      := WP5/WP3_rel[WP5_rel];
 			attribute<WP2>    WP2_rel                      := WP5/WP2_rel[WP5_rel];
 			attribute<WP1>    WP1_rel                      := WP5/WP1_rel[WP5_rel];
-		
+			attribute<AdminDomain> AdminDomain_rel := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/AdminDomain_rel);
+			attribute<float32>     ToedelingPand   := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/ToedelingPand);
+			
+			container Counts
+			{
+				attribute<uint32> vbos             (..) := pcount(vbo_alle_statussen/pand_alle_statussen_rel);
+				attribute<uint32> woon_vbos        (..) := pcount(vbo_alle_statussen/Per_gebruiksdoel/woon/select/pand_alle_statussen_rel);
+			}
+			#include<AfleidingPandtype.dms>
 		}
 		
 		unit<uint32> vbo_alle_statussen  := select_with_attr_by_cond(VolledigeBAG/vbos/vbo
@@ -365,13 +374,18 @@ container BAG : using = "Classifications/Vastgoed"
 															&& VolledigeBAG/vbos/vbo/einddatum >= int32(JaarStr+'0101'))
 		, Descr = "set met verblijfsobjecten op 1 januari van elk jaar met alle statussen. Tbv BAG Nieuwbouw identificatie"
 		{
+			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel := impl/gebruiksdoel_plus_rel;
+			attribute<pand>                                 pand_rel              := rlookup(pand_bag_nr, pand/pand_bag_nr);
+			attribute<pand_alle_statussen>                  pand_alle_statussen_rel              := rlookup(pand_bag_nr, pand_alle_statussen/pand_bag_nr);
+			
+			container Per_Gebruiksdoel := for_each_ne(vbo_gebruiksdoel_plus/name, 'Templates/BAG_GebruiksdoelSets_T(' + quote(vbo_gebruiksdoel_plus/name) +', ..)');
 			container impl
 			{
 				container gebruiksdoelen :=
 					for_each_nedv(
 						vbo_gebruiksdoel/name
-						, 'bitand(functie_code,vbo_gebruiksdoel/V/'+vbo_gebruiksdoel/name+'->functie_code) > 0w' 
-						, vbo
+						, 'bitand(functie_code, vbo_gebruiksdoel/V/'+vbo_gebruiksdoel/name+' -> functie_code) > 0w' 
+						, vbo_alle_statussen
 						, bool
 					);
 				
@@ -392,17 +406,31 @@ container BAG : using = "Classifications/Vastgoed"
 					attribute<bool>   winkel            (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/winkel;
 					attribute<bool>   woon              (...) := gebruiksdoelen/woon;
 					attribute<bool>   utiliteit_combi   (...) := !woon && Count_Utiliteiten > 1;
-					attribute<bool>   logistiek         (...) := pand/IsLogistiekFunctie[pand_rel];
+					attribute<bool>   logistiek         (...) := pand_alle_statussen/IsLogistiekFunctie[pand_alle_statussen_rel];
 					attribute<bool>   niet_woon         (...) := !woon;
 				}
+				
+				attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel (..) := switch(
+														 case(gebruiksdoelen_cbs/woon, vbo_gebruiksdoel_plus/v/woon)
+														, case(gebruiksdoelen_cbs/bijeenkomst, vbo_gebruiksdoel_plus/v/bijeenkomst)
+														, case(gebruiksdoelen_cbs/cel, vbo_gebruiksdoel_plus/v/cel)
+														, case(gebruiksdoelen_cbs/gezondheidszorg, vbo_gebruiksdoel_plus/v/gezondheidszorg)
+														, case(gebruiksdoelen_cbs/industrie, vbo_gebruiksdoel_plus/v/industrie)
+														, case(gebruiksdoelen_cbs/kantoor, vbo_gebruiksdoel_plus/v/kantoor)
+														, case(gebruiksdoelen_cbs/logies, vbo_gebruiksdoel_plus/v/logies)
+														, case(gebruiksdoelen_cbs/onderwijs, vbo_gebruiksdoel_plus/v/onderwijs)
+														, case(gebruiksdoelen_cbs/overige_gebruiks, vbo_gebruiksdoel_plus/v/overige_gebruiks)
+														, case(gebruiksdoelen_cbs/sport, vbo_gebruiksdoel_plus/v/sport)
+														, case(gebruiksdoelen_cbs/winkel, vbo_gebruiksdoel_plus/v/winkel)
+														, vbo_gebruiksdoel_plus/v/utiliteit_combi
+														);
 			}
 		}
 	}
 	
 	
-	// container PerJaar_oud := for_each_ne(BAG_jaren/name, 'PerJaarT('+string(BAG_jaren/jaar)+')');
-	
-	// #include<PerJaarT.dms>
+	container PerJaar_oud := for_each_ne(BAG_jaren/name, 'PerJaarT('+string(BAG_jaren/jaar)+')');
+	#include<PerJaarT.dms>
 	
 	container VolledigeBAG : using = ""
 	{ 
