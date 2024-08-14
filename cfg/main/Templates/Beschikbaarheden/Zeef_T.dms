@@ -1,0 +1,53 @@
+Template Zeef_T 
+: Descr = "Bepaal de zeef in de zichtjaren"
+{
+	unit<uint32> VariantXSectorXSubsector;
+	parameter<VariantXSectorXSubsector> id;
+	container Analysis;
+	parameter<string> Zichtjaar_name;
+	//
+	
+	parameter<string> name := VariantXSectorXSubsector/combi_name[id];
+	
+	unit<uint8> VariantK := CaseClassifications/VariantK;
+	
+	parameter<ha>      MinimalLandAvailability        := first(VariantK/MinimalLandAvailability);
+	parameter<float32> MinimumDichtheidToenameSector  := = 'first(VariantK/MinimumDichtheidToename'+Sector_name+')';
+	parameter<float32> MinimumSubSectorShare          := first(VariantK/MinimumSubSectorShare);
+	parameter<string>  Variant_name                   := first(VariantK/name);
+	parameter<string>  Sector_name                    := VariantXSectorXSubsector/Sector_name[id];
+	parameter<string>  SubSector_name                 := VariantXSectorXSubsector/SubSector_name[id];
+	attribute<bool>    Beschikbaar (CompactedAdminDomain) := !Totaal;
+	
+	// attribute<bool>    Beschikbaar              (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ProtoBeschikbaar_AdminDomain);
+	// attribute<bool>    ProtoBeschikbaar_AdminDomain      (AdminDomain) := = iif(ModelParameters/VariantDataOntkoppeld, 'Read', 'Write')+'ProtoBeschikbaar_AdminDomain';
+	// attribute<bool>    ReadProtoBeschikbaar_AdminDomain_UNCHECKED  (AdminDomain) : StorageName = "= '%LocalDataDir%/RSopen/VariantData/Beschikbaar/'+Variant_name+'/Zeef_AdminDomain/'+name+'/'+Zichtjaar_name+'.tif'", StorageReadOnly = "True";
+	// attribute<bool>    ReadProtoBeschikbaar_AdminDomain  (AdminDomain) := ReadProtoBeschikbaar_AdminDomain_UNCHECKED, IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))";
+	// attribute<bool>    WriteProtoBeschikbaar_AdminDomain (AdminDomain) := CalcProtoBeschikbaar[invert(CompactedAdminDomain/AdminDomain_rel)], StorageName = "= '%LocalDataDir%/RSopen/VariantData/Beschikbaar/'+Variant_name+'/Zeef_AdminDomain/'+name+'/'+Zichtjaar_name+'.tif'", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))";
+	// attribute<bool>    CalcProtoBeschikbaar     (CompactedAdminDomain) := !Totaal;
+	
+	attribute<bool> Totaal                   (CompactedAdminDomain) := = 'OR(
+		BuitenPlancapaciteit[CompactedAdminDomain/CompactedAllocDomain_rel],
+		OokBinnenPlancapaciteit[CompactedAdminDomain/CompactedAllocDomain_rel],
+		VariantData/Zeef/Basisjaar/'+Sector_name+'/'+SubSector_name+'/Totaal
+	)';
+	
+	//Geldt ook in plannen voor van betreffende sector
+	attribute<bool> OokBinnenPlancapaciteit  (CompactedAllocDomain) := = Sector_name = 'Wind' || sector_name = 'Zon' ? 'Src/PandenInBasisjaar' : 'Src/DichtheidToenameSubsectorTeKlein';
+	
+	//Geldt alleen buiten plannen van betreffende sector
+	attribute<bool> BuitenPlancapaciteit     (CompactedAllocDomain) := BuitenPlancapaciteit0 && !Src/PlannenDezeSector;
+	attribute<bool> BuitenPlancapaciteit0    (CompactedAllocDomain) := = Sector_name = 'Wind' || sector_name = 'Zon' ? 'const(false, CompactedAllocDomain)' : 'OR(Src/SubSectorShareTeLaag, Src/GeeftOnvoldoendeRuimte)';
+	
+	container Src
+	{
+		attribute<bool>    PandenInBasisjaar                   (CompactedAllocDomain) := = Sector_name == 'Zon' || Sector_name == 'Wind' || Sector_name == 'Verblijfsrecreatie' ? 'collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, SourceData/Vastgoed/BAG/PerJaar/'+/ModelParameters/BAG_RecentYear+'/pand/counts/per_AllocDomain) > 0[uint32]' : 'const(false, CompactedAllocDomain)';
+		attribute<bool>    DichtheidToenameSubsectorTeKlein    (CompactedAllocDomain) := = Sector_name == 'Werken' ? 'PotentieleDichtheidToenameSubSector < MinimumDichtheidToenameSector' : 'const(false, CompactedAllocDomain)';
+		attribute<bool>    SubSectorShareTeLaag                (CompactedAllocDomain) := = Sector_name == 'Werken' ? 'SubSectorShare < MinimumSubSectorShare' : 'const(false, CompactedAllocDomain)';
+		attribute<bool>    GeeftOnvoldoendeRuimte              (CompactedAllocDomain) := PotentieleRuimte < MinimalLandAvailability;
+		attribute<bool>    PlannenDezeSector                   (CompactedAllocDomain) := = 'Plannen/Per_CompactedAllocDomain/Hard/Result/'+Sector_name+' || Plannen/Per_CompactedAllocDomain/Zacht/Result/'+Sector_name;
+		attribute<float32> PotentieleDichtheidToenameSubSector (CompactedAllocDomain) := = Sector_name == 'Werken' ? 'VariantData/PotentieleState/'+Zichtjaar_name+'/Per_SectorXSubsectoren/'+Sector_name+'/'+SubSector_name+'/TovStateVoorAllocatie'    : 'const(0/0, CompactedAllocDomain)[float32]', Descr = "gebruikmakend van de zeef in basisjaar (vanwege invalid recursions)";
+		attribute<float32> SubSectorShare                      (CompactedAllocDomain) := = Sector_name == 'Werken' ? 'VariantData/PotentieleState/'+Zichtjaar_name+'/Per_SectorXSubsectoren/'+Sector_name+'/'+SubSector_name+'/Basisjaar/SubSectorShare' : 'const(0/0, CompactedAllocDomain)[float32]';
+		attribute<ha>      PotentieleRuimte                    (CompactedAllocDomain) := = 'sum(float32(VariantData/Zeef/Basisjaar/'+Sector_name+'/'+SubSector_name+'/Beschikbaar) * AdminDomain/NrHaPerCell, CompactedAdminDomain/CompactedAllocDomain_rel)';
+	}
+}
