@@ -1,0 +1,106 @@
+container Densities
+{
+	#include<DichtheidZichtjaar_T.dms>
+	#include<MaxWoningDichtheid_T.dms>
+
+	Template Werken_T
+	{
+		//
+		unit<uint8> Jobs6;
+		parameter<Jobs6> id;
+		container Basisjaar;
+		unit<ipoint> domain;
+		//
+		
+		parameter<string> domain_str := domain/name;
+		parameter<string> domain_size := string(domain/gridsize);
+		parameter<string> name := Jobs6/name[id];
+		
+		parameter<bool> KanLokaalHogereDichtheidKrijgen := Jobs6/KanLokaalHogereDichtheidKrijgen[id];
+		
+		parameter<float32> DichtheidFactorOV              := CaseClassifications/VariantK/DichtheidFactorOV_NietWonen[0b];
+		parameter<float32> DichtheidFactorWater           := CaseClassifications/VariantK/DichtheidFactorWater_NietWonen[0b];
+		parameter<float32> DichtheidFactorBevKern100kPlus := = 'CaseClassifications/VariantK/DichtheidFactorBevKern100kPlus_NietWonen[0b]';
+		parameter<float32> DichtheidFactorBevKern20kPlus  := = 'CaseClassifications/VariantK/DichtheidFactorBevKern20kPlus_NietWonen[0b]';
+		parameter<float32> DichtheidFactorBevKern20kMin   := = 'CaseClassifications/VariantK/DichtheidFactorBevKern20kMin_NietWonen[0b]';
+		
+		unit<uint32> RegioUnit1 := SourceData/RegioIndelingen/CBS/Last/Gemeente
+		{
+			attribute<.> per_domain (domain) := = 'per_'+domain_str;
+		}
+		
+		unit<uint32> RegioUnit2 := SourceData/RegioIndelingen/NVM
+		{
+			attribute<.> per_domain (domain) := = 'per_'+domain_str;
+		}
+		
+		unit<uint32> RegioUnit3 := SourceData/RegioIndelingen/CBS/Last/Provincie
+		{
+			attribute<.> per_domain (domain) := = 'per_'+domain_str;
+		}
+		
+		unit<uint8> TellerSubset := = 'Jobs6/CBSKlassen/'+Grondgebruik/CBSKlasse/Aggr/name[Jobs6/CBSKlasse_Aggr_rel[id]]+'/Subset';
+		
+		parameter<string> DichtheidFactorStr := 'mul(
+				add(
+					float32(BaseData/Omgeving/OV_Reistijd/TotRailHalte/Smoothed)          * (DichtheidFactorOV - 1f),
+					float32(BaseData/StartState/Grondgebruik/NabijGrootWaterInBBG/Smoothed) * (DichtheidFactorWater - 1f),
+					Max_Elem(
+						float32(BaseData/Omgeving/RondBevolkingskern/Is100kPlus) * (DichtheidFactorBevKern100kPlus - 1f),
+						float32(BaseData/Omgeving/RondBevolkingskern/Is20kPlus)  * (DichtheidFactorBevKern20kPlus - 1f),
+						float32(BaseData/Omgeving/RondBevolkingskern/Is20kMin)   * (DichtheidFactorBevKern20kMin - 1f)
+					)
+					// (DichtheidFactorGeneriek - 1f),
+				),
+				float32(KanLokaalHogereDichtheidKrijgen)
+		) + 1f';
+		
+		attribute<float32> DichtheidFactor (domain) := = '('+DichtheidFactorStr+')[domain/AllocDomain_rel]';
+
+		attribute<m2PandFootprint> TellerBasisjaar0 (domain) := = 'add('+AsItemList('Basisjaar/PerYear_AdminDomain/y'+string(ModelParameters/LISA_StartYear)+'/pand_met_vbo/footprint_perJobs6_'+domain_str+'/'+TellerSubset/name)+')';
+		attribute<m2PandFootprint> TellerBasisjaar  (domain) := TellerBasisjaar0 / float32(NoemerBasisjaar > 0[ha]);
+		
+		attribute<ha> NoemerBasisjaar (domain) := ='(Grondgebruik/CBSKlasse/Aggr_rel[BaseData/StartState/Grondgebruik/per_'+domain_str+'/Basisjaar] == Jobs6/CBSKlasse_Aggr_rel[id])[float32] * domain/NrHaPerCell';
+
+		attribute<m2PandFootprint_ha> PerRegioUnit1 (domain) := (sum(TellerBasisjaar, RegioUnit1/per_domain) / sum(NoemerBasisjaar, RegioUnit1/per_domain))[RegioUnit1/per_domain];
+		attribute<m2PandFootprint_ha> PerRegioUnit2 (domain) := (sum(TellerBasisjaar, RegioUnit2/per_domain) / sum(NoemerBasisjaar, RegioUnit2/per_domain))[RegioUnit2/per_domain];
+		attribute<m2PandFootprint_ha> PerRegioUnit3 (domain) := (sum(TellerBasisjaar, RegioUnit3/per_domain) / sum(NoemerBasisjaar, RegioUnit3/per_domain))[RegioUnit3/per_domain];
+		attribute<m2PandFootprint_ha> ResultOud     (domain) := max_elem(PerRegioUnit1, PerRegioUnit2, PerRegioUnit3) * DichtheidFactor;
+		
+		//
+		attribute<m2PandFootprint_ha> per_domain  (domain) := TellerBasisjaar / NoemerBasisjaar;
+		attribute<m2PandFootprint_ha> Buurt       (domain) := = 'mean(per_domain, Regioindelingen/CBS/Last/Buurt/per_'+domain_str+')[Regioindelingen/CBS/Last/Buurt/per_'+domain_str+']';
+		attribute<m2PandFootprint_ha> Wijk        (domain) := = 'mean(per_domain, Regioindelingen/CBS/Last/Wijk/per_'+domain_str+')[Regioindelingen/CBS/Last/Wijk/per_'+domain_str+']';
+		attribute<m2PandFootprint_ha> Gemeente    (domain) := = 'mean(per_domain, Regioindelingen/CBS/Last/Gemeente/per_'+domain_str+')[Regioindelingen/CBS/Last/Gemeente/per_'+domain_str+']';
+		attribute<m2PandFootprint_ha> NVM         (domain) := = 'mean(per_domain, Regioindelingen/NVM/per_'+domain_str+')[Regioindelingen/NVM/per_'+domain_str+']';
+		attribute<m2PandFootprint_ha> COROP       (domain) := = 'mean(per_domain, Regioindelingen/CBS/Last/COROP/per_'+domain_str+')[Regioindelingen/CBS/Last/COROP/per_'+domain_str+']';
+		attribute<m2PandFootprint_ha> Provincie   (domain) := = 'mean(per_domain, Regioindelingen/CBS/Last/Provincie/per_'+domain_str+')[Regioindelingen/CBS/Last/Provincie/per_'+domain_str+']';
+		
+		attribute<m2PandFootprint_ha> Max                  (domain) := max_elem(per_domain, Buurt, Wijk, Gemeente, NVM, COROP, Provincie);
+		attribute<m2PandFootprint_ha> MaalFactor           (domain) := Max * DichtheidFactor;
+		attribute<m2PandFootprint_ha> ResultMaalFactor     (domain) := value(potential(MaalFactor, Geography/Distmatrices_100m/pot2000m/rev_dist_scaled / sum(Geography/Distmatrices_100m/pot2000m/rev_dist_scaled)), m2PandFootprint_ha);
+		attribute<m2PandFootprint_ha> ResultNietMaalFactor (domain) := value(potential(Max, Geography/Distmatrices_100m/pot2000m/rev_dist_scaled / sum(Geography/Distmatrices_100m/pot2000m/rev_dist_scaled)), m2PandFootprint_ha);
+		attribute<m2PandFootprint_ha> Result               (domain) := ResultMaalFactor;
+	}	
+	
+	Template SectorXSubsector_T
+	{
+		parameter<Sector/XSubsector> id;
+		unit<ipoint> domain;
+		//
+		
+		parameter<string> name           := Sector/XSubsector/name[id];
+		parameter<string> SubSector_name := Sector/XSubsector/SubSector_name[id];
+		parameter<string> Sector_name    := Sector/XSubsector/Sector_name[id];
+		parameter<string> ValUnit_ref    := Sector/XSubsector/ValUnitDens_ref[id];
+		
+		unit<float32> ValUnit := = ValUnit_ref;
+		
+		attribute<ValUnit> Zichtjaar (domain) :=
+			= Sector_name == 'Verblijfsrecreatie'
+				? 'MakeDefined(/BaseData/Claims/Verblijfsrecreatie/Per_AllocRegio/'+VariantParameters/Recreatie_AllocRegio_name+'/Zichtjaren/'+Zichtjaar_name+'/PerRegioUnit/Zichtjaar_Object_perHa[RegioIndelingen/CBS/Last/'+VariantParameters/Recreatie_AllocRegio_name+'/per_AllocDomain],0f)'
+				: Sector_name == 'Wonen' || Sector_name == 'Wind'
+					? 'const((0/0)[ValUnit], domain)'
+					: 'Src/'+Sector_name+'/Subsectoren/'+SubSector_name;
+	}
+}
