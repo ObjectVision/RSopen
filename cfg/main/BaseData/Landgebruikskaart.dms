@@ -1,0 +1,99 @@
+container Landgebruikskaart : using = "Classifications/Actor"
+{
+	unit<uint32> LU_ModelType := Classifications/Actor/LU_ModelType;
+	unit<uint8>  CBSKlasse    := Classifications/Grondgebruik/CBSKlasse;
+	unit<uint8>  LandbouwK    := Classifications/Actor/LandbouwK;
+	
+	attribute<CBSKlasse>         gg_CBS                        (AdminDomain) := BaseData/StartState/Grondgebruik/per_AdminDomain/Basisjaar;
+	attribute<LandbouwK>         gg_Landbouw                   (AdminDomain) := BaseData/StartState/Grondgebruik/per_AdminDomain/gg_Landbouw;
+	
+	attribute<LU_ModelType>      gg_CBS_MT                     (AdminDomain) := CBSKlasse/LU_ModelType_rel[gg_CBS];
+	attribute<LU_ModelType>      gg_Landbouw_MT                (AdminDomain) := LandbouwK/LU_ModelType_rel[gg_Landbouw];
+
+	attribute<LU_ModelType>      gg_basis                      (AdminDomain) := MakeDefined(gg_CBS_MT, gg_Landbouw_MT);
+	
+	attribute<bool>              Wonen_StartState              (AdminDomain) := Impl/Wonen/IsWonen;
+	attribute<bool>              Werken_StartState             (AdminDomain) := Impl/Werken/IsWerken;
+	attribute<bool>              Verblijfsrecreatie_StartState (AdminDomain) := Impl/Verblijfsrecreatie/IsVerblijfsrecreatie;
+	
+	attribute<bool>              IsLU_NoData                   (AdminDomain) := IsNull(gg_basis);
+	attribute<bool>              IsLU_exogenous                (AdminDomain) := CBSKlasse/IsExogeen[gg_CBS];
+	attribute<bool>              IsLU_Water                    (AdminDomain) := gg_basis == LU_ModelType/v/water_totaal;
+	attribute<bool>              IsLU_Wonen                    (AdminDomain) := gg_basis == LU_ModelType/V/wonen_totaal;
+	attribute<bool>              IsLU_Werken                   (AdminDomain) := gg_basis == LU_ModelType/V/werken_totaal;
+	attribute<bool>              IsLU_Verblijfsrecreatie       (AdminDomain) := gg_basis == LU_ModelType/V/verblijfsrecreatie_totaal;
+	attribute<bool>              IsLU_Glastuinbouw             (AdminDomain) := gg_CBS == CBSKlasse/V/glastuinbouw;
+	
+	attribute<meter2>            Wonen_Filtered                (AdminDomain) := Impl/Wonen/Wonen/IsNieuwGrouped ? StateBasisjaar/State/Wonen/footprint : (0/0)[meter2];
+	attribute<meter2>            Werken_Filtered               (AdminDomain) := Impl/Werken/Werken/IsNieuwGrouped ? StateBasisjaar/State/PandFootprint/Totaal : (0/0)[meter2];
+	attribute<meter2>            Verblijfrecreatie_Filtered    (AdminDomain) := Impl/Verblijfsrecreatie/Verblijfsrecreatie/IsNieuwGrouped ? StateBasisjaar/State/Verblijfsrecreatie/footprint : (0/0)[meter2];
+	
+	attribute<impl/Typen>        Dominant                      (AdminDomain) := IsLU_Wonen || IsLU_NoData ? (0/0)[impl/Typen] : argmax_ifdefined(Wonen_Filtered, Werken_Filtered, Verblijfrecreatie_Filtered)[impl/Typen];
+
+	//////////////PARAMS/////////////////
+	parameter<meter2>                       MinimumPandfootprint             := 20[meter2];
+	parameter<Woning>                       MinimumWoningAmount              := 5[Woning];
+	parameter<Verblijfsobject>              MinimumVerblijfsobjectAmount     := 1[Verblijfsobject];
+	parameter<uint32>                       MinimumGroupSize                 := 3;
+	parameter<uint8>                        MinimumCountNieuwNatuur          := 10b; //aantal 25m cellen in een 100m moeten nieuwe natuur zijn om dit in het zichtjaar op te nemen.
+
+
+
+	container Impl
+	{
+		container Werken
+		{
+			attribute<meter2>  StartState_per25m             (AdminDomain)  := StateBasisjaar/State/PandFootprint/Totaal;
+			attribute<bool>    IsWerken                      (AdminDomain)  := StartState_per25m >= MinimumPandfootprint * AdminDomain/NrHaPerCell / 1[ha];
+			
+			container Werken    := Templates/Landgebruikskaart/GetNieuwGrouped_T('Werken','Werken_Totaal', MinimumGroupSize, gg_basis, 'StartState');
+			
+			container DrempelWaarden
+			{
+				attribute<uint32> Density_inCBS     (AdminDomain) := IsLU_Werken ? StartState_per25m[uint32] : 0;
+			}
+		}
+		
+		container Wonen
+		{
+			attribute<Woning>  StartState_per25m             (AdminDomain)  := StateBasisjaar/State/Wonen/Aantal_Woningen_Totaal;
+			attribute<bool>    IsWonen                       (AdminDomain)  := StartState_per25m >= MinimumWoningAmount * AdminDomain/NrHaPerCell / 1[ha];
+			
+			container Wonen    := Templates/Landgebruikskaart/GetNieuwGrouped_T('Wonen','Wonen_Totaal', MinimumGroupSize, gg_basis, 'StartState');
+			
+			container DrempelWaarden
+			{
+				attribute<uint32> Density_inCBS     (AdminDomain) := IsLU_Wonen ? StartState_per25m[uint32] : 0;
+			}
+		}
+		
+		container Verblijfsrecreatie
+		{
+			attribute<Verblijfsobject>  StartState_per25m            (AdminDomain)  := StateBasisjaar/State/Verblijfsrecreatie/Totaal;
+			attribute<bool>             IsVerblijfsrecreatie          (AdminDomain)  := StartState_per25m >= MinimumVerblijfsobjectAmount * AdminDomain/NrHaPerCell / 1[ha];
+			container Verblijfsrecreatie    := Templates/Landgebruikskaart/GetNieuwGrouped_T('Verblijfsrecreatie','Verblijfsrecreatie_Totaal', MinimumGroupSize, gg_basis, 'StartState');
+			
+			container DrempelWaarden
+			{
+				attribute<uint32> Density_inCBS     (AdminDomain) := IsLU_Verblijfsrecreatie ? StartState_per25m[uint32] : 0;
+			}
+		}
+		
+		unit<uint8> Typen : nrofrows = 3
+		{
+			attribute<string> name : ['Wonen', 'Werken', 'Verblijfsrecreatie'];
+			attribute<string> label := name;
+			
+			container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+		}
+	}
+	
+	attribute<LU_ModelType> Result             (AdminDomain) := switch(
+																	 case(IsLU_exogenous || IsLU_NoData || IsLU_Water, gg_basis)
+																	,case(gg_basis == LU_ModelType/V/wonen_totaal || gg_basis == LU_ModelType/V/Verblijfsrecreatie_totaal, gg_basis)
+																	,case(Dominant == impl/Typen/V/Wonen, LU_ModelType/V/Wonen_totaal)
+																	,case(Dominant == impl/Typen/V/Werken, LU_ModelType/V/Werken_totaal)
+																	,case(Dominant == impl/Typen/V/Verblijfsrecreatie, LU_ModelType/V/Verblijfsrecreatie_totaal)
+																	, gg_basis
+																);
+}  
