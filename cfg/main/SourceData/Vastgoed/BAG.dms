@@ -67,6 +67,7 @@ container BAG : using = "Classifications/Vastgoed"
 		unit<uint32> pand := select_with_attr_by_cond(VolledigeBAG/panden/pand, pand_selection_condition)
 		, Descr = "set met panden op 1 januari van elk jaar die voorraad zijn volgens de CBS definitie."
 		{
+			parameter<string> Selection_string      := 'Voorraad';
 			attribute<WP5>    WP5_rel                      := AfleidingPandtype/results/WP5_rel;
 			attribute<WP4>    WP4_rel                      := WP5/WP4_rel[WP5_rel];
 			attribute<WP3>    WP3_rel                      := WP5/WP3_rel[WP5_rel];
@@ -75,15 +76,19 @@ container BAG : using = "Classifications/Vastgoed"
 			
 			attribute<bool>   pand_selection_condition (VolledigeBAG/panden/pand) := ../pand_selection_condition;
 
-			attribute<.>           per_AllocDomain (AllocDomain) := poly2grid(geometry, AllocDomain);
-			attribute<AllocDomain> AllocDomain_rel := invert(per_AllocDomain);
-			attribute<AdminDomain> AdminDomain_rel := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/AdminDomain_rel);
-			attribute<float32>     ToedelingPand   := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/ToedelingPand);
+			// attribute<.>           per_AllocDomain (AllocDomain) := poly2grid(geometry, AllocDomain);
+			// attribute<AllocDomain> AllocDomain_rel := invert(per_AllocDomain);
+			// attribute<AdminDomain> AdminDomain_rel := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/AdminDomain_rel);
+			// attribute<float32>     ToedelingPand   := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/ToedelingPand);
+			
 			attribute<bool>        Is_VrijeSector  := rjoin(pand_bag_nr, SourceData/Vastgoed/EigendomStaat/pand/pand_bag_nr, SourceData/Vastgoed/EigendomStaat/pand/Is_VS_pand);
 		
 			attribute<../pand_hoogte> PHN_rel                          := rlookup(pand_bag_nr, ../pand_hoogte/pand_bag_nr);
 			attribute<cm>          pand_hoogte                      := ../pand_hoogte/hoogte_cm[PHN_rel];
 			attribute<cm>          pand_hoogte_maaiveld             := ../pand_hoogte/hoogte_maaiveld[PHN_rel];
+
+			unit<uint32> ToedelingsMatrix := = ModelParameters/BaseDataOntkoppeld ? 'Uitsmeer_key/Read_AdminDomain_in_all_panden' : 'Uitsmeer_key/Write_AdminDomain_in_all_panden';
+			#include<Uitsmeer_key.dms>
 
 			container Counts
 			{
@@ -144,13 +149,17 @@ container BAG : using = "Classifications/Vastgoed"
 				container Footprint_perGebruiksdoel :=
 					for_each_nedv(
 						vbo_gebruiksdoel_plus/name
-						,'IsLogistiekFunctie ? 0[m2PandFootprint] : (VBOopp_perGebruiksdoel/'+vbo_gebruiksdoel_plus/name+' / (vbo_opp * 1[units/pandUnit])) * footprint'
+						, quote(vbo_gebruiksdoel_plus/name)+' == ''logistiek'' && IsLogistiekFunctie 
+							? footprint 
+							: '+quote(vbo_gebruiksdoel_plus/name)+' == ''logistiek'' && NOT(IsLogistiekFunctie)
+								? 0[m2PandFootprint]
+								: IsLogistiekFunctie 
+									? 0[m2PandFootprint] 
+									: (VBOopp_perGebruiksdoel/'+vbo_gebruiksdoel_plus/name+' / (vbo_opp * 1[units/pandUnit])) * footprint'
 						, pand
 						, m2PandFootprint
 					), Descr = "per gebruiksdoel de pand footprint obv de share van vbo oppervlaktes in het pand"
 				{
-					attribute<m2PandFootprint> Logistiek       (pand) := IsLogistiekFunctie ? footprint : 0[m2PandFootprint];
-					attribute<m2PandFootprint> Utiliteit_Combi (pand) := ((sum(vbo/gebruiksdoelen_cbs/Utiliteit_Combi ? vbo/oppervlakte_trunc : (0/0)[m2_vbo], vbo/pand_rel) * 1[units/verblijfsobject]) / (vbo_opp * 1[units/pandUnit])) * footprint;
 					attribute<vbo_gebruiksdoel_plus> ArgMax    (pand) := ='!IsDefined(bijeenkomst) ? (0/0)[vbo_gebruiksdoel_plus] : ArgMax('+AsItemList(vbo_gebruiksdoel_plus/name)+')[vbo_gebruiksdoel_plus]';
 				}
 				
@@ -173,7 +182,7 @@ container BAG : using = "Classifications/Vastgoed"
 				container Counts
 				{
 					container Vbos_perGebruiksdoel      := collect_attr_by_cond(Pand/Counts/Vbos_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
-					attribute<uint32> Monumentaal_per_AllocDomain (AllocDomain) := sum_uint32(bouwjaar_trunc <= 1900[jaar], AllocDomain_rel);
+					attribute<uint32> Monumentaal_per_AllocDomain (AllocDomain) := sum_uint32(bouwjaar_trunc <= 1900[yr], AllocDomain_rel);
 				}
 				container oppervlaktes
 				{
@@ -181,6 +190,14 @@ container BAG : using = "Classifications/Vastgoed"
 					container VBOopp_perGebruiksdoel         := collect_attr_by_cond(Pand/Oppervlaktes/VBOopp_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
 					container Fractie_VBOOpp_perGebruiksdoel := collect_attr_by_cond(Pand/Oppervlaktes/Fractie_VBOOpp_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
 					attribute<m2_pand> vbo_opp (..) := collect_by_cond(met_vbo, pand/met_vbo_selection_condition, Pand/oppervlaktes/vbo_opp);
+				}
+				
+				unit<uint32> ToedelingsMatrix := select_with_org_rel(pand/ToedelingsMatrix/met_vbo_selection_condition)
+				{
+					attribute<uint64>      pand_bag_nr      := org_rel -> pand_bag_nr;
+					attribute<AdminDomain> AdminDomain_rel  := org_rel -> AdminDomain_rel;
+					attribute<float32>     ToedelingPand    := org_rel -> ToedelingPand;
+					attribute<..>          Pand_rel         := rlookup(pand_bag_nr, ../pand_bag_nr);
 				}
 			}
 			
@@ -193,9 +210,10 @@ container BAG : using = "Classifications/Vastgoed"
 															&& VolledigeBAG/vbos/vbo/einddatum >= int32(JaarStr+'0101'))
 		, Descr = "set met verblijfsobjecten op 1 januari van elk jaar die voorraad zijn volgens de CBS definitie."
 		{
+			parameter<string>                Selection_string      := 'Voorraad';
 			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel := impl/gebruiksdoel_plus_rel;
 			attribute<pand>                  pand_rel              := rlookup(pand_bag_nr, pand/pand_bag_nr);
-			attribute<Jaar>                  bouwjaar_trunc        := pand_rel -> bouwjaar_trunc;
+			attribute<yr>                    bouwjaar_trunc        := pand_rel -> bouwjaar_trunc;
 			attribute<WP5>                   WP5_rel               := pand_rel -> WP5_rel;
 			attribute<WP4>                   WP4_rel               := WP5/WP4_rel[WP5_rel];
 			attribute<WP3>                   WP3_rel               := WP5/WP3_rel[WP5_rel];
@@ -357,13 +375,17 @@ container BAG : using = "Classifications/Vastgoed"
 															&& VolledigeBAG/panden/pand/einddatum >= int32(JaarStr+'0101'))
 		, Descr = "set met panden op 1 januari van elk jaar met alle statussen. Tbv BAG Nieuwbouw identificatie"
 		{
+			parameter<string> Selection_string             := 'AlleStatussen';
 			attribute<WP5>    WP5_rel                      := AfleidingPandtype/results/WP5_rel;
 			attribute<WP4>    WP4_rel                      := WP5/WP4_rel[WP5_rel];
 			attribute<WP3>    WP3_rel                      := WP5/WP3_rel[WP5_rel];
 			attribute<WP2>    WP2_rel                      := WP5/WP2_rel[WP5_rel];
 			attribute<WP1>    WP1_rel                      := WP5/WP1_rel[WP5_rel];
-			attribute<AdminDomain> AdminDomain_rel := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/AdminDomain_rel);
-			attribute<float32>     ToedelingPand   := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/ToedelingPand);
+			// attribute<AdminDomain> AdminDomain_rel := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/AdminDomain_rel);
+			// attribute<float32>     ToedelingPand   := rjoin(pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/pand_bag_nr, VolledigeBAG/Panden/pand/Uitsmeer_key/Read_AdminDomain_in_all_panden/ToedelingPand);
+			
+			unit<uint32> ToedelingsMatrix := = ModelParameters/BaseDataOntkoppeld ? 'Uitsmeer_key/Read_AdminDomain_in_all_panden' : 'Uitsmeer_key/Write_AdminDomain_in_all_panden';
+			#include<Uitsmeer_key.dms>
 			
 			container Counts
 			{
@@ -378,6 +400,7 @@ container BAG : using = "Classifications/Vastgoed"
 															&& VolledigeBAG/vbos/vbo/einddatum >= int32(JaarStr+'0101'))
 		, Descr = "set met verblijfsobjecten op 1 januari van elk jaar met alle statussen. Tbv BAG Nieuwbouw identificatie"
 		{
+			parameter<string> Selection_string             := 'AlleStatussen';
 			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel := impl/gebruiksdoel_plus_rel;
 			attribute<pand>                                 pand_rel              := rlookup(pand_bag_nr, pand/pand_bag_nr);
 			attribute<pand_alle_statussen>                  pand_alle_statussen_rel              := rlookup(pand_bag_nr, pand_alle_statussen/pand_bag_nr);
@@ -446,20 +469,13 @@ container BAG : using = "Classifications/Vastgoed"
 			attribute<int16>     AHN_inwinjaar; 
 		}
 	}
-	
-	
-	// container PerJaar_oud := for_each_ne(BAG_jaren/name, 'PerJaarT('+string(BAG_jaren/jaar)+')');
-	// #include<PerJaarT.dms>
-	
-	container VolledigeBAG : using = ""
+
+	container VolledigeBAG
 	{ 
-		parameter<string>  Snapshot_Date_Input := '20240708';
+		parameter<string>  Snapshot_Date_Input := ModelParameters/BAG_file_date;
 		parameter<string>  Result_FSS_dir      := '%RSo_DataDir%/Vastgoed/VolledigeTabel_' + Snapshot_Date_Input;
 		parameter<int32>   MaxDatum            := 20500101i;
-		parameter<string>  bouwjaar_truncation_expr        := 'bouwjaar <= 1005f || bouwjaar > @YYYY@[jaar] ? null_f : bouwjaar < 1500f ? 1500f : bouwjaar';
-		// unit<uint32>              uq_pand_bag_nr                                 := unique(vbos/vbo/pand_bag_nr); // X
-		// attribute<uq_pand_bag_nr> vbo_uq_pand_nr_rel  (vbos/vbo)                 := rlookup(vbos/vbo/pand_bag_nr, uq_pand_bag_nr/values);
-		// attribute<uq_pand_bag_nr> pand_uq_pand_nr_rel (panden/pand)              := rlookup(panden/pand/pand_bag_nr, uq_pand_bag_nr/values);
+		parameter<string>  bouwjaar_truncation_expr        := 'bouwjaar <= 1005w || bouwjaar > @YYYY@[yr] ? null_w : bouwjaar < 1500w ? 1500w : bouwjaar';
 		
 		container panden
 		{
@@ -472,7 +488,7 @@ container BAG : using = "Classifications/Vastgoed"
 				attribute<rdc_mm>                       geometry_mm (poly);
 				attribute<rdc_meter>                    geometry (poly) := geometry_mm[rdc_meter];
 				attribute<string>                       identificatie;
-				attribute<jaar>                         bouwjaar;
+				attribute<yr>                         bouwjaar;
 
 				container meta := meta_src_template(., pand_status);
 			}
@@ -484,14 +500,14 @@ container BAG : using = "Classifications/Vastgoed"
 				attribute<pand_status>                  status_rel                   := import/meta/status_rel;
 				attribute<int32>                        begindatum                   := impl/begindatum0 < 19600101i ? impl/TIJDSTIPREGISTRATIE : impl/begindatum0;
 				attribute<int32>                        einddatum                    := impl/einddatum0 < 19600101i ? impl/EINDREGISTRATIE : impl/einddatum0;
-				attribute<jaar>                         bouwjaar                     := import/bouwjaar;
-				attribute<jaar>                         bouwjaar_trunc               := =replace(bouwjaar_truncation_expr, '@YYYY@', '2025');
+				attribute<yr>                           bouwjaar                     := import/bouwjaar;
+				attribute<yr>                           bouwjaar_trunc               := =replace(bouwjaar_truncation_expr, '@YYYY@', '2025');
 				attribute<m2PandFootprint>              footprint                    := area(geometry, meter2)[m2PandFootprint];
 				
 				attribute<bool>                         LigtInCBSVerblijfsrecreatie  := IsDefined(point_in_polygon(centroid_or_mid(geometry), SourceData/Grondgebruik/VerblijfsrecreatieBuffer/geometry_rd));
 				attribute<bool>                         IsLogistiekFunctie           := IsDefined(rlookup(pand_bag_nr, SourceData/Vastgoed/Logistiek_panden/Logistics/pand_bag_nr));
 				attribute<bool>                         IsVoorraad                   := pand_status/isVoorraad[status_rel];
-				// attribute<bool>                         IsStudyArea                  := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/rdc_meter/geometry));
+				attribute<bool>                         IsStudyArea                  := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/rdc_meter/geometry));
 				
 				unit<uint32> impl := .
 				{
@@ -509,22 +525,20 @@ container BAG : using = "Classifications/Vastgoed"
 					attribute<float32>                      lower_y := pointRow(NW);
 					attribute<float32>                      upper_y := pointRow(SE);
 					
-					// attribute<bool>                         IsStudyArea                  := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/rdc_meter/geometry));
-					
 					attribute<bool>                         pand_selection_condition     := ='X_ext < 1000f && Y_ext < 1000f' //panden met een grotere x/y range dan 1km eruit
 																							'&& lower_x < 300000f && lower_x > 0f'
 																							'&& upper_x < 300000f && upper_x > 0f'
 																							'&& lower_y < 620000f && lower_y > 300000f'
-																							'&& upper_y < 620000f && upper_y > 300000f'; //binnen NL
-																							// '&& IsStudyArea';
+																							'&& upper_y < 620000f && upper_y > 300000f'//; //binnen NL
+																							'&& IsStudyArea';
 																							
 				}
 			}  
 				
 			unit<uint32> pand := select_with_attr_by_org_rel(src, src/Impl/pand_selection_condition)
 			{
-				unit<uint32> ToedelingsMatrix := = ModelParameters/BaseDataOntkoppeld ? 'Uitsmeer_key/Read_AdminDomain_in_all_panden' : 'Uitsmeer_key/Write_AdminDomain_in_all_panden';
-				#include<Uitsmeer_key.dms>
+				// unit<uint32> ToedelingsMatrix := = ModelParameters/BaseDataOntkoppeld ? 'Uitsmeer_key/Read_AdminDomain_in_all_panden' : 'Uitsmeer_key/Write_AdminDomain_in_all_panden';
+				// #include<Uitsmeer_key.dms>
 			}
 			// unit<uint32> pand := select_with_attr_by_org_rel(src, const(TRUE,src));
 		}
