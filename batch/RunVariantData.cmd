@@ -7,6 +7,11 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteVariantData/Verblijfsrecreatie
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
+exit /B
+
 :ErrorEnd
 echo "%ErrorLevel%"
-pause "Er gaat iets mis..."
+echo "Er gaat iets mis..."
+pause
+
+exit
