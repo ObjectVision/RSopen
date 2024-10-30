@@ -56,9 +56,15 @@ call ..\batch\RunScenarios.cmd
 REM set RSL_SCENARIO_NAME=WLO_Laag
 REM call ..\batch\RunScenarios.cmd
 
-pause "Klaar ?"
+echo "Klaar ?"
+pause
+
+exit
 
 
 :ErrorEnd
 echo "%ErrorLevel%"
-pause "Er gaat iets mis..."
+echo "Er gaat iets mis..."
+pause
+
+exit
