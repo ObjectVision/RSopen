@@ -1,10 +1,10 @@
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms14.3.2
+set geodmsversion=GeoDms15.7.1
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
-set LocalDataProjDir=C:\LocalData\RSOpen
+set LocalDataProjDir=C:\LocalData\RSopen_RVFriesland
 set MT_FLAGS=/S1 /S2 /S3
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
@@ -21,39 +21,17 @@ goto runScenarios
 
 :runPrepareBasedata
 
-rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
+REM rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
 
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run2
 echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run3
-echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run4
-echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run5
-echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run6
-echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run7
-echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run8
-echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run9
-echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 :runPrepareVariantdata
 
-rmdir %LocalDataProjDir%\VariantData /s /q REM deletes the old VariantData folder.
+REM rmdir %LocalDataProjDir%\VariantData /s /q REM deletes the old VariantData folder.
 
 REM set RSL_VARIANT_NAME=MO
 REM call ..\batch\RunVariantData.cmd
@@ -83,6 +61,7 @@ echo "Klaar ?"
 pause
 
 exit
+
 
 
 :ErrorEnd
