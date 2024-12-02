@@ -26,8 +26,8 @@ REM rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
 call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run2
-echo "ErrorLevel is " %ErrorLevel% 
+REM call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run2
+REM echo "ErrorLevel is " %ErrorLevel% 
 
 :runPrepareVariantdata
 
