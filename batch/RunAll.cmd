@@ -1,11 +1,18 @@
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms16.0.2
+set geodmsversion=GeoDms15.10.2
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
-set LocalDataProjDir=C:\LocalData\RSopen_RVFriesland
+set LocalDataProjDir=C:\LocalData\RSopen
+REM set LocalDataProjDir=C:\LocalData\RSopen_RVFriesland
+
 set MT_FLAGS=/S1 /S2 /S3
+
+set CurrentDir=%CD%
+CD ..
+set ProjDir=%CD%
+CD %CurrentDir%
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
 
@@ -21,17 +28,15 @@ goto runScenarios
 
 :runPrepareBasedata
 
-REM rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
+rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
 
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run1
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
-REM call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run2
-REM echo "ErrorLevel is " %ErrorLevel% 
 
 :runPrepareVariantdata
 
-REM rmdir %LocalDataProjDir%\VariantData /s /q REM deletes the old VariantData folder.
+rmdir %LocalDataProjDir%\VariantData /s /q REM deletes the old VariantData folder.
 
 REM set RSL_VARIANT_NAME=MO
 REM call ..\batch\RunVariantData.cmd
@@ -46,6 +51,7 @@ REM set RSL_VARIANT_NAME=GL
 REM call ..\batch\RunVariantData.cmd
 
 set RSL_VARIANT_NAME=BAU
+set RSL_SCENARIO_NAME=WLO_Hoog
 call ..\batch\RunVariantData.cmd
 
 :runScenarios
