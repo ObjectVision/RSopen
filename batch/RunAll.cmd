@@ -5,6 +5,7 @@ set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
 set LocalDataProjDir=C:\LocalData\RSopen_RVFriesland
+
 set MT_FLAGS=/S1 /S2 /S3
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
