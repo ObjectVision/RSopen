@@ -3,13 +3,13 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 	Template Suitability_T
 	{
 		//
-		parameter<string>     Zichtjaar_name;
-		parameter<string>     DrainageVariant_name;
+		parameter<string> Zichtjaar_name;
+		parameter<string> DeepDrainageVariant_name;
 		//
 		
 		parameter<YearRange>  StartYear  := rjoin(Zichtjaar_name, Zichtjaar/name, Zichtjaar/PrevYearRange_rel);
 		parameter<YearRange>  EndYear    := rjoin(Zichtjaar_name, Zichtjaar/name, Zichtjaar/YearRange_rel);
-		parameter<DrainageK>  Scenario   := ='DrainageK/v/'+DrainageVariant_name;
+		parameter<DeepDrainageK> DeepDrainageVariant   := ='DeepDrainageK/v/'+DeepDrainageVariant_name;
 		parameter<Jaar>       PeriodDuration := (EndYear - StartYear)[jaar];
 		
 		parameter<int16>      StYrPhoenix     := int16(round(float32(StartYear)/10f) * 10i);
@@ -32,11 +32,6 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 					, EUR_ha
 				);
 			
-			attribute<Ratio>   Akkerbouw_perHa  (rdc_100m) := sum_uint32(gg_LandbouwK_25m == LU_ModelType/v/landbouw_akkerbouw, rdc_25m/rdc_100m_rel)[float32] / (1[Ha] / rdc_25m/nrhapercell);
-			attribute<Ratio>   Urbaan_perHa     (rdc_100m) := sum_uint32(gg_IsStedelijk, rdc_25m/rdc_100m_rel)[float32] / (1[Ha] / rdc_25m/nrhapercell);
-			
-			attribute <Eur_m2> transitiekosten_akkerbouw (rdc_100m) := Akkerbouw_perHa * ModelParameters/Landbouw/Transitiekosten_src/akkerbouw - Urbaan_perHa * ModelParameters/Landbouw/Transitiekosten_src/kosten_urbaan_afbraak;
-			
 			container YieldReduction : Descr = "yield reduction"
 			{
 				attribute<bool> AangetastVerziltGebied (rdc_100m) := SourceData/Landbouw/AangetastVerziltGebied;
@@ -44,18 +39,12 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 				container Result :=
 					for_each_nedv(
 						 GewasSoortYR/name
-						,GewasSoortYR/YR_bron == 'WWL'
-							?  'min_elem(YieldReduction_WWL/'+GewasSoortYR/name+' + float32(AangetastVerziltGebied) * ModelParameters/Landbouw/Verzilt_OpbrengstDerving * float32('+string(GewasSoortYR/AantastingDoorVerzilt)+'), 1f)'
-							: GewasSoortYR/YR_bron == 'Exotisch' 
-								? 'YieldReduction_Exotisch/'+GewasSoortYR/name
-								:  GewasSoortYR/YR_bron == 'HELP' 
-									? 'YieldReduction_HELP/'+GewasSoortYR/name
-									: 'const(ModelParameters/Landbouw/YieldReduction_NoData, rdc_100m)'
+						,'min_elem('+GewasSoortYR/YR_bron+'/'+GewasSoortYR/name+' + float32(AangetastVerziltGebied) * ModelParameters/Landbouw/Verzilt_OpbrengstDerving * float32('+string(GewasSoortYR/AantastingDoorVerzilt)+'), 1f)'
 						, rdc_100m
 						, float32
-					), Descr = "";
+					);
 				
-				container YieldReduction_WWL := 
+				container WWL := 
 					for_each_nedv(
 						WWL_GewasSoort/name
 						, 'MakeDefined(SourceData/Landbouw/Yield_Reduction/WWL_'+/Variant_name+'/'+WWL_GewasSoort/name+' / 100f, ModelParameters/Landbouw/YieldReduction_NoData)'
@@ -63,76 +52,13 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 						, float32
 					);
 				
-				container YieldReduction_Exotisch :=
+				container Exotisch :=
 					for_each_nedv(
 						Exotische_GewasSoort/name
 						, 'MakeDefined(1f - SourceData/Landbouw/WUR_Kansenkaarten/Kansenkaarten/'+Exotische_GewasSoort/name+', ModelParameters/Landbouw/YieldReduction_NoData)'
 						, rdc_100m
 						, float32
 					);
-				
-				container YieldReduction_HELP := 
-					for_each_nedv(
-						HELP_GewasSoort/name
-						, 'MakeDefined(HELP_StartYr/YieldReduction/'+HELP_GewasSoort/name+'/Result + HELP_EndYr/YieldReduction/'+HELP_GewasSoort/name+'/Result / 2f, ModelParameters/Landbouw/YieldReduction_NoData)' 
-						, rdc_100m
-						, float32
-					);
-				
-				container HELP_StartYr := Year_T(StYrPhoenixStr), Descr = "tbv HELP yield reduction berekening";
-				container HELP_EndYr   := Year_T(EndYrPhoenixStr), Descr = "tbv HELP yield reduction berekening";
-				
-				Template Year_T : Descr = "tbv HELP yield reduction berekening"
-				{
-					//
-					parameter<string> Year;
-					//
-					
-					container Peil := 
-						for_each_ne(
-							PeilK/name
-							, 'Peil_T('+string(id(PeilK))+'[PeilK])'
-						);
-					
-					container YieldReduction := 
-						for_each_ne(
-							HELP_GewasSoort/name
-							, 'YieldReduction_T(HELP_GewasSoort/V/'+HELP_GewasSoort/name+')'
-						);
-					
-					Template Peil_T
-					{
-						//
-						parameter<PeilK> id;
-						//
-						parameter<string> PeilName                    := PeilK/name[id];  
-						
-						attribute<uint32> ResultDDOption   (rdc_100m) := ='SourceData/Landbouw/HELP/'+PeilName+'_merged_'+DrainageK/Drainage_nameDDOption[Scenario]+'/'+Year;
-						attribute<uint32> ResultNoDDOption (rdc_100m) := ='SourceData/Landbouw/HELP/'+PeilName+'_merged_'+DrainageK/Drainage_nameNoDDOption[Scenario]+'/'+Year;
-						attribute<bool>   DDPossible       (rdc_100m) := SourceData/Landbouw/DD30_uit_droogleggingzomer_00;
-						attribute<uint32> Result           (rdc_100m) := DDPossible ? ResultDDOption: ResultNoDDOption;
-					}
-					
-					Template YieldReduction_T
-					{
-						//
-						parameter<HELP_GewasSoort> id;
-						//
-						
-						attribute<string> code (rdc_100m) :=
-							HELP_GewasSoort/HELP_Code[id] + '_' +
-							HELPbodems/code[BodemType] + '_'+
-							GLGHelpKlasse/code[Peil/GLG/Result] + '-' +
-							GHGHelpKlasse/code[Peil/GHG/Result];
-						
-						attribute<Float32> result (rdc_100m) :=
-								rjoin(
-									  code
-									, OpbrengstDerving/code
-									, OpbrengstDerving/TS
-								);
-					}
-				}
 			}
 		}
 		
@@ -259,7 +185,7 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 					attribute<Eur_Ha_jaarlijks> holding_costs      (rdc_100m) := ParametersModelType/holding_costs_ratio * total_gross_output;
 					attribute<Eur_Ha_jaarlijks> Net_revenues_ha    (rdc_100m) := = 'add('+ AsItemList(GewasSoortYR/perLandbouwK_domain/akkerbouw/name + '/Net_revenues') + ') - holding_costs';
 					attribute<EUR_M2_jaarlijks> Net_revenues       (rdc_100m) := Net_revenues_ha[EUR_M2_jaarlijks];
-					attribute<EUR_M2>           Conversion_costs   (rdc_100m) := ='MakeDefined(Factoren/transitiekosten/'+ ModelType_name + '[LU_ModelType/LandbouwK_rel[gg_LandbouwK]],0[EUR_ha])[EUR_M2]';
+					attribute<EUR_M2>           Conversion_costs   (rdc_100m) := ='MakeDefined(Factoren/transitiekosten/'+ ModelType_name + '[LU_ModelType/LandbouwK_rel[gg_LandbouwK]],/ModelParameters/Landbouw/Transitiekosten_src/overigen__'+ModelType_name+')[EUR_M2]';
 				}
 			}
 		}
@@ -284,8 +210,8 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 		attribute<Eur_Ha_jaarlijks> Net_revenues_ha  (rdc_100m) := Parameters/Rotation * (Gross_revenues - Parameters/Production_costs - Holding_costs);
 		attribute<EUR_M2_jaarlijks> Net_revenues     (rdc_100m) := Net_revenues_ha[EUR_M2_jaarlijks];
 		attribute<EUR_M2>           Conversion_costs (rdc_100m) := = UseSpecificTransitions ?
-			'MakeDefined(Factoren/Transitiekosten/'+Gewas_name+'[LU_ModelType/LandbouwK_rel[gg_LandbouwK]],0[EUR_ha])[EUR_M2]' :
-			'MakeDefined(Factoren/Transitiekosten/'+ModelType_name+'[LU_ModelType/LandbouwK_rel[gg_LandbouwK]],0[EUR_ha])[EUR_M2]';
+			'MakeDefined(Factoren/Transitiekosten/'+Gewas_name+'[LU_ModelType/LandbouwK_rel[gg_LandbouwK]], /ModelParameters/Landbouw/Transitiekosten_src/overigen__'+Gewas_name+')[EUR_M2]' :
+			'MakeDefined(Factoren/Transitiekosten/'+ModelType_name+'[LU_ModelType/LandbouwK_rel[gg_LandbouwK]],/ModelParameters/Landbouw/Transitiekosten_src/overigen__'+ModelType_name+')[EUR_M2]';
 		
 		container Kapitalisatie := ='Kapitalisatie_T(ModelType/V/'+ ModelType_name +')';
 		
