@@ -1,0 +1,210 @@
+Template Iter_Landbouw_T
+{
+	//
+	parameter<Iter> id;
+	container StateVoorAllocatie;
+	container Context0;
+	unit<uint8> Iter; //IterK
+	container Impl0;
+	parameter<bool> IsEnkelIter;
+	//
+	
+	parameter<string> name := Iter/name[id];
+	
+	container Context := Context0
+	{
+		container ThisIter := ..;
+		parameter<string> ThisIterName := Iter/name[id];
+		parameter<string> PrevIterName := Iter/prevname[id];
+	}	
+	
+	container Subsectoren :=
+		for_each_ne(
+			 Allocatie_Prep/SubSector/name
+			, 'IterSubsector_T_Landbouw('+string(id(Allocatie_Prep/SubSector))+'[Allocatie_Prep/SubSector],Allocatie_Prep/SubSector,StateVoorAllocatie,Context)'
+	);
+	
+	container Allocatie_Prep
+	{
+		unit<uint8> SubSector  := LandbouwK_Alloc
+		{
+			// attribute<Partitioning> Partitioning_rel :=  const(0[Partitioning],.);
+		}
+		unit<uint32> AllocRegio := Context/ThisSectorAllocRegio/AllocRegio
+		{
+			attribute<.> id := id(.);
+		}
+		
+		container ExogeenOpleggen
+		{
+			attribute<LU_ModelType> Totaal          (AdminDomain) := VariantData/ExogeenOpleggen/Totaal;
+			attribute<bool>         Beschikbaar     (AdminDomain) := IsNull(Totaal);
+		}
+		container Suitabilities :=
+			for_each_nedv(
+				SubSector/Name
+				, 'Subsectoren/'+SubSector/Name+'/CompactedAdminDomain/Beschikbaar 
+					&& collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ExogeenOpleggen/Beschikbaar) 
+						? value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, VariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_ModelType/'+SubSector/Name+'/Suitability) * 100f, int32) 
+						: null_i'
+				, CompactedAdminDomain
+				, int32
+			) // voor discr_alloc moet het int32 zijn, dus floats * 100 om precisie te behouden.
+		{
+			attribute<SubSector> ArgMax (CompactedAdminDomain) := ='argmax_ifdefined('+AsItemList(SubSector/name)+')[SubSector]';
+		}
+
+		attribute<AllocRegio> AtomicRegionMap (CompactedAdminDomain) := AllocRegio/per_CompactedAdminDomain;
+		
+		unit<uint32> AtomicRegions := AllocRegio
+		{
+			attribute<.> regio := id(.);
+		}	
+		
+		
+		// container RegionSets :=
+			// for_each_nedv(
+				// SubSector/name
+				// , 'AllocRegio/per_CompactedAllocDomain'
+				// , CompactedAdminDomain
+				// , AllocRegio
+			// );
+
+		container Claims
+		{
+			parameter<Ha> AreaalStudyGebied := area(rdc_meter/geometry[0], meter2)[ha];
+			
+			container MaxClaims := 
+				for_each_nedv(
+					  SubSector/name
+					, replace('uint32(VariantData/Claims/@Z@/SectorAllocRegios/@AS@/MaxClaims/'+SubSector/name+AllocRegio_StudyArea_orgrel+' / AdminDomain/NrHaPerCell)'
+							,'@Z@' , Context/ThisZichtjaar/name
+							,'@AS@', Context/ThisSectorAllocRegio/name)
+					, AllocRegio
+					, uint32
+				);
+			
+			container MinClaims := 
+				for_each_nedv(
+					  SubSector/name
+					, replace('uint32(VariantData/Claims/@Z@/SectorAllocRegios/@AS@/MinClaims/'+SubSector/name+AllocRegio_StudyArea_orgrel+' / AdminDomain/NrHaPerCell)'
+							,'@Z@' , Context/ThisZichtjaar/name
+							,'@AS@', Context/ThisSectorAllocRegio/name)
+					, AllocRegio
+					, uint32
+				);
+		}
+		
+		parameter<int32> threshold := -999999i; 	//This threshold determines above which point the suitablilty is considered.
+		// container FeasibleSolution; //This empty container is not used.
+	}
+	
+	container Allocatie := 
+		discrete_alloc_sp(
+			  Allocatie_Prep/SubSector/name										// 1 string 	attribute	TypeNames
+			, CompactedAdminDomain												// 2 uint32		unit
+			, Allocatie_Prep/Suitabilities 										// 3 int32		container	SuitabilityMaps
+			// , Allocatie_Prep/Subsector/Partitioning_rel							// 4 uint8		attribute
+			// , Allocatie_Prep/Partitioning/name									// 5 string		attribute
+			, Allocatie_Prep/AtomicRegions										// 6 uint16		unit		Regions
+			, Allocatie_Prep/AtomicRegionMap									// 7 uint16		attribute	RegionMap
+			, Allocatie_Prep/Claims/minclaims									// 8 uint32		container	MinClaims
+			, Allocatie_Prep/Claims/maxclaims									// 9 uint32		container	MaxClaims
+			, Allocatie_Prep/threshold											// 10 int32		parameter	Threshold
+			// , Allocatie_Prep/FeasibleSolution									// 11 (empty)	container
+		)
+	{
+		// attribute<Allocatie_Prep/SubSector>         Alloc_Result0        (CompactedAdminDomain) := landuse;
+		attribute<SubSector>                        Alloc_Result         (CompactedAdminDomain) := rjoin(landuse, id(Allocatie_Prep/SubSector), Allocatie_Prep/SubSector/LandbouwK_rel);
+		attribute<Sector/XSubsector>                per_SectorXSubSector (CompactedAdminDomain) := rjoin(Alloc_Result, Sector/XSubsector/LandbouwK_rel, id(Sector/XSubsector)), IntegrityCheck = "statusFlag";
+	}
+
+	attribute<bool> IsNuGealloceerd (CompactedAdminDomain) := IsDefined(Allocatie/Alloc_Result);
+	
+	container impl := impl0
+	{
+		parameter<bool> StopCriterium       := StaticStopCriterium;
+		parameter<bool> StaticStopCriterium := IsEnkelIter ? TRUE : id == (ModelParameters/Default_NrOfIters - 1b)[Iter];
+	}
+	
+	container StateNaAllocatie0 := 
+		for_each_ne(
+			Sector/XSubsector/name
+			, 'StatePrep_T('+string(id(Sector/XSubsector))+'[Sector/XSubsector], Context/ThisIter)'
+		)
+	{
+		container PandFootprint :=
+			for_each_nedv(
+				Jobs6/name
+				, sector_name == 'Werken' ? replace(impl/Update_Pandfootprint_expr,'@Y@', Context/ThisZichtjaar/name, '@SS@', Jobs6/name): replace(impl/Verdring_expr, '@S@', 'PandFootprint', '@SS@', Jobs6/name)
+				, CompactedAdminDomain
+				, m2PandFootprint
+			);
+	}
+	
+	container StateNaAllocatie1 :=
+		for_each_neidv(
+			Sector/XSubsector/name
+			, 'StateNaAllocatie0/'+Sector/XSubsector/name+'/Result'
+			, 'IsDefined(StateNaAllocatie0/'+Sector/XSubsector/name+'/Result)'
+			, CompactedAdminDomain
+			, float32
+		)
+	{
+		attribute<Sector/XSubsector> Subsector_rel (CompactedAdminDomain) := MakeDefined(StateVoorAllocatie/Subsector_rel, Allocatie/per_SectorXSubSector);
+		attribute<OP>                OP_rel        (CompactedAdminDomain) := StateVoorAllocatie/OP_rel;
+		
+		container PandFootprint :=
+			for_each_nedv(
+				Jobs6/name
+				, 'StateNaAllocatie0/PandFootprint/'+Jobs6/name
+				, CompactedAdminDomain
+				, m2PandFootprint
+			);
+		
+		container Wind
+		{
+			attribute<Yr> jaartal_ingebruikname (CompactedAdminDomain) := Allocatie/per_SectorXSubSector == Classifications/Actor/Sector/XSubsector/V/Wind_Totaal ? uint16(right(Context/ThisZichtjaar/name,4))[Yr] : StateVoorAllocatie/Wind/jaartal_ingebruikname;
+		}
+	}
+
+	// MET FENCECONTAINER
+	container StateNaAllocatie2_metFence :=
+		for_each_nedvn(
+			CaseClassifications/StandVar/Path
+			, 'value(StateNaAllocatie1/'+CaseClassifications/StandVar/Path + ', scope(CaseClassifications/StandVar, '+CaseClassifications/StandVar/unit_name+'))'
+			, CompactedAdminDomain
+			, CaseClassifications/StandVar
+			, CaseClassifications/StandVar/unit_name
+		)
+	{
+		container Wonen
+		{
+			attribute<Woning> Aantal_Woningen_Totaal (CompactedAdminDomain) := = 'add('+AsItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
+		}
+	}
+	container StateNaAllocatie_metFence := FenceContainer(StateNaAllocatie2_metFence, 'Results for '+Context/ThisSequenceName+', '+Context/ThisSectorAllocRegioName+', '+Context/ThisIterName+' are finished calculating');
+	
+	//ZONDER FENCECONTAINER
+	//Onderstaande twee parameters, en de expressie in de for_each zijn nodig om een 'blok' te creeren die altijd in zijn geheel wordt uitgerekend. Dit om bij generates van het zichtjaar efficient geheugengebruik te forceren.
+	parameter<bool> AnyUndefined := ='OR('+AsItemList('!IsDefined(StateNaAllocatie1/'+CaseClassifications/StandVar/Path+'[0[CompactedAdminDomain]])')+')';
+	parameter<bool> AllDefined   := NOT(AnyUndefined) && FALSE;
+	
+	container StateNaAllocatie2_zFence :=
+		for_each_nedvn(
+			CaseClassifications/StandVar/Path
+			, 'value(AllDefined['+CaseClassifications/StandVar/value_type+'] + StateNaAllocatie1/'+CaseClassifications/StandVar/Path + ', scope(CaseClassifications/StandVar, '+CaseClassifications/StandVar/unit_name+'))'
+			, CompactedAdminDomain
+			, CaseClassifications/StandVar
+			, CaseClassifications/StandVar/unit_name
+		)
+	{
+		container Wonen
+		{
+			attribute<Woning> Aantal_Woningen_Totaal (CompactedAdminDomain) := = 'add('+AsItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
+		}
+	}
+	
+	container StateNaAllocatie_zFence := StateNaAllocatie2_zFence;
+	container StateNaAllocatie := =ModelParameters/Use_Fence_operator ? 'StateNaAllocatie_metFence' : 'StateNaAllocatie_zFence';
+}
