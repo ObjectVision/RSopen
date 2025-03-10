@@ -16,8 +16,8 @@ set timeStamp=%yy%%mm%%dd%_%hh%%min%%sec%
 
 echo ================================================================
 
-echo "%ProgramPath%" /Llog/log_%timeStamp%.txt %MT_FLAGS% %1 %2
-"%ProgramPath%" /Llog/log_%timeStamp%.txt %MT_FLAGS% %1 %2
+echo "%ProgramPath%" /Llog/profile.txt %MT_FLAGS% %1 %2
+"%ProgramPath%" /Llog/profile.txt %MT_FLAGS% %1 %2
 
 echo Completed %1 %2 ?
 
