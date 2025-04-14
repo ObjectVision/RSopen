@@ -50,7 +50,6 @@ REM set RSL_VARIANT_NAME=GL
 REM call ..\batch\RunVariantData.cmd
 
 set RSL_VARIANT_NAME=BAU
-set RSL_SCENARIO_NAME=WLO_Hoog
 call ..\batch\RunVariantData.cmd
 
 :runScenarios
