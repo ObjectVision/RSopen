@@ -1,0 +1,142 @@
+container Claims : using = "Geography"
+{
+	container WonenEnWerken // Bron: Berekeningen van Significance B.V. in opdracht van PBL in het kader van het project Ruimtelijke Verkenningen 2023. Zie https://www.pbl.nl/publicaties/ruimtelijke-verkenning-2023-vier-scenarios-voor-de-inrichting-van-nederland-in-2050
+	{
+		parameter<String> ClaimSrcRef  := '%PrivDataDir%/Claims/TXL_'+ModelParameters/TIGRIS_filedate;
+		parameter<String> ClaimSrcDir  := ClaimSrcRef+'/@S@';
+		parameter<String> ClaimRef     := '%RSo_DataDir%/Claims/TXL_'+ModelParameters/TIGRIS_filedate;
+		parameter<String> ClaimDir     := ClaimRef+'/@S@';
+		parameter<string> SrcRegioRef  := 'LMSSubzone';
+		
+		unit<uint32> SrcRegio       := ='SourceData/RegioIndelingen/'+SrcRegioRef;
+		unit<uint32> COROP_Regio    := SourceData/RegioIndelingen/CBS/last/COROP;
+		
+		container MetaInfo
+		{
+			unit<uint32> Labour
+			: StorageName = "=ClaimSrcRef+'/MetaInfo/Labour.csv'"
+			, StorageType = "gdal.vect"
+			, StorageReadOnly = "true"
+			{
+				attribute<string> Name     := variable;
+				attribute<uint32> EndPos   := cumulate(Length[uint32]);
+				attribute<uint32> Startpos := EndPos - Length[uint32];
+			}
+			unit<uint32> Landuse
+			: StorageName = "=ClaimSrcRef+'/MetaInfo/Landuse.csv'"
+			, StorageType = "gdal.vect"
+			, StorageReadOnly = "true"
+			{
+				attribute<string> Name     := variable;
+				attribute<uint32> EndPos   := cumulate(Length[uint32]);
+				attribute<uint32> Startpos := EndPos - Length[uint32];
+			}
+		}
+		
+		container Cases := for_each_ne(Modellering/AllCases/name, 'CaseT('+quote(Modellering/AllCases/Scenario_name)+','+quote(Modellering/AllCases/Variant_name)+')');
+		
+		Template CaseT
+		{
+			//
+			parameter<string> Scenario;
+			parameter<string> Variant;
+			//
+			
+			container Tables := for_each_ne(TigrisXL/Table/name, 'DatasetT(TigrisXL/Table/V/'+TigrisXL/Table/name+','+quote(Scenario)+','+quote(Variant)+')');
+		}
+		
+		Template DatasetT
+		{
+			//
+			parameter<TigrisXL/Table> table_id;
+			parameter<string> Scenario;
+			parameter<string> Variant;
+			//
+			
+			container Zichtjaren := for_each_ne(Time/Tigrisjaar/name, 'Per_Zichtjaar_T(table_id, '+string(Time/Tigrisjaar/jaar)+'[YearRange],'+quote(Scenario)+','+quote(Variant)+')');
+		}
+		
+		Template Per_Zichtjaar_T
+		{
+			//
+			parameter<TigrisXL/Table> table_id;
+			parameter<YearRange> Jaar;
+			parameter<string> Scenario;
+			parameter<string> Variant;
+			//
+			
+			parameter<string> FileName_bare := TigrisXL/Table/name[table_id];
+			
+			parameter<string>  File_dat
+			:	StorageName = "=replace(ClaimSrcDir, '@S@', Scenario)+'_LMS/'+String(Jaar)+'/'+Variant+'_'+FileName_bare+'.dat'"
+			,	StorageType = "str";
+			
+			unit<uint32> SrcDomain := range(uint32,0,StrCount(File_dat, '\n'))
+			{
+				attribute<string> FullLine (SrcDomain) := ReadLines(File_dat, .,0);
+				attribute<uint32> EK := ReadElems(FullLine, ., const(0, .));
+			}
+			
+			parameter<string> Validator := '\\s*-?\\d+(\\.\\d+)?\\s*'; // 0 of meer spaties, 0 of 1 min-teken, een of meer digits, optioneel een punt gevolg door 1 of meer digits, gevolgd door 0 of meer spaties
+			// parameter<string> Validator := '\\s*-?\\d+(\\.\\d+)?';
+			
+			unit<uint32> SrcAttribute := ='MetaInfo/'+Classifications/TigrisXL/Table/name[table_id] +'' 
+			{
+				attribute<bool> is_oke := ='union_data(., '+AsItemList('all(regex_match(substr(SrcDomain/FullLine,'+string(SrcAttribute/StartPos)+','+string(SrcAttribute/Length)+'), Validator))')+')';
+			}
+			
+			unit<uint32>  TargetDomain := SourceData/RegioIndelingen/LMSSubzone;
+			unit<float32> TargetValues;
+			
+			container SrcAttributes_strings := 
+				for_each_nedv(
+					SrcAttribute/name
+					, 'substr(SrcDomain/FullLine,' + String(SrcAttribute/StartPos) +',' + String(SrcAttribute/Length) + ')'
+					, SrcDomain 
+					, string
+				)
+			{
+				attribute<uint32> EK(SrcDomain) := uint32(LmsSubzone);
+			}
+			
+			container SrcAttributes_oke := 
+				for_each_nedv(
+					SrcAttribute/name
+					, 'regex_match(SrcAttributes_strings/'+SrcAttribute/name+', Validator)'
+					, SrcDomain
+					, bool
+				)
+			{
+				attribute<uint32> EK (SrcDomain) := uint32(LmsSubzone);
+			}
+			
+			container SrcAttributes := 
+				for_each_neidv(
+					SrcAttribute/name
+					, 'value(SrcAttributes_strings/'+SrcAttribute/name+', TargetValues)'
+					, 'SrcAttributes_oke/'+SrcAttribute/name
+					, SrcDomain
+					, TargetValues
+				)
+			{
+				attribute<uint32> EK(SrcDomain) := uint32(LmsSubzone);
+			}
+			
+			container Attributes := 
+				for_each_nedv(
+					SrcAttribute/name
+					, SrcAttribute/is_oke
+						? 'rjoin(TargetDomain/LmsSubF, SrcAttributes/EK, SrcAttributes/'+ SrcAttribute/name +')'
+						: 'Formatting Error: MetaInfo defined a column with an unexpected number format: '
+					, TargetDomain
+					, TargetValues
+				);
+		}
+	}
+	
+	container AggregateToRegions :=
+		for_each_ne(
+			CaseClassifications/ZichtjaarxTXLClaimsxCase/name
+			, 'Templates/Claims/Claims_TargetUnits_T('+string(id(CaseClassifications/ZichtjaarxTXLClaimsxCase))+'[CaseClassifications/ZichtjaarxTXLClaimsxCase], CaseClassifications/ZichtjaarxTXLClaimsxCase)'
+		);
+}

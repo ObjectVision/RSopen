@@ -1,0 +1,250 @@
+container BAG_nieuwbouw
+{
+	container BAG               := SourceData/Vastgoed/BAG/PerJaar;
+	container BAG_ModelJaar     := = 'BAG/Y'+string(ModelParameters/Model_StartYear);
+	container BAG_RecentsteJaar := = 'BAG/Y'+string(ModelParameters/BAG_RecentYear);
+	
+	// model start jaar
+	unit<uint32> BAG_ModelJaar_vbo           := BAG_ModelJaar/vbo_alle_statussen{parameter<bool> IsSubset := FALSE;}
+	unit<uint32> BAG_ModelJaar_vbo_voorraad  := BAG_ModelJaar/vbo{parameter<bool> IsSubset := FALSE;}
+	unit<uint32> BAG_ModelJaar_pand          := BAG_ModelJaar/pand_alle_statussen{parameter<bool> IsSubset := FALSE;}
+	unit<uint32> BAG_ModelJaar_pand_voorraad := BAG_ModelJaar/pand{parameter<bool> IsSubset := FALSE;}
+	
+	// meest recente BAG
+	unit<uint32> BAG_RecentsteJaar_vbo           := BAG_RecentsteJaar/vbo_alle_statussen{parameter<bool> IsSubset := FALSE;}
+	unit<uint32> BAG_RecentsteJaar_vbo_voorraad  := BAG_RecentsteJaar/vbo{parameter<bool> IsSubset := FALSE;}
+	unit<uint32> BAG_RecentsteJaar_pand          := BAG_RecentsteJaar/pand_alle_statussen{parameter<bool> IsSubset := FALSE;}
+	unit<uint32> BAG_RecentsteJaar_pand_voorraad := BAG_RecentsteJaar/pand{parameter<bool> IsSubset := FALSE;}
+
+	
+	attribute<bool> IsNieuwVBO_TussenModelenRecentJaar (BAG_RecentsteJaar_vbo_voorraad) := ='!IsDefined(rlookup(BAG_RecentsteJaar_vbo_voorraad/vbo_bag_nr, BAG_ModelJaar_vbo_voorraad/vbo_bag_nr))';
+	attribute<bool> IsWegVBO_TussenModelenRecentJaar   (BAG_ModelJaar_vbo_voorraad)     := ='!IsDefined(rlookup(BAG_ModelJaar_vbo_voorraad/vbo_bag_nr, BAG_RecentsteJaar_vbo_voorraad/vbo_bag_nr))';
+	
+	unit<uint32> NieuweVBOsTussenModelenRecentJaar := select_with_org_rel(IsNieuwVBO_TussenModelenRecentJaar)
+	, Descr = "alle vbo's die in BAG_RecentsteJaar (e.g. 2023) er wel zijn, maar nog niet in BAG_ModelJaar (e.g. 2021) aanwezig waren."
+	{
+		attribute<rdc_meter>                        geometry               := org_rel -> geometry;
+		attribute<m2_vbo>                           oppervlakte_trunc      := org_rel -> oppervlakte_trunc;
+		attribute<Vastgoed/WP2>                     WP2_rel                := org_rel -> WP2_rel;
+		attribute<Vastgoed/WP4>                     WP4_rel                := org_rel -> WP4_rel;
+		attribute<uint64>                           vbo_bag_nr             := org_rel -> vbo_bag_nr;
+		attribute<uint64>                           pand_bag_nr            := org_rel -> pand_bag_nr;
+		attribute<BAG_RecentsteJaar_pand_voorraad>  pand_voorraad_rel      := rlookup(pand_bag_nr, BAG_RecentsteJaar_pand_voorraad/pand_bag_nr);
+		attribute<Pand_met_nieuw_vbo>               pand_met_nieuw_vbo_rel := rlookup(pand_bag_nr, Pand_met_nieuw_vbo/pand_bag_nr);
+		
+		container gebruiksdoelen :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'org_rel -> impl/gebruiksdoelen_cbs/'+Vastgoed/vbo_gebruiksdoel_plus/name+''
+				, NieuweVBOsTussenModelenRecentJaar
+				, bool
+			);
+		
+		container Avg_Footprint_VBOOpp_per_vbo_functie :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'Pand_met_nieuw_vbo/Avg_Footprint_perfunctie_inPand/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[pand_met_nieuw_vbo_rel]'
+				, NieuweVBOsTussenModelenRecentJaar
+				, m2PandFootprint
+			);
+	}
+	
+	unit<uint32> VBOsWegTussenModelenRecentJaar := select_with_org_rel(IsWegVBO_TussenModelenRecentJaar)
+	, Descr = "alle vbo's die in BAG_ModelJaar (e.g. 2021) aanwezig waren, maar niet meer in BAG_RecentsteJaar (e.g. 2023)."
+	{
+		attribute<rdc_meter>    geometry          := org_rel -> geometry;
+		attribute<m2_vbo>       oppervlakte_trunc := org_rel -> oppervlakte_trunc;
+		attribute<Vastgoed/WP2> WP2_rel           := org_rel -> WP2_rel; //deze komt oud modeljaar
+		attribute<Vastgoed/WP4> WP4_rel           := org_rel -> WP4_rel;
+		attribute<uint64>       vbo_bag_nr        := org_rel -> vbo_bag_nr;
+		attribute<uint64>       pand_bag_nr       := org_rel -> pand_bag_nr;
+		attribute<BAG_ModelJaar_pand_voorraad> pand_rel := rlookup(pand_bag_nr, BAG_ModelJaar_pand_voorraad/pand_bag_nr);
+		
+		container gebruiksdoelen :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'org_rel -> impl/gebruiksdoelen_cbs/'+Vastgoed/vbo_gebruiksdoel_plus/name+''
+				, VBOsWegTussenModelenRecentJaar
+				, bool
+			);
+			
+		container Footprint_perGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'BAG_ModelJaar_pand_voorraad/Oppervlaktes/Footprint_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[pand_rel]'
+				, VBOsWegTussenModelenRecentJaar
+				, m2PandFootprint
+			);
+			
+		container Vbos_InPand_perGebruiksdoel:=  
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'sum_uint32(gebruiksdoelen/'+Vastgoed/vbo_gebruiksdoel_plus/name+', pand_rel)[float32][(pand_rel)]'
+				, VBOsWegTussenModelenRecentJaar
+				, float32
+			);
+	}
+	
+	unit<uint32> Pand_met_nieuw_vbo := select_with_org_rel(IsDefined(invert(NieuweVBOsTussenModelenRecentJaar/pand_voorraad_rel)))
+	, Descr = "alle panden uit BAG_RecentsteJaar die een nieuw VBO bevatten."
+	{
+		attribute<rdc_meter>       geometry (poly) := org_rel -> geometry;
+		attribute<uint64>          pand_bag_nr     := org_rel -> pand_bag_nr;
+		attribute<m2PandFootprint> footprint       := area(geometry, m2PandFootprint);
+		attribute<m2_pand>         pand_vbo_opp    := (sum(Combine_VBOvoorraad_VBOnieuwbouw/oppervlakte_trunc, Combine_VBOvoorraad_VBOnieuwbouw/pand_met_nieuw_vbo_rel) * 1[verblijfsobject]) / 1[units/PandUnit];
+		
+		container Footprint_perGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				,'((sum(Combine_VBOvoorraad_VBOnieuwbouw/gebruiksdoelen/'+Vastgoed/vbo_gebruiksdoel_plus/name+' ? Combine_VBOvoorraad_VBOnieuwbouw/oppervlakte_trunc : 0[m2_vbo], Combine_VBOvoorraad_VBOnieuwbouw/pand_met_nieuw_vbo_rel) * 1[units/verblijfsobject]) / (pand_vbo_opp * 1[units/pandUnit])) * footprint'
+				, Pand_met_nieuw_vbo
+				, m2PandFootprint
+			);
+		
+		container Vbos_InPand_perGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'sum(Combine_VBOvoorraad_VBOnieuwbouw/gebruiksdoelen/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[uint32], Combine_VBOvoorraad_VBOnieuwbouw/pand_met_nieuw_vbo_rel)[float32]'
+				, Pand_met_nieuw_vbo
+				, float32
+			);
+		
+		container Avg_Footprint_perfunctie_inPand :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				,'Footprint_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name+'  / Vbos_InPand_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name
+				, Pand_met_nieuw_vbo
+				, m2PandFootprint
+			);
+	}
+	
+	unit<uint32> Combine_VBOvoorraad_VBOnieuwbouw := union_unit(BAG_RecentsteJaar_vbo_voorraad, Vbo_nieuwbouw)
+	, Descr = "vbo voorraad uit recent year + nieuwbouw vbo's, dit is nodig om de pandfootprint te bepalen voor de toekomstige situatie. "
+	{
+		attribute<rdc_meter>          geometry               := union_data(., BAG_RecentsteJaar_vbo_voorraad/geometry, Vbo_nieuwbouw/geometry);
+		attribute<m2_vbo>             oppervlakte_trunc      := union_data(., BAG_RecentsteJaar_vbo_voorraad/oppervlakte_trunc, Vbo_nieuwbouw/oppervlakte_trunc);
+		attribute<uint64>             pand_bag_nr            := union_data(., BAG_RecentsteJaar_vbo_voorraad/pand_bag_nr, Vbo_nieuwbouw/pand_bag_nr);
+		attribute<Pand_met_nieuw_vbo> pand_met_nieuw_vbo_rel := rlookup(pand_bag_nr, Pand_met_nieuw_vbo/pand_bag_nr);
+		
+		container gebruiksdoelen :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'union_data(Combine_VBOvoorraad_VBOnieuwbouw, BAG_RecentsteJaar_vbo_voorraad/impl/gebruiksdoelen_cbs/'+Vastgoed/vbo_gebruiksdoel_plus/name+', Vbo_nieuwbouw/gebruiksdoelen/'+Vastgoed/vbo_gebruiksdoel_plus/name+')'
+				, Combine_VBOvoorraad_VBOnieuwbouw
+				, bool
+			);
+	}
+	
+	unit<uint32> Vbo_nieuwbouw := select_with_org_rel(BAG_RecentsteJaar_vbo/status_rel == /Classifications/Vastgoed/vbo_status/V/Verblijfsobject_gevormd)
+	, Descr = "alle VBO's, die op meest recente datum de status gevormd hebben, en dus binnenkort voorraad gaan worden."
+	{
+		attribute<rdc_meter>      geometry           := org_rel -> geometry;
+		attribute<m2_vbo>         oppervlakte_trunc  := org_rel -> oppervlakte_trunc;
+		attribute<uint64>         vbo_bag_nr         := org_rel -> vbo_bag_nr;
+		attribute<uint64>         pand_bag_nr        := org_rel -> pand_bag_nr;
+		attribute<Pand_nieuwbouw> pand_nieuwbouw_rel := rlookup(pand_bag_nr, Pand_nieuwbouw/pand_bag_nr);
+		attribute<Vastgoed/WP2>   WP2_rel            := Pand_nieuwbouw/WP2_rel[pand_nieuwbouw_rel]; //deze en volgende moeten op basis zijn van wptyperingen terwijl de bestaande/geloopte op nieuwe snapshots moeten gebeuren.
+		attribute<Vastgoed/WP4>   WP4_rel            := Pand_nieuwbouw/WP4_rel[pand_nieuwbouw_rel];
+		
+		container gebruiksdoelen :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'org_rel -> impl/gebruiksdoelen_cbs/'+Vastgoed/vbo_gebruiksdoel_plus/name
+				, vbo_nieuwbouw
+				, bool
+			);
+		
+		container Footprint_perGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'Pand_nieuwbouw/Footprint_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[pand_nieuwbouw_rel]'
+				, vbo_nieuwbouw
+				, m2PandFootprint
+			);
+		
+		container Vbos_InPand_perGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'sum(gebruiksdoelen/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[uint32], pand_nieuwbouw_rel)[float32][(pand_nieuwbouw_rel)]'
+				, vbo_nieuwbouw
+				, float32
+			);
+	}
+	
+	attribute<bool> Pand_Nieuwbouw_Selection_condition (BAG_RecentsteJaar_pand) := BAG_RecentsteJaar_pand/status_rel == /Classifications/Vastgoed/pand_status/V/Bouw_gestart || BAG_RecentsteJaar_pand/status_rel == /Classifications/Vastgoed/pand_status/V/Bouwvergunning_verleend
+	, Descr = "alle panden, die op meest recente datum de status bouw gestart of vergunning verleend hebben, en dus binnenkort voorraad gaan worden.";
+	
+	unit<uint32> Pand_nieuwbouw := select_with_org_rel(Pand_Nieuwbouw_Selection_condition)
+	{
+		parameter<bool>            IsSubset        := TRUE;
+		
+		attribute<rdc_meter>       geometry (poly) := org_rel -> geometry;
+		attribute<yr>              bouwjaar        := org_rel -> bouwjaar;
+		attribute<uint64>          pand_bag_nr     := org_rel -> pand_bag_nr;
+		attribute<m2PandFootprint> footprint       := area(geometry, m2PandFootprint);
+		attribute<m2_pand>         pand_vbo_opp    := (sum(Vbo_nieuwbouw/oppervlakte_trunc, Vbo_nieuwbouw/pand_nieuwbouw_rel) * 1[verblijfsobject]) / 1[units/PandUnit];
+		
+		attribute<uint32>          count_woon_vbos := sum_uint32(Vbo_nieuwbouw/gebruiksdoelen/woon, Vbo_nieuwbouw/pand_nieuwbouw_rel);
+		attribute<Vastgoed/WP2>    WP2_rel         := count_woon_vbos == 0 ? (0/0)[Vastgoed/WP2] : count_woon_vbos >  1 ? Vastgoed/WP2/V/meergezins : Vastgoed/WP2/V/eengezins;
+		attribute<Vastgoed/WP4>    WP4_rel         := org_rel -> WP4_rel;
+		
+		container Footprint_perGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				,'((sum(Vbo_nieuwbouw/gebruiksdoelen/'+Vastgoed/vbo_gebruiksdoel_plus/name+' ? Vbo_nieuwbouw/oppervlakte_trunc : 0[m2_vbo], Vbo_nieuwbouw/pand_nieuwbouw_rel) * 1[units/verblijfsobject]) / (pand_vbo_opp * 1[units/pandUnit])) * footprint'
+				, Pand_nieuwbouw
+				, m2PandFootprint
+			);
+			
+		container PerGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 	'sum(
+						recollect_by_cond(Pand_Nieuwbouw_Selection_condition, Footprint_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name+', 0f)
+							[BAG_RecentsteJaar_pand/ToedelingsMatrix/pand_rel] * BAG_RecentsteJaar_pand/ToedelingsMatrix/ToedelingPand, BAG_RecentsteJaar_pand/ToedelingsMatrix/CompactedAdminDomain_rel
+					)[m2PandFootprint]'
+				, CompactedAdminDomain
+				, m2PandFootprint
+			);
+		
+		container PerJobs6 :=
+			for_each_nedv(
+				Actor/Jobs6/name
+				, replace(Actor/Jobs6/vbo_gebruiksdoel_plus_ref, '@', 'PerGebruiksdoel/', '#', '')
+				, CompactedAdminDomain
+				, m2PandFootprint
+			);
+	}
+	
+	#include<Wonen.dms>
+	#include<Werken.dms>
+	
+	container Verblijfsrecreatie
+	{
+		attribute<verblijfsobject> Totaal (CompactedAdminDomain) := value(CalcNieuwbouw_perDoel/logies/Nieuwbouw_vbos/Uitsmeren_Totaal/Aantal_Vbos_per_CompactedAdminDomain 
+			+ CalcNieuwbouw_perDoel/logies/NieuweVBOsTussenModelenRecentJaar/Uitsmeren_Totaal/Aantal_Vbos_per_CompactedAdminDomain 
+			- CalcNieuwbouw_perDoel/logies/VBOsWegTussenModelenRecentJaar/Uitsmeren_Totaal/Aantal_Vbos_per_CompactedAdminDomain
+			, verblijfsobject);
+		
+		attribute<meter2> Gebruiksoppervlak_plus  (CompactedAdminDomain) := CalcNieuwbouw_perDoel/logies/Nieuwbouw_vbos/Uitsmeren_Totaal/Gebruiksoppervlak_per_CompactedAdminDomain
+			+ CalcNieuwbouw_perDoel/logies/NieuweVBOsTussenModelenRecentJaar/Uitsmeren_Totaal/Gebruiksoppervlak_per_AdminDomain;
+			
+		attribute<meter2> Gebruiksoppervlak_min   (CompactedAdminDomain) := CalcNieuwbouw_perDoel/logies/VBOsWegTussenModelenRecentJaar/Uitsmeren_Totaal/Gebruiksoppervlak_per_CompactedAdminDomain;
+		attribute<meter2> Gebruiksoppervlak_saldo (CompactedAdminDomain) := Gebruiksoppervlak_plus - Gebruiksoppervlak_min;   
+	}
+	
+	container Wind
+	{
+		attribute<MW> Totaal                (CompactedAdminDomain) := const(0[MW], CompactedAdminDomain);
+		attribute<Yr> jaartal_ingebruikname (CompactedAdminDomain) := Totaal > 0[MW] ? BAG_RecentYear[Yr] : (0/0)[Yr];
+	}
+	
+	container Zon
+	{
+		attribute<MW> Totaal (CompactedAdminDomain) := const(0[MW], CompactedAdminDomain);
+	}
+	
+	container CalcNieuwbouw_perDoel := for_each_ne(vastgoed/vbo_gebruiksdoel_plus/name, 'CalcNieuwbouw_perDoel_T('+quote(vastgoed/vbo_gebruiksdoel_plus/name)+')');
+	
+	#include<CalcNieuwbouw_perDoel_T.dms>
+}

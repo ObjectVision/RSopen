@@ -1,0 +1,312 @@
+Template Zichtjaar_T
+: Descr = ""
+{
+	parameter<Time/Zichtjaar> id;
+	container Claims;
+	container CaseClassifications;
+	//
+	
+	parameter<string>    Zichtjaar_name   := Time/Zichtjaar/name[id];
+	unit<uint8>          AllocRegio       := /Classifications/Modellering/AllocRegiosK;
+	unit<uint8>          SectorAllocRegio := CaseClassifications/Actor/SectorAllocRegio;
+	
+	container SectorAllocRegios := for_each_ne(SectorAllocRegio/name, 'AllocRegios/'+SectorAllocRegio/AllocRegio_name+'/'+SectorAllocRegio/Sector_name);
+	
+	container AllocRegios := 
+		for_each_ne(
+			AllocRegio/name
+			, 'AllocRegio_T('+string(id(AllocRegio))+'[AllocRegio])'
+		)
+	{
+		parameter<string> Generate_Verblijfsrecreatie := 'Ready', ExplicitSuppliers = "=AsList('AllocRegios/'+/VariantParameters/SectorAllocRegio/Uq_AllocRegios/AllocRegio_name+'/Verblijfsrecreatie_prep/Per_AllocRegio/'+/VariantParameters/SectorAllocRegio/Uq_AllocRegios/AllocRegio_name+'/Zichtjaren/'+Zichtjaar_name+'/Make_PerRegioUnit', ';')"; 
+		
+	}
+	
+	Template AllocRegio_T
+	{
+		parameter<AllocRegio> AllocRegio_rel;
+		
+		parameter<string> AllocRegio_name := AllocRegio/name[AllocRegio_rel];
+		parameter<string> AllocRegio_path := AllocRegio/path[AllocRegio_rel];
+		
+		unit<uint32> RegioUnit := = AllocRegio_path
+		{
+			attribute<rdc_meter> geometry (poly) := =AllocRegio_path+'/geometry';
+			attribute<.>          per_TigrisXLSrcRegio (PrivData/Claims/WonenEnWerken/SrcRegio) := point_in_polygon(PrivData/Claims/WonenEnWerken/SrcRegio/centroid, geometry);
+			attribute<.>          per_Bevolkingskern_2011 (RegioIndelingen/Bevolkingskern_2011) := point_in_polygon(centroid_or_mid(RegioIndelingen/Bevolkingskern_2011/geometry), geometry);
+			
+			attribute<bool> Is300kPlusRegio := any(RegioIndelingen/Bevolkingskern_2011/isMeerdan300Kinw, per_Bevolkingskern_2011);
+			attribute<bool> Is75kPlusRegio  := any(RegioIndelingen/Bevolkingskern_2011/isMeerdan75Kinw, per_Bevolkingskern_2011) && !Is300kPlusRegio;
+			attribute<bool> Is50kPlusRegio  := any(RegioIndelingen/Bevolkingskern_2011/isMeerdan50Kinw, per_Bevolkingskern_2011) && !(Is75kPlusRegio || Is300kPlusRegio);
+			attribute<bool> IsRestRegio     := !(Is300kPlusRegio || Is75kPlusRegio || Is50kPlusRegio);
+		}
+		
+		unit<uint32> RegioUnit_Verblijfsrecreatie := = 'Regioindelingen/CBS/Last/'+VariantParameters/Recreatie_AllocRegio_name;
+		
+		parameter<string> CalcStr := 'sum(src/'+Zichtjaar_name+'/@X@/'+Scenario_name+'/'+Variant_name+'/Results/@Y@, RegioUnit/per_TigrisXLSrcRegio)';
+
+		container Read_Wonen_WP2xVSSH_FSS
+		: StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/WP2xVSSH_Proxy/'+AllocRegio_name+'/'+/ModelParameters/StudyArea+'.fss'"
+		, StorageReadOnly = "true"
+		{
+			attribute<Woning> eengezins_VrijeSector_Proxy  (RegioUnit);
+			attribute<Woning> eengezins_SocialeHuur_Proxy  (RegioUnit);
+			attribute<Woning> meergezins_VrijeSector_Proxy (RegioUnit);
+			attribute<Woning> meergezins_SocialeHuur_Proxy (RegioUnit);
+			attribute<Woning> eengezins_Proxy              (RegioUnit);
+			attribute<Woning> meergezins_Proxy             (RegioUnit);
+			
+			attribute<Woning> eengezins_VrijeSector (RegioUnit) := Read_Wonen_CSV/eengezins  * eengezins_VrijeSector_Proxy  / eengezins_Proxy;
+			attribute<Woning> eengezins_SocialeHuur (RegioUnit) := Read_Wonen_CSV/eengezins  * eengezins_SocialeHuur_Proxy  / eengezins_Proxy;
+			attribute<Woning> meergezins_VrijeSector(RegioUnit) := Read_Wonen_CSV/meergezins * meergezins_VrijeSector_Proxy / meergezins_Proxy;
+			attribute<Woning> meergezins_SocialeHuur(RegioUnit) := Read_Wonen_CSV/meergezins * meergezins_SocialeHuur_Proxy / meergezins_Proxy;
+		}
+
+			
+		container Wonen := Read_Wonen_WP2xVSSH_FSS
+		{
+			attribute<Woning> Totaal (RegioUnit) := ='add('+AsList(WP2xVSSH/name,',')+')';
+		}		
+		
+		container Werken := Read_werken_CSV;
+		
+		#include<Verblijfsrecreatie.dms> //claim berekening
+		
+		container Verblijfsrecreatie := 
+			for_each_nedv(
+				VerblijfsrecreatieK/name
+				,'Verblijfsrecreatie_prep/Per_AllocRegio/'+AllocRegio_name+'/Zichtjaren/'+Zichtjaar_name+'/PerRegioUnit/Zichtjaar_Objecten'
+				, RegioUnit
+				, Verblijfsobject
+			);  
+
+		container Wind
+		{
+			parameter<string> Variant := = 'VariantParameters/VariantK/RegEnergieVerdelingWind[VariantParameters/VariantK/V/'+Variant_name+']';
+			attribute<bool> RegioUnitSub_Condition (RegioUnit) := = RegioUnit/HeeftBuitengebied ? 'id(RegioUnit) <> RegioUnit/V/Buitengebied' : 'IsDefined(id(RegioUnit))';
+			
+			unit<uint32> RegioUnitSub := select_with_attr_by_cond(RegioUnit, RegioUnitSub_Condition)
+			{
+				attribute<.> per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+				attribute<.> per_CompactedAdminDomain (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, per_AdminDomain);
+			}
+			
+			container Nationaal
+			{
+				container Beleid
+				{
+					unit<uint8> EK :=  ModelParameters/Wind/Claims;
+					unit<uint8> Zichtjaar := Time/Zichtjaar
+					{
+						attribute<GW> OpLandOfBinnenwater := rjoin(YearRange_rel, EK/Jaar, EK/OpLandOfBinnenwater);
+						attribute<GW> OpLandOfBinnenwater_Hoog := rjoin(YearRange_rel, EK/Jaar, EK/OpLandOfBinnenwater_Hoog);
+					}
+				}
+				
+				container DitScenario
+				{
+					container Totaal
+					{
+						parameter<GW> Y2030 := min_elem(Y2060, Beleid/EK/OpLandOfBinnenwater[Beleid/EK/v/Y2030]);
+						parameter<GW> Y2040 := Y2030 + ((Y2060 - Y2030) / 3f);
+						parameter<GW> Y2050 := Y2040 + ((Y2060 - Y2030) / 3f);
+						parameter<GW> Y2060 := = 'VariantParameters/VariantK/NationaalVermogenWindOpLandEnBinnenwater2060[VariantParameters/VariantK/V/'+Variant_name+']';
+					}
+					
+					unit<uint8> EK := Beleid/EK
+					{
+						attribute<GW> OpLandOfBinnenwater := union_data(., DitScenario/Totaal/Y2030, DitScenario/Totaal/Y2040, DitScenario/Totaal/Y2050, DitScenario/Totaal/Y2060);
+					}
+					
+					unit<uint8> Zichtjaar := Beleid/Zichtjaar
+					{
+						attribute<GW> OpLandOfBinnenwater := rjoin(YearRange_rel, EK/Jaar, EK/OpLandOfBinnenwater);
+					}
+				}
+			}
+			
+			container Regionaal
+			{
+				attribute<MW> Evenredig (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] * const(1[float32] / #RegioUnitSub[float32], RegioUnitSub))[MW]';
+				attribute<MW> Ruimte    (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] 
+																	* (sum_uint32(VariantData/Zeef/'+Zichtjaar_name+'/SectorXSubsectoren/Wind/Totaal/IsBeschikbaar, RegioUnitSub/per_CompactedAdminDomain)[float32] 
+																		/ sum(sum_uint32(VariantData/Zeef/'+Zichtjaar_name+'/SectorXSubsectoren/Wind/Totaal/IsBeschikbaar, RegioUnitSub/per_CompactedAdminDomain)[float32])))[MW]';
+				attribute<MW> Vraag     (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] * (sum(BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32] / sum(sum(BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32])[float32]))[MW]';
+			}
+			
+			attribute<MW> Totaal (RegioUnit) := = 'recollect_by_cond(RegioUnitSub_Condition, Regionaal/'+Variant+')';
+		}
+		
+		container Zon
+		{
+			parameter<string> Variant := = 'VariantParameters/VariantK/RegionaleVerdelingZon[VariantParameters/VariantK/V/'+Variant_name+']';
+			
+			attribute<bool> RegioUnitSub_Condition (RegioUnit) := = RegioUnit/HeeftBuitengebied ? 'id(RegioUnit) <> RegioUnit/V/Buitengebied' : 'IsDefined(id(RegioUnit))';
+			
+			unit<uint32> RegioUnitSub := select_with_attr_by_cond(RegioUnit, RegioUnitSub_Condition)
+			{
+				attribute<.> per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+			}
+			
+			container Nationaal
+			{
+				parameter<TWh> Vermogen2030 := /ModelParameters/Zon/NationaalVermogenZon2030;
+				parameter<TWh> Vermogen2040 := Vermogen2030 + ((Vermogen2060 - Vermogen2030) / 3f);
+				parameter<TWh> Vermogen2050 := Vermogen2040 + ((Vermogen2060 - Vermogen2030) / 3f);
+				parameter<TWh> Vermogen2060 := = '/VariantParameters/VariantK/NationaalVermogenZon2060[/VariantParameters/VariantK/V/'+/Variant_name+']';
+				
+				unit<uint8> Zichtjaar := Time/Zichtjaar
+				{
+					attribute<TWh> Src := ='union_data(., '+AsItemList('Vermogen'+string(Time/Zichtjaar/YearRange_rel))+')';
+					attribute<GW> Resultaat := Src[GWh] / ModelParameters/Zon/vollasturen_zonnepaneel;
+				}
+			}
+			
+			container Regionaal
+			{
+				attribute<MW> Evenredig (RegioUnitSub) := = '((Nationaal/Zichtjaar/Resultaat[id])[MW] * const(1[float32] / #RegioUnitSub[float32], RegioUnitSub))[MW]';
+				attribute<MW> Ruimte    (RegioUnitSub) := = '((Nationaal/Zichtjaar/Resultaat[id])[MW] 
+																* (
+																	sum_uint32(
+																		VariantData/Zeef/'+Zichtjaar_name+'/SectorXSubsectoren/Zon/Totaal/IsBeschikbaar
+																		, collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain , RegioUnitSub/per_AdminDomain ) 
+																	)[float32] 
+																	/ 
+																	sum(
+																		sum_uint32(
+																			VariantData/Zeef/'+Zichtjaar_name+'/SectorXSubsectoren/Zon/Totaal/IsBeschikbaar
+																			, collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain , RegioUnitSub/per_AdminDomain )
+																		)[float32]
+																	)
+																  )
+																)[MW]';
+				attribute<MW> Vraag     (RegioUnitSub) := = '((Nationaal/Zichtjaar/Resultaat[id])[MW] * (sum(BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32] / sum(sum(BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32])[float32]))[MW]';
+			}
+			
+			attribute<MW> Totaal (RegioUnit) := = 'recollect_by_cond(RegioUnitSub_Condition, Regionaal/'+Variant+')';
+		}
+		
+		container Landbouw
+		{
+			attribute<bool> ExogeenOpleggen (CompactedAdminDomain) := IsDefined(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, VariantData/ExogeenOpleggen/Totaal));
+			
+			container StartYear := 
+				for_each_nedv(
+					  Actor/LandbouwK/name
+					, VariantK/ExogeenOpleggen[/variant_rel]
+						? 'sum(float32(NOT(ExogeenOpleggen)) * VariantData/StateBasisjaar/Landbouw/'+Actor/LandbouwK/name+', RegioUnit/per_CompactedAdminDomain)'
+						: 'sum(/VariantData/StateBasisjaar/Landbouw/'+Actor/LandbouwK/name+', RegioUnit/per_CompactedAdminDomain)'
+					, RegioUnit
+					, ha
+				);
+				
+			container StartYear_minusNietBeschikbaar := 
+				for_each_nedv(
+					  Actor/LandbouwK/name
+					, VariantK/ExogeenOpleggen[/variant_rel]
+						? 'sum(float32(NOT(ExogeenOpleggen)) * float32(VariantData/Zeef/Basisjaar/Landbouw/Rietteelt/Beschikbaar) * VariantData/StateBasisjaar/Landbouw/'+Actor/LandbouwK/name+', RegioUnit/per_CompactedAdminDomain)'
+						: 'sum(float32(VariantData/Zeef/Basisjaar/Landbouw/Rietteelt/Beschikbaar) * VariantData/StateBasisjaar/Landbouw/'+Actor/LandbouwK/name+', RegioUnit/per_CompactedAdminDomain)'
+					, RegioUnit
+					, ha
+				);
+			
+			container Maxclaims_Defined := 
+				for_each_nedv(
+					  Actor/LandbouwK/name
+					, 'StartYear/'+Actor/LandbouwK/name+' * (1f + ModelParameters/Landbouw/Landbouw_Claim_Growth)'
+					, RegioUnit
+					, ha
+				)
+			{
+				attribute<Ha> NonLandbouw (RegioUnit) := area(RegioUnit/geometry, meter2)[ha];
+			}
+			
+			container Maxclaims_Undefined := 
+				for_each_nedv(
+					  Actor/LandbouwK/name
+					, 'const(null_f, RegioUnit, ha)'
+					, RegioUnit
+					, ha
+				);
+			
+			container Minclaims_Defined0 := 
+				for_each_nedv(
+					  Actor/LandbouwK/name
+					, 'StartYear/'+Actor/LandbouwK/name+' * (1f - ModelParameters/Landbouw/Landbouw_Claim_Growth)'
+					, RegioUnit
+					, ha
+				);
+			
+			container Minclaims_Defined := 
+				for_each_nedv(
+					  Actor/LandbouwK/name
+					, Actor/LandbouwK/name == 'NonLandbouw' ? 'const(0[ha], RegioUnit)' : 'Minclaims_Defined0/'+Actor/LandbouwK/name
+					, RegioUnit
+					, ha
+				);
+			
+			container minclaims_zero := 
+				for_each_nedv(
+					  Actor/LandbouwK/name
+					, 'const(0[ha], RegioUnit, ha)'
+					, RegioUnit
+					, ha
+				);
+			
+			container minclaims_manual :=
+				for_each_nedv(
+					Actor/LandbouwK/name
+					, '=ModelParameters/Landbouw/'+/VariantParameters/VariantK/Claim_agrarisch_variant[Variant_rel]+'/minclaims_manual/'+Actor/LandbouwK/name
+					, RegioUnit
+					, ha
+				)
+			{
+				attribute<ha> NonLandbouw (RegioUnit) := const(0[ha], RegioUnit, ha);
+			}
+
+			container maxclaims_manual :=
+				for_each_nedv(
+					Actor/LandbouwK/name
+					, '=ModelParameters/Landbouw/'+/VariantParameters/VariantK/Claim_agrarisch_variant[Variant_rel]+'/maxclaims_manual/'+Actor/LandbouwK/name+''
+					, RegioUnit
+					, ha
+				)
+			{
+				attribute<Ha> NonLandbouw (RegioUnit) := area(RegioUnit/geometry, meter2)[ha] + 1000[ha];
+			}
+			
+		
+			container maxclaims := =ModelParameters/Landbouw/ClaimVariant == 'Manual' 
+										? 'maxclaims_manual' 
+										: ModelParameters/Landbouw/ClaimVariant == 'ConstGrowthMinMax'
+											? 'Maxclaims_Defined' 
+											: 'Maxclaims_Undefined';
+			
+			container minclaims := =ModelParameters/Landbouw/ClaimVariant == 'Manual' 
+										? 'minclaims_manual' 
+										: ModelParameters/Landbouw/ClaimVariant == 'ConstGrowthMinMax'
+											? 'Minclaims_Defined' 
+											: 'minclaims_zero';
+		}
+		
+		parameter<String> ClaimDir   := '%RSo_DataDir%/Claims/TXL_'+ModelParameters/TIGRIS_Filedate;
+		parameter<string> File_csv_name   := ClaimDir +'/'+/Scenario_name+'/'+/Variant_name+'/'+zichtjaar_name+'/'+AllocRegio_name;
+		
+		container Read_Wonen_CSV :=
+		for_each_ndv(
+				WP2/name
+				, RegioUnit
+				, Woning
+			), StorageName = "=File_csv_name+'/Wonen.csv'", StorageType = "gdal.vect", StorageReadOnly = "true";
+		
+		container Read_Werken_CSV :=
+		for_each_ndv(
+				Jobs6/name
+				, RegioUnit
+				, job
+			), StorageName = "=File_csv_name+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "true"
+		{
+			attribute<job> Totaal   (RegioUnit) := ='add('+AsList(Jobs6/name,',')+')';
+		}
+	}
+}
