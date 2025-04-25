@@ -1,30 +1,39 @@
 container ZorgvuldigInpassen
 {
-	container LangsInfraWerken //wegbermen, dijktaluds.
+	container LangsInfraWerken
+	: Descr = "wegbermen, dijktaluds"
 	{
-		unit<uint32> UitBGT_bermen := subset(
-				SourceData/Grondgebruik/BGT/ReadCombine/visualisatiecode_rel == /Classifications/Grondgebruik/BGT/poly_type/V/ondersteunendwegdeel_berm ||
-				SourceData/Grondgebruik/BGT/ReadCombine/visualisatiecode_rel == /Classifications/Grondgebruik/BGT/poly_type/V/ondersteunendwegdeel_verkeerseiland
+		// TODO: met dynapoint en point_in_polygon relevante bermen selecteren.
+		unit<uint32> UitBGT_bermen := select_with_org_rel(
+				SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/visualisatiecode_rel == /Classifications/Grondgebruik/BGT/Classes/V/ondersteunendwegdeel_berm ||
+				SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/visualisatiecode_rel == /Classifications/Grondgebruik/BGT/Classes/V/ondersteunendwegdeel_verkeerseiland
 			)
 		{
-			attribute<rdc_meter> geometry (poly) := /SourceData/Grondgebruik/BGT/ReadCombine/geometry[nr_OrgEntity];
+			attribute<rdc_meter> geometry (poly) := SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/geometry[org_rel];
 			
 			parameter<LadderTreden> Laddertrede_rel := LadderTreden/V/wegbermen[LadderTreden];
 			parameter<float32> fractie := LadderTreden/fractie[float32][LadderTreden/V/wegbermen];
+			attribute<meter2>    area               := area(geometry, meter2);
+			attribute<rdc_meter> centroid           := centroid_or_mid(geometry);
+			attribute<uint32>    bebouwde_kom_rel   := point_in_polygon(centroid, SourceData/RegioIndelingen/Bevolkingskern_2011/Geometry);
 			
+			unit<uint32> buitenbebouwdekom := select_with_org_rel(!IsDefined(bebouwde_kom_rel) && area >= minimale_opp_berm)
+			{
+				attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
+			}
+				
 			container per_tile := for_each_ne(
 				geography/TileDomain/name,
-				'Templates/ProcessTilesT('+quote(geography/TileDomain/name)+', UitBGT_bermen, minimale_opp_berm)'
+				'Templates/Zonneladder_ProcessTilesT('+quote(geography/TileDomain/name)+', UitBGT_bermen/buitenbebouwdekom, minimale_opp_berm)'
 			);
 			
-			unit<uint32> union_domain := ='union_unit('+AsItemList('per_tile/'+geography/TileDomain/name+'/Tile_selection/target_geom_in_tile/buitenbebouwdekom/Multi_to_singlepart_polygons')+')'
+			unit<uint32> union_domain := ='union_unit('+AsItemList('per_tile/'+geography/TileDomain/name+'/Tile_selection/target_geom_in_tile/Multi_to_singlepart_polygons')+')'
 			{
-				attribute<rdc_mm_i32> geometry (poly) := ='union_data(.,'+AsItemList('per_tile/'+geography/TileDomain/name+'/Tile_selection/target_geom_in_tile/buitenbebouwdekom/Multi_to_singlepart_polygons/geometry')+')';
-				attribute<rdc_meter> geometry_rd (poly) := geometry[rdc_meter];
+				attribute<rdc_meter> geometry (poly) := ='union_data(.,'+AsItemList('per_tile/'+geography/TileDomain/name+'/Tile_selection/target_geom_in_tile/Multi_to_singlepart_polygons/geometry[rdc_meter]')+')';
 				
-				container Union := Templates/UnionT(., geometry[rdc_meter], Laddertrede_rel);
+				container Union := Templates/Zonneladder_Union_T(., geometry, Laddertrede_rel);
 				
-				attribute<meter2> Nrmeter2_max := area(geometry_rd, meter2);
+				attribute<meter2> Nrmeter2_max := area(geometry, meter2);
 				attribute<meter2> Nrmeter2 := Nrmeter2_max * fractie;
 			}
 		}
@@ -36,16 +45,17 @@ container ZorgvuldigInpassen
 		parameter<GW> Potentieel_gegenereerd_vermogen_hoog := (Totaal_opp / 10000[meter2 / ha]) * Vermogen_ha_hoog / 1000[MW / GW];
 	}
 	
-	container IndustrielePlassen // bijvoorbeeld operatieve zandwinplassen
+	container IndustrielePlassen 
+	: Descr = "bijvoorbeeld operatieve zandwinplassen"
 	{
 		parameter<LadderTreden> Laddertrede_rel := LadderTreden/V/IndustrielePlassen[LadderTreden];
 		parameter<float32> fractie := LadderTreden/fractie[float32][LadderTreden/V/IndustrielePlassen];
 		
-		unit<uint32>  UitBBG_watermetdelfstoffen := ='subset(/SourceData/Grondgebruik/BBG/BBG_Reeks_1996_2017/CBSKlasse_rel_'+ModelParameters/BBG_Year+' == /Classifications/Grondgebruik/CBSKlasse/V/water_met_delfstofwinningsfunctie)'
+		unit<uint32>  UitBBG_watermetdelfstoffen := ='select_with_org_rel(SourceData/Grondgebruik/BBG/'+BBG_Bron+'/CBSKlasse_rel_'+ModelParameters/BBG_Year+' == /Classifications/Grondgebruik/CBSKlasse/V/water_met_delfstofwinningsfunctie)'
 		{
-			attribute<rdc_meter> geometry_rd (poly) := /SourceData/Grondgebruik/BBG/BBG_Reeks_1996_2017/Geometry[nr_OrgEntity];
+			attribute<rdc_meter> geometry_rd (poly) := ='SourceData/Grondgebruik/BBG/'+BBG_Bron+'/Geometry_simpl[org_rel]';
 			
-			container Union := Templates/UnionT(., geometry_rd, Laddertrede_rel);
+			container Union := Templates/Zonneladder_Union_T(., geometry_rd, Laddertrede_rel);
 			
 			attribute<meter2> Nrmeter2_max (union/unioned_domain) := area(Union/unioned_geometry, meter2);
 			attribute<meter2> Nrmeter2 (union/unioned_domain) := Nrmeter2_max * fractie;

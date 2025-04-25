@@ -1,0 +1,72 @@
+container Werken : using = "SourceData/Actoren/Banen;Classifications/Grondgebruik;Classifications/Actor"
+{
+	container ProbabilityMap_perSector := for_each_ne(TXLJobs6/name, 'MakeProbabilityMapT('+quote(TXLJobs6/name)+')');
+	
+	container MaxElemKaart
+	{
+		attribute<TXLJobs6> ArgMax (AllocDomain) := ='argmax('+AsItemList('ProbabilityMap_perSector/'+TXLJobs6/name+'/exponentiated')+')[TXLJobs6]';
+		attribute<TXLJobs6> SndBest(AllocDomain) := ='argmax('+AsItemList('ArgMax = TXLJobs6/V/'+TXLJobs6/Name+'? -9999f: ProbabilityMap_perSector/'+TXLJobs6/name+'/exponentiated')+')[TXLJobs6]';
+	}
+	
+	container ReadCoefficients := for_each_ne(TXLJobs6/name, 'ReadCoefficientsT('+quote(TXLJobs6/name)+',''20220401'','''')');
+
+	Template MakeProbabilityMapT
+	{
+		parameter<string> SectorName;
+		
+		attribute<float32> raw (AllocDomain):= = 'MakeDefined(
+			ReadCoefficients/'+SectorName+'/Result/constant
+			+ log(Diversen/per_AllocDomain/DistTo_CargoAir / 1[km])                    * ReadCoefficients/'+SectorName+'/Result/lndistto_cargoair_km 
+			+ log(Diversen/per_AllocDomain/DistTo_highway_acces_exit_2018 / 1[km])     * ReadCoefficients/'+SectorName+'/Result/lndist_highway_km_2018 
+			+ log(Diversen/per_AllocDomain/DistTo_Zeehavens_2019 / 1[km])              * ReadCoefficients/'+SectorName+'/Result/lndist_seaport_km_2019 
+			+ log(Diversen/per_AllocDomain/DistTo_Trainstation_2019 / 1[km])           * ReadCoefficients/'+SectorName+'/Result/lndist_train_km_2019 
+			+ log(Diversen/per_AllocDomain/tt_100kinhab_min_2017 / 1[min])             * ReadCoefficients/'+SectorName+'/Result/ln_tt_100kinhab_min_2017 
+			+ log(Diversen/per_AllocDomain/Hedonic_landprice_2007 / 1[eur_m2])         * ReadCoefficients/'+SectorName+'/Result/lnlandprice 
+			+ log(Diversen/per_AllocDomain/DistTo_Urban_Contour_2000 / 1[km])          * ReadCoefficients/'+SectorName+'/Result/lndist_urbancontour_km_2000 
+			
+			+ Diversen/per_AllocDomain/UAI_2018                                        * ReadCoefficients/'+SectorName+'/Result/uai_2018 
+			+ Diversen/per_AllocDomain/lu_share_unavailable                            * ReadCoefficients/'+SectorName+'/Result/lu_share_unavailable_2012
+			+ Diversen/per_AllocDomain/lu_share_construction                           * ReadCoefficients/'+SectorName+'/Result/lu_share_construction_2012
+			+ Diversen/per_AllocDomain/lu_share_nature                                 * ReadCoefficients/'+SectorName+'/Result/lu_share_nature_2012
+			+ Diversen/per_AllocDomain/lu_share_residential                            * ReadCoefficients/'+SectorName+'/Result/lu_share_residential_2012
+			+ Diversen/per_AllocDomain/Avg_shr_LUtype_neigh_1000r_otherbuiltup         * ReadCoefficients/'+SectorName+'/Result/avgshr_LU12_ngh_1000r_otherbu
+			,0f
+		)';
+		
+		attribute<float32> noemer        (AllocDomain):= ='1f + '+AsList('exp(ProbabilityMap_perSector/'+TXLJobs6/name+'/raw)',' + ');
+		attribute<float32> exponentiated (AllocDomain):= exp(raw) / noemer;
+	}
+	
+	Template ReadCoefficientsT
+	{
+		parameter<string> SectorName;
+		parameter<string> Datum;
+		parameter<string> VariantName;
+		
+		unit<uint32> domain
+		:  StorageName = "='%RSo_DataDir%/Vastgoed/logitcoeff_mlogit_devtype_'+Datum+'.csv'"
+		,  StorageType = "gdal.vect"
+		,  StorageReadOnly = "True" 
+		{
+			attribute<string> parm;
+			attribute<bool>   IsFE := substr(parm, strlen(parm) - 5, strlen(parm)) == '.prov';
+			attribute<string> parm1 := IsFE ? 'p'+parm : parm;
+			attribute<string> name := replace(parm1, 'construction', 'buildingsite', '_cons', 'constant', 'buildingsite', 'construction', 'o.', '', ' ', '_','-','','.','');
+		}
+		
+		unit<uint32> sector_subset := select_with_org_rel(lowercase(domain/eq) == lowercase(SectorName))
+		{
+			attribute<string>  name     := domain/name[org_rel];
+			attribute<float32> estimate := domain/estimate[org_rel][float32];
+			attribute<float32> p        := domain/p[org_rel][float32];
+		}
+		
+		container Result := 
+			for_each_nedv(
+				sector_subset/name
+				,'rjoin(rlookup('+quote(sector_subset/name)+', sector_subset/name), id(sector_subset), sector_subset/estimate)[float32]'
+				, void
+				, float32
+			);
+	}
+}

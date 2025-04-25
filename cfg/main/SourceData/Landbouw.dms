@@ -1,0 +1,554 @@
+container Landbouw : using = "Classifications/Landbouw"
+{
+	container WUR_Kansenkaarten
+	{
+		container Kansenkaarten := 
+			for_each_nedv(
+				Exotische_GewasSoort/name
+				, 'Read_gpkg/'+Exotische_GewasSoort/name+'/Kansenkaart/Totaalscore_value_25m'
+				, rdc_25m
+				, float32
+			)
+		{
+			attribute<Exotische_GewasSoort> ArgMax (rdc_25m) := ='argmax_ifdefined('+AsItemList(Exotische_GewasSoort/name)+')[Exotische_GewasSoort]';
+		}
+		
+		container Read_gpkg := 
+			for_each_ne(
+				Exotische_GewasSoort/name
+				, 'Read_gpkg_T('+quote(Exotische_GewasSoort/name)+',/Variant_name)'
+			);
+		
+		Template Read_gpkg_T
+		{
+			parameter<string> gewas_name;
+			parameter<string> variant;
+			
+			unit<uint32> Kansenkaart 
+			: StorageName = "='%RVF_DataDir%/WUR_Kansenkaarten/'+VariantParameters/VariantK/name[/Variant_rel]+' 2050/'+gewas_name+'.gpkg'"
+			, StorageType = "gdal.vect"
+			, StorageReadOnly = "true"
+			, DialogData = "rdc_meter"
+			{
+				attribute<uint8>   Bodemgeschiktheid_value            := uint8(replace(Bodemsgeschiktheid, '<no value>', ''));
+				attribute<float32> Bodemscore_value                   := float32(replace(Bodemscore, '#VALUE!', ''));
+				attribute<float32> Totaalscore_value                  := float32(replace(Totaalscore, '#VALUE!', ''));
+				
+				attribute<float32> Totaalscore_value_250m  (rdc_250m) := Totaalscore_value[rdc_250m_rel];
+				attribute<float32> Totaalscore_value_25m    (rdc_25m) := Totaalscore_value[rdc_25m_rel];
+				attribute<float32> Totaalscore_value_100m  (rdc_100m) := mean(Totaalscore_value_25m, rdc_25m/rdc_100m_rel);
+				
+				attribute<.>       rdc_25m_rel              (rdc_25m) := poly2grid(geometry, rdc_25m);
+				attribute<.>       rdc_250m_rel            (rdc_250m) := poly2grid(geometry, rdc_250m);
+			}
+		}
+	}
+	
+	unit<uint8> Verzilting_Risico_IndexK := cat_range(0b, 5b)
+	{
+		attribute<string> Label      : ['Kleiner risico','Nagenoeg gelijk risico','Enig groter risico','Matig groter risico','Aanzienlijk groter risico'];
+		attribute<uint32> BrushColor : [rgb(0, 0, 255),rgb(192, 192, 192),rgb(255, 223, 223),rgb(255, 79, 79),rgb(191, 0, 0)], DialogType = "BrushColor";
+	}
+	
+	attribute<Verzilting_Risico_IndexK> Verzilting_Risico_Index (rdc_25m)
+	:	StorageName     = "='%RVF_DataDir%/Verzilting/Index_landbouw_'+VariantParameters/VariantK/VerziltingsScenario[/Variant_rel]+'.tif'" 
+	,	StorageType     = "gdal.grid"
+	,	StorageReadOnly = "true"
+	,	Descr           = "0: Kleiner risico, 1: Nagenoeg gelijk risico, 2: Enig groter risico, 3: Matig groter risico, 4: Aanzienlijk groter risico"
+	,	Source          = "Ontvangen van Janneke Pouwels (Deltares) op 7 november 2024";
+	
+	attribute<bool>                     TeveelVerzilting    (rdc_25m) := Verzilting_Risico_Index >= 2[Verzilting_Risico_IndexK];
+	// attribute<bool>                     TeveelVerzilting       (rdc_100m) := sum_uint32(TeveelVerzilting_25m, rdc_25m/rdc_100m_rel) >= 8;
+	attribute<float32>                  RandomValues           (rdc_25m) := rnd_uniform(0, rdc_25m, range(float32, 0f, 1f)) * float32(TeveelVerzilting);
+	attribute<float32>                  ClusterRandomValues    (rdc_25m) := potential(RandomValues, /Geography/Distmatrices_25m/pot1000m/rev_dist_scaled) / 100f;
+	attribute<float32>                  a                      (rdc_25m) := 1f - ClusterRandomValues;
+	parameter<uint32>                   n                                 := uint32(sum(float32(TeveelVerzilting) * ModelParameters/Landbouw/Verzilt_Areaal_Fractie));
+	parameter<float32>                  zaaglijn                          := nth_element(a, n); 
+	attribute<bool>                     AangetastVerziltGebied (rdc_25m) := a <= zaaglijn; 
+
+	container Beleidsrestricties
+	{
+		attribute<uint32> Beregening_src (rdc_25m)
+		:	StorageName     = "%RVF_DataDir%/Beleidsristr_beregening/BEREGEN.asc"
+		,	StorageType     = "gdal.grid"
+		,	StorageReadOnly = "true"
+		,	Descr           = "0 = geen beregening, 1 en 2 = beregening (uit grond- en oppervlaktewater)"
+		,	Source          = "Ontvangen van Janneke Pouwels (Deltares) op 16 juli 2024";
+		attribute<bool>   Beregening (rdc_25m) := Beregening_src == 0 ? FALSE : TRUE;
+	
+		container Habitat_Typen
+		: 	StorageName = "%RVF_DataDir%/Beleidsristr_Habitattypen/H-T0.gpkg"
+		,	StorageType = "gdal.vect"
+		,	SyncMode    = "AllTables";
+	}
+
+	attribute<bool> Bruinrot (rdc_25m)
+	:	StorageName     = "%RVF_DataDir%/Geschiktheid_bruinrot/bruinrot.asc"
+	,	StorageType     = "gdal.grid"
+	, 	StorageReadOnly = "true"
+	,	Descr           = ""
+	,	Source          = "Ontvangen van Janneke Pouwels (Deltares) op 16 juli 2024";
+
+	attribute<VoederCategorie> Voedergewas_categorie_2014_import (rdc_25m)
+	:	Descr       = "gewassen 6 categorieën"
+	,	Source      = "Aanlevering LEI op 10 april 2015 Tom Kuhlman"
+					  "BRP en de landbouwtelling van 2014 "
+	,	url         = "%RVF_DataDir%/voedergew2014.txt"
+	,	StorageName = "%RVF_DataDir%/voedergew2014_categorie.tif";
+	
+	attribute<VoederCategorie> Voedergewas_categorie_2014 (rdc_25m):= makedefined(voedergewas_categorie_2014_import, 4[VoederCategorie]);
+
+	attribute<VoederGewas> voedergewas_gewas_2014 (rdc_100m)
+	:	Descr       = "6 gewassoorten"
+	,	Source      = "Aanlevering LEI op 10 april 2015 Tom Kuhlman BRP en de landbouwtelling van 2014 "
+	,	url         = "%RVF_DataDir%/voedergew2014.txt"
+	,	StorageName = "%RVF_DataDir%/voedergew2014_gws_gewas.tif";
+	
+	container Yield_Reduction
+	{
+		container WWL_WBS := 
+			for_each_ndva(
+				WWL_GewasSoort/name
+				, rdc_25m
+				, float32
+				, '%RVF_DataDir%/WWL_opbrengstderving/WBS/'+WWL_GewasSoort/name+'/dmgtot-Wh-2036-2065.tif'
+			);
+		container WWL_BAU :=  
+			for_each_ndva(
+				WWL_GewasSoort/name
+				, rdc_25m
+				, float32
+				, '%RVF_DataDir%/WWL_opbrengstderving/BAU/'+WWL_GewasSoort/name+'/dmgtot-Wh-2036-2065.tif'
+			);
+
+		container PeatyMeadows
+		{
+			container Import
+			{
+				attribute<Float32> yr_grass (rdc_100m):
+					Descr = "Yield reduction grassland (0-100%)",
+					Label = "Yield reduction grassland",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_grass.tif";
+				
+				attribute<Float32> yr_grass_reseed (rdc_100m):
+					Descr = "Yield reduction grass with reseeding (0-100%)",
+					Label = "Yield reduction grass with reseeding",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_grass_reseed.tif";
+			
+				attribute<Float32> yr_flowers (rdc_100m):
+					Descr = "Yield reduction flowers (0-100%)",
+					Label = "Yield reduction flowers",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_flowers.tif";
+				
+				attribute<Float32> yr_fruits_berry (rdc_100m):
+					Descr = "Yield reduction berry fruits (0-100%)",
+					Label = "Yield reduction berry fruits",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_fruits_berry.tif";
+			
+				attribute<Float32> yr_fruits_tree (rdc_100m):
+					Descr = "Yield reduction tree fruits (0-100%)",
+					Label = "Yield reduction tree fruits",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_fruits_tree.tif";
+			
+				attribute<Float32> yr_grains (rdc_100m):
+					Descr = "Yield reduction grains (0-100%)",
+					Label = "Yield reduction grains",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_grains.tif";
+				
+				attribute<Float32> yr_maize (rdc_100m):
+					Descr = "Yield reduction maize (0-100%)",
+					Label = "Yield reduction maize",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_maize.tif";
+			
+				attribute<Float32> yr_potatoes (rdc_100m):
+					Descr = "Yield reduction potatoes (0-100%)",
+					Label = "Yield reduction potatoes",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_potatoes.tif";
+			
+				attribute<Float32> yr_sugarbeet (rdc_100m):
+					Descr = "Yield reduction sugarbeet (0-100%)",
+					Label = "Yield reduction sugarbeet",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_sugarbeet.tif";
+			
+				attribute<Float32> yr_tree_nursery (rdc_100m):
+					Descr = "Yield reduction tree nursery (0-100%)",
+					Label = "Yield reduction tree nursery",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_tree_nursery.tif";
+					
+				attribute<Float32> yr_tree_nursery_other (rdc_100m):
+					Descr = "Yield reduction tree nursery, other trees (0-100%)",
+					Label = "Yield reduction tree nursery, other trees",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_tree_nursery_other.tif";
+					
+				attribute<Float32> yr_vegetables_leaf (rdc_100m):
+					Descr = "Yield reduction leaf vegetables (0-100%)",
+					Label = "Yield reduction leaf vegetables",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_vegetables_leaf.tif";
+					
+				attribute<Float32> yr_vegetables_summer (rdc_100m):
+					Descr = "Yield reduction summer vegetables (0-100%)",
+					Label = "Yield reduction summer vegetables",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_vegetables_summer.tif";
+			
+				attribute<Float32> yr_vegetables_winter (rdc_100m):
+					Descr = "Yield reduction winter vegetables (0-100%)",
+					Label = "Yield reduction winter vegetables",
+					Source = "SPINlab, according to van Bakel et al,2005",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_vegetables_winter.tif";
+				
+				attribute<Float32> yr_miscanthus_reclass (rdc_100m):
+					Descr = "Yield reduction miscanthus (0-20)",
+					Label = "Yield reduction miscanthus reclass",
+					Source = "Utrecht University, Van der Hilst et al. 2010",
+					StorageName = "%RVF_DataDir%/Agriculture_PMeadowsVasco/yr_miscanthus.tif";
+			}
+			attribute<Ratio> Gras_zonder_herinzaai (rdc_100m) := import/yr_grass < 0f ? null_f : import/yr_grass;
+			attribute<Ratio> Gras_met_herinzaai    (rdc_100m) := import/yr_grass_reseed < 0f ? null_f : import/yr_grass_reseed;
+			attribute<Ratio> Granen                (rdc_100m) := import/yr_grains < 0f ? null_f : import/yr_grains;
+			attribute<Ratio> Grove_zomergroenten   (rdc_100m) := import/yr_vegetables_summer < 0f ? null_f : import/yr_vegetables_summer;
+			attribute<Ratio> Wintergroenten        (rdc_100m) := import/yr_vegetables_winter < 0f ? null_f : import/yr_vegetables_winter;
+			attribute<Ratio> Bladgroenten          (rdc_100m) := import/yr_vegetables_leaf < 0f ? null_f : import/yr_vegetables_leaf;
+			attribute<Ratio> Groot_fruit           (rdc_100m) := import/yr_fruits_tree < 0f ? null_f : import/yr_fruits_tree;
+			attribute<Ratio> Klein_fruit           (rdc_100m) := import/yr_fruits_berry < 0f ? null_f : import/yr_fruits_berry;
+			attribute<Ratio> boomteelt             (rdc_100m) := import/yr_tree_nursery < 0f ? null_f : import/yr_tree_nursery;
+			attribute<Ratio> Overig_boomteelt      (rdc_100m) := import/yr_tree_nursery_other < 0f ? null_f : import/yr_tree_nursery_other ;
+			attribute<Ratio> Rietteelt             (rdc_100m) := 5f * import/yr_miscanthus_reclass < 0f ? null_f : 5f * import/yr_miscanthus_reclass;
+		}
+	}
+	
+	attribute<StallenKlasse> StallenHoofdvestiging (rdc_25m)
+	:	Descr       = "Lokatie stallen hoofdvestiging Alterra 2008-Tom Kuhlman LEI"
+	,	Source       = "Alterra 2008"
+	,	StorageName = "%RVF_DataDir%/int_vee_hoofdvestiging_grootteklasse_nge_uint8.tif";
+
+	attribute<StallenKlasse> StallenNevenvestiging (rdc_25m)
+	:	Label       = "Lokatie stallen nevenvestiging Alterra 2008-Tom Kuhlman LEI"
+	,	url         = ""
+	,	Source       = "Alterra 2008"
+	,	StorageName = "%RVF_DataDir%/int_vee_nevenvestiging_grootteklasse_nge_uint8.tif";
+	
+	attribute<Classifications/Landbouw/HELPbodems> HELPbodemsNL (rdc_25m)
+	:	Label       = "HELPbodemsNL"
+	,	Source      = "Tom Kuhlman WUR-LEI 3 maart 2015"
+					  "vergridding met maximum combined area optie op HELP_nummer veld in HELPbodemsNL.shp"
+	,	url         = ""
+	,	StorageName = "%RVF_DataDir%/HELP_opbrengstderving/HELPbodemsNL_met_HELP_nummer_mca.tif";
+
+	attribute<bool> DD30_uit_droogleggingzomer_00 (rdc_25m)
+	:	Label       = "DD30_uit_droogleggingzomer_00"
+	,	Source      = "export van resultaat /BronDataSource/Phoenix/ModelResults/AnalysePeilgebieden/DroogleggingZomer_DD_deel/Nl/PINoDD/J000_ en verwerking in ArcGIS tot boolean-tif"
+					  "https:\//pbl.sliksvn.com/ruimtescanner/PBL/SourceData/Trunk/LUMOS revison 5012"
+					  "https:\//pbl.sliksvn.com/ruimtescanner/PBL/ProjDir/branches/PeatyMeadows_Stripped revision 5010"
+					  "geodms 7177x64"
+	,	url         = ""
+	,	StorageName = "%RVF_DataDir%/DD30_uit_droogleggingzomer_00.tif";
+
+	attribute<Classifications/Landbouw/BodemKlasse14k> Bodem_HELP1 (rdc_25m):
+		Label = "Soil map used to create yield reduction maps",
+		Source = "Michiel van Eupen 2010",
+		StorageName = "%RVF_DataDir%/Bodemtypenkaart/bodem_help.tif";
+
+	attribute<Classifications/Landbouw/BodemKlasse14k> Bodem_HELP             (rdc_25m) := MakeDefined(Bodem_HELP1, 0b);
+	attribute<bool>                                    Bodem_HELP_kleiig      (rdc_25m) := Bodem_HELP >= BodemKlasse14k/V/V_W && Bodem_HELP <= BodemKlasse14k/V/K5;
+	attribute<bool>                                    Bodem_HELP_zandig      (rdc_25m) := Bodem_HELP >= BodemKlasse14k/V/Z30 && Bodem_HELP <= BodemKlasse14k/V/Grind30;
+
+	container SOMERS 
+	{
+		unit<uint32> Datasheet 
+		: StorageName = "%ProjDir%/Data/SOMERS/SOMERS 2.0 Datasheet.csv"
+		, StorageType = "gdal.vect"
+		, StorageReadOnly = "true"
+		{ 
+			attribute<BodemK>                 BodemK_rel                 := rlookup(BodemType, BodemK/Label);
+			attribute<PerceelsbreedteK>       PerceelsbreedteK_rel       := rlookup(Perceelsbreedte_m_, PerceelsbreedteK/values);
+			attribute<WinterdroogleggingK>    WinterdroogleggingK_rel    := rlookup(Winterdrooglegging_m_tov_zomerdrooglegging_, WinterdroogleggingK/values);
+			attribute<ZomerdroogleggingK>     ZomerdroogleggingK_rel     := rlookup(Zomerdrooglegging_m_mv_, ZomerdroogleggingK/values);
+			attribute<WeerregioK>             WeerregioK_rel             := rlookup(Weerregio, WeerregioK/values);
+			attribute<KwelsituatieK>          KwelsituatieK_rel          := rlookup(Kwelsituatie_mm_d_, KwelsituatieK/values);
+			attribute<InfiltratieMaatregelK>  InfiltratieMaatregelK_rel  := rlookup(InfiltratieMaatregel, InfiltratieMaatregelK/values);
+			
+			attribute<CombinatieTabel>        CombinatieTabel_rel        := combine_data(CombinatieTabel, WeerregioK_rel, KwelsituatieK_rel, PerceelsbreedteK_rel, BodemK_rel, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		}
+		
+		unit<uint32> InfiltratieMaatregelK := unique(Datasheet/InfiltratieMaatregel)
+		{
+			attribute<string> name := AsItemName(values);
+			attribute<string> label := name;
+			container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+		}
+		
+		unit<uint32> KwelsituatieK := unique(Datasheet/Kwelsituatie_mm_d_)
+		{
+			attribute<string> name := AsItemName(replace(values, '<', 'lt', '>', 'gt', ' - ', '_','-0','min0'));
+			attribute<string> label := name;
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+			
+			attribute<float32> LB := switch(
+										 case(values == '< -0.8 mm/d', null_f)
+										,case(values == '-0.8 - -0.3 mm/d', -0.8f)
+										,case(values == '-0.3 - 0.3 mm/d', -0.3f)
+										,case(values == '0.3 - 0.8 mm/d', 0.3f)
+										,case(values == '> 0.8 mm/d', 0.8f)
+										, null_f);
+			attribute<float32> ClassBreaks := LB, DialogType = "Classification";
+		}
+		
+		unit<uint32> WeerregioK := unique(Datasheet/Weerregio)
+		{
+			attribute<string> name      := AsItemName(values);
+			attribute<string> name_engl := replace(name, 'Zuidwest', 'southwest', 'Noordoost', 'northeast');
+			attribute<string> label := name;
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+		}
+		
+		unit<uint32> ZomerdroogleggingK := unique(Datasheet/Zomerdrooglegging_m_mv_)
+		{
+			attribute<string> name := AsItemName(replace(values, ' - ', '_','-0','min0'));
+			attribute<string> label := name;
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+		}
+		
+		unit<uint32> WinterdroogleggingK := unique(Datasheet/Winterdrooglegging_m_tov_zomerdrooglegging_)
+		{
+			attribute<string> name := AsItemName(replace(values, ' - ', '_','-0','min0'));
+			attribute<string> label := name;
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+		}
+		
+		unit<uint32> PerceelsbreedteK := unique(Datasheet/Perceelsbreedte_m_)
+		{
+			attribute<string> name := AsItemName(replace(values, ' - ', '_','-0','min0'));
+			attribute<string> label := name;
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+			
+			attribute<float32> LB := switch(
+										 case(values == '0-30', 0f)
+										,case(values == '30-50', 30f)
+										,case(values == '50-75', 50f)
+										,case(values == '75-140', 75f)
+										,case(values == '140-200', 140f)
+										, null_f);
+			attribute<float32> ClassBreaks := LB, DialogType = "Classification";
+		}
+		
+		unit<uint32> BodemK := BodemkaartKlasse
+		{
+			attribute<string> name := AsItemName(label);
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+		}
+		
+		unit<uint32> CombinatieTabel := combine(WeerregioK, KwelsituatieK, PerceelsbreedteK, BodemK, InfiltratieMaatregelK, WinterdroogleggingK, ZomerdroogleggingK);
+		
+		unit<uint32> Veenweide_percelen 
+		: StorageName = "%RVF_DataDir%/SOMERS/parcels_rekenregels_nobv_website.shp"
+		, StorageType = "gdal.vect"
+		, StorageReadOnly = "true"
+		, DialogData = "rdc_meter"
+		{
+			parameter<WinterdroogleggingK>     WinterdroogleggingK_rel   := WinterdroogleggingK/v/min0_1;
+			parameter<ZomerdroogleggingK>      ZomerdroogleggingK_rel    := ZomerdroogleggingK/v/_0_6;
+			parameter<InfiltratieMaatregelK>   InfiltratieMaatregelK_rel := InfiltratieMaatregelK/V/Geen_infiltratiemaatregel;
+			
+			attribute<PerceelsbreedteK>        PerceelsbreedteK_rel      := classify(float32(Breedte_m_), PerceelsbreedteK/ClassBreaks);
+			attribute<WeerregioK>              WeerregioK_rel            := rlookup(weerregio, WeerregioK/name_engl);
+			attribute<KwelsituatieK>           KwelsituatieK_rel         := classify(float32(Kwel_mm_d_), KwelsituatieK/ClassBreaks);
+			attribute<BodemK>                  BodemK_rel                := rlookup(bodem, BodemK/name);
+			 
+			attribute<.>                       AdminDomain_rel (AdminDomain) := poly2grid(geometry, AdminDomain);
+		}
+	}
+	
+	container HELP : using = "Classifications/Landbouw/phoenix"
+	{
+		attribute<Bool>    Verhoogd      (rdc_100m) := const(FALSE, rdc_100m);
+		attribute<float32> Verhoogd_NULL (rdc_100m) := !Verhoogd ? 1[float32] : 'null'[float32];
+		parameter<float32> NULL_mbd:= 'null'[Meterbd];
+		
+		container GHG_maaiveld_cm:  =
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'GHG_maaiveld_cm' 
+				 , '((MaaiveldHoogte_mNAP_sc/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP_sc)-(GHG_mNAP_sc/'+WaterschapZichtjaarScenario/Label+'GHG_mNAP_sc))*100[float32]'
+				,  rdc_100m
+				,  float32
+				,  'Gemiddeld hoogste grondwaterstand (GHG) in meter maaiveld met stedelijke correctie'
+			);
+
+		container GHG_maaiveld_HELPKlasse:=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'GHG_maaiveld_cm_HELPKlasse' 
+				 , 'classify(Help/GHG_maaiveld_cm/'+ WaterschapZichtjaarScenario/label+'GHG_maaiveld_cm[int32], Classifications/landbouw/GHGHELPKlasse/classes)'
+				,  rdc_100m
+				,  Classifications/landbouw/GHGHELPKlasse
+				,  'Gemiddeld hoogste grondwaterstand (GHG) in HELPKlassen (elke 5 cm) met stedelijke correctie'
+			);
+		
+		parameter<string> merge_ghg_Indexation_NoDD := asitemlist('GHG_maaiveld_HELPKlasse/' + Waterschap/name + '/PINoDD/@Y@GHG_maaiveld_cm_HELPKlasse');
+		parameter<string> merge_glg_Indexation_NoDD := asitemlist('GLG_maaiveld_HELPKlasse/' + Waterschap/name + '/PINoDD/@Y@GLG_maaiveld_cm_HELPKlasse');
+		
+		parameter<string> merge_ghg_Fixation_NoDD := asitemlist('GHG_maaiveld_HELPKlasse/' + Waterschap/name + '/PFNoDD/@Y@GHG_maaiveld_cm_HELPKlasse');
+		parameter<string> merge_glg_Fixation_NoDD := asitemlist('GLG_maaiveld_HELPKlasse/' + Waterschap/name + '/PFNoDD/@Y@GLG_maaiveld_cm_HELPKlasse');
+		
+		parameter<string> merge_ghg_Indexation_DD := asitemlist('GHG_maaiveld_HELPKlasse/' + Waterschap/name + '/PIDD/@Y@GHG_maaiveld_cm_HELPKlasse');
+		parameter<string> merge_glg_Indexation_DD := asitemlist('GLG_maaiveld_HELPKlasse/' + Waterschap/name + '/PIDD/@Y@GLG_maaiveld_cm_HELPKlasse');
+		
+		container GHG_merged_Indexation_NoDD := 
+			for_each_nedv(
+				Zichtjaar/label,
+				'MakeDefined('+replace(merge_ghg_Indexation_NoDD, '@Y@', Zichtjaar/label)+')',
+				rdc_100m, Classifications/landbouw/GHGHELPKlasse
+			);
+		container GHG_merged_Fixation_NoDD := 
+			for_each_nedv(
+				Zichtjaar/label,
+				'MakeDefined('+replace(merge_ghg_Fixation_NoDD, '@Y@', Zichtjaar/label)+')',
+				rdc_100m, Classifications/landbouw/GHGHELPKlasse
+			);
+		container GHG_merged_Indexation_DD := 
+			for_each_nedv(
+				Zichtjaar/label,
+				'MakeDefined('+replace(merge_ghg_Indexation_DD, '@Y@', Zichtjaar/label)+')',
+				rdc_100m, Classifications/landbouw/GHGHELPKlasse
+			);
+		container GLG_merged_Indexation_NoDD := 
+			for_each_nedv(
+				Zichtjaar/label,
+				'MakeDefined('+replace(merge_glg_Indexation_NoDD, '@Y@', Zichtjaar/label)+')',
+				rdc_100m, Classifications/landbouw/GLGHELPKlasse
+			);
+		container GLG_merged_Fixation_NoDD := 
+			for_each_nedv(
+				Zichtjaar/label,
+				'MakeDefined('+replace(merge_glg_Fixation_NoDD, '@Y@', Zichtjaar/label)+')',
+				rdc_100m, Classifications/landbouw/GLGHELPKlasse
+			);
+		container GLG_merged_Indexation_DD := 
+			for_each_nedv(
+				Zichtjaar/label,
+				'MakeDefined('+replace(merge_glg_Indexation_DD, '@Y@', Zichtjaar/label)+')',
+				rdc_100m, Classifications/landbouw/GLGHELPKlasse
+			);
+
+		// nodig voor HELP-tabellen tov maaiveld ipv tov NAP
+		container GLG_maaiveld_cm:=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'GLG_maaiveld_cm' 
+				 , '((MaaiveldHoogte_mNAP_sc/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP_sc)-(GLG_mNAP_sc/'+WaterschapZichtjaarScenario/Label+'GLG_mNAP_sc))*100[float32]'
+				,  rdc_100m
+				,  float32
+				,  'Gemiddeld hoogste grondwaterstand (GLG) in meter maaiveld'
+			);
+
+		container GLG_maaiveld_HELPKlasse:=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'GLG_maaiveld_cm_HELPKlasse' 
+				 , 'classify(Help/GLG_maaiveld_cm/'+ WaterschapZichtjaarScenario/label+'GLG_maaiveld_cm[int32], Classifications/landbouw/GLGHELPKlasse/classes)'
+				,  rdc_100m
+				,  Classifications/landbouw/GLGHELPKlasse
+				,  'Gemiddeld hoogste grondwaterstand (GLG) in HELPKlassen (elke 5 cm)'
+			);
+			
+		container MaaiveldHoogte_mNAP_sc :=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'MaaiveldHoogte_mNAP' + '_sc' 
+				, 'not(Verhoogd)
+				 ? (MaaiveldHoogte_mNAP/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP)
+				 : MaaiveldHoogte_mNAP/'+WaterschapZichtjaarScenario/samenvoeg_nr1_nr3+'/J000_MaaiveldHoogte_mNAP'
+				,  rdc_100m
+				,  Meterhoogte
+				,  'MaaiveldHoogte in meter NAP met stedelijke correctie'
+			);
+			
+		container MaaiveldHoogte_mNAP_src :=
+			for_each_ndvda(
+				 WaterschapZichtjaarScenario/label + 'MaaiveldHoogte_mNAP' 
+				,  rdc_100m
+				,  Meterhoogte
+				,  'MaaiveldHoogte in meter NAP'
+				, '%RVF_DataDir%/Phoenix/' + WaterschapZichtjaarScenario/filename +'MaaiveldHoogte_mNAP.tif'
+			);
+			
+		container MaaiveldHoogte_mNAP :=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'MaaiveldHoogte_mNAP' 
+				 , '((MaaiveldHoogte_mNAP_src/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP)<-1999[float32])'
+				'? NULL_mbd'
+				': (MaaiveldHoogte_mNAP_src/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP)'
+				,  rdc_100m
+				,  Meterhoogte
+				,  'Cumulatieve MaaiveldDaling waarbij -9999 op null wordt gezet tbv compatibiliteit tussen geodmsversies 7.125-7.130, zie ook http://mantis.objectvision.nl/view.php?id=739'
+			);
+		container GHG_mNAP_sc :=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'GHG_mNAP' + '_sc' 
+				, 'not(Verhoogd)
+				 ? (GHG_mNAP/'+WaterschapZichtjaarScenario/Label+'GHG_mNAP)
+				 : GHG_mNAP/'+WaterschapZichtjaarScenario/samenvoeg_nr1_nr3+'/J000_GHG_mNAP'
+				,  rdc_100m
+				,  float32
+				,  'Gemiddeld hoogste grondwaterstand (GHG) in meter NAP met stedelijke correctie'
+			);
+
+		container GLG_mNAP_sc :=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'GLG_mNAP' + '_sc' 
+				, 'not(Verhoogd) 
+				 ? (GLG_mNAP/'+WaterschapZichtjaarScenario/Label+'GLG_mNAP)
+				 : GLG_mNAP/'+WaterschapZichtjaarScenario/samenvoeg_nr1_nr3+'/J000_GLG_mNAP'
+				,  rdc_100m
+				,  float32
+				,  'Gemiddeld laagste grondwaterstand (GLG) in meter NAPmet stedelijke correctie'
+			);
+			
+		container GHG_mNAP :=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'GHG_mNAP' 
+				 , '((GHG_mNAP_src/'+WaterschapZichtjaarScenario/Label+'GHG_mNAP)<-1999[float32])'
+				'? NULL_mbd'
+				': (GHG_mNAP_src/'+WaterschapZichtjaarScenario/Label+'GHG_mNAP)'
+				,  rdc_100m
+				,  float32
+				,  'Cumulatieve MaaiveldDaling waarbij -9999 op null wordt gezet tbv compatibiliteit tussen geodmsversies 7.125-7.130, zie ook http://mantis.objectvision.nl/view.php?id=739'
+			);
+
+		container GLG_mNAP :=
+			for_each_nedvd(
+				 WaterschapZichtjaarScenario/label + 'GLG_mNAP' 
+				 , '((GLG_mNAP_src/'+WaterschapZichtjaarScenario/Label+'GLG_mNAP)<-1999[float32])'
+				'? NULL_mbd'
+				': (GLG_mNAP_src/'+WaterschapZichtjaarScenario/Label+'GLG_mNAP)'
+				,  rdc_100m
+				,  float32
+				,  'Cumulatieve MaaiveldDaling waarbij -9999 op null wordt gezet tbv compatibiliteit tussen geodmsversies 7.125-7.130, zie ook http://mantis.objectvision.nl/view.php?id=739'
+			);
+		container GHG_mNAP_src :=
+			for_each_ndvda(
+				 WaterschapZichtjaarScenario/label + 'GHG_mNAP' 
+				,  rdc_100m
+				,  float32
+				,  'Gemiddeld hoogste grondwaterstand (GHG) in meter NAP'
+				, '%RVF_DataDir%/Phoenix/' + WaterschapZichtjaarScenario/filename +'GHG_mNAP.tif'
+			);
+
+		container GLG_mNAP_src :=
+			for_each_ndvda(
+				 WaterschapZichtjaarScenario/label + 'GLG_mNAP' 
+				,  rdc_100m
+				,  float32
+				,  'Gemiddeld laagste grondwaterstand (GLG) in meter NAP'
+				, '%RVF_DataDir%/Phoenix/' + WaterschapZichtjaarScenario/filename +'GLG_mNAP.tif'
+			);
+	}
+}

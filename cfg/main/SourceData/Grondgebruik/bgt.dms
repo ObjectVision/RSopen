@@ -2,47 +2,130 @@ container BGT: using = "Units;Classifications;Classifications/Grondgebruik/BGT;G
 {
 	parameter<string> filedate := ModelParameters/BGT_file_date;
 	
-	unit<uint32> ReadCombine: StorageName = "='%RSLDataDir%/Grondgebruik/BGT/'+filedate+'.fss'", StorageReadOnly = "True"
-	, Descr = "Download from PDOK in gml-files, conversion to shp via ogr2ogr. Then read the individual shp-files and combined and stored in fss"
+	 
+	unit<uint32> Read_FSS 
+	:	StorageName = "='%RSo_DataDir%/Grondgebruik/BGT/'+filedate+'.fss'"
+	,	StorageReadOnly = "True" 
+	, 	Descr = "Generated in BGT-Tools project, available from Object Vision Github repository"
+	,	URL = "https://github.com/ObjectVision/BGT-Tools"
 	{
-		attribute<rdc_meter> geometry (poly);
-		attribute<Grondgebruik/CBS2010KlasseEK> bbg_code;
-		attribute<uint32> code;
-		attribute<string> plus_type;
-		attribute<Grondgebruik/BGT/poly_type> visualisatiecode_rel := rlookup(code, Grondgebruik/BGT/poly_type/code);
-		attribute<Grondgebruik/CBSKlasse> CBSKlasse_rel := rlookup(bbg_code, Grondgebruik/CBSKlasse/EK2010);
-		attribute<string> label := Grondgebruik/BGT/poly_type/label[visualisatiecode_rel];
+		attribute<rdc_meter>                           geometry (poly);
+		// attribute<rdc_meter>                           geometry (poly) := geometry_simpl;
+		attribute<rdc_meter>                           geometry_simpl (poly); // := geos_buffer_multi_polygon(geometry, 1d);
 		
-		attribute<bool> EvidentBenut_BuitenBBG := BGT/poly_type/EvidentBenut_BuitenBBG[rlookup(code, BGT/poly_type/code)]
+		attribute<string>                              type_name;
+		attribute<string>                              plus_type;
+		attribute<string>                              bron_bestand;
+		attribute<Classes>                             visualisatiecode_rel          := rlookup(class_name, Classes/class_label);
+		// attribute<CBS2010KlasseEK>                     bbg_code                      := Classes/bbg_code[visualisatiecode_rel];
+		// attribute<CBS2010Klasse>                       CBSKlasse_rel                 := rlookup(bbg_code, CBS2010Klasse/EK2010);
+		attribute<string>                              class_name                    := bron_bestand + '_' + type_name;
+		attribute<km2>                                 oppervlakkm2                  := area(geometry,Meter2)[km2];
+		
+		container MaakLosseCat :=
+			for_each_ne(
+				Classes/class_name
+				, 'MaakLosse_BGT_groepen_T(' +string(id(BGT/Classes))+ ', Read_FSS)'
+			);
+	}
+	
+	unit<uint32> IsDefinedAndNotNoData := select_with_attr_by_cond(Read_FSS, IsDefined(Read_FSS/visualisatiecode_rel)) 
+	{
+		container MaakLosseCat :=
+			for_each_ne(
+				Classes/class_name
+				, 'MaakLosse_BGT_groepen_T('+string(id(Classes))+', IsDefinedAndNotNoData)'
+			);
+			
+		attribute<bool>   EvidentBenut                  := Classes/EvidentBenut[visualisatiecode_rel];
+		attribute<bool>   EvidentBenutZon               := Classes/code[visualisatiecode_rel] == 1301 ? False : EvidentBenut;//ook waterloop EvidentBenut tbv vermijden Zon in havens Amsetrdan en Rotterdam, ARK bij Utrecht
+		
+		unit<uint64> per_2_5_all := poly2allgrids_uint64(geometry, rdc_2_5m)
+		{ 
+			attribute<bool> IsEvidentBenut         := IsDefinedAndNotNoData/EvidentBenut[polygon_rel];
+			attribute<bool> IsEvidentBenutZon      := IsDefinedAndNotNoData/EvidentBenutZon[polygon_rel];
+			attribute<bool> IsEvidentBenut_2_5m    (rdc_2_5m) := any(IsEvidentBenut, grid_rel);
+			attribute<bool> IsEvidentBenutZon_2_5m (rdc_2_5m) := any(IsEvidentBenutZon, grid_rel);
+		}
+
+		attribute<bool>   Make_IsEvidentBenut_AdminDomain      (AdminDomain) := modus(per_2_5_all/IsEvidentBenut_2_5m, rdc_2_5m/rdc_25m_rel), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/EvidentBenut_'+/ModelParameters/BGT_file_date+'_Modus_per_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+		attribute<bool>   IsEvidentBenut_AdminDomain           (AdminDomain) : StorageName = "=PropValue(Make_IsEvidentBenut_AdminDomain, 'StorageName')", StorageReadOnly = "true", StorageType = "tif";
+		attribute<bool>   Make_IsEvidentBenutZon_AdminDomain   (AdminDomain) := modus(per_2_5_all/IsEvidentBenutZon_2_5m, rdc_2_5m/rdc_25m_rel), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/EvidentBenutZon_'+/ModelParameters/BGT_file_date+'_Modus_per_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+		attribute<bool>   IsEvidentBenutZon_AdminDomain        (AdminDomain) : StorageName = "=PropValue(Make_IsEvidentBenutZon_AdminDomain, 'StorageName')", StorageReadOnly = "true", StorageType = "tif";
+		
+		unit<uint32> IsGroenvoorziening := select_with_org_rel(visualisatiecode_rel == Classes/V/begroeidterreindeel_groenvoorziening)
 		{
-			attribute<bool> per_AdminDomain (AdminDomain) := .[poly2grid(geometry, AdminDomain)];
+			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
+			attribute<rdc_meter> geometry_simpl (poly) := geos_buffer_multi_polygon(Geometry, 1d, 16b);
+		}
+		unit<uint32> IsSpoorbaan := select_with_org_rel(visualisatiecode_rel == Classes/V/wegdeel_spoorbaan)
+		{
+			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
+			attribute<rdc_meter> geometry_simpl (poly) := geos_buffer_multi_polygon(Geometry, 1d, 16b);
+			
+			parameter<float64> BufferSizeSnelwegenVoorWindRestrictie := ModelParameters/Wind/BufferSizeSnelwegenVoorWindRestrictie;
+			
+			attribute<rdc_meter> WindBuffer (poly) := geos_buffer_multi_polygon(geometry_simpl, BufferSizeSnelwegenVoorWindRestrictie, 16b);
+			
+			attribute<bool>   Make_per_AdminDomain      (AdminDomain) := IsDefined(poly2grid(WindBuffer, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsSpoorwegBuffer_'+string(BufferSizeSnelwegenVoorWindRestrictie)+'m_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+			attribute<bool>   per_AdminDomain           (AdminDomain) : StorageName = "=PropValue(Make_per_AdminDomain, 'StorageName')", StorageReadOnly = "true", StorageType = "tif";
+		}
+		unit<uint32> IsWaterweg := select_with_org_rel(visualisatiecode_rel == Classes/V/waterdeel_waterloop && (plus_type == 'kanaal' || plus_type == 'rivier' || plus_type == 'waardeOnbekend'))
+		{
+			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
+			attribute<rdc_meter> geometry_simpl (poly) := geos_buffer_multi_polygon(Geometry, 1d, 16b);
+			attribute<string>    plus_type       := ../plus_type[org_rel];
+		}
+
+		unit<uint32> IsAutoWeg := select_with_org_rel(visualisatiecode_rel == Classes/V/wegdeel_rijbaan_autosnelweg )
+		{
+			attribute<rdc_meter> geometry       (poly) := ../geometry[org_rel];
+			attribute<rdc_meter> geometry_simpl (poly) := geos_buffer_multi_polygon(Geometry, 1d, 16b);
+			attribute<string>    plus_type             := ../plus_type[org_rel];
+			attribute<Classes>   visualisatiecode_rel  := ../visualisatiecode_rel[org_rel];
+			
+			parameter<float64> BufferSizeSnelwegenVoorWindRestrictie := ModelParameters/Wind/BufferSizeSnelwegenVoorWindRestrictie;
+			
+			attribute<rdc_meter> WindBuffer       (poly) := geos_buffer_multi_polygon(geometry_simpl, BufferSizeSnelwegenVoorWindRestrictie, 16b);
+			
+			unit<uint32> FixKlaverbladen := .
+			{
+				attribute<rdc_meter> KlaverbladBufferPlus (poly) := geos_buffer_multi_polygon(geometry_simpl,  100d, 16b);
+				unit<uint32> union                 := geos_split_union_polygon(KlaverbladBufferPlus, visualisatiecode_rel);
+				attribute<rdc_meter> KlaverbladBufferMin  (union, poly) := geos_buffer_multi_polygon(union/geometry, -100d, 16b);
+				attribute<bool>   Make_per_AdminDomain      (AdminDomain) := IsDefined(poly2grid(KlaverbladBufferMin, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsAutoWeg_KlaverbladFix_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+				attribute<bool>   per_AdminDomain           (AdminDomain) : StorageName = "=PropValue(Make_per_AdminDomain, 'StorageName')", StorageReadOnly = "true", StorageType = "tif";
+			}
+			attribute<bool>   Make_per_AdminDomain      (AdminDomain) := IsDefined(poly2grid(WindBuffer, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsAutoWegBuffer_'+string(BufferSizeSnelwegenVoorWindRestrictie)+'m_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+			attribute<bool>   per_AdminDomain           (AdminDomain) : StorageName = "=PropValue(Make_per_AdminDomain, 'StorageName')", StorageReadOnly = "true", StorageType = "tif";
 		}
 		
-		attribute<bool> EvidentBenut_BinnenBBG := BGT/poly_type/EvidentBenut_BinnenBBG[rlookup(code, BGT/poly_type/code)]
+		unit<uint32> IsWindturbine := select_with_org_rel(visualisatiecode_rel == Classes/V/overigbouwwerk_windturbine)
 		{
-			attribute<bool> per_AdminDomain (AdminDomain) := .[poly2grid(geometry, AdminDomain)];
+			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
+			attribute<rdc_meter> geometry_simpl (poly) := geos_buffer_multi_polygon(Geometry, 1d, 16b);
+			attribute<string>    plus_type       := ../plus_type[org_rel];
 		}
-		
-		unit<uint32> IsGroenvoorziening := subset(visualisatiecode_rel == /Classifications/Grondgebruik/BGT/poly_type/V/begroeidterreindeel_groenvoorziening)
+	}
+	
+	Template MaakLosse_BGT_groepen_T
+	{
+		parameter<Classes> visualisatiecode_rel;
+		unit<uint32> src;
+		///
+		unit<uint32> vlak := select_with_org_rel(src/visualisatiecode_rel == visualisatiecode_rel)
 		{
-			attribute<rdc_meter> geometry (poly) := ../geometry[nr_OrgEntity];
+			attribute<rdc_meter>      geometry               (poly) := src/geometry[org_rel];
+			attribute<.>              per_2_5m           (rdc_2_5m) := poly2grid(geometry, rdc_2_5m);
+			
+			attribute<bool>           per_AdminDomain (AdminDomain) := modus(IsDefined(per_2_5m), rdc_2_5m/rdc_25m_rel);
+
+			attribute<float32> area := area(geometry, meter2);
+			attribute<bool> area_null := area == 0f;
+			
+			attribute<Classes>    visualisatiecode_rel := src/visualisatiecode_rel[org_rel];
+			
+			unit<uint32> s2p := sequence2points(geometry);
 		}
-		unit<uint32> IsSpoorbaan := subset(visualisatiecode_rel == /Classifications/Grondgebruik/BGT/poly_type/V/wegdeel_spoorbaan)
-		{
-			attribute<rdc_meter> geometry (poly) := ../geometry[nr_OrgEntity];
-		}
-		unit<uint32> IsWaterweg := subset(visualisatiecode_rel == /Classifications/Grondgebruik/BGT/poly_type/V/waterdeel_waterloop && (plus_type == 'kanaal' || plus_type == 'rivier' || plus_type == 'waardeOnbekend'))
-		{
-			attribute<rdc_meter> geometry (poly) := ../geometry[nr_OrgEntity];
-			attribute<string>    plus_type       := ../plus_type[nr_OrgEntity];
-		
-		}
-		unit<uint32> IsWindturbine := subset(visualisatiecode_rel == /Classifications/Grondgebruik/BGT/poly_type/V/bouwwerk_overig_windturbine)
-		{
-			attribute<rdc_meter> geometry (poly) := ../geometry[nr_OrgEntity];
-			attribute<string>    plus_type       := ../plus_type[nr_OrgEntity];
-		}
-		
-		// attribute<RegioIndelingen/MRA8> MRA_rel := point_in_polygon(centroid_or_mid(geometry), /geography/RegioIndelingen/MRA8/geometry);
 	}
 }

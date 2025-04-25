@@ -1,0 +1,114 @@
+container AfleidingPandtype
+{
+	unit<uint32> domain := ..;
+	container results
+	{
+		attribute<uint32>        nr_buurpanden     (domain) := functioneel_pand/NeighbourCount[invert(functioneel_pand/org_rel)]; 
+		attribute<WP5>           WP5_rel           (domain) := functioneel_pand/WP5_rel[invert(functioneel_pand/org_rel)];
+	}
+
+	container extents
+	{
+		attribute<rdc_meter>    NW     (domain) := lower_bound(geometry);
+		attribute<rdc_meter>    SE     (domain) := upper_bound(geometry);
+		attribute<float32>      X_ext  (domain) := PointCol(SE) - PointCol(NW);
+		attribute<float32>      Y_ext  (domain) := PointRow(SE) - PointRow(NW);
+	}
+	
+	
+	unit<uint32> functioneel_pand := select_with_org_rel(domain/counts/vbos > 0 && extents/X_ext < 1000f && extents/Y_ext < 1000f)
+	{
+		attribute<rdc_meter>    geometry (poly) := org_rel -> geometry;
+		attribute<rdc_meter>    geometry_inflated_20cm (poly) := org_rel -> geometry_inflated_20cm;
+		attribute<rdc_meter>    NW              := extents/NW[org_rel];
+		attribute<rdc_meter>    SE              := extents/SE[org_rel];
+	
+		attribute<uint32> NeighbourCount   := pcount(unique_neighbour_pair/F1) + pcount(unique_neighbour_pair/F2);
+		attribute<bool>   HasOneNeighbour  := NeighbourCount == 1;
+		attribute<bool>   IsSemiAttached   := HasOneNeighbour &&
+			HasOneNeighbour[
+				MakeDefined(
+					unique_neighbour_pair/F2[invert(unique_neighbour_pair/F1)],
+					unique_neighbour_pair/F1[invert(unique_neighbour_pair/F2)]
+				)
+			];
+
+		attribute<uint32> nr_woning := domain/counts/woon_vbos[org_rel];
+
+		attribute<WP5> WP5_rel  :=
+			  nr_woning == 0      ? WP5/V/geen_woonpand
+			: nr_woning >  1      ? WP5/V/appartement
+			: NeighbourCount == 0 ? WP5/V/vrijstaand
+			: HasOneNeighbour
+				? IsSemiAttached
+					? WP5/V/twee_onder_1_kap
+					: WP5/V/hoekwoning
+			: WP5/V/tussenwoning;
+	}
+
+	parameter<uint32>  nr_x         := ModelParameters/BAG_woonpand_typering/nr_x_tiles;
+	parameter<uint32>  nr_y         := ModelParameters/BAG_woonpand_typering/nr_y_tiles;
+	parameter<float64> inflate_size := ModelParameters/BAG_woonpand_typering/inflate_size;
+
+	unit<uint32> rectangle := range(uint32, 0, nr_x * nr_y)
+	{
+		attribute<uint32> seq_y  := id(.) / nr_x;
+		attribute<uint32> seq_x  := id(.) % nr_x;
+		attribute<string> name   := 'R'+string(seq_y)+'_C'+string(seq_x);
+
+		parameter<uint32> size_x := uint32(pointcol(BoundRange(rdc_meter))) / uint32(nr_x);
+		parameter<uint32> size_y := uint32(pointrow(BoundRange(rdc_meter))) / uint32(nr_y);
+
+		attribute<uint32> min_x  := uint32(pointcol(lowerbound(rdc_meter))) + seq_x * size_x;
+		attribute<uint32> max_x  := min_x + size_x;
+		attribute<uint32> min_y  := uint32(pointrow(lowerbound(rdc_meter))) + seq_y * size_y;
+		attribute<uint32> max_y  := min_y + size_y;
+		
+		// for visualisation
+		attribute<rdc_meter> geometry (poly) := points2sequence(point_set/point, point_set/sequence_rel); //, point_set/ordinal);
+		attribute<rdc_meter> top_left     := point_xy(float32(min_x), float32(max_y), rdc_meter); 
+		attribute<rdc_meter> top_right    := point_xy(float32(max_x), float32(max_y), rdc_meter);
+		attribute<rdc_meter> bottom_left  := point_xy(float32(min_x), float32(min_y), rdc_meter);
+		attribute<rdc_meter> bottom_right := point_xy(float32(max_x), float32(min_y), rdc_meter);
+		
+		unit<uint32> point_set := union_unit(.,.,.,.,.)
+		{
+			attribute<rdc_meter>  point        := union_data(., top_left, top_right, bottom_right, bottom_left, top_left);
+			attribute<..>      sequence_rel := union_data(., id(..), id(..), id(..), id(..), id(..));
+		}
+	}
+
+	container rectangles := for_each_ne(rectangle/name, 'Connect_neighbours_T('+string(ID(rectangle))+')');
+
+	template Connect_neighbours_T
+	{
+		parameter<rectangle> rectangle_sel;
+		// end case parameters
+
+		unit<uint32> domain :=
+			select_with_org_rel(
+				uint32(PointCol(functioneel_pand/NW)) <= rectangle/max_x[rectangle_sel]
+			&&	uint32(PointRow(functioneel_pand/NW)) <= rectangle/max_y[rectangle_sel]
+			&&	uint32(PointCol(functioneel_pand/SE)) >= rectangle/min_x[rectangle_sel]
+			&&	uint32(PointRow(functioneel_pand/SE)) >= rectangle/min_y[rectangle_sel]
+			);
+
+		attribute<rdc_meter> buffer (domain, poly) := domain/org_rel -> functioneel_pand/geometry_inflated_20cm; 
+
+		unit<uint32> neighbours := geos_polygon_connectivity(buffer)
+		{
+			attribute<upoint> coded_pair := point_yx(domain/org_rel[first_rel], domain/org_rel[second_rel]);
+		}
+	}
+	
+	unit<uint32> neighbour_pair := ='union_unit('+AsItemList('rectangles/' + rectangle/name + '/neighbours')+')'
+	{
+		attribute<upoint> coded_pair := ='union_data(., '+AsItemList('rectangles/' + rectangle/name + '/neighbours/coded_pair')+')';
+	}
+	
+	unit<uint32> unique_neighbour_pair := unique(neighbour_pair/coded_pair)
+	{
+		attribute<functioneel_pand> F1 := pointrow(values)[functioneel_pand];
+		attribute<functioneel_pand> F2 := pointcol(values)[functioneel_pand];
+	}
+}

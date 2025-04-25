@@ -1,16 +1,23 @@
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms14.2.1
+set geodmsversion=GeoDms16.0.5
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
-set LocalDataProjDir=K:\LD\RSOpen
+REM set LocalDataProjDir=K:\LD\RSOpen
+set LocalDataProjDir=C:\LocalData\RSopen
+
 set MT_FLAGS=/S1 /S2 /S3
+
+set CurrentDir=%CD%
+CD ..
+set ProjDir=%CD%
+CD %CurrentDir%
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
 
 set AlleenEindjaar=TRUE
 
-CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030 en 2040 overslaan?"
+CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030, 2040 en 2050 overslaan?"
 if ErrorLevel 2 set AlleenEindjaar=FALSE
 CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
 if ErrorLevel 2 goto runPrepareBasedata
@@ -20,26 +27,10 @@ goto runScenarios
 
 :runPrepareBasedata
 
-REM rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
+rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
 
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run1
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run2
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run3
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run4
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run5
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run6
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run7
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run8
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd ..\cfg\main.dms /WriteBasedata/Generate_Run9
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 :runPrepareVariantdata
@@ -69,7 +60,17 @@ call ..\batch\RunScenarios.cmd
 REM set RSL_SCENARIO_NAME=WLO_Laag
 REM call ..\batch\RunScenarios.cmd
 
-pause "Klaar ?"
+
+echo "Klaar ?"
+pause
+
+exit
+
+
 
 :ErrorEnd
 echo "%ErrorLevel%"
+echo "Er gaat iets mis..."
+pause
+
+exit

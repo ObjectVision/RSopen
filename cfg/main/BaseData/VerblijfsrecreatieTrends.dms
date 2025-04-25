@@ -1,0 +1,159 @@
+container Verblijfsrecreatie_Trends
+: Descr = "tbv berekening Verblijfsrecreatie claims"
+{
+	parameter<string> BAG_RecentYear       := string(/ModelParameters/BAG_RecentYear); //Vanaf recentyear ipv basisjaar omdat we tussen basisjaar en recentyear uitgaan van de bag nieuwbouw en sloop
+	parameter<uint32> BAG_RecentYear_value := right(BAG_RecentYear,4)[uint32];
+	parameter<string> BBG_Year             := /ModelParameters/BBG_Year;
+	parameter<uint32> BBG_Year_value       := BBG_Year[uint32];
+	
+	unit<uint32> jaren96_11 := range(uint32, 1996, 2012)
+	, Descr = "bbg jaren pre-bag"
+	{
+		attribute<string> label := name , DialogType = "LabelText";
+		attribute<string> name  := 'Y' + string(id(.));
+		attribute<uint32> value := id(.);
+		container V := for_each_nedv(name, String(ID(.))+'[..]', void, .);
+	}
+	
+	unit<uint8> Jaren := union_unit_uint8(jaren96_11, SourceData/Vastgoed/BAG/BAG_jaren)
+	, Descr = "totale set jaren relevant in deze trend analyse"
+	{
+		attribute<string>  name  := union_data(., jaren96_11/name, SourceData/Vastgoed/BAG/BAG_jaren/name);
+		attribute<string>  label := name, DialogType = "LabelText";
+		attribute<float32> value := union_data(., jaren96_11/value[float32], SourceData/Vastgoed/BAG/BAG_jaren/Jaar[float32]);
+		
+		container V := for_each_nedv(name, String(ID(.))+'[..]', void, .);
+	}
+	
+	parameter<string> RegioUnit_str := /VariantParameters/Recreatie_AllocRegio_name;
+	unit<uint32>      RegioUnit     := ='SourceData/RegioIndelingen/CBS/Last/'+RegioUnit_str;
+	
+	container DataPrep
+	{
+		container ReadData_BAG := for_each_ne(SourceData/Vastgoed/BAG/BAG_jaren/name, 'ReadData_BAG_T('+string(SourceData/Vastgoed/BAG/BAG_jaren/jaar)+', RegioUnit)');
+		container ReadData_BBG := for_each_ne(Classifications/Grondgebruik/ReeksJaren/naam, 'ReadData_BBG_T('+string(Classifications/Grondgebruik/ReeksJaren/jaar)+', RegioUnit)');
+		container PreBAG       := for_each_ne(jaren96_11/name,'PreBAG_PerJaar_T('+string(jaren96_11/value)+', RegioUnit)');
+	}
+	
+	container Data
+	{
+		container perRegio_Objecten := 
+			for_each_nedv(
+				Jaren/name
+				, Jaren/value < 2012f ? 'DataPrep/PreBAG/'+Jaren/name+'/preBAG_VBO_inCBS/totale_count_per_functie_perRegio/logies[float32]' : 'DataPrep/ReadData_BAG/'+Jaren/name+'/PerRegio/objecten[float32]'
+				, RegioUnit
+				, float32
+			);
+		
+		container perRegio_BrutoOpp := 
+			for_each_nedv(
+				Classifications/Grondgebruik/ReeksJaren/naam
+				, 'DataPrep/ReadData_BBG/'+Classifications/Grondgebruik/ReeksJaren/naam+'/BrutoOpp_perRegio / 1[ha]'
+				, RegioUnit
+				, float32
+			);
+	}
+	
+	container Trends
+	{
+		container Objecten_β := 
+			for_each_neidv(
+				RegioUnit/name
+				, 'max_elem(0f, OLS/Calc_OLS_Objecten_Regio/'+RegioUnit/name+'/β)'
+				, 'IsDefined(this) && This >= 0f && this < 300f' //aanname is groei, dus groter dan 0. En om de bandbreedte iets te controleren tussen 0 en 250.
+				, void
+				, float32
+			);
+		
+		container BrutoOpp_β :=
+				for_each_neidv(
+					RegioUnit/name
+					, 'max_elem(0f, OLS/Calc_OLS_BrutoOpp_Regio/'+RegioUnit/name+'/β)'
+					, 'IsDefined(this) && This >= 0f && this < 50f' //Als de BBG ReeksJaren onvolledig zijn, kan deze Null worden. En om de bandbreedte iets te controleren tussen 0 en 50.
+					, void
+					, float32
+			);
+		
+		
+		unit<uint32> Write_βs_Objecten := RegioUnit
+		, StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/Verblijfsrecreatie/'+RegioUnit_str+'/Betas_Objecten_'+/ModelParameters/StudyArea+'.fss'"
+		{
+			attribute<float32> Objecten_β := ='union_data(., '+AsItemList('Trends/Objecten_β/'+RegioUnit/name)+')';
+			attribute<float32> Objecten   := ='DataPrep/ReadData_BAG/Y'+string(/ModelParameters/BAG_RecentYear)+'/PerRegio/Objecten';
+			attribute<float32> BrutoOpp_β := ='union_data(., '+AsItemList('Trends/BrutoOpp_β/'+RegioUnit/name)+')';
+			attribute<float32> BrutoOpp   := ='DataPrep/ReadData_BBG/Y'+string(/ModelParameters/BBG_Verblijfsrecreatie_Year)+'/BrutoOpp_perRegio';
+		}
+		
+		unit<uint32> Read_βs_Objecten := RegioUnit
+		, StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/Verblijfsrecreatie/'+RegioUnit_str+'/Betas_Objecten_'+/ModelParameters/StudyArea+'.fss'", StorageReadOnly = "true"
+		{
+			attribute<float32> Objecten_β;
+			attribute<Verblijfsobject> Objecten;
+			attribute<float32> BrutoOpp_β;
+			attribute<ha> BrutoOpp;
+		}
+		
+		
+		container OLS
+		{
+			unit<uint8> k_set := range(uint8, 0b, 2b)
+			{
+				attribute<string> name : [ 'const', 'opp'];
+			}
+			
+			container Calc_OLS_Objecten_Regio := for_each_ne(RegioUnit/name, 'OLS_Regio_T('+string(id(RegioUnit))+', Data/perRegio_Objecten, Jaren)');
+			container Calc_OLS_BrutoOpp_Regio := for_each_ne(RegioUnit/name, 'OLS_Regio_T('+string(id(RegioUnit))+', Data/perRegio_BrutoOpp, Classifications/Grondgebruik/ReeksJaren)');
+			
+			container Betas_regio
+			{
+				container Objecten := for_each_nedv(RegioUnit/name, 'OLS/Calc_OLS_Objecten_Regio/'+RegioUnit/name+'/β', void, float32);
+				container BrutoOpp := for_each_nedv(RegioUnit/name, 'OLS/Calc_OLS_BrutoOpp_Regio/'+RegioUnit/name+'/β', void, float32);
+			}
+			
+			Template OLS_Regio_T
+			{
+				parameter<uint32> regio_id;
+				
+				container y_src;
+				
+				unit<uint8> Periods;
+				
+				attribute<float32> x (Periods) := Periods/value[float32];
+				attribute<float32> y (Periods) := ='union_data(Periods, '+AsItemList('y_src/'+Periods/name+'['+string(regio_id)+'[RegioUnit]]')+')';
+				
+				parameter<float32> σ_xy := cov(x, y);
+				parameter<float32> σ_x  := var(x);
+				parameter<float32> σ_y  := var(y);
+				
+				parameter<float32> β := σ_xy / σ_x;
+				parameter<float32> α := ȳ - β * x_bar; 
+				
+				attribute<float32> ŷ (Periods) := α + β*x; //predicted value of y (dependent var in regression)
+				
+				parameter<float32> x_bar := mean(x); //sample mean
+				parameter<float32> ȳ     := mean(y); //sample mean
+				
+				parameter<float32> SSR := sum((y - ŷ)^2f); // Sum of Squared Residuals
+				parameter<float32> SSE := sum((ŷ - ȳ)^2f); // Sum of Squared Explained
+				parameter<float32> SST := sum((y - ȳ)^2f); // Sum of Squares Total
+				parameter<float32> R2  := 1f - (SSR / SST);
+			}
+		}
+	}
+
+	#include<ReadData_BAG_T.dms>
+	#include<PreBAG_PerJaar_T.dms>
+	
+	Template ReadData_BBG_T
+	{
+		//
+		parameter<uint32> Year;
+		unit<uint32> RegioUnit;
+		//
+		
+		attribute<Ha> BrutoOpp          (AdminDomain):= ='SourceData/Grondgebruik/BBG/Dominant/per_AdminDomain_perKlasse/Y'+string(Year)+'/PerKlasse/Verblijfsrecreatie && AdminDomain/IsStudyArea ? AdminDomain/NrHaPerCell : 0[ha]';
+		attribute<Ha> BrutoOpp_perRegio (RegioUnit)  := sum(BrutoOpp, RegioUnit/Per_AdminDomain);
+		
+		parameter<Ha> Sum_BrutoOpp := sum(BrutoOpp);
+	}
+}

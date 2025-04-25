@@ -1,0 +1,63 @@
+Template IterSubsector_T
+{
+	//
+	parameter<SubSector> id;
+	unit<uint8> SubSector;
+	container StateVoorAllocatie;
+	container Context0;
+	//
+	
+	container Context := Context0
+	{
+		container ThisSubsector := ..;
+	}
+	
+	parameter<string> name               := SubSector/name[id];
+	parameter<string> SubSector_pathname := SubSector/Sector_name_ThisName[id];
+	parameter<string> Zichtjaar_name     := Context/ThisZichtjaar/name;
+	parameter<string> AllocRegio_name    := Context/ThisSectorAllocRegio/allocregio_name;
+	
+	unit<uint32> TredeK := = 'VariantData/Trede/SectorXSubSectoren/'+SubSector_pathname+'/Klasse';
+	
+	unit<uint64> CompactedAdminDomain := Geography/CompactedAdminDomain
+	{
+		attribute<bool>    Beschikbaar                := = 'PotentieleState/'+Zichtjaar_name+'/per_SectorXSubsectoren/'+SubSector_pathname+'/IsBeschikbaar_zichtjaar && !(IsDefined(StateVoorAllocatie/Subsector_rel)) && !ExtraRestrictieDoorWindAllocatie';
+		attribute<float32> PotentieleStateNaAllocatie := = 'PotentieleState/'+Zichtjaar_name+'/per_SectorXSubsectoren/'+SubSector_pathname+'/Zichtjaar * float32(Beschikbaar)';
+	}
+	
+	unit<uint64> CompactedAllocDomain := Geography/CompactedAllocDomain
+	{
+		attribute<float32> PotentieleStateNaAllocatie := sum(CompactedAdminDomain/PotentieleStateNaAllocatie, CompactedAdminDomain/CompactedAllocDomain_rel);
+		attribute<float32> Geschiktheid_src           := = 'VariantData/Suitability/'+Zichtjaar_name+'/'+SubSector_pathname+' * modus(CompactedAdminDomain/Beschikbaar, CompactedAdminDomain/CompactedAllocDomain_rel)[float32]';
+		attribute<uint32>  Geschiktheid_src_ordered   := invert(index(Geschiktheid_src))[uint32];
+		parameter<uint32>  Geschiktheid_src_range     := max(Geschiktheid_src_ordered)+100;
+		attribute<uint32>  TredeScore                 := (#TredeK -1) - collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain), IntegrityCheck = "max(collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain)) < #TredeK";
+		attribute<float32> Geschiktheid               := (float32(TredeScore) * float32(Geschiktheid_src_range) + float32(Geschiktheid_src_ordered));
+	}
+	
+	unit<uint32> AllocRegio := Context/ThisSectorAllocRegio/AllocRegio
+	{
+		attribute<float32> RestClaim := = replace(
+			'VariantData/Claims/@Z@/SectorAllocRegios/@AS@/@S@'+AllocRegio_StudyArea_orgrel+' - sum(StateVoorAllocatie/@SP@, per_CompactedAdminDomain)',
+			'@Z@' , Zichtjaar_name,
+			'@AS@', Context/ThisSectorAllocRegio/name,
+			'@S@' , Context/ThisSubsector/name,
+			'@SP@',Subsector_pathname
+		);
+	
+		attribute<ha>     Ruimte                 := sum(float32(CompactedAdminDomain/Beschikbaar) * AdminDomain/NrHaPerCell, AllocRegio/per_CompactedAdminDomain);
+		attribute<bool>   GeenRuimteOfRestclaim  := Ruimte == 0[ha] || RestClaim <= 0[float32];
+		attribute<uint32> MaxGeschiktheid        := max(CompactedAllocDomain/Geschiktheid, AllocRegio/per_CompactedAllocDomain)[uint32];
+		
+		parameter<uint32> MaxGeschiktheid_value  := max(CompactedAllocDomain/Geschiktheid)[uint32];
+		
+		attribute<uint32> Afkapgrens0 := MaxGeschiktheid_value - nth_element_weighted(
+				MaxGeschiktheid_value - CompactedAllocDomain/Geschiktheid[uint32], // rank
+				max_elem(RestClaim, 0f),                                           // target
+				CompactedAllocDomain/PotentieleStateNaAllocatie,                   // weight, hier geen potentiele delta gebruikt; evt sloop van deze subsector heralloceren we in volgende iteraties
+				per_CompactedAllocDomain
+		);
+		
+		attribute<uint32> Afkapgrens := GeenRuimteOfRestclaim ? (0/0)[uint32] : MakeDefined(Afkapgrens0, MaxGeschiktheid);
+	}
+}

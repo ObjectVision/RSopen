@@ -1,14 +1,15 @@
-set RSL_VARIANT_NAME=MO
-call ..\batch\RunZichtjaren.cmd
-
-set RSL_VARIANT_NAME=RG
-call ..\batch\RunZichtjaren.cmd
-
-set RSL_VARIANT_NAME=SW
-call ..\batch\RunZichtjaren.cmd
-
-set RSL_VARIANT_NAME=GL
-call ..\batch\RunZichtjaren.cmd
-
 set RSL_VARIANT_NAME=BAU
 call ..\batch\RunZichtjaren.cmd
+
+REM set RSL_VARIANT_NAME=WBSA
+REM call ..\batch\RunZichtjaren.cmd
+
+REM set RSL_VARIANT_NAME=WBSB
+REM call ..\batch\RunZichtjaren.cmd
+
+REM set RSL_VARIANT_NAME=Verdichting
+REM call ..\batch\RunZichtjaren.cmd
+
+REM set RSL_VARIANT_NAME=Uitleg
+REM call ..\batch\RunZichtjaren.cmd
+
