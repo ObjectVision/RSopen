@@ -1,6 +1,6 @@
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms16.0.5
+set geodmsversion=GeoDms17.2.5
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
