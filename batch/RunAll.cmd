@@ -20,12 +20,17 @@ del log\log.txt
 
 set AlleenEindjaar=TRUE
 
-CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030, 2040 en 2050 overslaan?"
+if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030, 2040 en 2050 overslaan?"
 if ErrorLevel 2 set AlleenEindjaar=FALSE
-CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
+if "%1%" equ "N" set AlleenEindjaar=FALSE
+
+if "%2%" equ ""  CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
 if ErrorLevel 2 goto runPrepareBasedata
-CHOICE /M "Wil je eerder gemaakte VariantData hergebruiken en dus het (her)genereren hiervan overslaan?"
+if "%2%" equ "N" goto runPrepareBasedata
+
+if "%3%" equ ""  CHOICE /M "Wil je eerder gemaakte VariantData hergebruiken en dus het (her)genereren hiervan overslaan?"
 if ErrorLevel 2 goto runPrepareVariantdata
+if "%3%" equ "N" goto runPrepareVariantdata
 goto runScenarios
 
 :runPrepareBasedata
@@ -66,9 +71,7 @@ REM set RSL_SCENARIO_NAME=WLO_Laag
 REM call ..\batch\RunScenarios.cmd
 
 
-echo "Klaar ?"
-pause
-
+echo "Klaar !"
 exit
 
 
