@@ -15,6 +15,8 @@ set ProjDir=%CD%
 CD %CurrentDir%
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
+REM deletes the old log file; each run adds the timed version to it.
+del log\log.txt
 
 set AlleenEindjaar=TRUE
 

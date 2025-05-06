@@ -18,6 +18,7 @@ echo ================================================================
 
 echo "%ProgramPath%" /Llog/log_%timeStamp%.txt %MT_FLAGS% %1 %2
 "%ProgramPath%" /Llog/log_%timeStamp%.txt %MT_FLAGS% %1 %2
+type log/log_%timeStamp%.txt >> log/log.txt
 
 echo Completed %1 %2 ?
 
