@@ -15,20 +15,28 @@ set ProjDir=%CD%
 CD %CurrentDir%
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
+REM deletes the old log file; each run adds the timed version to it.
+del log\log.txt
 
 set AlleenEindjaar=TRUE
 
-CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030, 2040 en 2050 overslaan?"
+if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030, 2040 en 2050 overslaan?"
 if ErrorLevel 2 set AlleenEindjaar=FALSE
-CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
+if "%1%" equ "N" set AlleenEindjaar=FALSE
+
+if "%2%" equ ""  CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
 if ErrorLevel 2 goto runPrepareBasedata
-CHOICE /M "Wil je eerder gemaakte VariantData hergebruiken en dus het (her)genereren hiervan overslaan?"
+if "%2%" equ "N" goto runPrepareBasedata
+
+if "%3%" equ ""  CHOICE /M "Wil je eerder gemaakte VariantData hergebruiken en dus het (her)genereren hiervan overslaan?"
 if ErrorLevel 2 goto runPrepareVariantdata
+if "%3%" equ "N" goto runPrepareVariantdata
 goto runScenarios
 
 :runPrepareBasedata
 
-rmdir %LocalDataProjDir%\Basedata /s /q REM deletes the old BaseData folder
+REM deletes the old BaseData folder
+rmdir %LocalDataProjDir%\Basedata /s /q 
 
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
@@ -36,7 +44,8 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 :runPrepareVariantdata
 
-rmdir %LocalDataProjDir%\VariantData /s /q REM deletes the old VariantData folder.
+REM deletes the old VariantData folder.
+rmdir %LocalDataProjDir%\VariantData /s /q 
 
 REM set RSL_VARIANT_NAME=MO
 REM call ..\batch\RunVariantData.cmd
@@ -62,9 +71,7 @@ REM set RSL_SCENARIO_NAME=WLO_Laag
 REM call ..\batch\RunScenarios.cmd
 
 
-echo "Klaar ?"
-pause
-
+echo "Klaar !"
 exit
 
 
