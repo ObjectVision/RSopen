@@ -4,22 +4,34 @@ set "TIMESTAMP=%TS:~0,8%-%TS:~8,6%"
 
 echo ================================================================
 
-echo "%ProgramPath%" /Llog/log_%timeStamp%.txt %MT_FLAGS% %1 %2
-"%ProgramPath%" /Llog/log_%timeStamp%.txt %MT_FLAGS% %1 %2
-type "log\log_%timeStamp%.txt" >> log\log.txt
+set lognaam_init=%3
+set lognaam=%lognaam_init:/=_%
 
-echo Completed %1 %2 ?
+echo "%ProgramPath%" /Llog/%lognaam%_%timeStamp%.txt %MT_FLAGS% %1 %2
+"%ProgramPath%" /Llog/%lognaam%_%timeStamp%.txt %MT_FLAGS% %1 %2
+type "log\%lognaam%_%timeStamp%.txt" >> log\log.txt
 
-if not errorlevel 1 ( exit /b )
+echo Did the following items complete calculations: %1 %2 ?
 
-if errorlevel 3 (
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+echo "No errors found"
+
+exit /B
+
+:ErrorEnd
+echo "ErrorLevel is " %ErrorLevel%
+
+if %ErrorLevel% == 3 (
  echo ERROR: Unexpected termination after loading %1 to update %2. 
 )
-if %ERRORLEVEL% == 2 (
+if %ErrorLevel% == 2 (
  echo ERROR: failed to load %1 or caught exception during updating %2. 
 )
-if %ERRORLEVEL% == 1 (
+if %ErrorLevel% == 1 (
  echo ERROR: updating of item %2 in %1 failed.
+)
+if %ErrorLevel% == -1073741819 (
+ echo ERROR: Access Violation. Contact Object Vision for support.
 )
 
 echo batch will be aborted after pause because of a detected failure
