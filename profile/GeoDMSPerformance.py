@@ -244,14 +244,12 @@ def getClosestLog(dms_log_t, profile_log, param, current_ind):
 def getClosestProfilelogForGeodmslog(profile_log, geodms_log, param):
     xy = {"ind":[], "x":[], "y":[], "dms_log_ind":[]}
     ind = 0
-    for i, dms_log_t in enumerate(geodms_log["time"]):
-        profile_log_first_datetime = profile_log['time'][0]
-        profile_log_last_datetime = profile_log['time'][-1]
-        dmslogt_seconds_after_profile_start = (dms_log_t - profile_log_first_datetime).total_seconds() # positive when dms_log_t is after start of profile
-        dmslogt_seconds_before_profile_end = (profile_log_last_datetime - dms_log_t).total_seconds() # positive when dms_log_t is before end of profile
+    profile_log_first_datetime = profile_log['time'][0]
+    profile_log_last_datetime = profile_log['time'][-1]
 
-        if dmslogt_seconds_after_profile_start < -1.0 or dmslogt_seconds_before_profile_end < -1.0:
-            print(f"Geodms log entry is outside experiment timeline: {geodms_log['text'][i]} {dmslogt_seconds_after_profile_start} {dmslogt_seconds_before_profile_end}")
+    for i, dms_log_t in enumerate(geodms_log["time"]):
+        if not (profile_log_first_datetime <= dms_log_t <= profile_log_last_datetime):
+            print(f"Geodms log entry is outside experiment timeline: {dms_log_t}")
             continue
 
         (ind, y) = getClosestLog(dms_log_t, profile_log, param, ind)
