@@ -36,7 +36,7 @@ goto runScenarios
 :runPrepareBasedata
 
 REM deletes the old BaseData folder
-rmdir %LocalDataProjDir%\Basedata /s /q 
+REM rmdir %LocalDataProjDir%\Basedata /s /q 
 
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
