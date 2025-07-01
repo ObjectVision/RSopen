@@ -13,6 +13,8 @@ set CurrentDir=%CD%
 CD ..
 set ProjDir=%CD%
 CD %CurrentDir%
+
+set RSL_BOERVARIANT_NAME=RationeleBoer
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
 REM deletes the old log file; each run adds the timed version to it.
