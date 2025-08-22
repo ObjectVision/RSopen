@@ -38,7 +38,7 @@ goto runScenarios
 :runPrepareBasedata
 
 REM deletes the old BaseData folder
-rmdir %LocalDataProjDir%\Basedata /s /q 
+REM rmdir %LocalDataProjDir%\Basedata /s /q 
 
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
@@ -47,22 +47,13 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 :runPrepareVariantdata
 
 REM deletes the old VariantData folder.
-rmdir %LocalDataProjDir%\VariantData /s /q 
-
-REM set RSL_VARIANT_NAME=MO
-REM call ..\batch\RunVariantData.cmd
-
-REM set RSL_VARIANT_NAME=RG
-REM call ..\batch\RunVariantData.cmd
-
-REM set RSL_VARIANT_NAME=SW
-REM call ..\batch\RunVariantData.cmd
-
-REM set RSL_VARIANT_NAME=GL
-REM call ..\batch\RunVariantData.cmd
+REM rmdir %LocalDataProjDir%\VariantData /s /q 
 
 set RSL_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd
+
+REM set RSL_VARIANT_NAME=WBS
+REM call ..\batch\RunVariantData.cmd
 
 :runScenarios
 
