@@ -15,6 +15,8 @@ set ProjDir=%CD%
 CD %CurrentDir%
 
 set RSL_BOERVARIANT_NAME=RationeleBoer
+set RSL_CO2PRIJS_NAME=EUR_80_ton
+
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
 REM deletes the old log file; each run adds the timed version to it.
@@ -56,6 +58,7 @@ REM set RSL_VARIANT_NAME=WBS
 REM call ..\batch\RunVariantData.cmd
 
 :runScenarios
+
 
 set RSL_SCENARIO_NAME=WLO_Hoog
 call ..\batch\RunScenarios.cmd
