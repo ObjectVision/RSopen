@@ -11,9 +11,9 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-container VariantData: using = "Classifications;units;Geography;VariantParameters;Classifications/Actor"
+container VariantData: using = "Classifications;Units;Geography;VariantParameters;Classifications/Actor"
+, Descr = "In de BaseData wordt alle sourcedata bewerkt op AdminDomain ofwel AllocDomain en voor zover deze niet variant specifiek is. In deze container wordt overal de compacted versie van genomen en worden variant specifieke dataset opgeroepen ofwel bewerkt."
 {
-	
 	container PotentieleState := 
 		for_each_ne(
 			Time/Zichtjaar/name
@@ -24,16 +24,24 @@ container VariantData: using = "Classifications;units;Geography;VariantParameter
 		for_each_ne(
 			Time/Zichtjaar/name
 			, 'Templates/Beschikbaarheden/Zeef_Zichtjaar_T('+quote(Time/Zichtjaar/name)+', ., Density, Suitability)'
-		)
+		), Descr = "De zeef filtert locaties weg die op basis van variant parameters af moeten vallen. Dit bouwt voort op de zeef uit de BaseData die niet variant specifiek zijn."
 	{
-		#include<Zeef_SrcDomain_grid.dms>
+		container Basisjaar :=
+			for_each_ne(
+				CaseClassifications/Actor/VariantXSectorxSubsector/combi_name
+				,'Templates/Beschikbaarheden/Zeef_Basisjaar_T(
+					CaseClassifications/Actor/VariantXSectorxSubsector
+					,'+string(id(CaseClassifications/Actor/VariantXSectorxSubsector))+'[CaseClassifications/Actor/VariantXSectorxSubsector]
+					,VariantData
+				)'
+			), Descr = "Basisjaar.";
 	}
 	
 	container Suitability := 
 		for_each_ne(
 			Time/Zichtjaar/name
 			, 'Templates/Suitabilities/Suitability_Zichtjaar_T('+quote(Time/Zichtjaar/name)+')'
-		)
+		), Descr = "De suitability per subsector wordt hier waarnodig variant specifiek gemaakt (i.e. wonen), of slechts het compacted domain van genomen (i.e. werken)."
 	{
 		#include<Geschiktheden.dms>
 	}
@@ -44,35 +52,57 @@ container VariantData: using = "Classifications;units;Geography;VariantParameter
 	
 	container StateBasisjaar := 
 		for_each_nedvn(
-			Classifications/Modellering/Standvar_Prep/path
-			, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/StartState/StateBasisjaar/State/'+Classifications/Modellering/Standvar_Prep/path+')' 
+			Classifications/Modellering/StandVar_Prep/path
+			, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/StartState/StateBasisjaar/State/'+Classifications/Modellering/StandVar_Prep/path+')' 
 			, CompactedAdminDomain
-			, Classifications/Modellering/Standvar_Prep
-			, Classifications/Modellering/Standvar_Prep/unit_name
-		);
+			, Classifications/Modellering/StandVar_Prep
+			, Classifications/Modellering/StandVar_Prep/unit_name
+		), Descr = "In de BaseData/StartState/StateBasisjaar wordt stand in het basisjaar al bepaald. Echter, in de deze container wordt hiervan alleen de waarden in het compacted domain geselecteerd om te worden gebruikt in de allocatie.";
 	
-	#include<Claims.dms>
+	container Claims :=
+		for_each_ne(
+			Time/Zichtjaar/name
+			,'Templates/Claims/Zichtjaar_T('+string(id(Time/Zichtjaar))+'[Time/Zichtjaar], Claims, CaseClassifications)'
+		), Descr = "via dit template wordt per subsector per alloc regio per zichtjaar claims gegenereerd.", using = "Classifications/Time";
+
 	#include<Wind_restricties.dms>
-	#include<NietBouwen.dms>
+	
+	container NietBouwen
+	: Descr = "Extra restricties waar niet gebouwd mag worden."
+	{
+		container Overstromingsgevaarzones :=
+			for_each_nedv(
+				/Classifications/Overstromingsgevaarzonering/zoneringK/name
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/Overstromingsgevaarzonering) == /Classifications/Overstromingsgevaarzonering/zoneringK/V/'+/Classifications/Overstromingsgevaarzonering/zoneringK/name+'
+					&&'+'VariantParameters/VariantK/GevaarRegimeZone'+string(id(/Classifications/Overstromingsgevaarzonering/zoneringK))+'[VariantParameters/VariantK/V/'+Variant_name+'] == Classifications/Modellering/MaatregelK/V/NietBouwen'
+				, CompactedAdminDomain
+				, bool
+			), Descr = "In de variant parameters wordt opgegeven in welke overstromingsgevaren zones er wel of niet gebouwd mag worden. Deze worden hier geevalueerd en in een boolean compacted domain kaart verwerkt."
+		{
+			attribute<bool> Totaal (CompactedAdminDomain) := = 'OR('+AsItemList(/Classifications/Overstromingsgevaarzonering/zoneringK/name)+')';
+		}
+	}
+	
 	#include<Maatregelen.dms>
 	
 	container Restricties := 
 		for_each_ne(
 			Actor/Sector/name
 			,'Templates/MaakRestrictieCombinaties_T('+quote(Actor/Sector/name)+')'
-		);
+		), Descr = "Via deze template wordt voor de relevante variant instelling combinaties van restrictie categorieen gemaakt.";
 	
 	
 	container Stimuli := 
 		for_each_ne(
 			Actor/Sector/name
 			,'Templates/MaakStimuliCombinaties_T('+quote(Actor/Sector/name)+')'
-		);
+		), Descr = "Via deze template wordt voor de relevante variant instelling combinaties van stimuli categorieen gemaakt.";
 		
 	container ExogeenOpleggen
+	: Descr = "Hier kan eventueel exogeen bepaald gebied worden opgelegd. Dit is enkel uitgewerkt voor de landbouw varianten. "
 	{
-		// attribute<LU_ModelType> RetentieGebied (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/WBS ? 'SourceData/Water/Waterberging/IsReservoir ? Classifications/Actor/LU_ModelType/V/Water_Totaal : null_u' : 'const(null_u, AdminDomain)';
-		// attribute<LU_ModelType> Natuur         (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/WBS ? 'SourceData/Grondgebruik/NVK/HDB2050_25m_diff' : '/SourceData/Grondgebruik/NVK/BAU2050_25m_diff';
+		attribute<LU_ModelType> RetentieGebied (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/WBSA || Variant_rel == VariantParameters/VariantK/V/WBSB ? 'SourceData/Water/Waterberging/IsReservoir ? Classifications/Actor/LU_ModelType/V/Water_Totaal : null_u' : 'const(null_u, AdminDomain)';
+		attribute<LU_ModelType> Natuur         (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/WBSA || Variant_rel == VariantParameters/VariantK/V/WBSB ? 'SourceData/Grondgebruik/NVK/HDB2050_25m_diff' : '/SourceData/Grondgebruik/NVK/BAU2050_25m_diff';
 		
 		
 		// attribute<LU_ModelType> Totaal         (AdminDomain) :=  Geography/rdc_meter/IsStudyArea_AdminDomain ? MakeDefined(RetentieGebied, Natuur) : null_u;
