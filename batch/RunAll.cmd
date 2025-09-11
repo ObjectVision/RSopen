@@ -47,20 +47,14 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 REM deletes the old VariantData folder.
 rmdir %LocalDataProjDir%\VariantData /s /q 
 
-REM set RSL_VARIANT_NAME=MO
-REM call ..\batch\RunVariantData.cmd
-
-REM set RSL_VARIANT_NAME=RG
-REM call ..\batch\RunVariantData.cmd
-
-REM set RSL_VARIANT_NAME=SW
-REM call ..\batch\RunVariantData.cmd
-
-REM set RSL_VARIANT_NAME=GL
-REM call ..\batch\RunVariantData.cmd
-
 set RSL_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd
+
+REM set RSL_VARIANT_NAME=Intensivering
+REM call ..\batch\RunVariantData.cmd
+
+REM set RSL_VARIANT_NAME=Transformeren
+REM call ..\batch\RunVariantData.cmd
 
 :runScenarios
 
