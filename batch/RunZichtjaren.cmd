@@ -10,11 +10,11 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Basisjaar/Landgebruikskaart/Result_SA
 if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Basisjaar/Y2030/Result_SA
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Y2030/Landgebruikskaart/Result_SA
 if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Basisjaar/Y2040/Result_SA
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Y2040/Landgebruikskaart/Result_SA
 if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Basisjaar/Y2050/Result_SA
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Y2050/Landgebruikskaart/Result_SA
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 
@@ -22,7 +22,7 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/Zichtjaren/Y2060/Impl/Generate
 if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Basisjaar/Y2060/Result_SA
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Y2060/Landgebruikskaart/Result_SA
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 exit /b
