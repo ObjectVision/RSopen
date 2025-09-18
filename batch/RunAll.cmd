@@ -66,6 +66,7 @@ REM call ..\batch\RunScenarios.cmd
 
 
 echo "Klaar !"
+pause
 exit
 
 
