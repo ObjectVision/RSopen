@@ -1,6 +1,17 @@
 echo off
-for /f "tokens=2 delims==." %%I in ('"wmic os get localdatetime /value"') do set "TS=%%I"
-set "TIMESTAMP=%TS:~0,8%-%TS:~8,6%"
+REM for /f "tokens=2 delims==." %%I in ('"wmic os get localdatetime /value"') do set "TS=%%I"
+REM set "TIMESTAMP=%TS:~0,8%-%TS:~8,6%"
+
+
+setlocal EnableExtensions
+for /f "tokens=1-3 delims=-/ " %%a in ("%date%") do (
+  for /f "tokens=1-3 delims=:.," %%h in ("%time: =0%") do (
+    rem %%a=dd %%b=mm %%c=yyyy ; %%h=HH %%i=MM %%j=SS
+    set "TIMESTAMP=%%c%%b%%a-%%h%%i%%j"
+  )
+)
+
+
 
 echo ================================================================
 
