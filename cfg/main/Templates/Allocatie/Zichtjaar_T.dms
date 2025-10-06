@@ -25,7 +25,7 @@ Template Zichtjaar_T
 			attribute<job> Zak_dienstverlening (CompactedAdminDomain) :=
 				= first(lowercase(Time/Zichtjaar/name)) == lowercase(name) && ModelParameters/werken/Thuiswerk_verdikking_ook_op_bestaandekantoren
 					? 'MakeDefined(1f / ((1f / Werken0/Zak_dienstverlening) * (1f + VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+'])), 0[job])'
-					: 'Werken0/Zak_dienstverlening';
+					: 'Werken0/Zak_dienstverlening', Descr = "Eenmalig ophoging van het aantal kantoorbanen per cel. Het idee erachter is dat je door verdikking meer mensen/banen in een kantoorgebouw kwijt kunt en je minder nieuwe kantoren hoeft te bouwen. Hierdoor krijg je wellicht al overrealisatie voordat de allocatie begint. Maar je hoeft dus geen nieuwe kantoorruimte te creeren.";
 		}
 
 		container Wind
@@ -73,23 +73,6 @@ Template Zichtjaar_T
 		}
 	}
 	
-	unit<UInt8> Sequence_first := range(uint8, 0[uint8], 1[uint8])
-	, Descr = "Unit om de eerste sequentie aan te duiden. Deze wordt voor Seq_0 gebruikt en is anders dan de latere sequentie set (welke sector alloc regios daarin zitten wordt immers via de variant parameters geregeld."
-	{
-		attribute<String> name := 'Seq_'+string(id(.));
-		attribute<String> Label := name, DialogType = "LabelText";
-		attribute<String> PrevName                   := MakeDefined(name[id(.) - 1[.]], '');
-		// attribute<Bool>   HasStopped_ThisZichtjaar   := ='union_data(., '+asItemList('Sequences/'+name+'/Impl/StopSequence')+')';
-	}
-	
-	unit<UInt8> Sequence_later := range(uint8, 1[uint8], ModelParameters/Default_NrOfSequences)
-	, Descr = "Unit om de latere sequenties aan te duiden. Deze wordt voor Seq_1 t/m Seq_n gebruikt en is gelijk aan het aantal sequenties dat in de variant parameters is opgegeven."
-	{
-		attribute<String> name := 'Seq_'+string(id(.));
-		attribute<String> Label := name, DialogType = "LabelText";
-		attribute<String> PrevName                   := MakeDefined(name[id(.) - 1[.]], 'Seq_0');
-		// attribute<Bool>   HasStopped_ThisZichtjaar   := ='union_data(., '+asItemList('Sequences/'+name+'/Impl/StopSequence')+')';
-	}
 	
 	container Impl := Impl0
 	{
@@ -109,11 +92,11 @@ Template Zichtjaar_T
 			), StorageReadOnly = "True", Descr = "This tif file could potentially contain only zeros or undefined values. To check for this eventuality, the container following this one checks for this.";
 		
 		container ReadStand :=
-			// for_each_neidvn(
-			for_each_nedvn(
+			for_each_neidvn(
+			// for_each_nedvn(
 				 StandVar/path
 				, 'ReadStand_UNCHECKED/'+StandVar/path
-				// , 'not(all(IsNull(this)))'
+				, StandVar/IsLandbouw || (NOT(/VariantParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
@@ -126,8 +109,23 @@ Template Zichtjaar_T
 			}
 		}
 
-		container ReadStand_Compacted := for_each_nedvn(StandVar/path, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ReadStand/'+StandVar/path+')', CompactedAdminDomain, StandVar, StandVar/unit_name), Descr = "Stand bestanden gecompacteerd naar het compacted admin domain, om daarna in het compacted admin domain de sector allocatie uit te voeren.";
-		container CalcStand_Compacted := for_each_nedvn(StandVar/path, 'Sequences/LastSequence/StateNaAllocatie/'+StandVar/path, CompactedAdminDomain, StandVar, StandVar/unit_name), Descr = "De gealloceerde waarden in het compacted admin domain, na de sector allocatie.";
+		container ReadStand_Compacted := 
+			for_each_nedvn(
+				StandVar/path
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ReadStand/'+StandVar/path+')'
+				, CompactedAdminDomain
+				, StandVar
+				, StandVar/unit_name
+			), Descr = "Stand bestanden gecompacteerd naar het compacted admin domain, om daarna in het compacted admin domain de sector allocatie uit te voeren.";
+			
+		container CalcStand_Compacted := 
+			for_each_nedvn(
+				StandVar/path
+				, 'Sequences/LastSequence/StateNaAllocatie/'+StandVar/path
+				, CompactedAdminDomain
+				, StandVar
+				, StandVar/unit_name
+			), Descr = "De gealloceerde waarden in het compacted admin domain, na de sector allocatie.";
 
 		container CalcStand := 
 			for_each_nedvn(
@@ -142,13 +140,22 @@ Template Zichtjaar_T
 			for_each_neidvnat(
 				StandVar/path
 				, 'CalcStand/'+StandVar/path
-				, StandVar/IsLandbouw ? '' : 'not(all(IsNull(this)))' 
+				, StandVar/IsLandbouw || (NOT(/VariantParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
 				, '%LocalDataProjDir%/Allocatie/'+Casus_name +'/Stand'+name+'/'+StandVar/path+'_'+/ModelParameters/StudyArea+'.tif'
 				, 'gdalwrite.grid'
 			), Descr = "Write the calculated stand file back to a tif file, but only if the stand file is not completely empty or undefined.";
+			
+		container WriteStand_Compacted := 
+			for_each_nedvn(
+				StandVar/path
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, WriteStand/'+StandVar/path+')'
+				, CompactedAdminDomain
+				, StandVar
+				, StandVar/unit_name
+			), Descr = "De gealloceerde waarden in het compacted admin domain, na de sector allocatie, via conversie van Compacted naar Uncompacted zodat het ook weggeschreven wordt.";
 	}
 	
 	container StateNaAllocatie := = Impl/Ontkoppeld ? 'Impl/ReadStand_Compacted' : 'Impl/WriteStand_Compacted';
