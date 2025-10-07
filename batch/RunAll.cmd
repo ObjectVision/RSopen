@@ -20,7 +20,7 @@ del log\log.txt
 
 set AlleenEindjaar=TRUE
 
-if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030, 2040 en 2050 overslaan?"
+if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030 en 2040 overslaan?"
 if ErrorLevel 2 set AlleenEindjaar=FALSE
 if "%1%" equ "N" set AlleenEindjaar=FALSE
 
@@ -50,11 +50,11 @@ REM rmdir %LocalDataProjDir%\VariantData /s /q
 set RSL_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd
 
-REM set RSL_VARIANT_NAME=Intensivering
-REM call ..\batch\RunVariantData.cmd
+set RSL_VARIANT_NAME=Intensivering
+call ..\batch\RunVariantData.cmd
 
-REM set RSL_VARIANT_NAME=Transformeren
-REM call ..\batch\RunVariantData.cmd
+set RSL_VARIANT_NAME=Transformeren
+call ..\batch\RunVariantData.cmd
 
 :runScenarios
 
