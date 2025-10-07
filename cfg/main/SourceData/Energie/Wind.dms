@@ -2,6 +2,93 @@ container Wind
 {
 	container Veldsituatie := ='Veldsituatie_'+ModelParameters/Wind/Veldsituatie_Jaar;
 	
+	//ad hoc analyse afstand huidige turbines tov woningen en bedrijventerreinen
+	container AfstandTotWoningen
+	{
+		unit<uint32> Woningen := unique(/SourceData/Vastgoed/BAG/PerJaar/Y2025/vbo/Per_Gebruiksdoel/woon/select/geometry)
+		{
+			attribute<rdc_meter> geometry := values;
+		}
+		
+		unit<uint32> from_domain := Veldsituatie/punten 
+		{
+			attribute<rdc_meter>        geometry      := Veldsituatie/punten/geometry;
+			attribute<to_domain>        to_domain_rel := connect(to_domain/geometry, geometry);
+			attribute<rdc_meter>        geometry_to   := to_domain/geometry[to_domain_rel];
+
+			attribute<meter>             dist         := value(dist(geometry_to, geometry), meter);
+			attribute<Results_per_COROP> COROP_rel    := point_in_polygon(geometry, Results_per_COROP/geometry);
+		}
+
+		unit<uint32> to_domain := Woningen
+		{
+			attribute<rdc_meter> geometry := Woningen/geometry;
+		}
+		
+		unit<uint32> Results_per_COROP := /SourceData/RegioIndelingen/CBS/Last/COROP
+		{
+			attribute<rdc_meter> geometry (poly) := /SourceData/RegioIndelingen/CBS/Last/COROP/geometry;
+			attribute<meter>     min_dist        := min(from_domain/dist, from_domain/COROP_rel);
+			attribute<meter>     avg_dist        := mean(from_domain/dist, from_domain/COROP_rel);
+			attribute<meter>     max_dist        := max(from_domain/dist, from_domain/COROP_rel);
+			attribute<meter>     median_dist     := rth_element(from_domain/dist, 0.5f, from_domain/COROP_rel);
+		}
+	}
+	
+	container AfstandTotBedrijventereinen
+	{
+		unit<uint32> bedrijventerreinen := select_with_org_rel(/SourceData/Grondgebruik/IBIS/Y2023/Type_rel == /classifications/Grondgebruik/IBIS/V/Bedrijventerrein)
+		{
+			attribute<rdc_meter> geometry (poly) := org_rel -> geometry;
+			unit<UInt32> split := geos_split_union_polygon(geometry)
+			{
+				attribute<rdc_meter> geometry_outer (poly) := bg_outer_multi_polygon(geometry);
+			}
+			unit<UInt32> segments := arc2segm(split/geometry_outer)
+			{
+				// For visualisation
+				// attribute<rdc_meter>                  geometry (arc)                 := points2sequence(PointSet/Point, PointSet/SeqNr, PointSet/Ordinal);
+				// unit<UInt32> PointSet := union_unit(.,.)
+				// {
+					// attribute<rdc_meter>                   Point   := Union_Data(., ../Point, ../NextPoint);
+					// attribute<..>                          SeqNr   := value(id(.) % NrOfRows(..), ..);
+					// attribute<UInt32>                      Ordinal := id(.) / NrOfRows(..);
+				// }
+			}
+			
+			unit<uint32> dyna := dyna_point(segments/point, segments/NextPoint, 25d);
+			
+			unit<uint32> uq_points := unique(dyna/point)
+			{
+				attribute<rdc_meter> geometry := values;
+			}
+		}
+		
+		unit<uint32> from_domain := Veldsituatie/punten 
+		{
+			attribute<rdc_meter>        geometry      := Veldsituatie/punten/geometry;
+			attribute<to_domain>        to_domain_rel := connect(to_domain/geometry, geometry);
+			attribute<rdc_meter>        geometry_to   := to_domain/geometry[to_domain_rel];
+
+			attribute<meter>             dist         := value(dist(geometry_to, geometry), meter);
+			attribute<Results_per_COROP> COROP_rel    := point_in_polygon(geometry, Results_per_COROP/geometry);
+		}
+
+		unit<uint32> to_domain := bedrijventerreinen/uq_points
+		{
+			attribute<rdc_meter> geometry := bedrijventerreinen/uq_points/geometry;
+		}
+		
+		unit<uint32> Results_per_COROP := /SourceData/RegioIndelingen/CBS/Last/COROP
+		{
+			attribute<rdc_meter> geometry (poly) := /SourceData/RegioIndelingen/CBS/Last/COROP/geometry;
+			attribute<meter>     min_dist        := min(from_domain/dist, from_domain/COROP_rel);
+			attribute<meter>     avg_dist        := mean(from_domain/dist, from_domain/COROP_rel);
+			attribute<meter>     max_dist        := max(from_domain/dist, from_domain/COROP_rel);
+			attribute<meter>     median_dist     := rth_element(from_domain/dist, 0.5f, from_domain/COROP_rel);
+			attribute<uint32>    count_turbines  := pcount(from_domain/COROP_rel);
+		}
+	}
 	
 	container Veldsituatie_2025
 	{
@@ -11,7 +98,7 @@ container Wind
 			,	Source          = "https://windstats.nl/gegevens Exporteer resultaat naar CSV bestand 4037 records Windstats windturbines met veldsituatie van 3 maart 2025"
 			,	StorageType     = "gdal.vect"
 			, 	DialogData      = "rdc_meter"
-			,	SyncMode        = "Attr"
+			,	SyncMode        = "AllTables"
 			,	SqlString       = "SELECT * FROM WindStats_Export_2025_03_24_RD_NEW WHERE LZM NOT LIKE 'zee'"
 		{
 		
@@ -25,6 +112,7 @@ container Wind
 			attribute<Yr> jaartal_ingebruikname := Vermogen_enkelecellen > 0[MW] ? 2020[yr] : null_f[yr]; //bij gebrek aan ingebruikname jaren in deze open set. Een default waarde.
 			attribute<MW> Vermogen_enkelecellen := sum(convert(punten/Vermogen[Units/kW],MW), punten/AdminDomain_rel) > 0[MW] ? sum(convert(punten/Vermogen[Units/kW],MW), punten/AdminDomain_rel) : (0/0)[MW]; 
 		}
+		
 	}
 	
 	container Veldsituatie_2024
@@ -35,7 +123,7 @@ container Wind
 			,	Source          = "Windstats windturbines met veldsituatie van 2024 met gedeactiveerde turbines in status 1 in kolom IsGesloopt"
 			,	StorageType     = "gdal.vect"
 			, 	DialogData      = "rdc_meter"
-			,	SyncMode        = "Attr"
+			,	SyncMode        = "AllTables"
 			// RDx > 0 --> windpark Borselle I, II, II en IV vallen weg
 			// RDy < 625000 --> windpark Gemini vallen weg
 			// RDx > 65000 AND RDx < 93000 AND RDy > 485000 AND RDy < 520000 -- > windpark Egmond aan zee, Prinses Amalia en Luchterduinen
@@ -83,7 +171,7 @@ container Wind
 		// ,	DialogData      = "geometry"
 		// ,	DialogType      = "Map"
 		// ,	StorageType     = "gdal.vect"
-		// ,	SyncMode        = "Attr"
+		// ,	SyncMode        = "AllTables"
 		// {
 			// attribute<rdc_meter> geometry;
 			// attribute<String> name_org := MWoL2017_project;
@@ -95,7 +183,7 @@ container Wind
 		// ,	StorageReadOnly = "True"
 		// ,	Source          = "GIS-analyse op punt bestand dmv Table to Ellipse in ArcGIS 10.3.1, conversie naar vlak in QGIS 2.2"
 		// ,	StorageType     = "gdal.vect"
-		// ,	SyncMode        = "Attr"
+		// ,	SyncMode        = "AllTables"
 		// {
 			// attribute<rdc_meter> geometry (poly);
 			// attribute<String> name := MWoL2017_p;
@@ -110,7 +198,7 @@ container Wind
 	, URL             ="%RSo_DataDir%/Windpotentie/LTPlancapaciteit/NL_IMRO_0000_IMsvWindOpLand_3000/structuurvisie-windenergie-op-land.pdf"
 	, URL             = "https://www.rijksoverheid.nl/documenten/rapporten/2014/03/31/bijlage-1-structuurvisie-windenergie-op-land"
 	, StorageType     = "gdal.vect"
-	, SyncMode        = "Attr"
+	, SyncMode        = "AllTables"
 	, 	DialogData      = "rdc_meter"
 	{
 		attribute<.> Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
