@@ -14,37 +14,32 @@
 
 container Ontwikkelpakketten
 {
-	#include<Default.dms>      //uit WLO
-	#include<Intensiveren.dms> //was default en dus OO in RVNL
+	#include<Default.dms>
 	
-	unit<UInt8> Transformeren := Intensiveren //fka GR
+	unit<UInt8> Default := Default_src
 	{
-		parameter<String> Variant_name: ['Transformeren'];
-		
-		container InUitgeefbaarExPandfootprint := T(Variant_name, Intensiveren/InUitgeefbaarExPandfootprint, .);
-		container InOpenbaar                   := T(Variant_name, Intensiveren/InOpenbaar, .);
+		container InUitgeefbaarExPandfootprint := T(/Variant_name, Default_src/InUitgeefbaarExPandfootprint, .);
+		container InOpenbaar                   := T(/Variant_name, Default_src/InOpenbaar, .);
 		container InNettoBuurt                 := InNettoBuurt_T(., InUitgeefbaarExPandfootprint, InOpenbaar);
-		
-		attribute<Float32> Weging_NatNiv := union_data(., 1.000,1.000,0.750,0.750,    0.500,0.500,0.250,0.250,0.000,0.000,    0.500,0.500,0.350,0.350,    0.250,0.250,0.125)[float32];
 	}
 	
-	Template T
+	Template T: Descr = "Hier voeren we variant-specifieke factoren door op de default"
 	{
-		
 		parameter<String> Variant_name;
 		container Src;
 		unit<UInt8> SrcUnit;
 		
-		
 		attribute<Float32> Verhard      (SrcUnit) := = 'min_elem(Src/Verhard * VariantK/VerhardingTovDefault[VariantParameters/VariantK/V/'+Variant_name+'], 1f)';
-		attribute<Float32> GroenTotaal  (SrcUnit) := 1f - Verhard;
-		attribute<Float32> GroenTotaal0 (SrcUnit) := add(Src/Boom, Src/Gras, Src/Struik);
-		attribute<Float32> Gras         (SrcUnit) := MakeDefined(Src/Gras   / GroenTotaal0 * GroenTotaal, 0f);
-		attribute<Float32> Struik       (SrcUnit) := MakeDefined(Src/Struik / GroenTotaal0 * GroenTotaal, 0f);
-		attribute<Float32> Boom         (SrcUnit) := MakeDefined(Src/Boom   / GroenTotaal0 * GroenTotaal, 0f);
+		attribute<Float32> GroenEnWater (SrcUnit) := 1f - Verhard;
+		attribute<Float32> Groen        (SrcUnit) := Src/Groen / add(Src/Groen, Src/Water) * GroenEnWater;
+		attribute<Float32> Water        (SrcUnit) := 1f - Verhard - Groen;
+		
+		attribute<Float32> Gras    (SrcUnit) := MakeDefined(Src/Gras   / Src/Groen * Groen, 0f);
+		attribute<Float32> Struik  (SrcUnit) := MakeDefined(Src/Struik / Src/Groen * Groen, 0f);
+		attribute<Float32> Boom    (SrcUnit) := MakeDefined(Src/Boom   / Src/Groen * Groen, 0f);
 	}
 	
-	Template InNettoBuurt_T
+	Template InNettoBuurt_T: Descr = "Hier zetten we de fracties om in meter2"
 	{
 		//
 		unit<UInt8> SrcUnit;
@@ -60,7 +55,8 @@ container Ontwikkelpakketten
 				attribute<Terreinoppervlak> Buitenruimte     (SrcUnit) := . - GebouwVoetafdruk
 				{
 					attribute<Terreinoppervlak> Verhard (SrcUnit) := . * InUitgeefbaarExPandFootprint/Verhard;
-					attribute<Terreinoppervlak> Groen   (SrcUnit) := . * InUitgeefbaarExPandFootprint/GroenTotaal
+					attribute<Terreinoppervlak> Water   (SrcUnit) := . * InUitgeefbaarExPandFootprint/Water;
+					attribute<Terreinoppervlak> Groen   (SrcUnit) := . * InUitgeefbaarExPandFootprint/Groen
 					{
 						attribute<Terreinoppervlak> Gras   (SrcUnit) := .. * InUitgeefbaarExPandFootprint/Gras;
 						attribute<Terreinoppervlak> Boom   (SrcUnit) := .. * InUitgeefbaarExPandFootprint/Boom;
@@ -72,20 +68,81 @@ container Ontwikkelpakketten
 			attribute<Terreinoppervlak> Openbaar (SrcUnit):= . * (1f - SrcUnit/FractieUitgeefbaar)
 			{
 				attribute<Terreinoppervlak> Verhard (SrcUnit) := . * InOpenbaar/Verhard;
-				attribute<Terreinoppervlak> Groen   (SrcUnit) := . * InOpenbaar/GroenTotaal
+				attribute<Terreinoppervlak> Water   (SrcUnit) := . * InOpenbaar/Water;
+				attribute<Terreinoppervlak> Groen   (SrcUnit) := . * InOpenbaar/Groen
 				{
 					attribute<Terreinoppervlak> Gras   (SrcUnit) := .. * InOpenbaar/Gras;
 					attribute<Terreinoppervlak> Boom   (SrcUnit) := .. * InOpenbaar/Boom;
 					attribute<Terreinoppervlak> Struik (SrcUnit) := .. * InOpenbaar/Struik;
 				}
 			}
+			
+			attribute<Terreinoppervlak> Totaal (SrcUnit) := add(Uitgeefbaar, Openbaar)
+			{
+				attribute<Terreinoppervlak> GebouwVoetafdruk            (SrcUnit) := Uitgeefbaar/GebouwVoetafdruk; // is per definitie de fractie voetafdruk van terreinopp nettobuurt; mag niet hoger zijn dan FractieUitgeefbaar
+				attribute<Terreinoppervlak> Verhard                     (SrcUnit) := add(Uitgeefbaar/Buitenruimte/Verhard, Openbaar/Verhard);
+				attribute<Terreinoppervlak> GebouwVoetafdrukPlusVerhard (SrcUnit) := add(GebouwVoetafdruk, Verhard); // Deze gebruiken voor soil sealing
+				
+				attribute<Terreinoppervlak> Water (SrcUnit) := add(Uitgeefbaar/Buitenruimte/Water, Openbaar/Water);
+				attribute<Terreinoppervlak> Groen (SrcUnit) := add(Uitgeefbaar/Buitenruimte/Groen, Openbaar/Groen)
+				{
+					attribute<Terreinoppervlak> Gras   (SrcUnit) := add(Uitgeefbaar/Buitenruimte/Groen/Gras, Openbaar/Groen/Gras);
+					attribute<Terreinoppervlak> Boom   (SrcUnit) := add(Uitgeefbaar/Buitenruimte/Groen/Boom, Openbaar/Groen/Boom);
+					attribute<Terreinoppervlak> Struik (SrcUnit) := add(Uitgeefbaar/Buitenruimte/Groen/Struik, Openbaar/Groen/Struik);
+				}
+			}
 		}
 		
-		attribute<Terreinoppervlak> Verhard (SrcUnit) := add(
-			TerreinoppervlakteNettoBuurt/Uitgeefbaar/GebouwVoetafdruk,
-			TerreinoppervlakteNettoBuurt/Uitgeefbaar/Buitenruimte/Verhard,
-			TerreinoppervlakteNettoBuurt/Openbaar/Verhard
-		);
+		container PerWoning
+		{
+			container Src := InNettoBuurt;
+			
+			attribute<m2_Woning> TerreinoppervlakteNettoBuurt (SrcUnit) := Src/TerreinoppervlakteNettoBuurt[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha])
+			{
+				attribute<m2_Woning> Uitgeefbaar (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha])
+				{
+					attribute<m2_Woning> GebouwVoetafdruk (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar/GebouwVoetafdruk[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					attribute<m2_Woning> Buitenruimte     (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar/Buitenruimte[meter2]     / (SrcUnit/DichtheidNettoBuurt * 1[ha])
+					{
+						attribute<m2_Woning> Verhard (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar/Buitenruimte/Verhard[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+						attribute<m2_Woning> Water   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar/Buitenruimte/Water[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+						attribute<m2_Woning> Groen   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar/Buitenruimte/Groen[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha])
+						{
+							attribute<m2_Woning> Gras   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar/Buitenruimte/Groen/Gras[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+							attribute<m2_Woning> Boom   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar/Buitenruimte/Groen/Boom[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+							attribute<m2_Woning> Struik (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Uitgeefbaar/Buitenruimte/Groen/Struik[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+						}
+					}
+				}
+				
+				attribute<m2_Woning> Openbaar (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Openbaar[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha])
+				{
+					attribute<m2_Woning> Verhard (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Openbaar/Verhard[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					attribute<m2_Woning> Water   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Openbaar/Water[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					attribute<m2_Woning> Groen   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Openbaar/Groen[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha])
+					{
+						attribute<m2_Woning> Gras   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Openbaar/Groen/Gras[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+						attribute<m2_Woning> Boom   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Openbaar/Groen/Boom[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+						attribute<m2_Woning> Struik (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Openbaar/Groen/Struik[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					}
+				}
+				
+				attribute<m2_Woning> Totaal (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha])
+				{
+					attribute<m2_Woning> GebouwVoetafdruk            (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal/GebouwVoetafdruk[meter2]            / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					attribute<m2_Woning> Verhard                     (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal/Verhard[meter2]                     / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					attribute<m2_Woning> GebouwVoetafdrukPlusVerhard (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal/GebouwVoetafdrukPlusVerhard[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					
+					attribute<m2_Woning> Water (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal/Water[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					attribute<m2_Woning> Groen (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal/Groen[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha])
+					{
+						attribute<m2_Woning> Gras   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal/Groen/Gras[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+						attribute<m2_Woning> Boom   (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal/Groen/Boom[meter2]   / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+						attribute<m2_Woning> Struik (SrcUnit) := Src/TerreinoppervlakteNettoBuurt/Totaal/Groen/Struik[meter2] / (SrcUnit/DichtheidNettoBuurt * 1[ha]);
+					}
+				}
+			}
+		}
 		
 		container FractiesGroen // tov TerreinoppervlakteNettoBuurt
 		{
