@@ -1,39 +1,59 @@
+// Based on the geometry of neighboring panden and the number of related residential verblijfsobjecten, a type is derived, called the woonpand_type.
+// 
+// The resulting housing types (woonpand types, or WP5) are:
+// - detached: building with one residential object with a residential function and no adjacent buildings with a residential function.
+// - semi-detached house: building with one accommodation object with a residential function and one adjoining building with a residential function, which only adjoins 1 building with a residential function.
+// - corner house: building with one accommodation object with a residential function and one adjoining building with a residential function, which adjoins several buildings with a residential function.
+// - terraced house: building with one residential object with a residential function and at least two adjoining buildings with a residential function.
+// - multi-family building: several accommodation units with a residential function are situated in the building.
+// 
+// A selection of buildings has been made that contain at least one accommodation object.
+// 
+// The calculation of the housing type (woonpand type) is based on:
+// - the geometry of the panden and how they border to other panden
+// - the number of verblijfsobjecten in the panden.
+// - The calculation method can be found in the afleidingen.dms script file.
+// 
+
 container AfleidingPandType
+: Descr = "Based on the geometry of neighboring panden and the number of related residential verblijfsobjecten, a type is derived, called the WP5_rel."
 {
-	unit<uint32> domain := ..;
+	unit<UInt32> domain := ..;
 	container results
 	{
-		attribute<uint32>        nr_buurpanden     (domain) := functioneel_pand/NeighbourCount[invert(functioneel_pand/org_rel)]; 
+		attribute<UInt32>        nr_buurpanden     (domain) := functioneel_pand/NeighbourCount[invert(functioneel_pand/org_rel)]; 
 		attribute<WP5>           WP5_rel           (domain) := functioneel_pand/WP5_rel[invert(functioneel_pand/org_rel)];
 	}
 
 	container extents
+	: Descr = "Calculate the extents of each pand."
 	{
 		attribute<rdc_meter>    NW     (domain) := lower_bound(geometry);
 		attribute<rdc_meter>    SE     (domain) := upper_bound(geometry);
-		attribute<float64>      X_ext  (domain) := PointCol(SE) - PointCol(NW);
-		attribute<float64>      Y_ext  (domain) := PointRow(SE) - PointRow(NW);
+		attribute<Float64>      X_ext  (domain) := PointCol(SE) - PointCol(NW);
+		attribute<Float64>      Y_ext  (domain) := PointRow(SE) - PointRow(NW);
 	}
 	
 	
-	unit<uint32> functioneel_pand := select_with_org_rel(domain/counts/VBOs > 0 && extents/X_ext < 1000d && extents/Y_ext < 1000d)
+	unit<UInt32> functioneel_pand := select_with_org_rel(domain/counts/VBOs > 0 && extents/X_ext < 1000d && extents/Y_ext < 1000d)
+	, Descr = "Selecteer panden met verblijfsobjecten en met een redelijke omvang (geen grote bedrijfsgebouwen e.d.)."
 	{
 		attribute<rdc_meter>    geometry (poly) := org_rel -> geometry;
 		attribute<rdc_meter>    geometry_inflated_20cm (poly) := org_rel -> geometry_inflated_20cm;
 		attribute<rdc_meter>    NW              := extents/NW[org_rel];
 		attribute<rdc_meter>    SE              := extents/SE[org_rel];
 	
-		attribute<uint32> NeighbourCount   := pcount(unique_neighbour_pair/F1) + pcount(unique_neighbour_pair/F2);
-		attribute<bool>   HasOneNeighbour  := NeighbourCount == 1;
-		attribute<bool>   IsSemiAttached   := HasOneNeighbour &&
+		attribute<UInt32> NeighbourCount   := pcount(unique_neighbour_pair/F1) + pcount(unique_neighbour_pair/F2), Descr = "Tel het aantal unieke buren.";
+		attribute<Bool>   HasOneNeighbour  := NeighbourCount == 1, Descr = "Heeft precies 1 buurpand.";
+		attribute<Bool>   IsSemiAttached   := HasOneNeighbour &&
 			HasOneNeighbour[
 				MakeDefined(
 					unique_neighbour_pair/F2[invert(unique_neighbour_pair/F1)],
 					unique_neighbour_pair/F1[invert(unique_neighbour_pair/F2)]
 				)
-			];
+			], descr = "Is semi-vrijstaand als de enige buur ook maar 1 buur heeft (namelijk dit pand).";
 
-		attribute<uint32> nr_Woning := domain/counts/woon_VBOs[org_rel];
+		attribute<UInt32> nr_Woning := domain/counts/woon_VBOs[org_rel], Descr = "Aantal verblijfsobjecten met een woonfunctie in het pand.";
 
 		attribute<WP5> WP5_rel  :=
 			  nr_Woning == 0      ? WP5/V/geen_woonpand
@@ -43,49 +63,54 @@ container AfleidingPandType
 				? IsSemiAttached
 					? WP5/V/Twee_onder_1_kap
 					: WP5/V/hoekWoning
-			: WP5/V/tussenWoning;
+			: WP5/V/tussenWoning, Descr = "Bepaal het woningtype op basis van het aantal verblijfsobjecten en het aantal buren.";
 	}
 
-	parameter<uint32>  nr_x         := ModelParameters/Wonen/BAG_woonpand_Typering/nr_x_tiles;
-	parameter<uint32>  nr_y         := ModelParameters/Wonen/BAG_woonpand_Typering/nr_y_tiles;
-	parameter<float64> inflate_size := ModelParameters/Wonen/BAG_woonpand_Typering/inflate_size;
+	parameter<UInt32>  nr_x         := ModelParameters/Wonen/BAG_woonpand_Typering/nr_x_tiles, Descr = "Aantal tegels in x-richting om de panden in te verdelen voor de burenberekening.";
+	parameter<UInt32>  nr_y         := ModelParameters/Wonen/BAG_woonpand_Typering/nr_y_tiles, Descr = "Aantal tegels in y-richting om de panden in te verdelen voor de burenberekening.";
+	parameter<Float64> inflate_size := ModelParameters/Wonen/BAG_woonpand_Typering/inflate_size, Descr = "Met hoeveel meter worden de panden vergroot om te bepalen of ze buren zijn.";
 
-	unit<uint32> rectangle := range(uint32, 0, nr_x * nr_y)
+	unit<UInt32> rectangle := range(uint32, 0, nr_x * nr_y)
+	, Descr = "Verdeel het gebied in een grid van rechthoeken om de burenberekening per rechthoek te doen. Dit omdat de geometrische berekeningen relatief zwaar zijn en tiling maakt dit efficienter."
 	{
-		attribute<uint32> seq_y  := id(.) / nr_x;
-		attribute<uint32> seq_x  := id(.) % nr_x;
-		attribute<string> name   := 'R'+string(seq_y)+'_C'+string(seq_x);
+		attribute<UInt32> seq_y  := id(.) / nr_x, Descr = "Volgnummer in y-richting";
+		attribute<UInt32> seq_x  := id(.) % nr_x, Descr = "Volgnummer in x-richting";
+		attribute<String> name   := 'R'+string(seq_y)+'_C'+string(seq_x), Descr = "Naam van de rechthoek";
 
-		parameter<uint32> size_x := uint32(PointCol(BoundRange(rdc_meter))) / uint32(nr_x);
-		parameter<uint32> size_y := uint32(PointRow(BoundRange(rdc_meter))) / uint32(nr_y);
+		parameter<UInt32> size_x := uint32(PointCol(BoundRange(rdc_meter))) / uint32(nr_x), Descr = "Breedte van een rechthoek in rdc_meter";
+		parameter<UInt32> size_y := uint32(PointRow(BoundRange(rdc_meter))) / uint32(nr_y), Descr = "Hoogte van een rechthoek in rdc_meter";
 
-		attribute<uint32> min_x  := uint32(PointCol(lowerbound(rdc_meter))) + seq_x * size_x;
-		attribute<uint32> max_x  := min_x + size_x;
-		attribute<uint32> min_y  := uint32(PointRow(lowerbound(rdc_meter))) + seq_y * size_y;
-		attribute<uint32> max_y  := min_y + size_y;
+		attribute<UInt32> min_x  := uint32(PointCol(lowerbound(rdc_meter))) + seq_x * size_x, Descr = "Min x-coordinaat van de rechthoek in rdc_meter";
+		attribute<UInt32> max_x  := min_x + size_x, Descr = "Max x-coordinaat van de rechthoek in rdc_meter";
+		attribute<UInt32> min_y  := uint32(PointRow(lowerbound(rdc_meter))) + seq_y * size_y, Descr = "Min y-coordinaat van de rechthoek in rdc_meter";
+		attribute<UInt32> max_y  := min_y + size_y, Descr = "Max y-coordinaat van de rechthoek in rdc_meter";
 		
 		// for visualisation
-		attribute<rdc_meter> geometry (poly) := points2sequence(point_set/point, point_set/Sequence_rel); //, point_set/ordinal);
+		attribute<rdc_meter> geometry (poly) := points2sequence(point_set/point, point_set/Sequence_rel); //, point_set/ordinal), Descr = "De geometrie van de rechthoek voor visualisatie.";
 		attribute<rdc_meter> top_left     := point_xy(float32(min_x), float32(max_y), rdc_meter); 
 		attribute<rdc_meter> top_right    := point_xy(float32(max_x), float32(max_y), rdc_meter);
 		attribute<rdc_meter> bottom_left  := point_xy(float32(min_x), float32(min_y), rdc_meter);
 		attribute<rdc_meter> bottom_right := point_xy(float32(max_x), float32(min_y), rdc_meter);
 		
-		unit<uint32> point_set := union_unit(.,.,.,.,.)
+		unit<UInt32> point_set := union_unit(.,.,.,.,.)
 		{
 			attribute<rdc_meter>  point        := union_data(., top_left, top_right, bottom_right, bottom_left, top_left);
 			attribute<..>      Sequence_rel := union_data(., id(..), id(..), id(..), id(..), id(..));
 		}
 	}
 
-	container rectangles := for_each_ne(rectangle/name, 'Connect_neighbours_T('+string(id(rectangle))+')');
+	container rectangles := for_each_ne(rectangle/name, 'Connect_neighbours_T('+string(id(rectangle))+')'), Descr = "Voor elke rechthoek in de tegelverdeling worden de buren van de panden in die rechthoek berekend."
+	{
+		// #include<Connect_neighbours_T.dms>
+	}
 
 	template Connect_neighbours_T
+	: Descr = "Bepaal de buren van de panden in een rechthoek."
 	{
 		parameter<rectangle> rectangle_sel;
 		// end case Parameters
 
-		unit<uint32> domain :=
+		unit<UInt32> domain :=
 			select_with_org_rel(
 				uint32(PointCol(functioneel_pand/NW)) <= rectangle/max_x[rectangle_sel]
 			&&	uint32(PointRow(functioneel_pand/NW)) <= rectangle/max_y[rectangle_sel]
@@ -93,20 +118,23 @@ container AfleidingPandType
 			&&	uint32(PointRow(functioneel_pand/SE)) >= rectangle/min_y[rectangle_sel]
 			);
 
-		attribute<rdc_meter> buffer (domain, poly) := domain/org_rel -> functioneel_pand/geometry_inflated_20cm; 
+		attribute<rdc_meter> buffer (domain, poly) := domain/org_rel -> functioneel_pand/geometry_inflated_20cm, Descr = "Haal de geometrieën van de panden op en vergroot deze met een kleine buffer (20cm) om te bepalen of ze buren zijn.";
 
-		unit<uint32> neighbours := geos_polygon_connectivity(buffer)
+		unit<UInt32> neighbours := geos_polygon_connectivity(buffer)
+		, Descr = "Bepaal de buren van de panden in de rechthoek door de geometrieën met een kleine buffer te verbinden."
 		{
-			attribute<upoint> coded_pair := point_yx(domain/org_rel[first_rel], domain/org_rel[second_rel]);
+			attribute<upoint> coded_pair := point_yx(domain/org_rel[first_rel], domain/org_rel[second_rel]), Descr = "Codeer de burenparen als upoint (lager ID in X, hoger ID in Y) om dubbele paren te voorkomen.";
 		}
 	}
 	
-	unit<uint32> neighbour_pair := ='union_unit('+AsItemList('rectangles/' + rectangle/name + '/neighbours')+')'
+	unit<UInt32> neighbour_pair := ='union_unit('+asItemList('rectangles/' + rectangle/name + '/neighbours')+')'
+	, Descr = "Verzamel alle burenparen uit alle rechthoeken."
 	{
-		attribute<upoint> coded_pair := ='union_data(., '+AsItemList('rectangles/' + rectangle/name + '/neighbours/coded_pair')+')';
+		attribute<upoint> coded_pair := ='union_data(., '+asItemList('rectangles/' + rectangle/name + '/neighbours/coded_pair')+')';
 	}
 	
-	unit<uint32> unique_neighbour_pair := unique(neighbour_pair/coded_pair)
+	unit<UInt32> unique_neighbour_pair := unique(neighbour_pair/coded_pair)
+	, Descr = "Haal de unieke burenparen op om dubbele paren te voorkomen."
 	{
 		attribute<functioneel_pand> F1 := PointRow(values)[functioneel_pand];
 		attribute<functioneel_pand> F2 := PointCol(values)[functioneel_pand];

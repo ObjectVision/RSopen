@@ -20,7 +20,7 @@ del log\log.txt
 
 set AlleenEindjaar=TRUE
 
-if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030, 2040 en 2050 overslaan?"
+if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030 en 2040 overslaan?"
 if ErrorLevel 2 set AlleenEindjaar=FALSE
 if "%1%" equ "N" set AlleenEindjaar=FALSE
 
@@ -36,7 +36,7 @@ goto runScenarios
 :runPrepareBasedata
 
 REM deletes the old BaseData folder
-REM rmdir %LocalDataProjDir%\Basedata /s /q 
+rmdir %LocalDataProjDir%\Basedata /s /q 
 
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
@@ -45,16 +45,16 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 :runPrepareVariantdata
 
 REM deletes the old VariantData folder.
-REM rmdir %LocalDataProjDir%\VariantData /s /q 
+rmdir %LocalDataProjDir%\VariantData /s /q 
 
 set RSL_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd
 
-REM set RSL_VARIANT_NAME=Intensivering
-REM call ..\batch\RunVariantData.cmd
+set RSL_VARIANT_NAME=Intensiveren
+call ..\batch\RunVariantData.cmd
 
-REM set RSL_VARIANT_NAME=Transformeren
-REM call ..\batch\RunVariantData.cmd
+set RSL_VARIANT_NAME=Transformeren
+call ..\batch\RunVariantData.cmd
 
 :runScenarios
 

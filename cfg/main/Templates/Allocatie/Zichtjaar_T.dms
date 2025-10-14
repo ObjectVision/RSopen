@@ -1,7 +1,7 @@
 Template Zichtjaar_T
+: Descr = "Een zichtjaar binnen een allocatiecasus, met daarin de state voor en na allocatie, en de sequenties om verdringing in latere jaren te kunnen heralloceren."
 {
-	//
-	parameter<string> name;
+	parameter<String> name;
 	container StateVoorAllocatie0;
 	container Impl0;
 	//
@@ -25,22 +25,29 @@ Template Zichtjaar_T
 			attribute<job> Zak_dienstverlening (CompactedAdminDomain) :=
 				= first(lowercase(Time/Zichtjaar/name)) == lowercase(name) && ModelParameters/werken/Thuiswerk_verdikking_ook_op_bestaandekantoren
 					? 'MakeDefined(1f / ((1f / Werken0/Zak_dienstverlening) * (1f + VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+'])), 0[job])'
-					: 'Werken0/Zak_dienstverlening';
+					: 'Werken0/Zak_dienstverlening', Descr = "Eenmalig ophoging van het aantal kantoorbanen per cel. Het idee erachter is dat je door verdikking meer mensen/banen in een kantoorgebouw kwijt kunt en je minder nieuwe kantoren hoeft te bouwen. Hierdoor krijg je wellicht al overrealisatie voordat de allocatie begint. Maar je hoeft dus geen nieuwe kantoorruimte te creeren.";
 		}
 
 		container Wind
 		{
-			attribute<bool>  MoetWindmolenAfgebrokenWorden (CompactedAdminDomain) := jaartal_ingebruikname_0 + ModelParameters/Wind/WindmolenAfschrijving < uint16(right(name, 4));
-			attribute<Yr>    jaartal_ingebruikname_0       (CompactedAdminDomain) := StateVoorAllocatie0/Wind/jaartal_ingebruikname;
-			attribute<Yr>    jaartal_ingebruikname         (CompactedAdminDomain) := VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? (0/0)[Yr] : jaartal_ingebruikname_0;
-			attribute<MW>    Totaal                        (CompactedAdminDomain) := VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? 0[MW]     : StateVoorAllocatie0/Wind/Totaal;
+			attribute<Bool>  MoetWindmolenAfgebrokenWorden (CompactedAdminDomain) := jaartal_ingebruikname_0 + ModelParameters/Wind/WindmolenAfschrijving < UInt16(right(name, 4)), Descr = "Als de jaartal ingebruikname + afschrijving kleiner is dan het zichtjaar, moet de windmolen worden afgebroken";
+			attribute<Yr>    jaartal_ingebruikname_0       (CompactedAdminDomain) := StateVoorAllocatie0/Wind/jaartal_ingebruikname, Descr = "Het jaartal van ingebruikname van de windmolen in het vorige zichtjaar";
+			attribute<Yr>    jaartal_ingebruikname         (CompactedAdminDomain) := VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? (0/0)[Yr] : jaartal_ingebruikname_0, Descr = "Het jaartal van ingebruikname van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
+			attribute<MW>    Totaal                        (CompactedAdminDomain) := =NOT(VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector) 
+																						? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/StartState/StateBasisjaar/src/Wind/Totaal)'
+																						: 'VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden
+																							? 0[MW]
+																							: StateVoorAllocatie0/Wind/Totaal', Descr = "Het totaal vermogen aan windmolens in dit zichtjaar, of 0 als de windmolen is afgebroken";
+			attribute<Meter> MaxWerpafstandNom             (CompactedAdminDomain) := VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/MaxWerpafstandNom, Descr = "De max werpafstand van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
+			attribute<Meter> Ashoogte                      (CompactedAdminDomain) := VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/Ashoogte, Descr = "De Ashoogte van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
+			attribute<Meter> Rotordiameter                 (CompactedAdminDomain) := VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/Rotordiameter, Descr = "De Rotordiameter van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
 		}
 	}
 	
 	container Context
 	{
 		container ThisZichtjaar := ..;
-		parameter<string> ThisZichtjaar_name := ../name;
+		parameter<String> ThisZichtjaar_name := ../name;
 	}
 	
 	container Sequences :=
@@ -65,7 +72,7 @@ Template Zichtjaar_T
 			, CaseClassifications/Actor/SectorAllocRegio  // unit with sector alloc regio set
 			, Sequence_first                              // unit of single first sequence or later sequences
 			, Impl                                        // Impl folder from previous step
-		);
+		), Descr = "Eerste sequentie, die werkt op basis van de state voor allocatie";
 		
 		container LastSequence := =last(Sequence_later/name)
 		{
@@ -73,29 +80,15 @@ Template Zichtjaar_T
 		}
 	}
 	
-	unit<uint8> Sequence_first := range(uint8, 0[uint8], 1[uint8])
-	{
-		attribute<string> name := 'Seq_'+string(id(.));
-		attribute<string> Label := name, DialogType = "LabelText";
-		attribute<string> PrevName                   := MakeDefined(name[id(.) - 1[.]], '');
-		// attribute<bool>   HasStopped_ThisZichtjaar   := ='union_data(., '+AsItemList('Sequences/'+name+'/Impl/StopSequence')+')';
-	}
-	
-	unit<uint8> Sequence_later := range(uint8, 1[uint8], ModelParameters/Default_NrOfSequences)
-	{
-		attribute<string> name := 'Seq_'+string(id(.));
-		attribute<string> Label := name, DialogType = "LabelText";
-		attribute<string> PrevName                   := MakeDefined(name[id(.) - 1[.]], 'Seq_0');
-		// attribute<bool>   HasStopped_ThisZichtjaar   := ='union_data(., '+AsItemList('Sequences/'+name+'/Impl/StopSequence')+')';
-	}
 	
 	container Impl := Impl0
 	{
-		parameter<string>  Generate  := 'Allocatie'+name, ExplicitSuppliers = "=AsList('WriteStand/'+StandVar/path, ';')";
+		parameter<String>  Generate  := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')", Descr = "Generate parameter to trigger generation of the stand files for this zichtjaar";
 
-		parameter<bool>   Ontkoppeld := ='ModelParameters/StandAllocatieOntkoppeld';
+		parameter<Bool>   Ontkoppeld := ='ModelParameters/StandAllocatieOntkoppeld', Descr = "Of de stand allocatie ontkoppeld is van de sector allocatie. Als dat zo is, worden de stand bestanden eerst ingelezen, gecompacteerd, en na de sector allocatie weer teruggeschreven. Als dat niet zo is, worden de stand bestanden direct overschreven.";
 		
-		unit<uint32> StandVar := CaseClassifications/StandVar;
+		unit<UInt32>      StandVar          := CaseClassifications/StandVar;
+		parameter<string> AllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', Casus_name, '@JAAR@', name, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
 		
 		container ReadStand_UNCHECKED :=
 			for_each_ndvna(
@@ -103,15 +96,16 @@ Template Zichtjaar_T
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
-				, '%LocalDataProjDir%/Allocatie/'+Casus_name +'/Stand'+name+'/'+StandVar/path+'_'+/ModelParameters/StudyArea+'.tif'
+				, replace(AllocatieFileName, '@STANDPATH@', StandVar/path)
+				// , '%LocalDataProjDir%/Allocatie/'+Casus_name +'/Stand'+name+'/'+StandVar/path+'_'+/ModelParameters/StudyArea+'_SS-'+string(#/Classifications/Actor/Sector/xSubsector)+'.tif'
 			), StorageReadOnly = "True", Descr = "This tif file could potentially contain only zeros or undefined values. To check for this eventuality, the container following this one checks for this.";
 		
 		container ReadStand :=
-			// for_each_neidvn(
-			for_each_nedvn(
+			for_each_neidvn(
+			// for_each_nedvn(
 				 StandVar/path
 				, 'ReadStand_UNCHECKED/'+StandVar/path
-				// , 'not(all(IsNull(this)))'
+				, StandVar/IsLandbouw || (NOT(/VariantParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
@@ -119,29 +113,28 @@ Template Zichtjaar_T
 		{
 			container wonen
 			{
-				attribute<Woning> Aantal_Woningen_Totaal (AdminDomain) := = 'add('+AsItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
+				attribute<Woning> Aantal_Woningen_Totaal (AdminDomain) := = 'add('+asItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
 				attribute<Woning> Aantal_Woningen_Totaal_NVM (NVM) := sum(Aantal_Woningen_Totaal, NVM/Per_AdminDomain);
 			}
 		}
 
-		 container Oppervlakte_km2_Per_sub_sector_rel :=
-             for_each_nedv(
-								Classifications/Actor/Sector/xSubsector/Label
-								, 'sum((ReadStand/SubSector_rel == /Classifications/Actor/Sector/xSubsector/V/' + Classifications/Actor/Sector/xSubsector/Label + ')[float32] * AdminDomain/NrHaPerCell)[km2]'
-								,void
-								, km2
-                               );
-
-		container ReadStandWind
-		{
-			attribute<bool>  IsWind   (AdminDomain) :=ReadStand/SubSector_rel==Classifications/Actor/Sector/xSubsector/V/Wind_Totaal;
-			attribute<uint8> WindUint8(AdminDomain) :=IsWind ? 1b :  0b/0b;
+		container ReadStand_Compacted := 
+			for_each_nedvn(
+				StandVar/path
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ReadStand/'+StandVar/path+')'
+				, CompactedAdminDomain
+				, StandVar
+				, StandVar/unit_name
+			), Descr = "Stand bestanden gecompacteerd naar het compacted admin domain, om daarna in het compacted admin domain de sector allocatie uit te voeren.";
 			
-			#include <WindPolygoon.dms>
-		}
-		
-		container ReadStand_Compacted := for_each_nedvn(StandVar/path, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ReadStand/'+StandVar/path+')', CompactedAdminDomain, StandVar, StandVar/unit_name);
-		container CalcStand_Compacted := for_each_nedvn(StandVar/path, 'Sequences/LastSequence/StateNaAllocatie/'+StandVar/path, CompactedAdminDomain, StandVar, StandVar/unit_name);
+		container CalcStand_Compacted := 
+			for_each_nedvn(
+				StandVar/path
+				, 'Sequences/LastSequence/StateNaAllocatie/'+StandVar/path
+				, CompactedAdminDomain
+				, StandVar
+				, StandVar/unit_name
+			), Descr = "De gealloceerde waarden in het compacted admin domain, na de sector allocatie.";
 
 		container CalcStand := 
 			for_each_nedvn(
@@ -150,40 +143,30 @@ Template Zichtjaar_T
 				, AdminDomain
 				, StandVar
 				,StandVar/unit_name
-		);
+		), Descr = "De gealloceerde waarden terug in het volledige admin domain, met undefined voor de niet gecompacteerde cellen.";
 		
 		container WriteStand :=
 			for_each_neidvnat(
-			// for_each_nedvnat(
 				StandVar/path
 				, 'CalcStand/'+StandVar/path
-				, StandVar/IsLandbouw ? '' : 'not(all(IsNull(this)))' 
+				, StandVar/IsLandbouw || (NOT(/VariantParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
-				, '%LocalDataProjDir%/Allocatie/'+Casus_name +'/Stand'+name+'/'+StandVar/path+'_'+/ModelParameters/StudyArea+'.tif'
+				, replace(AllocatieFileName, '@STANDPATH@', StandVar/path)
+				// , '%LocalDataProjDir%/Allocatie/'+Casus_name +'/Stand'+name+'/'+StandVar/path+'_'+/ModelParameters/StudyArea+'_SS-'+string(#/Classifications/Actor/Sector/xSubsector)+'.tif'
 				, 'gdalwrite.grid'
-			);
+			), Descr = "Write the calculated stand file back to a tif file, but only if the stand file is not completely empty or undefined.";
+			
+		container WriteStand_Compacted := 
+			for_each_nedvn(
+				StandVar/path
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, WriteStand/'+StandVar/path+')'
+				, CompactedAdminDomain
+				, StandVar
+				, StandVar/unit_name
+			), Descr = "De gealloceerde waarden in het compacted admin domain, na de sector allocatie, via conversie van Compacted naar Uncompacted zodat het ook weggeschreven wordt.";
 	}
 	
-	container StateNaAllocatie := = Impl/Ontkoppeld ? 'Impl/ReadStand_Compacted' : 'Impl/WriteStand_Compacted'
-	{
-		container PlaceHolder;
-		container WindPath :=  = Impl/Ontkoppeld && VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector 
-									? 'Impl/ReadStand_Compacted/Wind' 
-									: NOT(Impl/Ontkoppeld) && VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector
-										? 'Impl/WriteStand_Compacted/Wind'
-										: 'PlaceHolder';
-		container Wind := WindPath
-		{
-			unit<uint64> Objects := select_with_attr_by_cond(WindPath, WindPath/Totaal > 0f)
-			{
-				attribute<rdc_meter> geometry :=  collect_by_cond(., WindPath/Totaal > 0f, CompactedAdminDomain/point)
-				{
-					parameter<meter> SymbolWorldSize   := 10[meter], DialogType = "SymbolWorldSize  ";
-					parameter<int16> SymbolIndex := 83s, DialogType = "SymbolIndex";
-				}
-			}
-		}
-	}
+	container StateNaAllocatie := = Impl/Ontkoppeld ? 'Impl/ReadStand_Compacted' : 'Impl/WriteStand_Compacted';
 }
