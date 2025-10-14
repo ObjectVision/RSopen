@@ -4,40 +4,48 @@ Template Sequence_T : using = "Classifications/modellering"
 	parameter<Sequence> id;
 	container StateVoorAllocatie;
 	container Context0;
-	parameter<bool> IsSeq0;
-	unit<uint8> SectorAllocRegio;
-	unit<uint8> Sequence;
+	parameter<Bool> IsSeq0;
+	unit<UInt8> SectorAllocRegio;
+	unit<UInt8> Sequence;
 	container Impl0;
 	//
 	
-	parameter<string> name := Sequence/name[id];
+	parameter<String> name := Sequence/name[id];
 	
 	container Context := Context0
 	{
 		container ThisSequence := ..;
-		parameter<string> ThisSequenceName := Sequence/name[id];
+		parameter<String> ThisSequencename := Sequence/name[id];
 	}
 	
-	parameter<bool> ExtraRestrictieDoorWindAllocatieNodig                   := name != 'Seq_0' && VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector;
-	attribute<bool> ExtraRestrictieDoorWindAllocatie (CompactedAdminDomain) := =ExtraRestrictieDoorWindAllocatieNodig
-																					? 'impl/ExtraRestrictieDoorWindAllocatie/IsNietToegestaan'
-																					: 'const(FALSE, CompactedAdminDomain)';
+	parameter<Bool> ExtraRestrictieDoorWindAllocatieNodig                       := lowercase(name) != lowercase('Seq_0') && VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector, Descr = "Extra restricties door wind allocatie zijn nodig wanneer er in voorgaande stappen wind is Gealloceerd. Dus in seq0 is dat nooit het geval, want wind komt als laatste. En als er uberhaupt geen wind gealloceerd wordt.";
+	parameter<Bool> ExtraRestrictieDoorHuidigeWindNodig                         := NOT(VariantParameters/SectorAllocRegio/Uq_Sectors/HasWindSector), Descr = "Wanneer er geen wind wordt gealloceerd, en huidige windmolen voor altijd blijven staan, moeten we die wel netjes uitsluiten van voor nieuwe wonen/werken/verblijfsrec allocatie";
+	attribute<Bool> ExtraRestrictieDoorHuidigeZonneweide (CompactedAdminDomain) := =NOT(VariantParameters/SectorAllocRegio/Uq_Sectors/HasZonSector)
+																					? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/StartState/StateBasisjaar/Src/Zon/Totaal > 0[MW])'
+																					: 'const(FALSE, CompactedAdminDomain)', Descr = "Wanneer er geen zon wordt gealloceerd, en huidige zonneweide voor altijd blijven staan, moeten we die wel netjes uitsluiten van voor nieuwe wonen/werken/verblijfsrec allocatie";
 	
-	container impl := impl0
+	//extra restrictie voor de allocatie van nieuwe windturbines! Oftewel, niet de restrictie voor andere sectoren. 
+	attribute<Bool> ExtraRestrictieDoorWindAllocatie     (CompactedAdminDomain) := =ExtraRestrictieDoorWindAllocatieNodig
+																					? 'Impl/ExtraRestrictieDoorWindAllocatie/IsNietToegestaan'
+																					: ExtraRestrictieDoorHuidigeWindNodig
+																						? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, VariantData/Wind_restricties/Dynamisch/Bestaande_turbines/IsNietToegestaan_basis)'
+																						: 'const(FALSE, CompactedAdminDomain)';
+	
+	container Impl := Impl0
 	{
 		container ExtraRestrictieDoorWindAllocatie
 		{
-			parameter<string> Gealloceerd_str                         := ExtraRestrictieDoorWindAllocatieNodig
+			parameter<String> Gealloceerd_str                         := ExtraRestrictieDoorWindAllocatieNodig
 																			? 'StateVoorAllocatie/Wind/Totaal > 0f'
 																			: 'const(FALSE, CompactedAdminDomain)';
-			attribute<bool> Gealloceerd        (CompactedAdminDomain) := = Gealloceerd_str;
-			attribute<bool> Gealloceerd_buffer (CompactedAdminDomain) := = ExtraRestrictieDoorWindAllocatieNodig
+			attribute<Bool> Gealloceerd        (CompactedAdminDomain) := = Gealloceerd_str;
+			attribute<Bool> Gealloceerd_buffer (CompactedAdminDomain) := = ExtraRestrictieDoorWindAllocatieNodig
 																			? 'Buffer/proximity_res'
 																			: 'const(FALSE, CompactedAdminDomain)';
 			
-			container Buffer := Templates/Buffer_gridcel_T(Gealloceerd,  4f * CaseClassifications/WindTurbineType/RotorDiameter);
+			container Buffer := Templates/Buffer_gridcel_T(Gealloceerd,  ModelParameters/Wind/AantalKeerWerpafstandRestrictieHuidigeTurbines[float64] * CaseClassifications/WindTurbineType/RotorDiameter[float64]);
 			
-			attribute<bool> IsNietToegestaan (CompactedAdminDomain) := Gealloceerd_buffer;
+			attribute<Bool> IsNietToegestaan (CompactedAdminDomain) := Gealloceerd_buffer;
 		}
 	}
 	
@@ -50,9 +58,9 @@ Template Sequence_T : using = "Classifications/modellering"
 				,'+SectorAllocRegio/PrevState+'
 				, Context
 				, '+string(SectorAllocRegio/AantalIters)+'[uint8]
-				, impl
+				, Impl
 			)'
-		);
+		), Descr = "Maakt voor elke SectorAllocRegio een SectorAllocRegio_T-instantie aan (met de betreffende referentie, id, PrevState, Context, aantal iteraties en implementation-overrides)";
 	
-	container StateNaAllocatie := = #SectorAllocRegio > 0 ? 'SectorAllocRegios/'+last(SectorAllocRegio/name)+'/StateNaAllocatie' : 'StateVoorAllocatie';
+	container StateNaAllocatie := = #SectorAllocRegio > 0 ? 'SectorAllocRegios/'+last(SectorAllocRegio/name)+'/StateNaAllocatie' : 'StateVoorAllocatie', Descr = "Dit verwijst naar de StateNaAllocatie van de laatste verwerkte regio of naar StateVoorAllocatie als er geen regio's zijn.";
 }

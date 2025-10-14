@@ -1,8 +1,8 @@
 Template IterSubsector_T
 {
 	//
-	parameter<SubSector> id;
-	unit<uint8> SubSector;
+	parameter<Subsector> id;
+	unit<UInt8> Subsector;
 	container StateVoorAllocatie;
 	container Context0;
 	//
@@ -12,52 +12,63 @@ Template IterSubsector_T
 		container ThisSubsector := ..;
 	}
 	
-	parameter<string> name               := SubSector/name[id];
-	parameter<string> SubSector_pathname := SubSector/Sector_name_ThisName[id];
-	parameter<string> Zichtjaar_name     := Context/ThisZichtjaar/name;
-	parameter<string> AllocRegio_name    := Context/ThisSectorAllocRegio/allocregio_name;
+	parameter<String> name               := Subsector/name[id];
+	parameter<String> Subsector_pathname := Subsector/Sector_name_Thisname[id];
+	parameter<String> Zichtjaar_name     := Context/ThisZichtjaar/name;
+	parameter<String> AllocRegio_name    := Context/ThisSectorAllocRegio/AllocRegio_name;
 	
-	unit<uint32> TredeK := = 'VariantData/Trede/SectorXSubSectoren/'+SubSector_pathname+'/Klasse';
+	unit<UInt32> TredeK := = 'VariantData/Trede/SectorxSubsectoren/'+Subsector_pathname+'/Klasse';
 	
 	unit<uint64> CompactedAdminDomain := Geography/CompactedAdminDomain
+	, Descr = "Op AdminDomain niveau wordt de geschiktheid en beschikbaarheid opgehaald/bepaald."
 	{
-		attribute<bool>    Beschikbaar                := = 'PotentieleState/'+Zichtjaar_name+'/per_SectorXSubsectoren/'+SubSector_pathname+'/IsBeschikbaar_zichtjaar && !(IsDefined(StateVoorAllocatie/Subsector_rel)) && !ExtraRestrictieDoorWindAllocatie';
-		attribute<float32> PotentieleStateNaAllocatie := = 'PotentieleState/'+Zichtjaar_name+'/per_SectorXSubsectoren/'+SubSector_pathname+'/Zichtjaar * float32(Beschikbaar)';
+		attribute<Bool>    Beschikbaar                := = 'PotentieleState/'+Zichtjaar_name+'/per_SectorxSubsectoren/'+Subsector_pathname+'/IsBeschikbaar_zichtjaar 
+																&& !(IsDefined(StateVoorAllocatie/SubSector_rel)) 
+																&& !RestrictiesVoorSectorenAlsGevolgVanWind/Restrictief_voor_beperkt_kwestbare_gebouwen 
+																&& !ExtraRestrictieDoorHuidigeZonneweide', Descr = "Is land unit i beschikbaar en niet al eerder dit of vorige zichtjaren gealloceerd, en niet niet nog een additionele restrictie door wind allocatie?";
+		attribute<Float32> PotentieleStateNaAllocatie := = 'PotentieleState/'+Zichtjaar_name+'/per_SectorxSubsectoren/'+Subsector_pathname+'/Zichtjaar * float32(Beschikbaar)', Descr = "Wat is de toegestane dichtheid D voor deze subsector per land unit i, check nog eens op beschikbaarheid.";
 	}
 	
 	unit<uint64> CompactedAllocDomain := Geography/CompactedAllocDomain
+	, Descr = "Allocatie geschiedt uiteindelijk op AllocDomain, dus hier worden een aantal aggregaties gemaakt."
 	{
-		attribute<float32> PotentieleStateNaAllocatie := sum(CompactedAdminDomain/PotentieleStateNaAllocatie, CompactedAdminDomain/CompactedAllocDomain_rel);
-		attribute<float32> Geschiktheid_src           := = 'VariantData/Suitability/'+Zichtjaar_name+'/'+SubSector_pathname+' * modus(CompactedAdminDomain/Beschikbaar, CompactedAdminDomain/CompactedAllocDomain_rel)[float32]';
-		attribute<uint32>  Geschiktheid_src_ordered   := invert(index(Geschiktheid_src))[uint32];
-		parameter<uint32>  Geschiktheid_src_range     := max(Geschiktheid_src_ordered)+100;
-		attribute<uint32>  TredeScore                 := (#TredeK -1) - collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain), IntegrityCheck = "max(collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain)) < #TredeK";
-		attribute<float32> Geschiktheid               := (float32(TredeScore) * float32(Geschiktheid_src_range) + float32(Geschiktheid_src_ordered));
+		attribute<Float32> PotentieleStateNaAllocatie := sum(CompactedAdminDomain/PotentieleStateNaAllocatie, CompactedAdminDomain/CompactedAllocDomain_rel), Descr = "Aggregatie van AdminDomain D_ij naar AllocDomain.";
+		attribute<Float32> Geschiktheid_Beschikbaar   := = 'VariantData/Suitability/'+Zichtjaar_name+'/'+Subsector_pathname+' * Modus(CompactedAdminDomain/Beschikbaar, CompactedAdminDomain/CompactedAllocDomain_rel)[float32]', Descr = "Geschiktheid S_ij waar beschikbaar, dmv aggregatie van beschikbaarheid op AdminDomain naar AllocDomain op basis van modus.";
+		attribute<Float32> Geschiktheid_Cleaned       := Geschiktheid_Beschikbaar == 0f ? null_f : Geschiktheid_Beschikbaar, Descr = "Als de geschiktheid 0 is, willen we dit undefined hebben.";
+		attribute<UInt32>  Geschiktheid_Ordered       := invert(index(Geschiktheid_Cleaned))[uint32], Descr = "In het allocatie proces moet de geschiktheid gesorteerd worden, zodat er greedy vanaf de meest geschikte locatie gealloceerd wordt.";
+		parameter<UInt32>  Geschiktheid_Ordered_range := max(Geschiktheid_Ordered)+100, Descr = "Wat is de maximale geschiktheid, plus een getal wat er voor zorgt dat er later geen dubbele waarden kunnen voorkomen.";
+		attribute<UInt32>  TredeScore                 := (#TredeK -1) - collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain)
+															, Descr = "Tredes introduceren een volgordelijkheid in groepen cellen. Zodat onafhankelijk van de geschiktheid sommige groepen cellen boven andere geplaatst moeten worden.
+																		Bijvoorbeeld dichtbij een OV-knooppunt. Hier wordt deze volgordelijkheid voorbereid. Met een check of de maximale waarde van een trede wel kleiner of gelijk is aan de cardinaliteit van de tredes. Is dit niet het geval, dan moet je meer onderzoek uitvoeren.", IntegrityCheck = "max(collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain)) < #TredeK";
+		
+		//deze geschiktheid is landsdekkend, en dus locaties die niet beschikbaar zijn zitten er nog in. En niet beshcikbare locaties binnen een trede worden dan hoger gekozen dan anderen. Terwijl die later toch weer afvallen. Daar moeten we voor corrigeren, anders alloceert ie nooit wat.
+		attribute<Float32> Geschiktheid               := IsDefined(Geschiktheid_Cleaned)[float32] * (float32(TredeScore) * float32(Geschiktheid_Ordered_range) + float32(Geschiktheid_Ordered)), Descr = "Hier wordt de sorteerde geschiktheid gecombineerd met de tredescores tot een aangepaste geschiktheid in groepen per trede.";
+	
 	}
 	
-	unit<uint32> AllocRegio := Context/ThisSectorAllocRegio/AllocRegio
+	unit<UInt32> AllocRegio := Context/ThisSectorAllocRegio/AllocRegio
 	{
-		attribute<float32> RestClaim := = replace(
-			'VariantData/Claims/@Z@/SectorAllocRegios/@AS@/@S@'+AllocRegio_StudyArea_orgrel+' - sum(StateVoorAllocatie/@SP@, per_CompactedAdminDomain)',
+		attribute<float32> Stand := ='sum(StateVoorAllocatie/'+Subsector_pathname+', Per_CompactedAdminDomain)';
+		attribute<Float32> Claim := = replace(
+			'VariantData/Claims/@Z@/SectorAllocRegios/@AS@/@S@'+AllocRegio_StudyArea_orgrel,
 			'@Z@' , Zichtjaar_name,
 			'@AS@', Context/ThisSectorAllocRegio/name,
-			'@S@' , Context/ThisSubsector/name,
-			'@SP@',Subsector_pathname
+			'@S@' , Context/ThisSubsector/name
 		);
+		attribute<Float32> RestClaim := Claim - Stand, Descr = "Hier de restclaim C_jr bepaald, door van de claim voor deze regio en subsector de stand voor deze allocatie stap af te trekken.";
 	
-		attribute<ha>     Ruimte                 := sum(float32(CompactedAdminDomain/Beschikbaar) * AdminDomain/NrHaPerCell, AllocRegio/per_CompactedAdminDomain);
-		attribute<bool>   GeenRuimteOfRestclaim  := Ruimte == 0[ha] || RestClaim <= 0[float32];
-		attribute<uint32> MaxGeschiktheid        := max(CompactedAllocDomain/Geschiktheid, AllocRegio/per_CompactedAllocDomain)[uint32];
+		attribute<Ha>     Beschikbaar            := sum_uint32(CompactedAdminDomain/Beschikbaar, Per_CompactedAdminDomain)[float32] * AdminDomain/NrHaPerCell, Descr = "Aggregatie van beschikbaarheid in AdminDomain middels R_ir uitgedrukt in hectare.";
+		attribute<Bool>   GeenRuimteOfRestclaim  := Beschikbaar == 0[ha] || RestClaim <= 0[float32], Descr = "Is geen ruimte in deze regio, of er geen of een negatieve restclaim?";
+		attribute<UInt32> MaxGeschiktheid        := max(CompactedAllocDomain/Geschiktheid, AllocRegio/Per_CompactedAllocDomain)[uint32], Descr = "Wat is de maximale geschiktheid in deze regio?";
+		parameter<UInt32> MaxGeschiktheid_value  := max(CompactedAllocDomain/Geschiktheid)[uint32], Descr = "Overall maximale geschiktheid.";
 		
-		parameter<uint32> MaxGeschiktheid_value  := max(CompactedAllocDomain/Geschiktheid)[uint32];
+		attribute<UInt32> Afkapgrens0 := MaxGeschiktheid_value - nth_element_weighted(                // omkering
+				MaxGeschiktheid_value - CompactedAllocDomain/Geschiktheid[uint32],                    // rank
+				max_elem(RestClaim, 0f),                                                              // target
+				CompactedAllocDomain/PotentieleStateNaAllocatie,                                      // weight, hier geen potentiele delta gebruikt; evt sloop van deze subsector heralloceren we in volgende iteraties
+				Per_CompactedAllocDomain                                                              // R_ir
+		), Descr = "hier wordt de zaaglijn Z_ij bepaald.";
 		
-		attribute<uint32> Afkapgrens0 := MaxGeschiktheid_value - nth_element_weighted(
-				MaxGeschiktheid_value - CompactedAllocDomain/Geschiktheid[uint32], // rank
-				max_elem(RestClaim, 0f),                                           // target
-				CompactedAllocDomain/PotentieleStateNaAllocatie,                   // weight, hier geen potentiele delta gebruikt; evt sloop van deze subsector heralloceren we in volgende iteraties
-				per_CompactedAllocDomain
-		);
-		
-		attribute<uint32> Afkapgrens := GeenRuimteOfRestclaim ? (0/0)[uint32] : MakeDefined(Afkapgrens0, MaxGeschiktheid);
+		attribute<UInt32> Afkapgrens := GeenRuimteOfRestclaim ? null_u : MakeDefined(Afkapgrens0, MaxGeschiktheid), Descr = "Als er uberhaupt geen ruimte of restclaim is voor deze regio, dan mag de zaaglijn undefined zijn. Anders neem je de zaaglijn. Echter, de zaaglijn kan undefined zijn als de niet genoeg cellen beschikbaar zijn om de claim te realisteren. In dat geval wordt de zaagzlijn zo gezet dat alle cellen daarin vallen.";
 	}
 }
