@@ -6,103 +6,117 @@ Template BereikbaarheidGroen : using = "Classifications/Actor"
 	
 	container Src := .;
 	
-	parameter<Woning_ha> MaxWoningenInGroen: [5];
-	parameter<ha>        MinimumOppervlakte: [1];
+	parameter<Woning_ha> MaxWoningenInGroen                 := 5[Woning_ha];
+	parameter<meter2>    MinimumOppervlakteInCelOmMeeTeDoen := 100[meter2];
+	parameter<ha>        MinimumAaneengeslotenOppervlakte   := 1[Ha];
+	parameter<float32>   FractieGroenWerken                 := ='VariantParameters/FractiesGroenInWerken/'+VariantParameters/VariantK/FractieGroenVariant_Werken[/Variant_rel]+'/GroenTotaal';
+	parameter<float32>   FractieGroenVerblijfsrecreatie     := ='VariantParameters/FractiesGroenInVerblijfsrecreatie/'+VariantParameters/VariantK/FractieGroenVariant_Verblijfsrecreatie[/Variant_rel]+'/GroenTotaal';
+
+	// unit<UInt32> Regio     := SourceData/RegioIndelingen/Provincie;
 	
-	unit<UInt32> Regio := SourceData/RegioIndelingen/Provincie;
-	
-	unit<UInt8> Indicator: NrOfRows = 3
+	unit<UInt8>  Indicator : NrOfRows = 2
 	{
-		attribute<String> name     : ['Aanwezig', 'Beschikbaar', 'Bereikbaar'];
-		attribute<String> GroenSrc : ['1f', '(Potentiaal > 0[Woning])[float32]', 'Potentiaal[float32]'];
+		attribute<String> name     : [
+										  'Aanwezig'       //Oppervlakte groen waar groen aanwezig is
+										// , 'Beschikbaar'    //Oppervlakte groen nabij woningen
+										 ,'Bereikbaar'     //
+									];  
+		attribute<String> GroenSrc : [
+										 '1f *  Src/OppGroenBinnenExtent'                                                // Cellen waar groen aanwezig is
+										// , '(AantalWoningenInOmgeving > 0[Woning])[float32]'   // Groen nabij woningen
+										,'1f * OppGroenInOmgeving'                       // 
+									];
 	}
 	
-	unit<UInt8> GroenBlauwK : NrOfRows = 3
+	unit<UInt8> GroenBlauwK : NrOfRows = 1
 	{
-		attribute<String> name : ['Groenvoorziening','Parken','Natuur','Extensieve_Landbouw','Water'];
+		attribute<String> name : ['Groen'];
 		attribute<String> Label := name;
 		container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
 	}
+
+	attribute<Meter2> OppGroen_Basisjaar                 (AdminDomain) := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/GroenOpp_AdminDomain;
+	attribute<Woning> Woningen                           (AdminDomain) := SrcSrc/Stand/Aantal_Woningen_Totaal[Woning];
 	
-	attribute<LU_ModelType> LU             (AdminDomain) := SrcSrc/Landgebruikskaart/Result_SA;
-	attribute<GroenBlauwK>  GroenBlauw_rel (AdminDomain) := switch(
-		  case(LU == LU_ModelType/v/Landbouw_gg_vee_extensief, GroenBlauwK/v/Extensieve_Landbouw)
-		, case(LU == LU_ModelType/v/Landbouw_Rijst, GroenBlauwK/v/Extensieve_Landbouw)
-		, case(LU == LU_ModelType/v/Landbouw_Rietteelt, GroenBlauwK/v/Extensieve_Landbouw)
-		, case(LU == LU_ModelType/v/Water_Totaal, GroenBlauwK/v/Water)
-		, case(LU == LU_ModelType/v/Natuur_Totaal, GroenBlauwK/v/Natuur)
-		// , case(Ref != 'Basisjaar' && VariantData/ExogeenOpleggen/RetentieGebied == LU_ModelType/v/water_Totaal, GroenBlauwK/v/Water)
-		, null_b
-	);
-	
-	attribute<Woning> Woningen0 (AdminDomain) := SrcSrc/Stand/Aantal_Woningen_Totaal[Woning];
-	
-	attribute<Bool> Range (AdminDomain) := =  lowercase(Ref) == lowercase('Groen/InZichtjaar') ? 'IsDefined(Stand/subSector_rel)' : 'const(TRUE, AdminDomain)';
-	
-	attribute<Woning> Woningen (AdminDomain) := Woningen0 * float32(Range);
+
+	attribute<Meter2> OppGroen_NaAllocWonen              (AdminDomain) := ='VariantParameters/Ontwikkelpakketten/DezeBuurtSchaal/'+VariantParameters/VariantK/OntwikkelPakketVariant[/Variant_rel]+'/InDezeBuurt/GroenOppervlakte[SrcSrc/Stand/OP_rel]';
+	attribute<Meter2> OppGroen_NaAllocWerken             (AdminDomain) := SrcSrc/Stand/Sector_rel == Sector/V/werken ? FractieGroenWerken * AdminDomain/NrMeter2PerCell : null_f;
+	attribute<Meter2> OppGroen_NaAllocVerblijfsrecreatie (AdminDomain) := SrcSrc/Stand/Sector_rel == Sector/V/verblijfsrecreatie ? FractieGroenVerblijfsrecreatie * AdminDomain/NrMeter2PerCell : null_f;
+
+	attribute<Meter2> OppGroen                           (AdminDomain) := =lowercase(ThisYear/Zichtjaar) == lowercase('basisjaar') 
+																			? 'OppGroen_Basisjaar'
+																			: 'switch(
+																				 case(IsDefined(OppGroen_NaAllocWonen), OppGroen_NaAllocWonen)
+																				,case(IsDefined(OppGroen_NaAllocWerken), OppGroen_NaAllocWerken)
+																				,case(IsDefined(OppGroen_NaAllocVerblijfsrecreatie), OppGroen_NaAllocVerblijfsrecreatie)
+																				,OppGroen_Basisjaar
+																				)';
 	
 	container Afstanden := for_each_ne(Bereikbaarheid/AfstandGroen/name, 'Per_Afstand_T('+string(id(Bereikbaarheid/AfstandGroen))+'[Bereikbaarheid/AfstandGroen], Woningen, Src)');
 	
-	Template Per_Afstand_T //fka T2
+	Template Per_Afstand_T 
 	{
-		parameter<Bereikbaarheid/AfstandGroen> id;
-		attribute<Woning> Woningen (AdminDomain);
+		parameter<Bereikbaarheid/AfstandGroen> AfstandGroen_id;
+		attribute<Woning>                      Woningen (AdminDomain);
 		container Src;
 		//
 		
 		container AggrGroenKlassen := 
 			for_each_ne(
 				GroenBlauwK/name
-				, 'Per_GroenBlauwK_T(Src/GroenBlauw_rel == GroenBlauwK/V/'+GroenBlauwK/name+', id, Woningen, Src)');
+				, 'Per_GroenBlauwK_T(Src/OppGroen, AfstandGroen_id, Woningen, Src)');
 	}
 	
-	Template Per_GroenBlauwK_T // fka T3
+	Template Per_GroenBlauwK_T 
 	{
-		//
-		attribute<Bool> IsGroenKlasse (AdminDomain);
+		attribute<Meter2>                      OppGroen (AdminDomain);
 		parameter<Bereikbaarheid/AfstandGroen> AfstandGroen_id;
-		attribute<Woning> Woningen (AdminDomain);
+		attribute<Woning>                      Woningen (AdminDomain);
 		container Src;
 		//
 		
-		parameter<meter> Bovengrens := Bereikbaarheid/AfstandGroen/Bovengrens[AfstandGroen_id];
-		
-		attribute<Woning> WoningenInThisStRegio (AdminDomain) := Woningen
-		{
-			parameter<Woning> Aggregated := sum(.);
-		}
-		
-		attribute<Bool> Extent0 (AdminDomain) := Woningen <= Src/MaxWoningenInGroen * AdminDomain/NrHaPerCell && IsGroenKlasse;
+		parameter<meter>   AfstandGroen_Bovengrens        := Bereikbaarheid/AfstandGroen/Bovengrens[AfstandGroen_id];
+		attribute<Bool>    Extent0          (AdminDomain) := Woningen <= Src/MaxWoningenInGroen * AdminDomain/NrHaPerCell && OppGroen > MinimumOppervlakteInCelOmMeeTeDoen, Descr = "Initiele groen extent: opp groen per cell boven grens EN minder woningen in cel dan grens";
 		
 		unit<UInt32> ExtentDistrict := district(uint32(Extent0))
+		, Descr = "Zoek aaneengelsoten stukken groen"
 		{
-			attribute<.> Per_AdminDomain (AdminDomain):= Districts;
-			attribute<ha> Oppervlakte := pcount(Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell;
+			attribute<meter2> Oppervlakte                   := sum(OppGroen, Districts);
 		}
 		
-		attribute<Bool> Extent (AdminDomain) := Extent0 && ExtentDistrict/Oppervlakte[ExtentDistrict/Per_AdminDomain] >= Src/MinimumOppervlakte;
+		attribute<Bool>   Extent               (AdminDomain) := Extent0 && ExtentDistrict/Oppervlakte[ExtentDistrict/Districts] >= Src/MinimumAaneengeslotenOppervlakte[meter2], Descr = "Groen extent: Initiele extent EN aangesloten groen opp boven grens.";
+		attribute<meter2> OppGroenBinnenExtent (AdminDomain) := Extent ? OppGroen : 0[meter2];
 		
-		attribute<Woning> Potentiaal (AdminDomain) :=
+		attribute<Woning> AantalWoningenInOmgeving (AdminDomain) := //sommeert aantal woningen binnen range
 			= 'potential(
-				WoningenInThisStRegio,
-				Geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/PotRange/Flat2
+				Woningen
+				,Geography/Distmatrices/Impl_25m/pot'+string(AfstandGroen_Bovengrens)+'m/PotRange/Flat2
 			)[Woning]';
+			
+		attribute<Meter2> OppGroenInOmgeving (AdminDomain) := //sommeert oppervlakte groen binnen range
+			= 'potential(
+				OppGroenBinnenExtent
+				,Geography/Distmatrices/Impl_25m/pot'+string(AfstandGroen_Bovengrens)+'m/PotRange/Flat2
+			)[meter2]';
+			
+			
+		attribute<m2_woning> OppGroen_perWoning (AdminDomain) := OppGroenInOmgeving / Woningen;
 		
 		container Indicatoren := for_each_ne(Indicator/name, 'Indicatoren_T('+quote(Indicator/GroenSrc)+', ..)');
 	}
 	
 	Template Indicatoren_T // fka T4
 	{
-		//
+		
 		parameter<String> GroenSrc;
 		container Src;
-		//
 		
-		attribute<ha> Groen (AdminDomain) := = GroenSrc+' * Src/Extent[float32] * AdminDomain/NrHaPerCell'
+		
+		attribute<Meter2> Groen (AdminDomain) := = GroenSrc
 		{
-			parameter<ha> Aggregated := sum(.)
+			parameter<Meter2> Aggregated := sum(.)
 			{
-				parameter<m2_Woning> PerWoning := .[meter2] / Src/WoningenInThisStRegio/Aggregated;
+				parameter<m2_Woning> PerWoning := . / sum(Src/Woningen);
 			}
 		}
 	}
