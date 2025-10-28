@@ -11,13 +11,39 @@ container Plancapaciteit : using = "Units;Classifications;ModelParameters;Varian
 		];
 	}
 	
-	unit<UInt8> SectorK : NrOfRows = 2
+	unit<UInt8> SectorK : NrOfRows = 4
 	, Descr = "Sectoren waarvoor plancapaciteiten beschikbaar zijn"
 	{
 		attribute<String> name:
 		[
-			'Wonen',
-			'Werken'
+			 'Wonen'
+			,'Werken_AlgemeneBedrijfslocatie'
+			,'Werken_Industrieterrein'
+			,'Werken_Kantoor'
+		];
+		attribute<String> path:
+		[
+			 'Wonen'
+			,'Werken/AlgemeneBedrijfslocatie'
+			,'Werken/Industrieterrein'
+			,'Werken/Kantoor'
+		];
+		attribute<String> sub:
+		[
+			 ''
+			,'AlgemeneBedrijfslocatie'
+			,'Industrieterrein'
+			,'Kantoor'
+		];
+	}
+	
+	unit<uint8> WerkenHoofdKlasses : NrOfRows = 3
+	{
+		attribute<string> name : 
+		[
+			 'AlgemeneBedrijfslocatie'
+			,'Industrieterrein'
+			,'Kantoor'
 		];
 	}
 	
@@ -25,14 +51,16 @@ container Plancapaciteit : using = "Units;Classifications;ModelParameters;Varian
 	, Descr = "Combinatie van sector en hardheid"
 	{
 		attribute<String> Sector_name    := SectorK/name[first_rel];
+		attribute<String> Sector_subname := SectorK/sub[first_rel];
 		attribute<String> HardheidK_name := HardheidK/name[second_rel];
-		attribute<String> name           := Sector_name+'/'+HardheidK_name;
+		attribute<String> path           := SectorK/path[first_rel]+'/'+HardheidK_name;
+		attribute<String> name           := Sector_name+'_'+HardheidK_name;
 	}
 	
 	container Read := 
 		for_each_ne(
-			Sector_x_HardheidK/name
-			,'Read_PlanCapaciteit_Tifs_T('+quote(Sector_x_HardheidK/Sector_name)+', '+quote(Sector_x_HardheidK/HardheidK_name)+')'
+			Sector_x_HardheidK/path
+			,'Read_PlanCapaciteit_Tifs_T('+quote(Sector_x_HardheidK/Sector_name)+', '+quote(Sector_x_HardheidK/HardheidK_name)+', '+quote(Sector_x_HardheidK/Sector_subname)+')'
 		), Descr = "Inlezen van de plancapaciteit tifs per sector en hardheid"
 	{
 		container Wind
@@ -77,46 +105,96 @@ container Plancapaciteit : using = "Units;Classifications;ModelParameters;Varian
 				attribute<Bool> Per_AllocDomain (AllocDomain) := const(FALSE, AllocDomain);
 			}
 		}
-	}
-	
-	//temp, idee om plantypes mee te nemen voor welke sector waar mag komen. kantoren op bedrijventerrein, logistiek en industie op industrie terrein.
-	container MRA
-	{
+		
 		container Werken
 		{
-			unit<uint32> Shp
-			:	StorageName = "%Plancapaciteit_DataDir%/Provincie/Noord_Holland/WerklocatiesPlabeka2019NK.shp"
-			,	StorageType = "gdal.vect"
-			,	Source      = "Plancapaciteit.nl, via Nils Klopper (prov. Noord Holland)"
-			,	StorageReadOnly = "true"
-			,	DialogData = "rdc_meter";
-			
-			unit<uint32>  Result := Shp
+			container Hard
 			{
-				attribute<rdc_meter> Geometry (poly) := Shp/Geometry;
-				attribute<string>    Plantype        := Shp/type;
-				
-				attribute<Plantypes> Plantype_rel := rlookup(Plantype, Plantypes/values);
-				unit<uint8> Plantypes := unique_uint8(plantype)
-				{
+				container Per_Subsector_AdminDomain := 
+					for_each_nedv(
+						Sector/xSubsectoren/Werken/Subsector/Subsector_name
+						, 'OR(
+							 Sector/xSubsectoren/Werken/Subsector/KanOpIndustrieterrein[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? Industrieterrein/Hard/Per_AdminDomain : FALSE
+							,Sector/xSubsectoren/Werken/Subsector/KanOpKantoor[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? Kantoor/Hard/Per_AdminDomain : FALSE
+							,Sector/xSubsectoren/Werken/Subsector/KanOpAlgemeneBedrijfslocatie[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? AlgemeneBedrijfslocatie/Hard/Per_AdminDomain : FALSE
+							)'
+						, AdminDomain
+						, bool
+					);
+				container Per_Subsector_AllocDomain := 
+					for_each_nedv(
+						Sector/xSubsectoren/Werken/Subsector/Subsector_name
+						, 'OR(
+							 Sector/xSubsectoren/Werken/Subsector/KanOpIndustrieterrein[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? Industrieterrein/Hard/Per_AllocDomain : FALSE
+							,Sector/xSubsectoren/Werken/Subsector/KanOpKantoor[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? Kantoor/Hard/Per_AllocDomain : FALSE
+							,Sector/xSubsectoren/Werken/Subsector/KanOpAlgemeneBedrijfslocatie[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? AlgemeneBedrijfslocatie/Hard/Per_AllocDomain : FALSE
+							)'
+						, AllocDomain
+						, bool
+					);
+				attribute<Bool> Per_AdminDomain (AdminDomain) := 
+					OR(
+						 AlgemeneBedrijfslocatie/Hard/Per_AdminDomain
+						,Industrieterrein/Hard/Per_AdminDomain
+						,Kantoor/Hard/Per_AdminDomain
+					);
+				attribute<Bool> Per_AllocDomain (AllocDomain) := 
+					OR(
+						 AlgemeneBedrijfslocatie/Hard/Per_AllocDomain
+						,Industrieterrein/Hard/Per_AllocDomain
+						,Kantoor/Hard/Per_AllocDomain
+					);
+			}
+			container Zacht
+			{
+				container Per_Subsector_AdminDomain := 
+					for_each_nedv(
+						Sector/xSubsectoren/Werken/Subsector/Subsector_name
+						, 'OR(
+							 Sector/xSubsectoren/Werken/Subsector/KanOpIndustrieterrein[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? Industrieterrein/Zacht/Per_AdminDomain : FALSE
+							,Sector/xSubsectoren/Werken/Subsector/KanOpKantoor[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? Kantoor/Zacht/Per_AdminDomain : FALSE
+							,Sector/xSubsectoren/Werken/Subsector/KanOpAlgemeneBedrijfslocatie[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? AlgemeneBedrijfslocatie/Zacht/Per_AdminDomain : FALSE
+							)'
+						, AdminDomain
+						, bool
+					);
+				container Per_Subsector_AllocDomain := 
+					for_each_nedv(
+						Sector/xSubsectoren/Werken/Subsector/Subsector_name
+						, 'OR(
+							 Sector/xSubsectoren/Werken/Subsector/KanOpIndustrieterrein[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? Industrieterrein/Zacht/Per_AllocDomain : FALSE
+							,Sector/xSubsectoren/Werken/Subsector/KanOpKantoor[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? Kantoor/Zacht/Per_AllocDomain : FALSE
+							,Sector/xSubsectoren/Werken/Subsector/KanOpAlgemeneBedrijfslocatie[Sector/xSubsectoren/Werken/Subsector/v/'+Sector/xSubsectoren/Werken/Subsector/Subsector_name+'] ? AlgemeneBedrijfslocatie/Zacht/Per_AllocDomain : FALSE
+							)'
+						, AllocDomain
+						, bool
+					);
 					
-				}
-				
-				attribute<bool>       IsHardTm30                     := BHtm30 > 0[float64] || KHtm30 > 0[float64];
-				attribute<bool>       IsHard                         := IsHardTm30 || MRAWest; //hard na30 bestaat niet
-				attribute<bool>       IsZacht                        := !IsHard;
-
-				container V := for_each_nedv(AsItemName(plannaam), string(id(.))+'[..]', void, .);
+				attribute<Bool> Per_AdminDomain (AdminDomain) := 
+					OR(
+						 AlgemeneBedrijfslocatie/Zacht/Per_AdminDomain
+						,Industrieterrein/Zacht/Per_AdminDomain
+						,Kantoor/Zacht/Per_AdminDomain
+					);
+				attribute<Bool> Per_AllocDomain (AllocDomain) := 
+					OR(
+						 AlgemeneBedrijfslocatie/Zacht/Per_AllocDomain
+						,Industrieterrein/Zacht/Per_AllocDomain
+						,Kantoor/Zacht/Per_AllocDomain
+					);
 			}
 		}
-	}	
+	}
 	
 	Template Read_PlanCapaciteit_Tifs_T
 	: Descr = "Inlezen van de plancapaciteit tifs per sector en hardheid"
 	{
-		parameter<String> Sector_name;
+		parameter<String> Sector_name0;
 		parameter<String> HardheidK_name;
+		parameter<String> Sector_subname;
 		//
+		
+		parameter<string> Sector_name := Sector_subname == '' ? Sector_name0 : Sector_subname;
 		
 		attribute<Bool> Per_AdminDomain (AdminDomain)
 		: StorageName = "=UsePrivPlanCapaciteit ? '%PrivDataDir%/PlanCapaciteit/'+ModelParameters/Plancapaciteit_filedate+'/PrivPlannen_'+Sector_name+'_'+HardheidK_name+'_rdc_25m.tif' : '%RSo_DataDir%/Beleid/Plancapaciteit/'+ModelParameters/Plancapaciteit_filedate+'/Plannen_'+Sector_name+'_'+HardheidK_name+'_rdc_25m.tif'"
