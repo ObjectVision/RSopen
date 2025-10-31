@@ -10,7 +10,39 @@ container PostAllocAnalyses : using = "Geography;Classifications/Actor;VariantDa
 	#include <RuimtelijkeVerkenning2023.dms>
 	#include <PeilOptimalisatie.dms>
 	#include <Output.dms>
-
+	
+	container AdHoc // Runnen vanuit WBS variant
+	{
+		unit<uint8> RestrictieK: NrOfRows = 4
+		{
+			attribute<string> name: ['Restrictief_hard','WBS', 'Restrictief_zacht', 'Geen'];
+			attribute<String> Label := name, DialogType = "LabelText";
+			attribute<UInt32> BrushColor : DialogType = "BrushColor",
+			[
+				rgb(110,178,134), rgb(149,201,226), rgb(205,238,210), rgb(255,255,255)
+			];
+			
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+		}
+		
+		attribute<Bool> Restrictief_hard  (AdminDomain) := OR(/SourceData/Restricties/Wonen/ZeerHard, /SourceData/Restricties/Wonen/Hard, /SourceData/Restricties/Wonen/Middel);
+		attribute<Bool> Restrictief_zacht (AdminDomain) := /SourceData/Restricties/Wonen/Zacht;
+		attribute<Bool> WBS               (AdminDomain) := OR(
+			/BaseData/Omgeving/Overstromingsgevaarzonering == /Classifications/Overstromingsgevaarzonering/zoneringK/V/Zeer_gevaarlijk || /BaseData/Omgeving/Overstromingsgevaarzonering == /Classifications/Overstromingsgevaarzonering/zoneringK/V/Gevaarlijk,
+			/VariantData/Zeef/Basisjaar/Wonen/eengezins_VrijeSector/Src/TeZettingsgevoelig[/Geography/CompactedAdminDomain/Per_AdminDomain],
+			/VariantData/Zeef/Basisjaar/Wonen/eengezins_VrijeSector/Src/TeSlap[/Geography/CompactedAdminDomain/Per_AdminDomain],
+			/VariantData/Zeef/Basisjaar/Wonen/eengezins_VrijeSector/Src/TeNat[/Geography/CompactedAdminDomain/Per_AdminDomain],
+			/VariantData/Zeef/Basisjaar/Wonen/eengezins_VrijeSector/Src/ReserverenVoorRivierAfvoer_Krap[/Geography/CompactedAdminDomain/Per_AdminDomain]
+		);
+		
+		attribute<RestrictieK> Resultaat (AdminDomain) := switch(
+			case(Restrictief_hard, RestrictieK/V/Restrictief_hard),
+			case(WBS, RestrictieK/V/WBS),
+			case(Restrictief_zacht, RestrictieK/V/Restrictief_zacht),
+			RestrictieK/V/Geen
+		);
+	}
+	
 	Template PerZichtjaar_T
 	{
 		parameter<string> ZichtjaarName;
@@ -44,5 +76,75 @@ container PostAllocAnalyses : using = "Geography;Classifications/Actor;VariantDa
 				}
 			}
 		}
+	}
+	
+	container AnalysesGroenOmgeving
+	{
+		parameter<meter>     AfstandGroen_Bovengrens            := 500[meter];
+		parameter<Woning_ha> MaxWoningenInGroen                 := 5[Woning_ha];
+		parameter<meter2>    MinimumOppervlakteInCelOmMeeTeDoen := 100[meter2];
+		parameter<ha>        MinimumAaneengeslotenOppervlakte   := 1[Ha];
+		
+		attribute<Woning> Woningen               (AdminDomain) := /SourceData/Vastgoed/BAG/PerJaar/Y2025/vbo/Counts/per_WP1_AdminDomain/Totaal[woning];
+		// attribute<Woning> Woningen_100m       (AllocDomain) := /SourceData/Vastgoed/BAG/PerJaar/Y2025/vbo/Counts/per_WP1_AllocDomain/Totaal[woning];
+		attribute<Meter2> OppGroen               (AdminDomain) := SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/GroenOpp_AdminDomain;
+		// attribute<Meter2> OppGroen_Basisjaar_100m  (AllocDomain) := sum(/SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/GroenOpp_AdminDomain, AdminDomain/AllocDomain_rel);
+	
+	
+		attribute<Bool>   Extent0             (AdminDomain) := Woningen <= MaxWoningenInGroen * AdminDomain/NrHaPerCell && OppGroen > MinimumOppervlakteInCelOmMeeTeDoen, Descr = "Initiele groen extent: opp groen per cell boven grens EN minder woningen in cel dan grens";
+		
+		unit<UInt32> ExtentDistrict := district(uint32(Extent0))
+		, Descr = "Zoek aaneengelsoten stukken groen"
+		{
+			attribute<meter2> Oppervlakte                   := sum(OppGroen, Districts);
+		}
+		
+		attribute<Bool>   Extent               (AdminDomain) := Extent0 && ExtentDistrict/Oppervlakte[ExtentDistrict/Districts] >= MinimumAaneengeslotenOppervlakte[meter2], Descr = "Groen extent: Initiele extent EN aangesloten groen opp boven grens.";
+		attribute<meter2> OppGroenBinnenExtent (AdminDomain) := Extent ? OppGroen : 0[meter2];
+		
+		attribute<Woning> AantalWoningenInOmgeving (AdminDomain) := //sommeert aantal woningen binnen range
+			= 'potential(
+				Woningen
+				,Geography/Distmatrices/Impl_25m/pot'+string(AfstandGroen_Bovengrens)+'m/PotRange/Flat2
+			)[Woning]';
+			
+		attribute<Meter2> OppGroenInOmgeving (AdminDomain) := //sommeert oppervlakte groen binnen range
+			= 'potential(
+				OppGroenBinnenExtent
+				,Geography/Distmatrices/Impl_25m/pot'+string(AfstandGroen_Bovengrens)+'m/PotRange/Flat2
+			)[meter2]';
+			
+			
+		attribute<m2_woning> OppGroen_perWoning (AdminDomain) := OppGroenInOmgeving / Woningen;
+	
+	
+	
+		//Oude BGT
+		parameter<String> BGT_data_2019 := '20190108';
+	 
+		unit<UInt32> Read_fss 
+		:	StorageName = "='%RSo_DataDir%/Grondgebruik/BGT/'+filedate+'/fss/'" //E:\SourceData\RSOpen\Grondgebruik\BGT\20190108\fss\begroeidterreindeel.fss
+		,	StorageReadOnly = "True" 
+		, 	Descr = "Generated in BGT-Tools project, available from Object Vision Github repository"
+		,	URL = "https://github.com/ObjectVision/BGT-Tools"
+		{
+			attribute<rdc_meter>                           geometry_dpoint (poly); //is al gesimplified op 1 meter in de BGT-Tools. 
+			attribute<rdc_meter>                           geometry (poly) := geometry_dpoint;
+			attribute<String>                              Type_name;
+			attribute<String>                              plus_Type;
+			attribute<String>                              bron_bestand;
+			attribute<Classes>                             visualisatiecode_rel          := rlookup(lowercase(Class_name), lowercase(Classes/Class_Label));
+			attribute<String>                              Class_name                    := bron_bestand + '_' + Type_name;
+			attribute<km2>                                 oppervlakkm2                  := area(geometry,meter2_f64)[km2];
+			
+			container MaakLosseCat :=
+				for_each_ne(
+					Classes/Class_name
+					, 'MaakLosse_BGT_groepen_T(' +string(id(BGT/Classes))+ ', Read_fss)'
+				);
+		}
+
+	
+	
 	}
 }
