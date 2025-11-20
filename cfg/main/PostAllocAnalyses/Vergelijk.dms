@@ -136,13 +136,14 @@ container Vergelijk : using = "Geography;Classifications"
 				, replace(AllocatieFileName, '@STANDPATH@', StandVar/path)
 			),	StorageReadOnly = "True";
 	
-		container RegionaleIndicatoren
-		: StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'RegionaleIndicatoren', '.tif', '.mmd')"
-		, StorageReadOnly = "true"
+		container RegionaleIndicatoren : StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'RegionaleIndicatoren', '.tif', '.mmd')", StorageReadOnly = "true"
 		{
-			
+			attribute<Woning> Netto_Allocatie_Woningen (Provincie) := Netto_Allocatie/Aantal_Woningen;
+			attribute<Job>    Netto_Allocatie_Banen    (Provincie) := Netto_Allocatie/Aantal_Banen;
+		
 		}
-	
+		
+		
 		container ClaimRealisatie : using = "Impl"
 		{
 			container Per_AllocRegio := 
@@ -151,26 +152,17 @@ container Vergelijk : using = "Geography;Classifications"
 					, 'ClaimRealisatie_T('+quote(VariantParameters/SectorAllocRegio/Uq_AllocRegios/AllocRegio_name)+','+quote(VariantParameters/SectorAllocRegio/Uq_AllocRegios/AllocRegio_path)+')'
 				)
 			{
-				container Nederland := ClaimRealisatie_T('NL', 'RegioIndelingen/NL') 
-				{
-				}
+				container Nederland := ClaimRealisatie_T('NL', 'RegioIndelingen/NL');
 			}
 			
-			// container CheckNL := 
-				// for_each_nedv(
-					  // Classifications/Actor/Jobs6/name
-					// , replace('union_data(Classifications/Time/Zichtjaar, '+AsList('Indicatoren/'+Classifications/Time/Zichtjaar/name+'/ClaimRealisatie/Per_AllocRegio/Nederland/Claim_realisatie/Werken/@SS@',',')+')', '@SS@', Classifications/Actor/Jobs6/name)
-					// , Classifications/Time/Zichtjaar 
-					// , float32
-				// );
-			
-			
+	
 			Template ClaimRealisatie_T
 			{
 				//
 				parameter<String> ClaimRegio_name;
 				parameter<String> ClaimRegio_path;
 				//
+				
 				unit<UInt32> ClaimRegio := =ClaimRegio_path;
 				parameter<string> ClaimVariantName := 'BAU';
 				
@@ -208,18 +200,22 @@ container Vergelijk : using = "Geography;Classifications"
 							Jobs6/name
 							, ClaimRegio
 							, job
-						), StorageName = "=File_csv_name+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE"
-					{
-						attribute<job> Totaal   (ClaimRegio) := ='add('+asList(Jobs6/name,',')+')';
-					}
+						), StorageName = "=File_csv_name+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE";
 					
 					container Wonen := Read_Wonen_WP2xVSSH_fss
 					{
 						attribute<Woning> Totaal (ClaimRegio) := ='add('+asList(WP2xVSSH/name,',')+')';
-					}		
+					}
 					
-					container Werken := Read_werken_CSV;
+					container Werken := Read_werken_CSV
+					{
+						attribute<job> Totaal (ClaimRegio) := ='add('+asList(Jobs6/name,',')+')';
+					}
 					
+					container Verblijfsrecreatie
+					{
+						attribute<verblijfsobject> Totaal (ClaimRegio) := ='/VariantData/Claims/'+Zichtjaar_name+'/AllocRegios/'+ClaimRegio_name+'/Verblijfsrecreatie/Totaal';
+					}
 					
 					container Claims :=
 						for_each_nedvn(
@@ -230,7 +226,8 @@ container Vergelijk : using = "Geography;Classifications"
 							, StandVar/Claims_sub/unit_name
 						)
 					{
-						// attribute<verblijfsobject> Verblijfsrecreatie_NL (RegioIndelingen/NL) := sum(ThisYear/Impl/Claims/AllocRegios/NL/Verblijfsrecreatie/Totaal, RegioIndelingen/CBS/Last/Provincie/NL_rel);
+						attribute<Woning> Aantal_Woningen (ClaimRegio) := ='add('+AsItemList('Aantal_Woningen_'+WP2xVSSH/name)+')';
+						attribute<Job>    Aantal_Banen    (ClaimRegio) := ='add('+AsItemList('Banen_'+Jobs6/name)+')';
 					}
 					
 					container Stand_PerAllocRegio := 
@@ -240,10 +237,40 @@ container Vergelijk : using = "Geography;Classifications"
 							, ClaimRegio
 							, StandVar/Alloc_sub
 							, StandVar/Alloc_sub/unit_name
-						);
-				} 
-				container Claim_realisatie
-				: Descr = "claim realisatie voor klassen die niet naar min/max claims kijken."
+						)
+					{
+						attribute<Woning> Aantal_Woningen (ClaimRegio) := ='add('+AsItemList('Aantal_Woningen_'+WP2xVSSH/name)+')';
+						attribute<Job>    Aantal_Banen    (ClaimRegio) := ='add('+AsItemList('Banen_'+Jobs6/name)+')';
+					}
+					
+					container Netto_Allocatie :=
+						for_each_nedvn(
+							StandVar/Alloc_sub/name
+							, 'sum(ThisYear/Stand/'+StandVar/Alloc_sub/path+' - /Indicatoren/Basisjaar/Stand/'+StandVar/Alloc_sub/name+', ClaimRegio/Per_AdminDomain)'
+							, ClaimRegio
+							, StandVar/Alloc_sub
+							, StandVar/Alloc_sub/unit_name
+						)
+					{
+						attribute<Woning> Aantal_Woningen (ClaimRegio) := ='add('+AsItemList('Aantal_Woningen_'+WP2xVSSH/name)+')';
+						attribute<Job>    Aantal_Banen    (ClaimRegio) := ='add('+AsItemList('Banen_'+Jobs6/name)+')';
+					}
+								
+					container RestClaim := 
+						for_each_nedvn(
+							StandVar/Alloc_sub/name
+							, 'impl/Claims/'+StandVar/Alloc_sub/name+' - Impl/Stand_PerAllocRegio/'+StandVar/Alloc_sub/name+''
+							, ClaimRegio
+							, StandVar/Alloc_sub
+							, StandVar/Alloc_sub/unit_name
+						)
+					{
+						attribute<Woning> Aantal_Woningen (ClaimRegio) := ='add('+AsItemList('Aantal_Woningen_'+WP2xVSSH/name)+')';
+						attribute<Job>    Aantal_Banen    (ClaimRegio) := ='add('+AsItemList('Banen_'+Jobs6/name)+')';
+					}
+				}
+				
+				container Claim_realisatie: Descr = "claim realisatie voor klassen die niet naar min/max claims kijken."
 				{
 					container Wonen	:= 
 						for_each_nedv(
@@ -251,7 +278,10 @@ container Vergelijk : using = "Geography;Classifications"
 							, 'Impl/Stand_PerAllocRegio/Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name+' / Impl/Claims/Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name
 							, ClaimRegio
 							, float32
-						);
+						)
+					{
+						attribute<float32>    Totaal    (ClaimRegio) := Impl/Stand_PerAllocRegio/Aantal_Woningen / Impl/Claims/Aantal_Woningen;
+					}
 					
 					container Werken := 
 						for_each_nedv(
@@ -259,7 +289,10 @@ container Vergelijk : using = "Geography;Classifications"
 							, 'Impl/Stand_PerAllocRegio/Banen_'+Classifications/Actor/Jobs6/name+' / Impl/Claims/Banen_'+Classifications/Actor/Jobs6/name
 							, ClaimRegio
 							, float32
-						);
+						)
+					{
+						attribute<float32>    Totaal    (ClaimRegio) := Impl/Stand_PerAllocRegio/Aantal_Banen / Impl/Claims/Aantal_Banen;
+					}
 					
 					container Verblijfsrecreatie := 
 						for_each_nedv(
@@ -271,7 +304,49 @@ container Vergelijk : using = "Geography;Classifications"
 							, float32
 						);
 				}
+				
+				container RestClaim_realisatie: Descr = "claim realisatie voor klassen die niet naar min/max claims kijken."
+				{
+					container Wonen	:= 
+						for_each_nedv(
+							Classifications/Vastgoed/WP2xVSSH/name
+							, 'Impl/Netto_Allocatie/Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name+' / max_elem(0[woning], Impl/RestClaim/Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name+')'
+							, ClaimRegio
+							, float32
+						)
+					{
+						attribute<float32>    Totaal    (ClaimRegio) := Impl/Netto_Allocatie/Aantal_Woningen / max_elem(0[woning], Impl/RestClaim/Aantal_Woningen);
+					}
+					
+					container Werken := 
+						for_each_nedv(
+							Classifications/Actor/Jobs6/name
+							, 'Impl/Netto_Allocatie/Banen_'+Classifications/Actor/Jobs6/name+' / max_elem(0[job], Impl/RestClaim/Banen_'+Classifications/Actor/Jobs6/name+')'
+							, ClaimRegio
+							, float32
+						)
+					{
+						attribute<float32>    Totaal    (ClaimRegio) := Impl/Netto_Allocatie/Aantal_Banen / max_elem(0[job], Impl/RestClaim/Aantal_Banen);
+					}
+					
+					container Verblijfsrecreatie := 
+						for_each_nedv(
+							Classifications/Actor/VerblijfsrecreatieK/Sector_name
+							, lowercase(ClaimRegio_name) == lowercase('NL')
+								? 'Impl/Netto_Allocatie/Objecten_'+Classifications/Actor/VerblijfsrecreatieK/Sector_name+' / Impl/RestClaim/Verblijfsrecreatie_NL'
+								: 'Impl/Netto_Allocatie/Objecten_'+Classifications/Actor/VerblijfsrecreatieK/Sector_name+' / Impl/RestClaim/Objecten_'+Classifications/Actor/VerblijfsrecreatieK/Sector_name
+							, ClaimRegio
+							, float32
+						);
+				}
 			}
+		}
+		
+		container ClaimrealisatieTovBasisjaar
+		{
+			// @Jip, graag hier de claims (netto erbij), allocatie (netto erbij) en claimrealisatie tov stand basisjaar configureren. 
+			// graag twee varianten maken:  incl bag nieuwbouw en exl bag nieuwbouw
+			//graag in beide varianten ook de totale claims, allocatie en claimrealisatie opnemen (per sector)
 		}
 	}
 }
