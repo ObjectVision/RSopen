@@ -1,6 +1,6 @@
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms17.4.6
+set geodmsversion=GeoDms17.9.6
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 REM set exe_dir=C:\dev\GeoDms\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
@@ -24,7 +24,7 @@ del log\log.txt
 
 set AlleenEindjaar=TRUE
 
-if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030, 2040 en 2050 overslaan?"
+if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030 en 2040 overslaan?"
 if ErrorLevel 2 set AlleenEindjaar=FALSE
 if "%1%" equ "N" set AlleenEindjaar=FALSE
 
@@ -68,6 +68,7 @@ REM call ..\batch\RunScenarios.cmd
 
 
 echo "Klaar !"
+pause
 exit
 
 
