@@ -1,9 +1,9 @@
-set RSL_VARIANT_NAME=BAU
+set RSO_VARIANT_NAME=BAU
 call ..\batch\RunZichtjaren.cmd
 
-set RSL_VARIANT_NAME=Intensiveren
+set RSO_VARIANT_NAME=Intensiveren
 call ..\batch\RunZichtjaren.cmd
 
-set RSL_VARIANT_NAME=Transformeren
+set RSO_VARIANT_NAME=Transformeren
 call ..\batch\RunZichtjaren.cmd
 

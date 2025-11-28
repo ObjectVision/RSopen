@@ -15,56 +15,56 @@ set MT_FLAGS=/S1 /S2 /S3
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
 set AlleenEindjaar=TRUE
-set RSL_VARIANT_NAME=BAU
-set RSL_SCENARIO_NAME=WLO_Hoog
+set RSO_VARIANT_NAME=BAU
+set RSO_SCENARIO_NAME=WLO_Hoog
 
 
 REM case(TredesBAUmetLadder  && BouwenNietInGevaarlijk  && NietBouwenWaarSlap , '_mLadder_nGev_nSlap')
-REM set RSL_TredesBAUmetLadder=TRUE
-REM set RSL_BouwenNietInGevaarlijk=TRUE
-REM set RSL_NietBouwenWaarSlap=TRUE
+REM set RSO_TredesBAUmetLadder=TRUE
+REM set RSO_BouwenNietInGevaarlijk=TRUE
+REM set RSO_NietBouwenWaarSlap=TRUE
 REM call ..\batch\RunVariant_IenW.cmd
 
 REM ,case(TredesBAUmetLadder  && BouwenNietInGevaarlijk  && !NietBouwenWaarSlap, '_mLadder_nGev_wSlap')
-REM set RSL_TredesBAUmetLadder=TRUE
-REM set RSL_BouwenNietInGevaarlijk=TRUE
-REM set RSL_NietBouwenWaarSlap=FALSE
+REM set RSO_TredesBAUmetLadder=TRUE
+REM set RSO_BouwenNietInGevaarlijk=TRUE
+REM set RSO_NietBouwenWaarSlap=FALSE
 REM call ..\batch\RunVariant_IenW.cmd
 
 REM ,case(TredesBAUmetLadder  && !BouwenNietInGevaarlijk && !NietBouwenWaarSlap, '_mLadder_wGev_wSlap') //bau
-REM set RSL_TredesBAUmetLadder=TRUE
-REM set RSL_BouwenNietInGevaarlijk=FALSE
-REM set RSL_NietBouwenWaarSlap=FALSE
+REM set RSO_TredesBAUmetLadder=TRUE
+REM set RSO_BouwenNietInGevaarlijk=FALSE
+REM set RSO_NietBouwenWaarSlap=FALSE
 REM call ..\batch\RunVariant_IenW.cmd
 
 REM ,case(TredesBAUmetLadder  && !BouwenNietInGevaarlijk && NietBouwenWaarSlap , '_mLadder_wGev_nSlap')
-REM set RSL_TredesBAUmetLadder=TRUE
-REM set RSL_BouwenNietInGevaarlijk=FALSE
-REM set RSL_NietBouwenWaarSlap=TRUE
+REM set RSO_TredesBAUmetLadder=TRUE
+REM set RSO_BouwenNietInGevaarlijk=FALSE
+REM set RSO_NietBouwenWaarSlap=TRUE
 REM call ..\batch\RunVariant_IenW.cmd
 
 REM ,case(!TredesBAUmetLadder && !BouwenNietInGevaarlijk && !NietBouwenWaarSlap, '_zLadder_wGev_wSlap')
-set RSL_TredesBAUmetLadder=FALSE
-set RSL_BouwenNietInGevaarlijk=FALSE
-set RSL_NietBouwenWaarSlap=FALSE
+set RSO_TredesBAUmetLadder=FALSE
+set RSO_BouwenNietInGevaarlijk=FALSE
+set RSO_NietBouwenWaarSlap=FALSE
 call ..\batch\RunVariant_IenW.cmd
 
 REM ,case(!TredesBAUmetLadder && !BouwenNietInGevaarlijk && NietBouwenWaarSlap , '_zLadder_wGev_nSlap')
-set RSL_TredesBAUmetLadder=FALSE
-set RSL_BouwenNietInGevaarlijk=FALSE
-set RSL_NietBouwenWaarSlap=TRUE
+set RSO_TredesBAUmetLadder=FALSE
+set RSO_BouwenNietInGevaarlijk=FALSE
+set RSO_NietBouwenWaarSlap=TRUE
 call ..\batch\RunVariant_IenW.cmd
 
 REM ,case(!TredesBAUmetLadder && BouwenNietInGevaarlijk  && !NietBouwenWaarSlap, '_zLadder_nGev_wSlap')
-set RSL_TredesBAUmetLadder=FALSE
-set RSL_BouwenNietInGevaarlijk=TRUE
-set RSL_NietBouwenWaarSlap=FALSE
+set RSO_TredesBAUmetLadder=FALSE
+set RSO_BouwenNietInGevaarlijk=TRUE
+set RSO_NietBouwenWaarSlap=FALSE
 call ..\batch\RunVariant_IenW.cmd
 
 REM ,case(!TredesBAUmetLadder && BouwenNietInGevaarlijk  && NietBouwenWaarSlap , '_zLadder_nGev_nSlap')
-set RSL_TredesBAUmetLadder=FALSE
-set RSL_BouwenNietInGevaarlijk=TRUE
-set RSL_NietBouwenWaarSlap=TRUE
+set RSO_TredesBAUmetLadder=FALSE
+set RSO_BouwenNietInGevaarlijk=TRUE
+set RSO_NietBouwenWaarSlap=TRUE
 call ..\batch\RunVariant_IenW.cmd
 
 

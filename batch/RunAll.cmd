@@ -14,8 +14,7 @@ CD ..
 set ProjDir=%CD%
 CD %CurrentDir%
 
-set RSL_BOERVARIANT_NAME=RationeleBoer
-set RSL_CO2PRIJS_NAME=EUR_80_ton
+set RSO_BOERVARIANT_NAME=RationeleBoer
 
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
@@ -51,19 +50,19 @@ if %ErrorLevel% NEQ 0 goto ErrorEnd
 REM deletes the old VariantData folder.
 REM rmdir %LocalDataProjDir%\VariantData /s /q 
 
-set RSL_VARIANT_NAME=BAU
+set RSO_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd
 
-REM set RSL_VARIANT_NAME=WBS
+REM set RSO_VARIANT_NAME=WBS
 REM call ..\batch\RunVariantData.cmd
 
 :runScenarios
 
 
-set RSL_SCENARIO_NAME=WLO_Hoog
+set RSO_SCENARIO_NAME=WLO_Hoog
 call ..\batch\RunScenarios.cmd
 
-REM set RSL_SCENARIO_NAME=WLO_Laag
+REM set RSO_SCENARIO_NAME=WLO_Laag
 REM call ..\batch\RunScenarios.cmd
 
 
