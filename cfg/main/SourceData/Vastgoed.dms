@@ -1,4 +1,4 @@
-container Vastgoed: using  = "Units;Geography;Classifications"
+container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 , Descr = "Brondata voor vastgoed, zoals de BAG, logistieke panden, energielabels, eigendom en WOZ-waardes"
 {
 	#include<WOZ.dms>
@@ -44,4 +44,127 @@ container Vastgoed: using  = "Units;Geography;Classifications"
 		attribute<AdminDomain>                           AdminDomain_rel     := locatie[AdminDomain];
 		attribute<Classifications/Vastgoed/Energielabel> Modus (AdminDomain) := Modus(Energielabel_rel, locatie[AdminDomain]); //, StorageName = "%LocalDataProjDir%/BaseData/Vastgoed/Energielabels.tif", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))";
 	}
+	
+	container Rudifun
+	:	StorageName     = "%RSo_DataDir%/Vastgoed/Rudifun_2024_nl.gdb"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "True"
+	,	DialogData      = "rdc_meter"
+	,	Descr           = "De Ruimtelijke Dichtheden en Functiemenging in Nederland (RUDIFUN) dataset geeft een indicatie van de dichtheid en morfologie van bebouwd gebied."
+	, 	URL             = "https://dataportaal.pbl.nl/RUDIFUN"
+	,	SyncMode        = "AllTables"
+	{
+		
+	}
+	
+	container Funderingsschade
+	{
+		unit<uint32> per_Buurt
+		:	StorageName     = "%PrivDataDir%/Funderingsschade/cost_buurten2020.csv"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "True"
+		,	Descr           = "Funderingsschade ontvangen van Deltares d.d. 15-12-2025"
+		{
+			unit<uint32> Buurt := RegioIndelingen/CBS/Y2020/Buurt;
+			
+			attribute<Buurt>     Buurt_rel       := rlookup(buurtcode, Buurt/statcode);
+			attribute<rdc_meter> geometry (poly) := Buurt/geometry[buurt_rel];
+			attribute<uint32>    no_building     := num_buildings_buurt[uint32];
+			attribute<float32>   cost_timber     := cost_timber_buurt[float32];
+			attribute<float32>   cost_shallow    := cost_shallow_buurt[float32];
+			attribute<float32>   total_cost      := total_cost_buurt[float32];
+		
+		}
+		
+		container Read_per_Object
+		:	StorageName     = "%PrivDataDir%/Funderingsschade/buildings_pts_with_timber_shallow_costs.gpkg"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "True"
+		,	Descr           = "Funderingsschade ontvangen van Deltares d.d. 15-12-2025"
+		{
+			unit<uint32> strong_climate_change
+			{
+				attribute<rdc_meter> geometry (arc);
+				
+				unit<uint32> s2p := sequence2points(geometry);
+			}
+		}
+		
+		unit<uint32> per_Object := Read_per_Object/strong_climate_change/s2p
+		{
+			attribute<rdc_meter>       geometry             := point;
+			attribute<float32>         p_hout_fundering     := Read_per_Object/strong_climate_change/p_timber_pile[Read_per_Object/strong_climate_change/s2p/sequence_rel][float32], Descr = "";
+			attribute<float32>         p_staal_fundering    := Read_per_Object/strong_climate_change/p_shallow_found[Read_per_Object/strong_climate_change/s2p/sequence_rel][float32], Descr = "";
+			attribute<float32>         p_beton_fundering    := Read_per_Object/strong_climate_change/p_beton[Read_per_Object/strong_climate_change/s2p/sequence_rel][float32], Descr = "";
+			
+			attribute<float32>         cost_hout_fundering  := Read_per_Object/strong_climate_change/cost_timber_piles[Read_per_Object/strong_climate_change/s2p/sequence_rel][float32], Descr = "";
+			attribute<float32>         cost_staal_fundering := Read_per_Object/strong_climate_change/cost_shallow_found[Read_per_Object/strong_climate_change/s2p/sequence_rel][float32], Descr = "";
+			
+			attribute<yr>              Bouwjaar             := per_Pand/bouwjaar_trunc[pand_rel], Descr = "";
+			attribute<WP5>             t_i                  := per_Pand/WP5_rel[pand_rel], Descr = "Woningtype van pand i (bijvoorbeeld: rijwoning, hoekwoning, vrijstaand, appartement).";
+			
+			attribute<per_Pand>        pand_rel             := point_in_polygon(geometry, per_Pand/geometry), Descr = "";
+			attribute<BouwjaarKlassen> c_i                  := Classify(Bouwjaar, BouwjaarKlassen/ClassBreaks), Descr = "Bouwjaarklasse van pand i (bijvoorbeeld: vóór 1940, 1940–1969, 1970–1989, ≥1990).";
+			
+			attribute<float32>         y_i                  := p_hout_fundering * cost_hout_fundering + p_staal_fundering * cost_staal_fundering, Descr = "Verwachte funderingsschade per pand, afgeleid uit private gegevens over funderingstype en herstelkosten.";
+			attribute<float32>         s_i                  := per_Pand/Counts/woon_VBOs[pand_rel][float32], Descr = "Schaalfactor voor pand i: aantal woningen in het pand";
+			attribute<float32>         w_i                  := ='switch(
+																 '+AsList(
+																 'case(t_i == WP5/v/'+WP_x_BJ/WP_name+' && c_i == BouwjaarKlassen/v/'+WP_x_BJ/BJ_name+', r_type/'+WP_x_BJ/WP_name+' * r_jaar/'+WP_x_BJ/BJ_name+' * s_i)', ',')+'
+																, null_f
+																)', Descr = "Publiek herleidbaar verdeelgewicht voor pand i binnen de buurt, opgebouwd uit bouwjaarklasse- en woningtypefactoren (r_jaar, r_type) en een schaalterm s_i (aantal woningen); gebruikt om buurtkosten proportioneel toe te rekenen (niet zelf een eurobedrag).";
+		}
+		
+		container r_jaar := 
+			for_each_nedv(
+				BouwjaarKlassen/name
+				, 'mean(per_Object/c_i == '+string(id(BouwjaarKlassen))+'[BouwjaarKlassen] ? per_Object/y_i : null_f) / mean(per_Object/y_i)'
+				, void
+				, float32
+			), Descr = "Relatieve risicofactor voor funderingsschade voor bouwjaarklasse c. Afgeleid uit een private kalibratieset, maar gepubliceerd als geaggregeerd kental. Genormaliseerd zodat de gemiddelde of mediane waarde gelijk is aan 1.";
+			
+		container r_type := 
+			for_each_nedv(
+				WP5/name
+				, 'mean(per_Object/t_i == '+string(id(WP5))+'[WP5] ? per_Object/y_i : null_f) / mean(per_Object/y_i)'
+				, void
+				, float32
+			), Descr = "Relatieve risicofactor voor funderingsschade voor woningtype t. Afgeleid uit een private kalibratieset, maar gepubliceerd als geaggregeerd kental. Genormaliseerd zodat de gemiddelde of mediane waarde gelijk is aan 1.";
+		
+		unit<uint32> per_Pand := ='/SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/pand'
+		{
+			attribute<WP5>             t_i                       := WP5_rel, Descr = "Woningtype van pand i (bijvoorbeeld: rijwoning, hoekwoning, vrijstaand, appartement).";
+			attribute<BouwjaarKlassen> c_i                       := Classify(Bouwjaar_trunc, BouwjaarKlassen/ClassBreaks), Descr = "Bouwjaarklasse van pand i (bijvoorbeeld: vóór 1940, 1940–1969, 1970–1989, ≥1990).";
+			attribute<float32>         s_i                       := Counts/woon_VBOs[float32], Descr = "Schaalfactor voor pand i: aantal woningen in het pand";
+			
+			attribute<float32>         w_i                       := ='switch(
+																	 '+AsList(
+																	 'case(t_i == WP5/v/'+WP_x_BJ/WP_name+' && c_i == BouwjaarKlassen/v/'+WP_x_BJ/BJ_name+', r_type/'+WP_x_BJ/WP_name+' * r_jaar/'+WP_x_BJ/BJ_name+' * s_i)', ',')+'
+																	, null_f
+																	)', Descr = "Publiek herleidbaar verdeelgewicht voor pand i binnen de buurt, opgebouwd uit bouwjaarklasse- en woningtypefactoren (r_jaar, r_type) en een schaalterm s_i (aantal woningen); gebruikt om buurtkosten proportioneel toe te rekenen (niet zelf een eurobedrag).";
+			
+			attribute<float32>         k_i                       := C_b[buurt_rel] * (w_i / sum(w_i, buurt_rel)[buurt_rel]), Descr = "Toegerekend deel van de buurtkosten C_b aan pand i";
+			
+			attribute<per_Buurt>       buurt_rel                 := point_in_polygon(centroid_or_mid(geometry), per_Buurt/geometry), Descr = "";
+			attribute<float32>         C_b           (per_Buurt) := per_Buurt/total_cost, Descr = "Totale geschatte funderingsschade (euro) in buurt b.";
+
+			attribute<Eur>             k  (CompactedAdminDomain) := sum(k_i[ToedelingsMatrix/Pand_rel] * ToedelingsMatrix/ToedelingPand, ToedelingsMatrix/CompactedAdminDomain_rel)[Eur];
+		}
+		
+		unit<uint8> WP_x_BJ := combine_uint8(WP5, BouwjaarKlassen)
+		{
+			attribute<string> WP_name := WP5/name[first_rel];
+			attribute<string> BJ_name := BouwjaarKlassen/name[second_rel];
+		}
+		
+		unit<uint8> BouwjaarKlassen := cat_range(0b, 4b)
+		{
+			attribute<string> label          : ['<1940', '1940-1969', '1970-1989', '>=1990'];
+			attribute<string> name           := AsItemName(label);
+			attribute<yr>     ClassBreaks   : [0, 1940, 1970, 1990], DialogType = "Classification";
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+		}
+	}
+	
+	
 }
