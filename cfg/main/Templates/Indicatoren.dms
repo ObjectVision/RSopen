@@ -24,7 +24,7 @@ Template Indicatoren_T
 		}
 		
 		parameter<string> AllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', Casus_name, '@JAAR@', Zichtjaar, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
-
+		
 		container Stand_with_path :=
 			for_each_ndvna(
 				StandVar/path
@@ -37,9 +37,9 @@ Template Indicatoren_T
 	
 	attribute<Classifications/Actor/Sector>                       Sector_rel                    (AdminDomain):= Classifications/Actor/Sector/XSubsector/Sector_rel[Impl/Stand_with_path/Subsector_rel];
 	attribute<Bool>                                               Sector_rel_Verstedelijking    (AdminDomain):= Sector_rel == /Classifications/Actor/Sector/V/Wonen || 
-																	Sector_rel == /Classifications/Actor/Sector/V/Werken || 
+																	Sector_rel == /Classifications/Actor/Sector/V/Werken ||
 																	Sector_rel == /Classifications/Actor/Sector/V/Verblijfsrecreatie;
-																  
+																
 	attribute<Bool> Sector_rel_Verstedelijking_Buitenstedelijk  (AdminDomain):= !/SourceData/RegioIndelingen/Bevolkingskern_2011/Is_BBG_AdminDomain ? Sector_rel_Verstedelijking : false;			
 	
 	container Stand :=
@@ -90,7 +90,7 @@ Template Indicatoren_T
 			parameter<string> SectorAllocRegioName;
 			///
 			unit<uint32> AllocRegio := =rjoin(SectorAllocRegioName, /VariantParameters/SectorAllocRegio/SectorAllocRegio_name, /VariantParameters/SectorAllocRegio/AllocRegio_path);
-
+			
 			unit<uint32> Read := AllocRegio
 			, StorageName = "='%LocalDataDir%/Allocatie/'+Casus_name+'/OverflowNa_'+Zichtjaar+'_'+SequenceName+'_'+SectorAllocRegioName+'.csv'"
 			, StorageType = "gdal.vect"
@@ -105,9 +105,7 @@ Template Indicatoren_T
 					, AllocRegio
 					, Float32
 				);
-		}	
-		
-
+		}
 	}
 	
 	container Overstromingsschade := Templates/SSM2017_Overstromingsschades_T(Zichtjaar), Descr = "SSM Model van Deltares nagebouwd in RuimteScanner; Slager, K. (2016). Technische documentatie SSM2015: functionele en technische ontwerpkeuzen. Deltares rapportage 1230095-004-HYE-0009 dd. november 2016 ";
@@ -126,16 +124,28 @@ Template Indicatoren_T
 	#include<Bereikbaarheid.dms>
 	#include<DeltaT.dms>
 	
-	container Waterberging
+	container Waterberging := Basisjaar/Waterberging
 	{
-		unit<uint32> Regio := /SourceData/RegioIndelingen/Buurt;
-		
-		attribute<Meter>  WaterdiepteBijHevigeNeerslag_Basisjaar (AdminDomain) := SourceData/Water/WaterdiepteBijHevigeNeerslag;
-		attribute<Meter>  WaterdiepteBijHevigeNeerslag_NaIngreep (AdminDomain) := SourceData/Water/WaterdiepteBijHevigeNeerslag;
-		attribute<Meter>  WaterdiepteBijHevigeNeerslag_ThisYear  (AdminDomain) := IsDefined(Stand/SubSector_rel) ? WaterdiepteBijHevigeNeerslag_NaIngreep : WaterdiepteBijHevigeNeerslag_Basisjaar;
-	
-		attribute<Meter3> Waterbergingsvraag_Basisjaar       (Regio) := Basisjaar/Waterberging/Waterbergingsvraag;
-		attribute<Meter3> Waterbergingsvraag_PrevYear        (Regio) := PrevIndicatoren/Waterberging/Waterbergingsvraag;
-		attribute<Meter3> Waterbergingsvraag_ThisYear        (Regio) := sum(WaterdiepteBijHevigeNeerslag_ThisYear * AdminDomain/NrMeter2PerCell, Regio/Per_AdminDomain);
+		container PerGrid := Basisjaar/Waterberging/PerGrid
+		{
+			container Aanbod
+			{
+				container GrondgebruikSrc := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData;
+				
+				parameter<string> CalcString := 'sum(GrondgebruikSrc/@Capaciteit_AdminDomain * /VariantParameters/VariantK/FractieWaterretentieCapaciteit@[/Variant_rel] * Classifications/WaterretentieK/MetBenodigdeVelddata/Bergingscapaciteit[Classifications/WaterretentieK/MetBenodigdeVelddata/V/@], invert(Grid/AdminDomain_rel))';
+				
+				container PerWaterrententieK := for_each_nedv(Classifications/WaterretentieK/MetBenodigdeVelddata/name, replace(CalcString, '@', Classifications/WaterretentieK/MetBenodigdeVelddata/name), Grid, meter3);
+				
+				// attribute<meter3> Halfverharding (Grid) := sum(GrondgebruikSrc/HalfverhardingCapaciteit_AdminDomain * /VariantParameters/VariantK/FractieWaterretentieCapaciteitHalfVerharding[/Variant_rel]     * WaterretentieK/Bergingscapaciteit[WaterretentieK/V/Halfverharding], invert(Grid/Per_AdminDomsin));
+				// attribute<meter3> HolleWeg       (Grid) := sum(GrondgebruikSrc/HolleWegCapaciteit_AdminDomain       * /VariantParameters/VariantK/FractieWaterretentieCapaciteitHolleWegCapaciteit[/Variant_rel] * WaterretentieK/Bergingscapaciteit[WaterretentieK/V/HolleWeg], invert(Grid/Per_AdminDomsin));
+				// attribute<meter3> Wadi           (Grid) := sum(GrondgebruikSrc/WadiCapaciteit_AdminDomain           * /VariantParameters/VariantK/FractieWaterretentieCapaciteitWadiCapaciteit[/Variant_rel]     * WaterretentieK/Bergingscapaciteit[WaterretentieK/V/Wadi], invert(Grid/Per_AdminDomsin));
+				
+				attribute<meter3> Totaal (Grid) := = 'add('+AsItemList(Classifications/WaterrententieK/MetBenodigdeVelddata/name)+')';
+			}
+			
+			attribute<meter3> Restvraag (Grid) := Vraag - Aanbod/Totaal;
+		}
 	}
+	
+	attribute<Eur> Funderingsschade_Woningen (AdminDomain) := Indicatoren/Basisjaar/Funderingsschade_Woningen * float32(IsNull(Stand/Subsector_rel));
 }
