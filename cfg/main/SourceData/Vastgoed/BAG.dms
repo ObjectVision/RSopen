@@ -472,16 +472,61 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 			#include<AfleidingPandType.dms>
 		}
 		
+		unit<UInt32> pand_alle_statussen_toekomstige_nieuwbouwsloop := select_with_attr_by_cond(VolledigeBAG/panden/pand
+														, VolledigeBAG/panden/pand/Begindatum >= int32(JaarStr+'0101') 
+															&& VolledigeBAG/panden/pand/Einddatum >= int32(JaarStr+'0101'))
+		, Descr = "set met panden op 1 januari van elk jaar met alle statussen. Tbv BAG Nieuwbouw sloop identificatie"
+		{
+			unit<UInt32> ToedelingsMatrix := = 'Uitsmeer_key/AdminDomain_in_all_panden';
+			#include<Uitsmeer_key.dms>
+		
+			container oppervlaktes
+			{
+				attribute<m2_pand>         vbo_opp            (..) := sum(vbo/oppervlakte_trunc[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[verblijfsobject] / 1[Units/PandUnit];
+			
+				container VBOopp_perGebruiksdoel :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						, 'sum((vbo/Impl/gebruiksdoelen_cbs/'+vbo_gebruiksdoel_plus/name+' ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[verblijfsobject]'
+						, pand
+						, meter2
+					), Descr = "per gebruiksdoel de vbo oppervlakte in een pand"
+				{
+					attribute<meter2> niet_woon           (pand) := sum((vbo/Impl/gebruiksdoelen_cbs/niet_woon ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[verblijfsobject];
+					
+					//nodig voor sloopkosten niet woningen in BaseData/Suitabilities
+					attribute<meter2> niet_woon_AdminDomain (AdminDomain) := sum(niet_woon[pand/ToedelingsMatrix/Pand_rel] * pand/ToedelingsMatrix/ToedelingPand, pand/ToedelingsMatrix/AdminDomain_rel), Descr = "sommeer het aantal woningen over CAD cellen, gebaseerd op de uitsmeer-pand-relatie. Zodat grote panden netjes over meerdere cellen worden verdeeld.";
+				}
+				
+				container Footprint_perGebruiksdoel :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						, lowercase(quote(vbo_gebruiksdoel_plus/name))+' == lowercase(''Logistiek'') && IsLogistiekFunctie 
+							? Footprint 
+							: '+lowercase(quote(vbo_gebruiksdoel_plus/name))+' == lowercase(''Logistiek'') && NOT(IsLogistiekFunctie)
+								? 0[m2PandFootprint]
+								: IsLogistiekFunctie 
+									? 0[m2PandFootprint] 
+									: (VBOopp_perGebruiksdoel/'+vbo_gebruiksdoel_plus/name+' / (vbo_opp * 1[Units/PandUnit])) * Footprint'
+						, pand
+						, m2PandFootprint
+					), Descr = "per gebruiksdoel de pand Footprint obv de share van vbo Oppervlaktes in het pand"
+				{
+					attribute<vbo_gebruiksdoel_plus> ArgMax    (pand) := ='!IsDefined(bijeenkomst) ? (0/0)[vbo_gebruiksdoel_plus] : ArgMax('+asItemList(vbo_gebruiksdoel_plus/name)+')[vbo_gebruiksdoel_plus]';
+				}
+			}
+		}
+		
 		unit<UInt32> vbo_alle_statussen  := select_with_attr_by_cond(VolledigeBAG/VBOs/vbo
 														, VolledigeBAG/VBOs/vbo/Begindatum < int32(JaarStr+'0101') 
 															&& VolledigeBAG/VBOs/vbo/Einddatum >= int32(JaarStr+'0101'))
 		, Descr = "set met verblijfsobjecten op 1 januari van elk jaar met alle statussen. Tbv BAG Nieuwbouw identificatie"
 		{
-			parameter<String> Selection_string             := 'AlleStatussen';
-			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel := Impl/gebruiksdoel_plus_rel;
-			attribute<pand>                                 Pand_rel              := rlookup(pand_bag_nr, pand/pand_bag_nr);
-			attribute<pand_alle_statussen>                  pand_alle_statussen_rel              := rlookup(pand_bag_nr, pand_alle_statussen/pand_bag_nr);
-			attribute<yr>                    Bouwjaar_trunc        := Pand_rel -> Bouwjaar_trunc;
+			parameter<String>                Selection_string        := 'AlleStatussen';
+			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel   := Impl/gebruiksdoel_plus_rel;
+			attribute<pand>                  Pand_rel                := rlookup(pand_bag_nr, pand/pand_bag_nr);
+			attribute<pand_alle_statussen>   pand_alle_statussen_rel := rlookup(pand_bag_nr, pand_alle_statussen/pand_bag_nr);
+			attribute<yr>                    Bouwjaar_trunc          := Pand_rel -> Bouwjaar_trunc;
 
 			container Per_Gebruiksdoel := for_each_ne(vbo_gebruiksdoel_plus_plus/name, 'Templates/BAG_GebruiksdoelSets_T(' + quote(vbo_gebruiksdoel_plus_plus/name) +', ..)');
 			container Impl
@@ -512,6 +557,67 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 					attribute<Bool>   woon              (...) := gebruiksdoelen/woon;
 					attribute<Bool>   utiliteit_combi   (...) := !woon && Count_Utiliteiten > 1;
 					attribute<Bool>   Logistiek         (...) := pand_alle_statussen/IsLogistiekFunctie[pand_alle_statussen_rel];
+					attribute<Bool>   niet_woon         (...) := !woon;
+				}
+				
+				attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel (..) := switch(
+														 case(gebruiksdoelen_cbs/woon, vbo_gebruiksdoel_plus/v/woon)
+														, case(gebruiksdoelen_cbs/bijeenkomst, vbo_gebruiksdoel_plus/v/bijeenkomst)
+														, case(gebruiksdoelen_cbs/cel, vbo_gebruiksdoel_plus/v/cel)
+														, case(gebruiksdoelen_cbs/Gezondheidszorg, vbo_gebruiksdoel_plus/v/Gezondheidszorg)
+														, case(gebruiksdoelen_cbs/industrie, vbo_gebruiksdoel_plus/v/industrie)
+														, case(gebruiksdoelen_cbs/Kantoor, vbo_gebruiksdoel_plus/v/Kantoor)
+														, case(gebruiksdoelen_cbs/logies, vbo_gebruiksdoel_plus/v/logies)
+														, case(gebruiksdoelen_cbs/onderwijs, vbo_gebruiksdoel_plus/v/onderwijs)
+														, case(gebruiksdoelen_cbs/overige_gebruiks, vbo_gebruiksdoel_plus/v/overige_gebruiks)
+														, case(gebruiksdoelen_cbs/sport, vbo_gebruiksdoel_plus/v/sport)
+														, case(gebruiksdoelen_cbs/winkel, vbo_gebruiksdoel_plus/v/winkel)
+														, vbo_gebruiksdoel_plus/v/utiliteit_combi
+														);
+				attribute<vbo_gebruiksdoel_plus_plus> gebruiksdoel_plus_plus_rel (..) := rjoin(gebruiksdoel_plus_rel, vbo_gebruiksdoel_plus_plus/vbo_gebruiksdoel_plus_rel, id(vbo_gebruiksdoel_plus_plus));
+			}
+		}
+		
+		unit<UInt32> vbo_alle_statussen_toekomstige_nieuwbouwsloop  := select_with_attr_by_cond(VolledigeBAG/VBOs/vbo
+														, VolledigeBAG/VBOs/vbo/Begindatum >= int32(JaarStr+'0101') 
+															&& VolledigeBAG/VBOs/vbo/Einddatum >= int32(JaarStr+'0101'))
+		, Descr = "set met verblijfsobjecten op 1 januari van elk jaar met alle statussen. Tbv BAG Nieuwbouw identificatie"
+		{
+			parameter<String>                Selection_string        := 'AlleStatussen';
+			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel   := Impl/gebruiksdoel_plus_rel;
+			attribute<pand>                  Pand_rel                := rlookup(pand_bag_nr, pand/pand_bag_nr);
+			attribute<pand_alle_statussen_toekomstige_nieuwbouwsloop>   pand_alle_statussen_toekomst_rel := rlookup(pand_bag_nr, pand_alle_statussen_toekomstige_nieuwbouwsloop/pand_bag_nr);
+			attribute<yr>                    Bouwjaar_trunc          := Pand_rel -> Bouwjaar_trunc;
+
+			container Per_Gebruiksdoel := for_each_ne(vbo_gebruiksdoel_plus_plus/name, 'Templates/BAG_GebruiksdoelSets_T(' + quote(vbo_gebruiksdoel_plus_plus/name) +', ..)');
+			container Impl
+			{
+				container gebruiksdoelen :=
+					for_each_nedv(
+						vbo_gebruiksdoel/name
+						, 'bitand(functie_code, vbo_gebruiksdoel/V/'+vbo_gebruiksdoel/name+' -> functie_code) > 0w' 
+						, ..
+						, bool
+					);
+				
+				container gebruiksdoelen_cbs
+				{
+					attribute<Bool>   utiliteit         (...) := ='('+asList('gebruiksdoelen/'+vbo_gebruiksdoel/Utiliteiten/name, ' || ')+') && !woon';
+					attribute<UInt32> Count_Utiliteiten (...) := =asList('gebruiksdoelen/'+vbo_gebruiksdoel/Utiliteiten/name+'[uint32]', ' + ');
+					
+					attribute<Bool>   bijeenkomst       (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/bijeenkomst;
+					attribute<Bool>   cel               (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/cel;
+					attribute<Bool>   Gezondheidszorg   (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/Gezondheidszorg;
+					attribute<Bool>   industrie         (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/industrie;
+					attribute<Bool>   Kantoor           (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/Kantoor;
+					attribute<Bool>   logies            (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/logies;
+					attribute<Bool>   onderwijs         (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/onderwijs;
+					attribute<Bool>   overige_gebruiks  (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/overige_gebruiks;
+					attribute<Bool>   sport             (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/sport;
+					attribute<Bool>   winkel            (...) := !woon && Count_Utiliteiten == 1 && gebruiksdoelen/winkel;
+					attribute<Bool>   woon              (...) := gebruiksdoelen/woon;
+					attribute<Bool>   utiliteit_combi   (...) := !woon && Count_Utiliteiten > 1;
+					attribute<Bool>   Logistiek         (...) := pand_alle_statussen_toekomstige_nieuwbouwsloop/IsLogistiekFunctie[pand_alle_statussen_toekomst_rel];
 					attribute<Bool>   niet_woon         (...) := !woon;
 				}
 				
