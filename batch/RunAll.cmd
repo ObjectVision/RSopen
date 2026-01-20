@@ -1,6 +1,6 @@
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms18.1.2
+set geodmsversion=GeoDms18.2.2
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 REM set exe_dir=C:\dev\GeoDms\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
