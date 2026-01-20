@@ -33,7 +33,13 @@ Template Indicatoren_T
 				, StandVar
 				, StandVar/unit_name
 				, replace(AllocatieFileName, '@STANDPATH@', StandVar/path)
-			),	StorageReadOnly = "True";
+			),	StorageReadOnly = "True"
+		{
+			container Wonen
+			{
+				attribute<m2PandFootprint> Footprint (AdminDomain) : StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Wonen/Footprint')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			}
+		}
 	}
 	
 	attribute<Classifications/Actor/Sector> Sector_rel (AdminDomain):= Classifications/Actor/Sector/XSubsector/Sector_rel[Impl/Stand_with_path/Subsector_rel];
@@ -59,6 +65,7 @@ Template Indicatoren_T
 		attribute<Woning>       Aantal_Woningen_Totaal             (AdminDomain) := ='add('+asItemList('Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name)+')';
 		attribute<Job>          Aantal_Banen_Totaal                (AdminDomain) := ='add('+asItemList('Banen_'+/Classifications/Actor/Jobs6/name)+')';
 		attribute<meter2>       m2PandFootprint_Totaal             (AdminDomain) := ='add('+asItemList('m2PandFootprint_'+/Classifications/Actor/Jobs6/name)+')';
+		attribute<meter2>       PandFootprint_Wonen                (AdminDomain) := Impl/Stand_with_path/Wonen/Footprint;
 		attribute<meter2>       PandFootprint_Werken               (AdminDomain) := m2PandFootprint_Totaal;
 		attribute<meter2>       PandFootprint_Verblijfsrecreatie   (AdminDomain) := 
 				switch(
@@ -131,9 +138,79 @@ Template Indicatoren_T
 	// N.B. Dit is de potentië"le schade bij een diepte vanaf kleine kans (= 1/1000 jaar of hoger). Zie: https://www.klimaateffectatlas.nl/nl/overstromingsdieptec
 	container Overstromingsschade := Templates/SSM2017_Overstromingsschades_T(Zichtjaar), Descr = "SSM Model van Deltares nagebouwd in RuimteScanner; Slager, K. (2016). Technische documentatie SSM2015: functionele en technische ontwerpkeuzen. Deltares rapportage 1230095-004-HYE-0009 dd. november 2016 ";
 	
-	container BereikbaarheidGroenBBG := Templates/BereikbaarheidGroen(., quote(Zichtjaar)); // Methode Bart, BBG
-	container BereikbaarheidGroenBBGNieuw := Templates/BereikbaarheidGroenNieuw(., quote(Zichtjaar)); // Methode Jip, BBG
-	container BereikbaarheidGroenNieuwBGTNieuw := Templates/BereikbaarheidGroenNieuwBGT(., quote(Zichtjaar)); // Methode Jip, BGT
+	container BereikbaarheidGroen
+	{
+		parameter<Woning_ha> MaxWoningenInGroen                 := 5[Woning_ha];
+		parameter<ha>        MinimumAaneengeslotenOppervlakte   := 1[Ha];
+		attribute<Woning>    Woningen             (AdminDomain) := Stand/Aantal_Woningen_Totaal[Woning];
+		
+		parameter<meter2>    MinimumOppervlakteInCelOmMeeTeDoen := 100[meter2];
+		parameter<float32>   FractieGroenWerken                 := VariantParameters/FractiesGroenInWerken/DezeVariant/GroenTotaal;
+		parameter<float32>   FractieGroenVerblijfsrecreatie     := VariantParameters/FractiesGroenInVerblijfsrecreatie/DezeVariant/GroenTotaal;
+
+		unit<UInt32> Regio  := SourceData/RegioIndelingen/Provincie;
+		unit<uint8>  GroenK := /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen;
+		
+		unit<uint8> Indicator : NrOfRows = 3 
+		, Descr = "Groenaanbod = Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
+					Groenaanbod_per_woning = Totale oppervlakte groen binnen de gegeven straal gedeeld door het aantal woningen in die cel (m² per woning).
+					Drukte_gecorrigeerd_groenaanbod_per_woning = Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning)."
+		{
+			attribute<string> name: 
+			[
+				 'Groenaanbod'                                  // Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
+				,'Groenaanbod_per_woning'                       // Totale oppervlakte groen binnen de gegeven straal gedeeld door het aantal woningen in die cel (m² per woning).
+				,'Drukte_gecorrigeerd_groenaanbod_per_woning'   // Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning).
+			];
+			
+			attribute<string> IndicatorExpr : 
+			[
+				 'Som_GroenInOmgeving_metWoning'                          
+				,'Som_GroenInOmgeving_metWoning / WoningenInThisStRegio' 
+				,'Som_AanwezigGroenPerWoning' 
+			];
+			
+			attribute<string> ValuesUnit : 
+			[
+				 'meter2' 
+				,'m2_Woning' 
+				,'m2_Woning' 
+			];
+		}
+	
+		container obv_BBG := Templates/BereikbaarheidGroenBBG_T(..);
+		container obv_BGT := Templates/BereikbaarheidGroenBGT_T(..);
+		
+		Template Per_Regio_T 
+		{
+			attribute<bool>   IsRegio  (AdminDomain);
+			attribute<Woning> Woningen (AdminDomain);
+			container         Src;
+			//
+			
+			container Afstanden := 
+				for_each_ne(
+					Classifications/Bereikbaarheid/AfstandGroen/name
+					, 'Per_Afstand_T(
+							'+string(id(Classifications/Bereikbaarheid/AfstandGroen))+'[Classifications/Bereikbaarheid/AfstandGroen]
+							, IsRegio
+							, Woningen
+							, Src
+						)'
+				);
+		}
+		Template BereikbaarGroen_Indicatoren_T 
+		{
+			parameter<string> IndicatorExpr;
+			parameter<string> ValuesUnit0;
+			container         Src;
+			//
+			unit<float32> ValuesUnit :=  =ValuesUnit0;
+			
+			attribute<ValuesUnit>   Indicator        (AdminDomain) := =IndicatorExpr, Descr = "Berekende indicatorwaarde per cel volgens de gekozen definitie.";
+			parameter<ValuesUnit>   Indicator_Aggregated           := mean(Indicator > 0[ValuesUnit] ? Indicator : null_f), Descr = "Gemiddelde positieve indicatorwaarde over het studiegebied.";
+		}
+	}
 	
 	#include<Verharding.dms>
 	#include<Waterberging.dms>

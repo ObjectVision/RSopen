@@ -1,0 +1,63 @@
+Template BereikbaarheidGroenBGT_T : using = "Classifications/Actor"
+{
+	container SrcSrc;
+	// parameter<String> Ref;
+	//
+	
+	container    Src := .;
+
+//	Groen obv BGT
+	attribute<Meter2> OppGroen_Basisjaar (AdminDomain) := SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/GroenOpp_AdminDomain;
+	attribute<Meter2> OppGroen_NaAllocWonen              (AdminDomain) := ='VariantParameters/Ontwikkelpakketten/DezeBuurtSchaal/'+VariantParameters/VariantK/OntwikkelPakketVariant[/Variant_rel]+'/InDezeBuurt/Terreinoppervlakte/Totaal/Groen[SrcSrc/Stand/OP_rel]';	
+	attribute<Meter2> OppGroen_NaAllocWerken             (AdminDomain) := SrcSrc/Stand/Sector_rel == Sector/V/werken ? FractieGroenWerken * AdminDomain/NrMeter2PerCell : null_f;
+	attribute<Meter2> OppGroen_NaAllocVerblijfsrecreatie (AdminDomain) := SrcSrc/Stand/Sector_rel == Sector/V/verblijfsrecreatie ? FractieGroenVerblijfsrecreatie * AdminDomain/NrMeter2PerCell : null_f;
+
+	attribute<Meter2> OppGroen (AdminDomain) := 
+		=lowercase(ThisYear/Zichtjaar) == lowercase('basisjaar') 
+			? 'OppGroen_Basisjaar'
+			: 'switch(
+				 case(IsDefined(OppGroen_NaAllocWonen), OppGroen_NaAllocWonen)
+				,case(IsDefined(OppGroen_NaAllocWerken), OppGroen_NaAllocWerken)
+				,case(IsDefined(OppGroen_NaAllocVerblijfsrecreatie), OppGroen_NaAllocVerblijfsrecreatie)
+				,OppGroen_Basisjaar
+			)';
+
+	
+	container PerRegios := for_each_ne(Regio/name, 'Per_Regio_T(Regio/per_AdminDomain == Regio/V/'+Regio/name+', Woningen, Src)')
+	{
+		container Totaal := Per_Regio_T(const(true, AdminDomain), Woningen, Src);
+	}
+	
+	Template Per_Afstand_T
+	{
+		
+		parameter<Bereikbaarheid/AfstandGroen> AfstandGroen_id;
+		attribute<bool>                        IsRegio                       (AdminDomain) : Descr = "Indicator of een cel binnen de afgebakende studie- of regiogrens ligt.";
+		attribute<Woning>                      Woningen                      (AdminDomain) : Descr = "Aantal woningen per cel.";
+		container                              Src;
+		
+		parameter<meter>                       Bovengrens                                  := Bereikbaarheid/AfstandGroen/Bovengrens[AfstandGroen_id], Descr = "Bovengrens afstandsklasse, i.e. tot hoever kijken we?";
+		attribute<Woning>                      WoningenInThisStRegio         (AdminDomain) := Woningen * IsRegio[float32], Descr = "Aantal woningen per cel, geclipt op de geselecteerde regio.";
+		
+		attribute<Bool>                        Extent0                       (AdminDomain) := Woningen <= MaxWoningenInGroen * AdminDomain/NrHaPerCell && OppGroen > MinimumOppervlakteInCelOmMeeTeDoen && IsRegio, Descr = "Initiele groen extent: opp groen per cell boven grens EN minder woningen in cel dan grens";
+
+		unit<uint32> ExtentDistrict := district_8(uint32(Extent0))
+		, Descr = "Identificatie van aaneengesloten groengebieden op basis van 8-connectiviteit."
+		{
+			attribute<meter2> Oppervlakte := sum(OppGroen, Districts), Descr = "Oppervlakte van elk aaneengesloten groengebied (in hectare).";
+		}
+
+		attribute<bool>                        Extent                        (AdminDomain) := Extent0 && ExtentDistrict/Oppervlakte[ExtentDistrict/Districts] >= MinimumAaneengeslotenOppervlakte[meter2], Descr = "Groencellen die deel uitmaken van een aaneengesloten groengebied met een minimale oppervlakte.";
+		attribute<meter2>                      OppGroenBinnenExtent          (AdminDomain) := float32(Extent) * OppGroen, Descr = "Oppervlakte (m²) van groen in cellen die voldoen aan alle selectiecriteria.";
+		
+		attribute<Woning>                      Som_WoningenInOmgeving        (AdminDomain) := ='potential(WoningenInThisStRegio, geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/potrange/Flat2)[Woning]', Descr = "Totale som van woningen binnen de gegeven afstand rond elke cel.";
+		attribute<meter2>                      Som_GroenInOmgeving           (AdminDomain) := ='potential(OppGroenBinnenExtent, geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/potrange/Flat2)[meter2]', Descr = "Totale oppervlakte groen (m²) binnen de gegeven afstand rond elke cel.";
+		attribute<meter2>                      Som_GroenInOmgeving_metWoning (AdminDomain) := Som_GroenInOmgeving * float32(WoningenInThisStRegio > 0[woning]), Descr = "Totale oppervlakte groen binnen de gegeven afstand, alleen voor cellen waar woningen aanwezig zijn.";
+		
+		attribute<m2_woning>                   GroenAanwezigPerWoning        (AdminDomain) := OppGroenBinnenExtent / Som_WoningenInOmgeving, Descr = "Oppervlakte groen per woning aan de aanbodzijde, berekend als het aanwezige groen in een cel gedeeld door het aantal omliggende woningen.";
+		attribute<m2_woning>                   Som_AanwezigGroenPerWoning    (AdminDomain) := ='potential(GroenAanwezigPerWoning, geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/potrange/Flat2)[m2_woning]', Descr = "Som van per-woning groenbijdragen van alle groencellen binnen de gegeven afstand (drukte-gecorrigeerd groenaanbod).";
+		
+		container Indicatoren := for_each_ne(Indicator/name, 'BereikbaarGroen_Indicatoren_T('+quote(Indicator/IndicatorExpr)+','+quote(Indicator/ValuesUnit)+', .)');
+	}
+	
+}
