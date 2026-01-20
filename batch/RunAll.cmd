@@ -42,6 +42,10 @@ call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run2
+echo "ErrorLevel is " %ErrorLevel% 
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+
 :runPrepareVariantdata
 
 REM deletes the old VariantData folder.
