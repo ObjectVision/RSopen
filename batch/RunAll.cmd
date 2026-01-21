@@ -4,8 +4,8 @@ set geodmsversion=GeoDms18.2.2
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 REM set exe_dir=C:\dev\GeoDms\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
-REM set LocalDataProjDir=K:\LD\RSOpen
-set LocalDataProjDir=C:\LocalData\RSopen
+set LocalDataProjDir=K:\LD\RS_HerijkingKlimaatRisicos
+REM set LocalDataProjDir=C:\LocalData\RSopen
 
 set MT_FLAGS=/S1 /S2 /S3
 
