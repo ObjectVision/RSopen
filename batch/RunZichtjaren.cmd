@@ -19,10 +19,6 @@ REM if %ErrorLevel% NEQ 0 goto ErrorEnd
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/Zichtjaren/Y2050/Impl/Generate
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
-REM deze ontkoppelde dat is nodig voor de indicatoren.
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run2_IndicatorenData
-REM if %ErrorLevel% NEQ 0 goto ErrorEnd
-
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Export/Generate_Indicatoren
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
