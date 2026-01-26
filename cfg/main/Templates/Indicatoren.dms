@@ -11,6 +11,7 @@ Template Indicatoren_T
 	
 	container PrevStand := PrevIndicatoren/Stand;
 	container StandBasisjaar := Basisjaar/Stand;
+	container StandKeuze := StandBasisjaar;
 	container ThisYear := .;
 	container Impl
 	{
@@ -24,7 +25,7 @@ Template Indicatoren_T
 		}
 		
 		parameter<string> AllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', Casus_name, '@JAAR@', Zichtjaar, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
-
+		
 		container Stand_with_path :=
 			for_each_ndvna(
 				StandVar/path
@@ -32,19 +33,26 @@ Template Indicatoren_T
 				, StandVar
 				, StandVar/unit_name
 				, replace(AllocatieFileName, '@STANDPATH@', StandVar/path)
-			),	StorageReadOnly = "True";
-			
+			),	StorageReadOnly = "True"
+		{
+			container Wonen
+			{
+				attribute<m2PandFootprint> Footprint (AdminDomain) : StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Wonen/Footprint')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			}
+		}
+
 		container Stand_FromAlloc := ='/Allocatie/Zichtjaren/'+Zichtjaar+'/Impl/WriteStand';
 		container Stand           := =/ModelParameters/StandAllocatieOntkoppeld ? 'Stand_FromStorage' : 'Stand_FromAlloc';
-			
 	}
 	
-	attribute<Classifications/Actor/Sector>                       Sector_rel                    (AdminDomain):= Classifications/Actor/Sector/XSubsector/Sector_rel[Impl/Stand_with_path/Subsector_rel];
-	attribute<Bool>                                               Sector_rel_Verstedelijking    (AdminDomain):= Sector_rel == /Classifications/Actor/Sector/V/Wonen || 
-																	Sector_rel == /Classifications/Actor/Sector/V/Werken || 
-																	Sector_rel == /Classifications/Actor/Sector/V/Verblijfsrecreatie;
-																  
-	attribute<Bool> Sector_rel_Verstedelijking_Buitenstedelijk  (AdminDomain):= !/SourceData/RegioIndelingen/Bevolkingskern_2011/Is_BBG_AdminDomain ? Sector_rel_Verstedelijking : false;			
+	attribute<Classifications/Actor/Sector> Sector_rel (AdminDomain):= Classifications/Actor/Sector/XSubsector/Sector_rel[Impl/Stand_with_path/Subsector_rel];
+	
+	attribute<Bool> Sector_rel_Verstedelijking (AdminDomain) :=
+		Sector_rel == /Classifications/Actor/Sector/V/Wonen ||
+		Sector_rel == /Classifications/Actor/Sector/V/Werken ||
+		Sector_rel == /Classifications/Actor/Sector/V/Verblijfsrecreatie;
+	
+	attribute<Bool> Sector_rel_Verstedelijking_Buitenstedelijk  (AdminDomain):= !/SourceData/RegioIndelingen/Bevolkingskern_2011/Is_BBG_AdminDomain ? Sector_rel_Verstedelijking : false;
 	
 	container Stand :=
 		for_each_nedvnl(
@@ -56,77 +64,138 @@ Template Indicatoren_T
 			, replace(Impl/StandVar/name, '_', ' ')
 		)
 	{
-		attribute<Actor/Sector> Sector_rel               (AdminDomain) := Actor/Sector/XSubsector/Sector_rel[Subsector_rel];
-	
-		attribute<Woning>       Aantal_Woningen_Totaal   (AdminDomain) := = 'add('+asItemList('Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name)+')';
-		attribute<Job>     Aantal_Banen_Totaal      (AdminDomain) := = 'add('+asItemList('Banen_'+/Classifications/Actor/Jobs6/name)+')';
-		attribute<meter2>  m2PandFootprint_Totaal   (AdminDomain) := = 'add('+asItemList('m2PandFootprint_'+/Classifications/Actor/Jobs6/name)+')';
-		attribute<meter2>  PandFootprint_Werken     (AdminDomain) := m2PandFootprint_Totaal;
+		attribute<Actor/Sector> Sector_rel                         (AdminDomain) := Actor/Sector/XSubsector/Sector_rel[Subsector_rel];
+		attribute<Woning>       Aantal_Woningen_Totaal             (AdminDomain) := ='add('+asItemList('Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name)+')';
+		attribute<Job>          Aantal_Banen_Totaal                (AdminDomain) := ='add('+asItemList('Banen_'+/Classifications/Actor/Jobs6/name)+')';
+		attribute<meter2>       m2PandFootprint_Totaal             (AdminDomain) := ='add('+asItemList('m2PandFootprint_'+/Classifications/Actor/Jobs6/name)+')';
+		attribute<meter2>       PandFootprint_Wonen                (AdminDomain) := Impl/Stand_with_path/Wonen/Footprint;
+		attribute<meter2>       PandFootprint_Werken               (AdminDomain) := m2PandFootprint_Totaal;
+		attribute<meter2>       PandFootprint_Verblijfsrecreatie   (AdminDomain) := 
+				switch(
+					case(Sector_rel == Actor/Sector/V/Verblijfsrecreatie, ModelParameters/Verblijfsrecreatie/Pandfootprint_per_AlloceerdeCel)
+					, case(IsDefined(Sector_rel), 0[meter2])
+					, /Indicatoren/Basisjaar/Stand/PandFootprint_Verblijfsrecreatie
+				);
 	}
+	
 	#include<ClaimRealisatie.dms>
 	
-	container Overflow
-	{
-		container PerSequence := 
-			for_each_ne(
-				Sequence_later/name
-				, 'PerSequence_T('+quote(Sequence_later/name)+')'
-			)
-		{
-			container Seq_0 := PerSequence_T(first(Sequence_first/name));
-		}
+	// Wegge4sterd want werkt niet
+	// container Overflow
+	// {
+		// container PerSequence := for_each_ne(Sequence_later/name, 'PerSequence_T('+quote(Sequence_later/name)+')')
+		// {
+			// container Seq_0 := PerSequence_T(first(Sequence_first/name));
+		// }
 		
-		Template PerSequence_T 
-		{
-			parameter<string> SequenceName;
-			///
-			unit<uint8> SectorAllocRegio := CaseClassifications/Actor/SectorAllocRegio;
+		// Template PerSequence_T 
+		// {
+			// //
+			// parameter<string> SequenceName;
+			// //
 			
-			container PerSectorAllocRegio := 
-				for_each_ne(
-					SectorAllocRegio/name
-					, 'PerSectorAllocRegio_T('+quote(SectorAllocRegio/name)+')'
-				);
-		}
-		
-		Template PerSectorAllocRegio_T 
-		{
-			parameter<string> SectorAllocRegioName;
-			///
-			unit<uint32> AllocRegio := =rjoin(SectorAllocRegioName, /VariantParameters/SectorAllocRegio/SectorAllocRegio_name, /VariantParameters/SectorAllocRegio/AllocRegio_path);
-
-			unit<uint32> Read := AllocRegio
-			, StorageName = "='%LocalDataDir%/Allocatie/'+Casus_name+'/OverflowNa_'+Zichtjaar+'_'+SequenceName+'_'+SectorAllocRegioName+'.csv'"
-			, StorageType = "gdal.vect"
-			, StorageReadOnly = "true"
-			{
+			// unit<uint8> SectorAllocRegio := CaseClassifications/Actor/SectorAllocRegio;
 			
-			}
-			container Result := 
-				for_each_nedv(
-					Actor/Jobs6/name
-					,'Read/'+Actor/Jobs6/name+'[float32]' 
-					, AllocRegio
-					, Float32
-				);
-		}	
+			// container PerSectorAllocRegio := for_each_ne(SectorAllocRegio/name, 'PerSectorAllocRegio_T('+quote(SectorAllocRegio/name)+')');
+		// }
 		
-
-	}
+		// Template PerSectorAllocRegio_T 
+		// {
+			// //
+			// parameter<string> SectorAllocRegioName;
+			// //
+			
+			// unit<uint32> AllocRegio := =rjoin(SectorAllocRegioName, /VariantParameters/SectorAllocRegio/SectorAllocRegio_name, /VariantParameters/SectorAllocRegio/AllocRegio_path);
+			
+			// unit<uint32> Read := AllocRegio
+			// , StorageName = "='%LocalDataDir%/Allocatie/'+Casus_name+'/OverflowNa_'+Zichtjaar+'_'+SequenceName+'_'+SectorAllocRegioName+'.csv'"
+			// , StorageType = "gdal.vect"
+			// , StorageReadOnly = "true"
+			// {
+			
+			// }
+			
+			// container Result := 
+				// for_each_nedv(
+					// Actor/Jobs6/name
+					// ,'Read/'+Actor/Jobs6/name+'[float32]' 
+					// , AllocRegio
+					// , Float32
+				// );
+		// }
+	// }
 	
-	container Overstromingsschade := Templates/SSM2017_Overstromingsschades_T(Zichtjaar), Descr = "SSM Model van Deltares nagebouwd in RuimteScanner; Slager, K. (2016). Technische documentatie SSM2015: functionele en technische ontwerpkeuzen. Deltares rapportage 1230095-004-HYE-0009 dd. november 2016 ";
-	container SOMERS_CO2_laagveen := Templates/SOMERS_CO2_T(Zichtjaar), Descr = "Het registratiesysteem SOMERS (Subsurface Organic Matter Emission RegistRation System) is ontwikkeld om de landelijke CO2-uitstoot reductie in het veenweidegebied jaarlijks bij te houden. Met SOMERS 2.0 zijn rekenregels opgesteld om de toekomstige uitstoot te bepalen onder gestandaardiseerde omstandigheden.", URL = "https://www.nobveenweiden.nl/bevindingen-rekenregels/";
-	
-	container BereikbaarheidGroen := Templates/BereikbaarheidGroen(., quote(Zichtjaar));
-	container Landgebruikskaart   := Templates/Landgebruikskaart/Make_Landgebruikskaart_T(Zichtjaar, Stand);
+	// container SOMERS_CO2_laagveen := Templates/SOMERS_CO2_T(Zichtjaar), Descr = "Het registratiesysteem SOMERS (Subsurface Organic Matter Emission RegistRation System) is ontwikkeld om de landelijke CO2-uitstoot reductie in het veenweidegebied jaarlijks bij te houden. Met SOMERS 2.0 zijn rekenregels opgesteld om de toekomstige uitstoot te bepalen onder gestandaardiseerde omstandigheden.", URL = "https://www.nobveenweiden.nl/bevindingen-rekenregels/";
 	
 	// #include<Gebruiksoppervlak.dms>
 	#include<SloopNieuwbouwWonen.dms>
 	// #include<Materiaalgebruik.dms>
-	#include<Grondgebruik.dms>
 	// #include<Inbreiding.dms>
 	#include<Dichtheid.dms>
-	#include<Verharding.dms>
-	#include<Bereikbaarheid.dms>
+	// #include<Bereikbaarheid.dms>
 	#include<DeltaT.dms>
+	#include<Grondgebruik.dms>
+	
+	container Landgebruikskaart   := Templates/Landgebruikskaart/Make_Landgebruikskaart_T(Zichtjaar, Stand);
+	
+	// N.B. Dit is de potentië"le schade bij een diepte vanaf kleine kans (= 1/1000 jaar of hoger). Zie: https://www.klimaateffectatlas.nl/nl/overstromingsdieptec
+	container Overstromingsschade := Templates/SSM2017_Overstromingsschades_T(Zichtjaar), Descr = "SSM Model van Deltares nagebouwd in RuimteScanner; Slager, K. (2016). Technische documentatie SSM2015: functionele en technische ontwerpkeuzen. Deltares rapportage 1230095-004-HYE-0009 dd. november 2016 ";
+	
+	container BereikbaarheidGroen
+	{
+		parameter<Woning_ha> MaxWoningenInGroen                 := 5[Woning_ha];
+		parameter<ha>        MinimumAaneengeslotenOppervlakte   := 1[Ha];
+		attribute<Woning>    Woningen0             (AdminDomain) := Stand/Aantal_Woningen_Totaal[Woning];
+		attribute<Bool> AllocatieHeeftPlaatsgevonden (AdminDomain) := Impl/StandVar/Subsector/Sector_rel[Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Wonen;
+		attribute<Woning> Woningen (AdminDomain) := Woningen0 * float32(AllocatieHeeftPlaatsgevonden);
+		
+		parameter<meter2>    MinimumOppervlakteInCelOmMeeTeDoen := 100[meter2];
+		parameter<float32>   FractieGroenWerken                 := VariantParameters/FractiesGroenInWerken/DezeVariant/GroenTotaal;
+		parameter<float32>   FractieGroenVerblijfsrecreatie     := VariantParameters/FractiesGroenInVerblijfsrecreatie/DezeVariant/GroenTotaal;
+		
+		unit<UInt32> Regio  := SourceData/RegioIndelingen/Provincie;
+		unit<uint8>  GroenK := /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen;
+		
+		unit<uint8> Indicator : NrOfRows = 3 
+		, Descr = "Groenaanbod = Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
+					Groenaanbod_per_woning = Totale oppervlakte groen binnen de gegeven straal gedeeld door het aantal woningen in die cel (m² per woning).
+					Drukte_gecorrigeerd_groenaanbod_per_woning = Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning)."
+		{
+			attribute<string> name: 
+			[
+				 'Groenaanbod'                                  // Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
+				,'Cumulatief_Groenaanbod_over_woningen'         // Totale oppervlakte groen binnen de gegeven straal maal het aantal woningen in die cel (m²). In dichtgebouwd gebied nieuw groen toevoegen, maak je veel mensen gelukkig mee. Echter, ze realiseren zich dan niet dat je het moet delen met al die andere mensen (indicator 3).
+				,'Drukte_gecorrigeerd_groenaanbod_per_woning'   // Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning).
+			];
+			
+			attribute<string> IndicatorExpr : 
+			[
+				 'Som_GroenInOmgeving_metWoning'                          
+				,'Som_GroenInOmgeving_metWoning * WoningenInThisStRegio_ge1 / 1[woning]' 
+				,'Som_AanwezigGroenPerWoning' 
+			];
+			
+			attribute<string> ValuesUnit : 
+			[
+				 'meter2' 
+				,'meter2' 
+				,'m2_Woning' 
+			];
+		}
+		
+		container InDezeStudie := obv_BBG;
+		
+		container obv_BBG := Templates/BereikbaarheidGroenBBG_T(..);
+		container obv_BGT := Templates/BereikbaarheidGroenBGT_T(..);
+	}
+	
+	#include<Verharding.dms>
+	#include<Waterberging.dms>
+	
+	attribute<Eur> Funderingsschade_Woningen (AdminDomain) := recollect_by_cond(
+		AdminDomain/IsCompactedDomain
+			, SourceData/Vastgoed/Funderingsschade/per_pand/k 
+			/ ((1f+ModelParameters/Wonen/Discontovoet)^float32((VariantParameters/VariantK/JaarWaarinFunderingschadeZichtbaar[/variant_rel] - ModelParameters/Model_StartYear) / 1[YearRange]))
+		)
+	, Descr = "Schade aan eigenaar vd woning, wat tot uiting komt in de vorm van ofwel herstelkosten of, indien niet wordt hersteld, een afname vd woningwaarde (zie verwervingskosten)";
 }

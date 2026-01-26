@@ -2,37 +2,29 @@ container Verharding
 {
 	unit<UInt32> Regio := SourceData/RegioIndelingen/Provincie;
 	
-	container Src
-	{
-		attribute<uint8>  Y2021_5m (rdc_5m)
-		:	StorageName     = "%RSo_DataDir%/Grondgebruik/Imperviousness_Density_2021_010m_NL_rdc_uint8.tif"
-		,	Source          = "Copernicus Land Monitoring Service, high resolution imperviousness map 2018"
-		, 	URL             = "https://land.copernicus.eu/pan-european/high-resolution-layers/imperviousness/status-maps/imperviousness-density-2018?tab=download"
-		, 	Descr           = "Relevant tiles gecombineerd in QGIS, en dan gewarped naar RDC, en dan studiegebied NL genomen en naar uint8 gecast.";
-
-		attribute<uint8>        Y2021_25m_write   (rdc_25m) := mean(Y2021_5m <= 100b ? Y2021_5m : null_b, rdc_5m/rdc_25m_rel),	StorageName     = "%RSo_DataDir%/Grondgebruik/Imperviousness_Density_2021_025m_NL_rdc_uint8.tif", StorageType = "gdalwrite.grid";
-		attribute<uint8>        Y2021_25m         (rdc_25m) : StorageName     = "%RSo_DataDir%/Grondgebruik/Imperviousness_Density_2021_025m_NL_rdc_uint8.tif", StorageReadOnly = "true";
-		
-		attribute<Percent>       InProcent         (rdc_25m) := rdc_25m/IsStudyArea ? value(Y2021_25m, percent) : null_f;
-		// attribute<Percent>       InProcent_5m   (rdc_5m) := rdc_5m/IsStudyArea ? value(Y2021_5m, percent) : null_f;
-	}
-
+	container Src := /Indicatoren/Basisjaar/Verharding;
+	
 	container Wonen
 	{
-		unit<UInt8>        OP                                         := Impl/StandVar/OP;
-		attribute<OP>      OP_rel                       (AdminDomain) := Stand/OP_rel;
-		attribute<Bool>    AllocatieHeeftPlaatsgevonden (AdminDomain) := IsDefined(OP_rel);  
-		attribute<meter2>  Verhard                      (AdminDomain) := ='VariantParameters/Ontwikkelpakketten/DezeBuurtSchaal/'+VariantParameters/VariantK/OntwikkelPakketVariant[/Variant_rel]+'/InNettoBuurt/Terreinoppervlakte/Totaal/GebouwVoetafdrukPlusVerhard[OP_rel] * AdminDomain/NrHaPerCell[float32]';
-		attribute<percent> Verharding                   (AdminDomain) := value(Verhard / AdminDomain/NrMeter2PerCell, Ratio)[Percent];
-		// parameter<m2_ha>  Per_NL                                     := sum(Verhard) / (sum_uint32(AllocatieHeeftPlaatsgevonden)[float32] * AdminDomain/NrHaPerCell);
-		// attribute<m2_ha>  Per_Regio                          (Regio) := sum(Verhard, Regio/Per_AdminDomain) / (sum_uint32(AllocatieHeeftPlaatsgevonden, Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell);
+		parameter<float32> FractieVerhard                                            := min_elem(ModelParameters/Wonen/DefaultVerharding * VariantParameters/VariantK/VerhardingTovDefault[/Variant_rel], 1f);
+	
+		unit<UInt8>        OP                                                        := Impl/StandVar/OP;
+		attribute<OP>      OP_rel                                      (AdminDomain) := Stand/OP_rel;
+		attribute<Bool>    AllocatieHeeftPlaatsgevonden                (AdminDomain) := Stand/Sector_rel == Actor/Sector/V/Wonen; 
+		attribute<Bool>    BAGNieuwbouwAllocatieHeeftPlaatsgevonden    (AdminDomain) := AllocatieHeeftPlaatsgevonden && IsNull(OP_rel);
+		// attribute<meter2>  StandFootprintWaarAllocHeeftPlaatsgevonden  (AdminDomain) := ='min_elem(AdminDomain/NrHaPerCell[meter2], Stand/PandFootprint_Wonen / float32(AllocatieHeeftPlaatsgevonden)) / float32(AllocatieHeeftPlaatsgevonden)'; // @Jip, waarom die tweede deling?  En waarom wordt dit item verder niet gebruikt in deze cfg?
+		attribute<meter2>  Verhard                                     (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+																						? min_elem(AdminDomain/NrHaPerCell[meter2], (Stand/PandFootprint_Wonen + (AdminDomain/NrHaPerCell[meter2] - Stand/PandFootprint_Wonen) * FractieVerhard) / float32(AllocatieHeeftPlaatsgevonden)) / float32(AllocatieHeeftPlaatsgevonden)
+																						: VariantParameters/Ontwikkelpakketten/DezeBuurtSchaal/Default/InDezeBuurt/Terreinoppervlakte/Totaal/GebouwVoetafdrukPlusVerhard[OP_rel] * AdminDomain/NrHaPerCell[float32];
+		attribute<float32> Verharding                                  (AdminDomain) := Verhard / AdminDomain/NrMeter2PerCell;
 	}
 	
 	container Werken
 	{
 		attribute<Bool>    AllocatieHeeftPlaatsgevonden (AdminDomain) := Impl/StandVar/Subsector/Sector_rel[Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Werken;
-		attribute<meter2>  Verhard                      (AdminDomain) := ='Stand/m2PandFootprint_Totaal + (AdminDomain/NrHaPerCell[meter2] - Stand/m2PandFootprint_Totaal) * VariantParameters/FractiesGroenInWerken/'+Variant_name+'/Verhard / float32(AllocatieHeeftPlaatsgevonden)';
-		attribute<percent> Verharding                   (AdminDomain) := value(Verhard / AdminDomain/NrMeter2PerCell, Ratio)[Percent];
+		attribute<meter2>  Verhard0                     (AdminDomain) := Stand/PandFootprint_Werken + (AdminDomain/NrHaPerCell[meter2] - Stand/PandFootprint_Werken) * VariantParameters/FractiesGroenInWerken/DezeVariant/Verhard / float32(AllocatieHeeftPlaatsgevonden);
+		attribute<meter2>  Verhard                      (AdminDomain) := min_elem(AdminDomain/NrHaPerCell[meter2], Verhard0) / float32(AllocatieHeeftPlaatsgevonden);
+		attribute<float32> Verharding                   (AdminDomain) := Verhard / AdminDomain/NrMeter2PerCell;
 		parameter<m2_ha>   Per_NL                                     := sum(Verhard) / (sum_uint32(AllocatieHeeftPlaatsgevonden)[float32] * AdminDomain/NrHaPerCell);
 		attribute<m2_ha>   Per_Regio                          (Regio) := sum(Verhard, Regio/Per_AdminDomain) / (sum_uint32(AllocatieHeeftPlaatsgevonden, Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell);
 	}
@@ -40,43 +32,31 @@ container Verharding
 	container Verblijfsrecreatie
 	{
 		attribute<Bool>    AllocatieHeeftPlaatsgevonden (AdminDomain) := Impl/StandVar/Subsector/Sector_rel[Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Verblijfsrecreatie;
-		attribute<meter2>  Verhard                      (AdminDomain) := ='(VariantParameters/FractiesGroenInVerblijfsrecreatie/'+Variant_name+'/Verhard * AdminDomain/NrMeter2PerCell) / float32(AllocatieHeeftPlaatsgevonden)';
-		attribute<percent> Verharding                   (AdminDomain) := value(Verhard / AdminDomain/NrMeter2PerCell, Ratio)[Percent];
+		attribute<meter2>  Verhard0                     (AdminDomain) := Stand/PandFootprint_Verblijfsrecreatie + (AdminDomain/NrHaPerCell[meter2] - Stand/PandFootprint_Verblijfsrecreatie) * VariantParameters/FractiesGroenInVerblijfsrecreatie/DezeVariant/Verhard / float32(AllocatieHeeftPlaatsgevonden);
+		attribute<meter2>  Verhard                      (AdminDomain) := min_elem(AdminDomain/NrHaPerCell[meter2], Verhard0) / float32(AllocatieHeeftPlaatsgevonden);
+		attribute<float32> Verharding                   (AdminDomain) := Verhard / AdminDomain/NrMeter2PerCell;
 		parameter<m2_ha>   Per_NL                                     := sum(Verhard) / (sum_uint32(AllocatieHeeftPlaatsgevonden)[float32] * AdminDomain/NrHaPerCell);
 		attribute<m2_ha>   Per_Regio                          (Regio) := sum(Verhard, Regio/Per_AdminDomain) / (sum_uint32(AllocatieHeeftPlaatsgevonden, Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell);
-	}
-	
-	attribute<Bool> AllocatieHeeftPlaatsgevonden (AdminDomain) := Wonen/AllocatieHeeftPlaatsgevonden || Werken/AllocatieHeeftPlaatsgevonden;
-	
-	attribute<meter2> Totaal (AdminDomain) := MakeDefined(Wonen/Verhard, Werken/Verhard);
-	
-	parameter <m2_ha> Per_NL := sum(Totaal) / (sum_uint32(AllocatieHeeftPlaatsgevonden)[float32] * AdminDomain/NrHaPerCell)
-	{
-		parameter<Float32> Fractie := . / (1[ha])[meter2];
-	}	
-	attribute<m2_ha> Per_Regio (Regio) := sum(Totaal, Regio/Per_AdminDomain) / (sum_uint32(AllocatieHeeftPlaatsgevonden, Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell)
-	{
-		attribute<Float32> Fractie (Regio) := . / (1[ha])[meter2];
 	}
 	
 	container PerModelType_Basisjaar :=
 		for_each_nedv(
 			LU_ModelType/Name
-			,'Indicatoren/Basisjaar/Landgebruikskaart/Result_SA  == LU_ModelType/V/'+ string(LU_ModelType/name)+' ? Src/InProcent : null_f'
+			,'Indicatoren/Basisjaar/Landgebruikskaart/Result_SA  == LU_ModelType/V/'+ string(LU_ModelType/name)+' ? Src/Result : null_f'
 			, rdc_25m
-			, Percent
+			, float32
 		);
-
+	
 	container Mean_PerRegion_Basisjaar := 
 		for_each_nedv(
 			LU_ModelType/Name
-			,'MakeDefined(mean(PerModelType_Basisjaar/'+LU_ModelType/Name+', RegioIndelingen/NVM/per_AdminDomain)[RegioIndelingen/NVM/per_AdminDomain], 0[Percent])'
+			,'MakeDefined(mean(PerModelType_Basisjaar/'+LU_ModelType/Name+', RegioIndelingen/NVM/per_AdminDomain)[RegioIndelingen/NVM/per_AdminDomain], 0[float32])'
 			, rdc_25m
-			, Percent
+			, float32
 		);
-
-
-	parameter<string>       output_domain_str    := '25m';   //domain of input files
+	
+	parameter<string> output_domain_str := '25m'; //domain of input files
+	
 	attribute<LU_ModelType> LU          (rdc_25m) := Landgebruikskaart/Result_SA;
 	attribute<bool>         IsChanged   (rdc_25m) := Basisjaar/Landgebruikskaart/Result_SA != LU;
 	
@@ -87,40 +67,40 @@ container Verharding
 					? mean(Mean_PerRegion_Basisjaar/'+LU_ModelType/Name+', rdc_25m/rdc_'+output_domain_str+'_rel) 
 					: null_f'
 			, rdc_25m
-			, Percent
+			, float32
 		);
-		
+	
 	container Verharding_AllowedToChanged_PerModelType :=
 		for_each_nedv(
 			LU_ModelType/Name
-			, 'LU_ModelType/IsVerhard[LU_ModelType/v/'+LU_ModelType/Name+']
+			, 'LU_ModelType/IsVerhard[LU_ModelType/V/'+LU_ModelType/Name+']
 					? Verharding_PerModelType/'+LU_ModelType/Name+' 
-					: 0[percent]'
+					: 0[float32]'
 			, rdc_25m
-			, Percent
+			, float32
 		);
-		
+	
 	container VerhardingOfChanged_PerModelType :=
 		for_each_nedv(
 			LU_ModelType/Name
 			, 'IsChanged 
-				? max_elem(Verharding_AllowedToChanged_PerModelType/'+LU_ModelType/Name+', mean(src/InProcent, rdc_25m/rdc_'+output_domain_str+'_rel)) 
-				: mean(src/InProcent, rdc_25m/rdc_'+output_domain_str+'_rel)'
+				? max_elem(Verharding_AllowedToChanged_PerModelType/'+LU_ModelType/Name+', mean(src/Result, rdc_25m/rdc_'+output_domain_str+'_rel)) 
+				: mean(src/Result, rdc_25m/rdc_'+output_domain_str+'_rel)'
 			, rdc_25m
-			, Percent
+			, float32
 		);
-		
-	attribute<Percent> Verharding_LU_Change (rdc_25m) :=
+	
+	attribute<float32> Verharding_LU_Change (rdc_25m) :=
 		='merge(
 			uint16(LU)
-			, Percent
+			, float32
 			,'+AsItemList('VerhardingOfChanged_PerModelType/'+LU_ModelType/Name)+'
 		)';
-		
-	attribute<Percent> Verharding           (rdc_25m) := switch(
-															case(Wonen/AllocatieHeeftPlaatsgevonden, Wonen/Verharding)
-															, case(Werken/AllocatieHeeftPlaatsgevonden, Werken/Verharding)
-															, case(Verblijfsrecreatie/AllocatieHeeftPlaatsgevonden, Verblijfsrecreatie/Verharding)
-															, Verharding_LU_Change
-														);
+	
+	attribute<float32> Result (rdc_25m) := switch(
+		  case(Wonen/AllocatieHeeftPlaatsgevonden, Wonen/Verharding)
+		, case(Werken/AllocatieHeeftPlaatsgevonden, Werken/Verharding)
+		, case(Verblijfsrecreatie/AllocatieHeeftPlaatsgevonden, Verblijfsrecreatie/Verharding)
+		, Verharding_LU_Change
+	);
 }
