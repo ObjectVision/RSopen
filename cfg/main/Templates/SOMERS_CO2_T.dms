@@ -10,7 +10,9 @@ Template SOMERS_CO2_T
 	parameter<Bool>  IsStartYear         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
 	parameter<Int16> PrevZichtjaar_value := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel);
 	parameter<Int16> Zichtjaar_value     := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
-	parameter<Bool>  IsFirstAllocYear    := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar); 
+	parameter<Bool>  IsFirstAllocYear    := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
+	parameter<jaar>  Periode := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
+	parameter<jaarlijks> Rentevoet := ModelParameters/Landbouw/Rentevoet;// TO DO: check vooronderstelde waarde
 	
 	unit<UInt32> Huidige_Percelen := Veenweide_percelen
 	{
@@ -22,54 +24,49 @@ Template SOMERS_CO2_T
 		attribute<CombinatieTabel> CT_rel_perGrid (AdminDomain) := CombinatieTabel_rel[AdminDomain_rel];
 	}
 	
-	// attribute<EUR> NPV (AdminDomain) := PerZichtjaar * (1f - (1[jaarlijks] + Rentevoet)^-Periode / Rentevoet);
+	container Emissies := for_each_ne(CO2/EmissieK/name, 'EmissieT('+quote(CO2/EmissieK/name)+')');
 	
-	container Minimum_uitstoot := UitstootT('Minimum');
-	container Maximum_uitstoot := UitstootT('Maximum');
-	container Mediaan_uitstoot := UitstootT('Mediaan');
+	container Kosten := for_each_ne(CO2/EmissieXPrijsK/name, 'EmissieXPrijsT('+string(id(CO2/EmissieXPrijsK))+'[CO2/EmissieXPrijsK])');
 	
-	Template UitstootT
+	Template EmissieT
 	{
 		//
-		parameter<string> Stat_ref;
+		parameter<string> Emissie_name;
 		//
 		
-		attribute<kg_jaarlijks> Uitstoot (AdminDomain) := = 'rjoin(Huidige_Percelen/CT_rel_perGrid, Datasheet/CombinatieTabel_rel, value(Datasheet/'+Stat_ref+', kg_ha_jaarlijks)) * AdminDomain/NrHaPerCell';
+		attribute<kg_jaarlijks> Jaarlijks (AdminDomain) := = 'rjoin(Huidige_Percelen/CT_rel_perGrid, Datasheet/CombinatieTabel_rel, value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks)) * AdminDomain/NrHaPerCell';
 		
-		attribute<kg_jaarlijks> Uitstoot_naLUC (AdminDomain) :=
+		attribute<kg_jaarlijks> NaLUC (AdminDomain) :=
 			LU_ModelType/IsStedelijk[ThisYear/Landgebruikskaart/Result_SA]
 				? ModelParameters/Landbouw/CO2_Uitstoot_StedelijkGebruik * AdminDomain/NrHaPerCell
-				: ThisYear/Landgebruikskaart/Result_SA == LU_ModelType/v/Water_Totaal
+				: ThisYear/Landgebruikskaart/Result_SA == LU_ModelType/V/Water_Totaal
 					? ModelParameters/Landbouw/CO2_Uitstoot_Water * AdminDomain/NrHaPerCell
-					: Uitstoot;
-		
-		parameter<jaar> Periode := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
+					: Jaarlijks;
 		
 		// Voorlopige aanname: de jaarlijkse uitstoot is constant en de veenlaag is oneindig dik. Needs work.
-		attribute<kg> Cumulatief_overZichtjaar  (AdminDomain) := Uitstoot_naLUC * Periode, StorageName = "='%LocalDataProjDir%/Indicatoren/CO2_Uitstoot/'+Casus_name +'/'+BoerVariantK/name[ModelParameters/Landbouw/BoerVariant]+'_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Stat_ref+'.tif'", StorageType = "gdalwrite.grid";
-		attribute<kg> Cumulatief_sindsStartyear (AdminDomain) := =IsFirstAllocYear ? 'Cumulatief_overZichtjaar' : 'PrevIndicatoren/SOMERS_CO2/'+Stat_ref+'_uitstoot/Cumulatief_sindsStartyear + Cumulatief_overZichtjaar';
+		attribute<kg> Cumulatief_overZichtjaar  (AdminDomain) := NaLUC * Periode;
+		attribute<kg> Cumulatief_sindsStartyear (AdminDomain) := = IsFirstAllocYear ? 'Cumulatief_overZichtjaar' : 'PrevIndicatoren/SOMERS_CO2/Emissies/'+Emissie_name+'/Cumulatief_sindsStartyear + Cumulatief_overZichtjaar';
 		
 		parameter<mton> Cumulatief_sindsStartyear_StGebied := sum(Cumulatief_sindsStartyear)[mton];
-		
-		container Kosten_minimum := KostenT('Minimum', Periode, Uitstoot_naLUC);
-		container Kosten_maximum := KostenT('Maximum', Periode, Uitstoot_naLUC);
 	}
 	
-	Template KostenT
+	Template EmissieXPrijsT
 	{
 		//
-		parameter<string> Stat_ref;
-		parameter<jaar> Periode;
-		
-		attribute<kg_jaarlijks> Uitstoot_naLUC (AdminDomain);
+		parameter<CO2/EmissieXPrijsK> id;
 		//
 		
-		parameter<Eur_ton>       CO2_prijs                  := = 'ModelParameters/Landbouw/CO2_prijs_'+Stat_ref;
-		parameter<jaarlijks>     Rentevoet                  := ModelParameters/Landbouw/Rentevoet;// TO DO: check vooronderstelde waarde
+		parameter<string> Emissie_name := CO2/EmissieXPrijsK/Emissie_name[id];
+		parameter<string> Prijs_name := CO2/EmissieXPrijsK/Prijs_name[id];
+		parameter<Eur_ton> Prijs := CO2/EmissieXPrijsK/Prijs[id];
 		
-		attribute<EUR_jaarlijks> PerZichtjaar (AdminDomain) := Uitstoot_naLUC[ton_jaarlijks] * CO2_prijs;
-		attribute<EUR>           NPV          (AdminDomain) := PerZichtjaar * (1f - (1f + Rentevoet / 1[jaarlijks])^(-Periode / 1[jaar])) / Rentevoet,  Descr = "NPV = C * [1-(1+r)^-r] / r";
+		attribute<EUR_jaarlijks> Jaarlijks (AdminDomain) := = 'Emissies/'+Emissie_name+'/NaLUC[ton_jaarlijks] * Prijs';
 		
-		parameter<EUR>           NPV_StGebied := sum(NPV);
+		attribute<EUR> NPV (AdminDomain) :=
+			(Jaarlijks[float32] * (1f - (1f + Rentevoet[float32])^-Periode[float32]) / Rentevoet[float32])[EUR],
+			Descr = "NPV = C * [1-(1+r)^-r] / r", 
+			StorageName = "='%LocalDataProjDir%/Indicatoren/SOMERS_CO2/Kosten/'+Casus_name +'/'+BoerVariant_name+'_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Emissie_name+'_'+Prijs_name+'.tif'", StorageType = "gdalwrite.grid";
+		
+		parameter<EUR> NPV_StGebied := sum(NPV);
 	}
 }
