@@ -133,43 +133,45 @@ container Basisjaar
 	{
 		parameter<Woning_ha> MaxWoningenInGroen                 := 5[Woning_ha];
 		parameter<ha>        MinimumAaneengeslotenOppervlakte   := 1[Ha];
-		attribute<Woning>    Woningen             (AdminDomain) := Stand/Aantal_Woningen_Totaal[Woning];
+		attribute<Woning>    Woningen0             (AdminDomain) := Stand/Aantal_Woningen_Totaal[Woning];
+		attribute<Woning>    Woningen              (AdminDomain) := Woningen0;
 		
 		parameter<meter2>    MinimumOppervlakteInCelOmMeeTeDoen := 100[meter2];
 		parameter<float32>   FractieGroenWerken                 := VariantParameters/FractiesGroenInWerken/DezeVariant/GroenTotaal;
 		parameter<float32>   FractieGroenVerblijfsrecreatie     := VariantParameters/FractiesGroenInVerblijfsrecreatie/DezeVariant/GroenTotaal;
-
+		
 		unit<UInt32> Regio  := SourceData/RegioIndelingen/Provincie;
 		unit<uint8>  GroenK := /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen;
 		
 		unit<uint8> Indicator : NrOfRows = 3 
 		, Descr = "Groenaanbod = Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
-					Groenaanbod_per_woning = Totale oppervlakte groen binnen de gegeven straal gedeeld door het aantal woningen in die cel (m² per woning).
+					Cumulatief_Groenaanbod_over_woningen = Totale oppervlakte groen binnen de gegeven straal maal het aantal woningen in die cel (m²). In dichtgebouwd gebied nieuw groen toevoegen, maak je veel mensen gelukkig mee. Echter, ze realiseren zich dan niet dat je het moet delen met al die andere mensen (indicator 3).
 					Drukte_gecorrigeerd_groenaanbod_per_woning = Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning)."
 		{
 			attribute<string> name: 
 			[
 				 'Groenaanbod'                                  // Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
-				,'Groenaanbod_per_woning'                       // Totale oppervlakte groen binnen de gegeven straal gedeeld door het aantal woningen in die cel (m² per woning).
+				,'Cumulatief_Groenaanbod_over_woningen'         // Totale oppervlakte groen binnen de gegeven straal maal het aantal woningen in die cel (m²). In dichtgebouwd gebied nieuw groen toevoegen, maak je veel mensen gelukkig mee. Echter, ze realiseren zich dan niet dat je het moet delen met al die andere mensen (indicator 3).
 				,'Drukte_gecorrigeerd_groenaanbod_per_woning'   // Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning).
 			];
 			
 			attribute<string> IndicatorExpr : 
 			[
 				 'Som_GroenInOmgeving_metWoning'                          
-				,'Som_GroenInOmgeving_metWoning / WoningenInThisStRegio' 
+				,'Som_GroenInOmgeving_metWoning * WoningenInThisStRegio_ge1 / 1[woning]' 
 				,'Som_AanwezigGroenPerWoning' 
 			];
 			
 			attribute<string> ValuesUnit : 
 			[
 				 'meter2' 
-				,'m2_Woning' 
+				,'meter2' 
 				,'m2_Woning' 
 			];
 		}
 		
-		container InDezeStudie := obv_BBG; 
+		container InDezeStudie := obv_BBG;
+		
 		container obv_BBG := Templates/BereikbaarheidGroenBBG_T(..);
 		container obv_BGT := Templates/BereikbaarheidGroenBGT_T(..);
 	}
@@ -185,10 +187,11 @@ container Basisjaar
 	container Waterberging
 	{
 		parameter<string> Grid_ref := '500m'; // 100m, 500m
+		parameter<string> Kans_ref := '100'; // 100, 1000
 		
 		unit<IPoint> Grid  := = '/Geography/rdc_'+Grid_ref;
 		
-		attribute<Meter>  WaterdiepteBijHevigeNeerslag (AdminDomain) := SourceData/Water/WaterdiepteBijHevigeNeerslag;
+		attribute<Meter>  WaterdiepteBijHevigeNeerslag (AdminDomain) := = 'SourceData/Water/WaterdiepteBijHevigeNeerslag_T'+Kans_ref;
 		attribute<bool> BestaandBebouwdGebied          (AdminDomain) := /BaseData/Omgeving/BBGSamengesteld; // @Jip, waarom nergens BBG woongebied? 
 		attribute<Meter3> Vraag                        (AdminDomain) := WaterdiepteBijHevigeNeerslag * AdminDomain/NrMeter2PerCell * float32(BestaandBebouwdGebied);
 		attribute<Meter3> Restvraag                    (AdminDomain) := Vraag; // We gaan ervan uit dat evt bestaande capaciteit al 'verbruikt' is. Er is dus geen (extra) 'aanbod'
@@ -198,6 +201,18 @@ container Basisjaar
 			attribute<Meter3> Vraag             (Grid) := ='sum(../Vraag, AdminDomain/rdc_'+Grid_ref+'_rel)';
 			attribute<Meter3> RestVraag         (Grid) := ='sum(../RestVraag, AdminDomain/rdc_'+Grid_ref+'_rel)';
 			attribute<Meter3> RestvraagPositief (Grid) := max_elem(Restvraag, 0[meter3]);
+		}
+		
+		container PerRegio
+		{
+			unit<UInt32> Regio := SourceData/RegioIndelingen/Provincie
+			{
+				attribute<.> Per_Grid (Grid) := poly2grid(geometry, Grid);
+			}
+			
+			attribute<Meter3> Vraag             (Regio) := sum(PerGrid/Vraag, Regio/Per_Grid);
+			attribute<Meter3> RestVraag         (Regio) := sum(PerGrid/RestVraag, Regio/Per_Grid);
+			attribute<Meter3> RestvraagPositief (Regio) := sum(PerGrid/RestvraagPositief, Regio/Per_Grid);
 		}
 	}
 }
