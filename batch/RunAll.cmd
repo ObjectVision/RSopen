@@ -1,8 +1,8 @@
 
 REM ========== PARAMETER INSTELLINGEN ================
 set geodmsversion=GeoDms19.1.0
-set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
-REM set exe_dir=C:\dev\GeoDms\bin\Release\x64
+REM set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
+set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
 set LocalDataProjDir=C:\LocalData\RSopen
@@ -35,8 +35,8 @@ goto runScenarios
 
 :runPrepareBasedata
 
-deletes the old BaseData folder
-rmdir %LocalDataProjDir%\Basedata /s /q 
+REM deletes the old BaseData folder
+REM rmdir %LocalDataProjDir%\Basedata /s /q 
 
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run1
 echo "ErrorLevel is " %ErrorLevel% 
@@ -47,24 +47,24 @@ echo "ErrorLevel is " %ErrorLevel%
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 REM deze ontkoppelde dat is nodig voor de indicatoren.
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3_IndicatorenData
-echo "ErrorLevel is " %ErrorLevel% 
-if %ErrorLevel% NEQ 0 goto ErrorEnd
+REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3_IndicatorenData
+REM echo "ErrorLevel is " %ErrorLevel% 
+REM if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 
 :runPrepareVariantdata
 
-deletes the old VariantData folder.
-rmdir %LocalDataProjDir%\VariantData /s /q 
+REM deletes the old VariantData folder.
+REM rmdir %LocalDataProjDir%\VariantData /s /q 
 
 set RSL_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd
 
-set RSL_VARIANT_NAME=Intensiveren
-call ..\batch\RunVariantData.cmd
+REM set RSL_VARIANT_NAME=Intensiveren
+REM call ..\batch\RunVariantData.cmd
 
-set RSL_VARIANT_NAME=Transformeren
-call ..\batch\RunVariantData.cmd
+REM set RSL_VARIANT_NAME=Transformeren
+REM call ..\batch\RunVariantData.cmd
 
 :runScenarios
 
