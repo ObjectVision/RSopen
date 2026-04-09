@@ -7,68 +7,69 @@
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
-// de kosten van het opkopen van het huidige opstal.
+// Bepaal de geschiktheid voor wonen per OP in de zichtjaren Potentiele opbrengsten van een pakket Woningen De
+// geschatte grondproductiekosten op die locatie
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-Template Suitability_Wonen_perOP_T
-: Descr = "Bepaal de geschiktheid voor wonen per OP in de zichtjaren"
-{
-	parameter<String> OP_name;
-	//
-	
-	attribute<Float32> Opbrengsten (CompactedAdminDomain) := ='src/Wonen/Opbrengsten_perOP/'+OP_name, Descr = "Potentiele opbrengsten van een pakket Woningen";
-	
-	attribute<Eur> Grondproductiekosten (CompactedAdminDomain) :=
-		='collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Grondproductiekosten/Results/Totaal/'+/ModelParameters/Wonen/grondproductie_kosten_Variant+') 
-		* float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar) * AdminDomain/NrHaPerCell', Descr = "De geschatte grondproductiekosten op die locatie";
-		
-	attribute<Eur> Bouwkosten (CompactedAdminDomain) := ='src/Wonen/Bouwkosten/perOP/'+OP_name, Descr = "De geschatte bouwkosten van een pakket Woningen";
-	
-	container Verwervingskosten : Descr = "de kosten van het opkopen van het huidige opstal."
-	{
-		attribute<Eur> Woningen0 (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal) * float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar)';
-		
-		container Funderingsschade
-		{
-			attribute<Eur> Src                (CompactedAdminDomain) := SourceData/Vastgoed/Funderingsschade/per_pand/k; // afgekapt op 95% percentiel van bron
-			attribute<Eur> Herstelkosten      (CompactedAdminDomain) := // We gaan ervanuit dat deze geincasseerd worden, ongeacht evt sloop in een zichtjaar
-				= iif(
-					VariantParameters/VariantK/FunderingschadeWordtHersteld[variant_rel],
-					'Src / ((1f+ModelParameters/Wonen/Discontovoet)^float32((VariantParameters/VariantK/JaarWaarinFunderingschadeZichtbaar[variant_rel] - ModelParameters/Model_StartYear) / 1[YearRange]))',
-					'const(0[Eur], CompactedAdminDomain)'
-				);
-			
-			attribute<Eur> Waardevermindering (CompactedAdminDomain) := // We gaan ervan uit dat deze niet groter kan zijn van bestande woningwaarde
-				= iif(
-					VariantParameters/VariantK/FunderingschadeWordtHersteld[variant_rel],
-					'const(0[Eur], CompactedAdminDomain)',
-					'min_elem(Src, Woningen0) / ((1f+ModelParameters/Wonen/Discontovoet)^float32((VariantParameters/VariantK/JaarWaarinFunderingschadeZichtbaar[variant_rel] - ModelParameters/Model_StartYear) / 1[YearRange]))'
-				);
-		}
-		
-		attribute<Eur> Woningen      (CompactedAdminDomain) := max_elem(Woningen0 - Funderingsschade/Waardevermindering, 0[Eur]);
-		attribute<Eur> Niet_Woningen (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Verwervingskosten/Niet_Woningen/Totaal) * float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar)';
-		attribute<Eur> Totaal        (CompactedAdminDomain) := Woningen + Niet_Woningen;
-	}
-	
-	container Sloopkosten : Descr = "de kosten van het slopen van het huidige opstal."
-	{
-		attribute<Eur> Woningen      (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Sloopkosten/Totaal)      * float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar)';
-		attribute<Eur> Niet_Woningen (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Sloopkosten/Totaal_Niet_Woningen) * float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar)';
-		attribute<Eur> Totaal        (CompactedAdminDomain) := Woningen + Niet_Woningen;
-	}
-	
-	attribute<Eur> ResidueleWaarde  (CompactedAdminDomain) := Opbrengsten - Bouwkosten - Grondproductiekosten;
-	attribute<Eur> ExploitatieSaldo (CompactedAdminDomain) := ResidueleWaarde - Verwervingskosten/Totaal - Sloopkosten/Totaal;
-	attribute<Eur> Per_AdminDomain0 (CompactedAdminDomain) := ExploitatieSaldo;
-	
-	attribute<Eur> TotaalIJburg (CompactedAdminDomain) :=
-		rth_element(Per_AdminDomain0, 0.5f, collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, SourceData/RegioIndelingen/LMSSubzone/Per_AdminDomain))[SourceData/RegioIndelingen/LMSSubzone/Ijburg2_proxy] //mediaan in IJburg en de rest van NL
-		/ collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, float32(SourceData/RegioIndelingen/LMSSubzone/IsIjburg2)[SourceData/RegioIndelingen/LMSSubzone/Per_AdminDomain])
-		* rnd_uniform(0, CompactedAdminDomain, range(float32, 0f, 1f)), Descr = "IJburg is atlijd een lastige, je moet een waarde hangen aan iets van geen land is/vas. Wat betekent dat we in bronData vaak Data missen voor dit stuk. Dus dit hacken we er zo in.";
-	
-	attribute<Eur> TotaalAdminDomain (CompactedAdminDomain) := MakeDefined(Per_AdminDomain0, TotaalIjburg);
-	attribute<Eur> CalcTotaal        (CompactedAllocDomain) := sum(TotaalAdminDomain, CompactedAdminDomain/CompactedAllocDomain_rel);
-	attribute<Eur> Totaal            (CompactedAllocDomain) := CalcTotaal;
-}
+Template Suitability_Wonen_perOP_T
+: Descr = "Bepaal de geschiktheid voor wonen per OP in de zichtjaren"
+{
+	parameter<String> OP_name;
+	//
+	
+	attribute<Float32> Opbrengsten (CompactedAdminDomain) := ='src/Wonen/Opbrengsten_perOP/'+OP_name, Descr = "Potentiele opbrengsten van een pakket Woningen";
+	
+	attribute<Eur> Grondproductiekosten (CompactedAdminDomain) :=
+		='collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Grondproductiekosten/Results/Totaal/'+/ModelParameters/Wonen/grondproductie_kosten_Variant+') 
+		* float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar) * AdminDomain/NrHaPerCell', Descr = "De geschatte grondproductiekosten op die locatie";
+		
+	attribute<Eur> Bouwkosten (CompactedAdminDomain) := ='src/Wonen/Bouwkosten/perOP/'+OP_name, Descr = "De geschatte bouwkosten van een pakket Woningen";
+	
+	container Verwervingskosten : Descr = "de kosten van het opkopen van het huidige opstal."
+	{
+		attribute<Eur> Woningen0 (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal) * float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar)';
+		
+		container Funderingsschade
+		{
+			attribute<Eur> Src                (CompactedAdminDomain) := SourceData/Vastgoed/Funderingsschade/per_pand/k; // afgekapt op 95% percentiel van bron
+			attribute<Eur> Herstelkosten      (CompactedAdminDomain) := // We gaan ervanuit dat deze geincasseerd worden, ongeacht evt sloop in een zichtjaar
+				= iif(
+					VariantParameters/VariantK/FunderingschadeWordtHersteld[variant_rel],
+					'Src / ((1f+ModelParameters/Wonen/Discontovoet)^float32((VariantParameters/VariantK/JaarWaarinFunderingschadeZichtbaar[variant_rel] - ModelParameters/Model_StartYear) / 1[YearRange]))',
+					'const(0[Eur], CompactedAdminDomain)'
+				);
+			
+			attribute<Eur> Waardevermindering (CompactedAdminDomain) := // We gaan ervan uit dat deze niet groter kan zijn van bestande woningwaarde
+				= iif(
+					VariantParameters/VariantK/FunderingschadeWordtHersteld[variant_rel],
+					'const(0[Eur], CompactedAdminDomain)',
+					'min_elem(Src, Woningen0) / ((1f+ModelParameters/Wonen/Discontovoet)^float32((VariantParameters/VariantK/JaarWaarinFunderingschadeZichtbaar[variant_rel] - ModelParameters/Model_StartYear) / 1[YearRange]))'
+				);
+		}
+		
+		attribute<Eur> Woningen      (CompactedAdminDomain) := max_elem(Woningen0 - Funderingsschade/Waardevermindering, 0[Eur]);
+		attribute<Eur> Niet_Woningen (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Verwervingskosten/Niet_Woningen/Totaal) * float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar)';
+		attribute<Eur> Totaal        (CompactedAdminDomain) := Woningen + Niet_Woningen;
+	}
+	
+	container Sloopkosten : Descr = "de kosten van het slopen van het huidige opstal."
+	{
+		attribute<Eur> Woningen      (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Sloopkosten/Totaal)      * float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar)';
+		attribute<Eur> Niet_Woningen (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Wonen/Sloopkosten/Totaal_Niet_Woningen) * float32(PotentieleState/'+name+'/per_SectorxSubsectoren/Wonen/'+Subsector_name+'/IsBeschikbaar_zichtjaar)';
+		attribute<Eur> Totaal        (CompactedAdminDomain) := Woningen + Niet_Woningen;
+	}
+	
+	attribute<Eur> ResidueleWaarde  (CompactedAdminDomain) := Opbrengsten - Bouwkosten - Grondproductiekosten;
+	attribute<Eur> ExploitatieSaldo (CompactedAdminDomain) := ResidueleWaarde - Verwervingskosten/Totaal - Sloopkosten/Totaal;
+	attribute<Eur> Per_AdminDomain0 (CompactedAdminDomain) := ExploitatieSaldo;
+	
+	attribute<Eur> TotaalIJburg (CompactedAdminDomain) :=
+		rth_element(Per_AdminDomain0, 0.5f, collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, SourceData/RegioIndelingen/LMSSubzone/Per_AdminDomain))[SourceData/RegioIndelingen/LMSSubzone/Ijburg2_proxy] //mediaan in IJburg en de rest van NL
+		/ collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, float32(SourceData/RegioIndelingen/LMSSubzone/IsIjburg2)[SourceData/RegioIndelingen/LMSSubzone/Per_AdminDomain])
+		* rnd_uniform(0, CompactedAdminDomain, range(float32, 0f, 1f)), Descr = "IJburg is atlijd een lastige, je moet een waarde hangen aan iets van geen land is/vas. Wat betekent dat we in bronData vaak Data missen voor dit stuk. Dus dit hacken we er zo in.";
+	
+	attribute<Eur> TotaalAdminDomain (CompactedAdminDomain) := MakeDefined(Per_AdminDomain0, TotaalIjburg);
+	attribute<Eur> CalcTotaal        (CompactedAllocDomain) := sum(TotaalAdminDomain, CompactedAdminDomain/CompactedAllocDomain_rel);
+	attribute<Eur> Totaal            (CompactedAllocDomain) := CalcTotaal;
+}

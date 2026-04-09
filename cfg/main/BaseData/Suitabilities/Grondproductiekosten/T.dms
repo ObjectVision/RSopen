@@ -8,120 +8,122 @@
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
 // Templates voor het inlezen van data, berekening van de kosten, statistieken en export van de resultaten.
+// Berekening van de grondproductiekosten voor een combinatie van bouwtype en onzekerheidsscenario. Controleren
+// of de coëfficiënt significant is op basis van de p-waarde en de drempelwaarde.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-container T
-: Descr = "Templates voor het inlezen van data, berekening van de kosten, statistieken en export van de resultaten."
-{
-	Template ReadData
-	{
-		parameter<C/GrondproductieModelVarianten> id;
-		//
-		
-		parameter<String> StorageStr := '%RSo_DataDir%/Vastgoed/'+C/GrondproductieModelVarianten/name[id]+'SchattingDec19.csv';
-		
-		unit<UInt32> ModelVariant
-		:  StorageName = "=StorageStr"
-		,  StorageType = "gdal.vect"
-		,  StorageReadOnly = "True"
-		{
-			attribute<C/GrondproductieVariabelen> GrondproductieVariabelen_rel := rlookup(lowercase(./Variabele), lowercase(C/GrondproductieVariabelen/name));
-		}
-	}
-	
-	Template CalculateCosts : using = "ReadData" 
-	, Descr = "Berekening van de grondproductiekosten voor een combinatie van bouwtype en onzekerheidsscenario."
-	{
-		//
-		parameter<C/Combi> id;
-		unit<UInt32> domain;
-		attribute<String> Coefficients (domain);
-		attribute<String> Stderror (domain);
-		attribute<String> Pvalue (domain);
-		parameter<String> CalcStr0;
-		parameter<String> Onzekerheid2_name;
-		//
-		
-		parameter<String> GenericStr := 'MakeDefined(float32(@C@), 0f)';
-		parameter<String> CoefficientStr := replace(GenericStr, '@C@', 'Coefficients');
-		parameter<String> StderrorStr    := replace(GenericStr, '@C@', 'Stderror');
-		parameter<String> CalcStr := = CalcStr0;
-		
-		attribute<Bool> IsSignificant                   (domain) := float32(Pvalue) <= Significatie_threshold, Descr = "Controleren of de co�ffici�nt significant is op basis van de p-waarde en de drempelwaarde.";
-		attribute<Bool> IsControleVar                   (domain) := C/GrondproductieVariabelen/IsControleVar[domain/GrondproductieVariabelen_rel], Descr = "Controleren of het een controlevariabele betreft.";
-		attribute<Bool> IsOnzekereControleVar           (domain) := C/GrondproductieVariabelen/IsOnzekereControleVar[domain/GrondproductieVariabelen_rel], Descr = "Controleren of het een onzekere controlevariabele betreft.";
-		attribute<Bool> IsOnzekereControleVarEnNegatief (domain) := IsOnzekereControleVar && ParameterValueIsNegatief, Descr = "Controleren of het een onzekere controlevariabele betreft die een negatieve co�ffici�nt heeft.";
-		attribute<Bool> IsOnzekereControleVarEnPositief (domain) := IsOnzekereControleVar && !ParameterValueIsNegatief, Descr = "Controleren of het een onzekere controlevariabele betreft die een positieve co�ffici�nt heeft.";
-		attribute<Bool> IsIntercept                     (domain) := domain/GrondproductieVariabelen_rel == C/GrondproductieVariabelen/V/Intercept, Descr = "Controleren of het de intercept betreft.";
-		
-		attribute<Float32> ParameterValue0          (domain) := = '('+CalcStr+')', Descr = "Bepalen van de initi�le waarde van de parameter.";
-		attribute<Bool>    ParameterValueIsNegatief (domain) := ParameterValue0 < 0f, Descr = "Controleren of de initi�le waarde van de parameter negatief is.";
-		attribute<Float32> ParameterValueSig        (domain) := = 'float32(IsSignificant) * ('+CalcStr+')', Descr = "Indien de parameter significant is, wordt de initi�le waarde aangehouden, anders wordt deze op 0 gezet.";
-		attribute<Float32> ParameterValue           (domain) := IsIntercept || IsControleVar ? parameterValue0 : ParameterValueSig, Descr = "Indien het de intercept of een controlevariabele betreft, wordt de initi�le waarde aangehouden, anders wordt de gesignificeerde waarde aangehouden.";
-		
-		attribute<String> VariableValue_ref (domain) :=
-			lowercase(Onzekerheid2_name) == lowercase('Low')  && IsOnzekereControleVarEnNegatief ? '1f' :
-			lowercase(Onzekerheid2_name) == lowercase('Low')  && IsOnzekereControleVarEnPositief ? '0f' :
-			lowercase(Onzekerheid2_name) == lowercase('High') && IsOnzekereControleVarEnNegatief ? '0f' :
-			lowercase(Onzekerheid2_name) == lowercase('High') && IsOnzekereControleVarEnPositief ? '1f':
-			C/GrondproductieVariabelen/DefaultWaarde[domain/GrondproductieVariabelen_rel], Descr = "Bepalen van de waarde van de variabele op basis van het onzekerheidsscenario en het type variabele. Voor onzekere controlevariabelen wordt in het Low scenario een zo laag mogelijke waarde genomen indien de co�ffici�nt positief is, en een zo hoog mogelijke waarde indien de co�ffici�nt negatief is. In het High scenario is dit omgekeerd. Voor overige variabelen wordt de standaard waarde genomen.";
-		
-		attribute<String> List (domain) := 'value('+VariableValue_ref+', float32) * '+string(ParameterValue);
-		
-		attribute<Eur_Ha> Kosten0 (AdminDomain) := = 'exp(add('+asItemList(List+'[float32]')+')) + const(0[Eur_ha], AdminDomain)', Descr = "Berekening van de geschatte kosten op basis van de exponenti�le functie van de som van de producten van de variabelen en hun co�ffici�nten. Indien de uitkomst kleiner is dan 0, wordt deze op 0 gezet.";
-		attribute<Eur_Ha> Kosten  (AdminDomain) := MakeDefined(Kosten0, max(Kosten0)), Descr = "Zorg dat negatieve kosten worden opgevangen door de minimum waarde te nemen van de geschatte kosten en de maximum geschatte kosten.";
-	}
-	
-	Template Statistics
-	{
-		parameter<String> SrcStr;
-		parameter<C/Onzekerheid> id;
-		//
-		
-		attribute<Eur_Ha> Src (AdminDomain) := = 'Results/'+SrcStr+'/'+C/Onzekerheid/name[id], Descr = "Ophalen van de geschatte kosten voor een combinatie van bouwtype en onzekerheidsscenario.";
-		attribute<Bool>   BBG (AdminDomain) := SourceData/Diversen/Per_AdminDomain/begrenzing_bebouwd_gebied, Descr = "Begrenzing van het bebouwd gebied om alleen binnen dit gebied de statistieken te berekenen.";
-		
-		container Result := for_each_ne(C/Extent/name, 'BBGT('+C/Extent/CalcStr+')'), Descr = "Berekening van de statistieken van de geschatte kosten binnen het bebouwd gebied voor een combinatie van bouwtype en onzekerheidsscenario.";
-		
-		Template BBGT
-		: Descr = "Berekening van de statistieken van de geschatte kosten binnen het bebouwd gebied voor een combinatie van bouwtype en onzekerheidsscenario."
-		{
-			//
-			attribute<Bool> IsExtent (AdminDomain);
-			//
-			
-			attribute<Eur_ha> InExtent (AdminDomain) := Src / float32(IsExtent);
-			
-			parameter<Eur_ha> mean           := mean(InExtent), Descr = "Gemiddelde waarde";
-			parameter<Eur_ha> sd             := sd(InExtent), Descr = "Standaarddeviatie";
-			
-			parameter<Eur_ha> min            := min(InExtent), Descr = "Minimum waarde";
-			parameter<Eur_ha> rth_element_20 := rth_element(InExtent, 0.20f), Descr = "20ste percentiel";
-			parameter<Eur_ha> rth_element_50 := rth_element(InExtent, 0.50f), Descr = "Mediaan";
-			parameter<Eur_ha> rth_element_80 := rth_element(InExtent, 0.80f), Descr = "80ste percentiel";
-			parameter<Eur_ha> max            := max(InExtent), Descr = "Maximum waarde";
-		}
-	}
-	
-	Template Export
-	: Descr = "Exporteren van de resultaten naar een overzichtstabel."
-	{
-		parameter<String> SrcStr;
-		//
-		
-		container Results :=
-			for_each_nedv(
-				C/Onzekerheid/name,
-				replace(
-					'union_data(C/ExtentxIndicator,'+asItemList(replace(SrcStr, '@E@', C/ExtentxIndicator/Extent_name, '@I@', C/ExtentxIndicator/Indicator_name))+')',
-					'@O@', C/Onzekerheid/name
-				),
-				C/ExtentxIndicator, Eur_Ha
-			)
-		{
-			attribute<String> Extent_name    (C/ExtentxIndicator) := C/ExtentxIndicator/Extent_name;
-			attribute<String> Indicator_name (C/ExtentxIndicator) := C/ExtentxIndicator/Indicator_name;
-		}
-	}
+container T
+: Descr = "Templates voor het inlezen van data, berekening van de kosten, statistieken en export van de resultaten."
+{
+	Template ReadData
+	{
+		parameter<C/GrondproductieModelVarianten> id;
+		//
+		
+		parameter<String> StorageStr := '%RSo_DataDir%/Vastgoed/'+C/GrondproductieModelVarianten/name[id]+'SchattingDec19.csv';
+		
+		unit<UInt32> ModelVariant
+		:  StorageName = "=StorageStr"
+		,  StorageType = "gdal.vect"
+		,  StorageReadOnly = "True"
+		{
+			attribute<C/GrondproductieVariabelen> GrondproductieVariabelen_rel := rlookup(lowercase(./Variabele), lowercase(C/GrondproductieVariabelen/name));
+		}
+	}
+	
+	Template CalculateCosts : using = "ReadData" 
+	, Descr = "Berekening van de grondproductiekosten voor een combinatie van bouwtype en onzekerheidsscenario."
+	{
+		//
+		parameter<C/Combi> id;
+		unit<UInt32> domain;
+		attribute<String> Coefficients (domain);
+		attribute<String> Stderror (domain);
+		attribute<String> Pvalue (domain);
+		parameter<String> CalcStr0;
+		parameter<String> Onzekerheid2_name;
+		//
+		
+		parameter<String> GenericStr := 'MakeDefined(float32(@C@), 0f)';
+		parameter<String> CoefficientStr := replace(GenericStr, '@C@', 'Coefficients');
+		parameter<String> StderrorStr    := replace(GenericStr, '@C@', 'Stderror');
+		parameter<String> CalcStr := = CalcStr0;
+		
+		attribute<Bool> IsSignificant                   (domain) := float32(Pvalue) <= Significatie_threshold, Descr = "Controleren of de coëfficiënt significant is op basis van de p-waarde en de drempelwaarde.";
+		attribute<Bool> IsControleVar                   (domain) := C/GrondproductieVariabelen/IsControleVar[domain/GrondproductieVariabelen_rel], Descr = "Controleren of het een controlevariabele betreft.";
+		attribute<Bool> IsOnzekereControleVar           (domain) := C/GrondproductieVariabelen/IsOnzekereControleVar[domain/GrondproductieVariabelen_rel], Descr = "Controleren of het een onzekere controlevariabele betreft.";
+		attribute<Bool> IsOnzekereControleVarEnNegatief (domain) := IsOnzekereControleVar && ParameterValueIsNegatief, Descr = "Controleren of het een onzekere controlevariabele betreft die een negatieve coëfficiënt heeft.";
+		attribute<Bool> IsOnzekereControleVarEnPositief (domain) := IsOnzekereControleVar && !ParameterValueIsNegatief, Descr = "Controleren of het een onzekere controlevariabele betreft die een positieve coëfficiënt heeft.";
+		attribute<Bool> IsIntercept                     (domain) := domain/GrondproductieVariabelen_rel == C/GrondproductieVariabelen/V/Intercept, Descr = "Controleren of het de intercept betreft.";
+		
+		attribute<Float32> ParameterValue0          (domain) := = '('+CalcStr+')', Descr = "Bepalen van de initiële waarde van de parameter.";
+		attribute<Bool>    ParameterValueIsNegatief (domain) := ParameterValue0 < 0f, Descr = "Controleren of de initiële waarde van de parameter negatief is.";
+		attribute<Float32> ParameterValueSig        (domain) := = 'float32(IsSignificant) * ('+CalcStr+')', Descr = "Indien de parameter significant is, wordt de initiële waarde aangehouden, anders wordt deze op 0 gezet.";
+		attribute<Float32> ParameterValue           (domain) := IsIntercept || IsControleVar ? parameterValue0 : ParameterValueSig, Descr = "Indien het de intercept of een controlevariabele betreft, wordt de initiële waarde aangehouden, anders wordt de gesignificeerde waarde aangehouden.";
+		
+		attribute<String> VariableValue_ref (domain) :=
+			lowercase(Onzekerheid2_name) == lowercase('Low')  && IsOnzekereControleVarEnNegatief ? '1f' :
+			lowercase(Onzekerheid2_name) == lowercase('Low')  && IsOnzekereControleVarEnPositief ? '0f' :
+			lowercase(Onzekerheid2_name) == lowercase('High') && IsOnzekereControleVarEnNegatief ? '0f' :
+			lowercase(Onzekerheid2_name) == lowercase('High') && IsOnzekereControleVarEnPositief ? '1f':
+			C/GrondproductieVariabelen/DefaultWaarde[domain/GrondproductieVariabelen_rel], Descr = "Bepalen van de waarde van de variabele op basis van het onzekerheidsscenario en het type variabele. Voor onzekere controlevariabelen wordt in het Low scenario een zo laag mogelijke waarde genomen indien de coëfficiënt positief is, en een zo hoog mogelijke waarde indien de coëfficiënt negatief is. In het High scenario is dit omgekeerd. Voor overige variabelen wordt de standaard waarde genomen.";
+		
+		attribute<String> List (domain) := 'value('+VariableValue_ref+', float32) * '+string(ParameterValue);
+		
+		attribute<Eur_Ha> Kosten0 (AdminDomain) := = 'exp(add('+asItemList(List+'[float32]')+')) + const(0[Eur_ha], AdminDomain)', Descr = "Berekening van de geschatte kosten op basis van de exponentiële functie van de som van de producten van de variabelen en hun coëfficiënten. Indien de uitkomst kleiner is dan 0, wordt deze op 0 gezet.";
+		attribute<Eur_Ha> Kosten  (AdminDomain) := MakeDefined(Kosten0, max(Kosten0)), Descr = "Zorg dat negatieve kosten worden opgevangen door de minimum waarde te nemen van de geschatte kosten en de maximum geschatte kosten.";
+	}
+	
+	Template Statistics
+	{
+		parameter<String> SrcStr;
+		parameter<C/Onzekerheid> id;
+		//
+		
+		attribute<Eur_Ha> Src (AdminDomain) := = 'Results/'+SrcStr+'/'+C/Onzekerheid/name[id], Descr = "Ophalen van de geschatte kosten voor een combinatie van bouwtype en onzekerheidsscenario.";
+		attribute<Bool>   BBG (AdminDomain) := SourceData/Diversen/Per_AdminDomain/begrenzing_bebouwd_gebied, Descr = "Begrenzing van het bebouwd gebied om alleen binnen dit gebied de statistieken te berekenen.";
+		
+		container Result := for_each_ne(C/Extent/name, 'BBGT('+C/Extent/CalcStr+')'), Descr = "Berekening van de statistieken van de geschatte kosten binnen het bebouwd gebied voor een combinatie van bouwtype en onzekerheidsscenario.";
+		
+		Template BBGT
+		: Descr = "Berekening van de statistieken van de geschatte kosten binnen het bebouwd gebied voor een combinatie van bouwtype en onzekerheidsscenario."
+		{
+			//
+			attribute<Bool> IsExtent (AdminDomain);
+			//
+			
+			attribute<Eur_ha> InExtent (AdminDomain) := Src / float32(IsExtent);
+			
+			parameter<Eur_ha> mean           := mean(InExtent), Descr = "Gemiddelde waarde";
+			parameter<Eur_ha> sd             := sd(InExtent), Descr = "Standaarddeviatie";
+			
+			parameter<Eur_ha> min            := min(InExtent), Descr = "Minimum waarde";
+			parameter<Eur_ha> rth_element_20 := rth_element(InExtent, 0.20f), Descr = "20ste percentiel";
+			parameter<Eur_ha> rth_element_50 := rth_element(InExtent, 0.50f), Descr = "Mediaan";
+			parameter<Eur_ha> rth_element_80 := rth_element(InExtent, 0.80f), Descr = "80ste percentiel";
+			parameter<Eur_ha> max            := max(InExtent), Descr = "Maximum waarde";
+		}
+	}
+	
+	Template Export
+	: Descr = "Exporteren van de resultaten naar een overzichtstabel."
+	{
+		parameter<String> SrcStr;
+		//
+		
+		container Results :=
+			for_each_nedv(
+				C/Onzekerheid/name,
+				replace(
+					'union_data(C/ExtentxIndicator,'+asItemList(replace(SrcStr, '@E@', C/ExtentxIndicator/Extent_name, '@I@', C/ExtentxIndicator/Indicator_name))+')',
+					'@O@', C/Onzekerheid/name
+				),
+				C/ExtentxIndicator, Eur_Ha
+			)
+		{
+			attribute<String> Extent_name    (C/ExtentxIndicator) := C/ExtentxIndicator/Extent_name;
+			attribute<String> Indicator_name (C/ExtentxIndicator) := C/ExtentxIndicator/Indicator_name;
+		}
+	}
 }

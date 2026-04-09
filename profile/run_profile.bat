@@ -9,12 +9,13 @@ REM Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
 REM Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 REM Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 REM
-REM Dit script installeert de benodigde Python-packages (psutil, bokeh) en start vervolgens het GeoDMSPerformance.py profilerings-script.
+REM Installeert de benodigde Python-packages (psutil, bokeh) en start het GeoDMSPerformance.py profilerings-
+REM script.
 REM
 REM ================================================================================
 
-pip install psutil bokeh
-
-python GeoDMSPerformance.py profile_setups.txt
-echo oke?
+pip install psutil bokeh
+
+python GeoDMSPerformance.py profile_setups.txt
+echo oke?
 pause

@@ -7,108 +7,111 @@
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
-// Bepalen van geschiktheden voor verschillende sectoren op basis van logit modellen, prijsindeces en regionale en nationale kenmerken.
+// Bepalen van geschiktheden voor verschillende sectoren op basis van logit modellen, prijsindeces en regionale
+// en nationale kenmerken. Bepalen van de woningwaarde per woningtype op basis van de prijsindex en de regionale
+// en nationale kenmerken van de woningen. Haal de woning oppervlak per woningtype op Laadt via #include:
+// RegionalAvgCharacteristics, UAI, PrijsIndex, Grondproductiekosten, Verwervingskosten, Geschiktheden_Werken.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-container Suitabilities
-: Descr = "Bepalen van geschiktheden voor verschillende sectoren op basis van logit modellen, prijsindeces en regionale en nationale kenmerken."
-{
-	container Wonen
-	{
-		container Woningwaarde_perWoningType := 
-			for_each_ne(
-				Classifications/Vastgoed/WP4/name
-				, 'Templates/Suitabilities/Woningwaarde_perWoningType_T('+string(id(Classifications/Vastgoed/WP4))+'[Classifications/Vastgoed/WP4])'
-			), Descr = "Bepalen van de woningwaarde per woningtype op basis van de prijsindex en de regionale en nationale kenmerken van de woningen.";
-		
-		#include<RegionalAvgCharacteristics.dms>
-		#include<UAI.dms>
-		#include<PrijsIndex.dms>
-		#include<Grondproductiekosten.dms>
-		#include<Verwervingskosten.dms>
-		
-		container Sloopkosten := 
-			for_each_nedv(
-				Classifications/Vastgoed/WP4/name
-				, 'MakeDefined(SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/Model_StartYear)+'/VBO/per_Gebruiksdoel/woon/Select/Oppervlaktes/per_WP4_AdminDomain/'+Classifications/Vastgoed/WP4/name+' * 1[verblijfsobject] * /ModelParameters/Wonen/Sloopkosten/'+Classifications/Vastgoed/WP4/name+', 0[eur])' 
-				, AdminDomain
-				, eur
-			), Descr = "Haal de woning oppervlak per woningtype op"
-		{
-			attribute<eur> Totaal               (AdminDomain) := ='add('+AsItemList(Classifications/Vastgoed/WP4/name)+')';
-			attribute<eur> Totaal_niet_woningen (AdminDomain) := ='SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/Model_StartYear)+'/pand/Oppervlaktes/VBOopp_perGebruiksdoel/niet_woon_AdminDomain * /ModelParameters/Wonen/Sloopkosten/Kantoor';
-		} 
-	} 
-	
-	#include<Geschiktheden_Werken.dms>
-	
-	container Verblijfsrecreatie : using = "SourceData/Actoren/Banen;Classifications/Grondgebruik;Classifications/Actor"
-	{
-		container ProbabilityMap_Verblijfsrecreatie
-		: Descr = "Bepalen van de geschiktheid van locaties voor verblijfsrecreatie op basis van een logit model met verschillende varianten."
-		{
-			container Variant_Dist_1000m_Neighbourhood   := MakeProbabilityMapT_Verblijfsrec('Verblijfsrecreatie','Dist_1000m_Neighbourhood', '1000');
-		}
-		
-		container ReadCoefficients_Verblijfsrecreatie
-		: Descr = "Inlezen van de logit co�ffici�nten voor verschillende modelvarianten voor verblijfsrecreatie."
-		{
-			//container Variant_Dist_100m_Neighbourhood  := ReadCoefficientsT('Verblijfsrecreatie',ModelParameters/Verblijfsrec_coeff_date,'_Dist_100m_Neighbourhood');
-			container Variant_Dist_1000m_Neighbourhood := ReadCoefficientsT('Verblijfsrecreatie',ModelParameters/Verblijfsrec_coeff_date,'_Dist_1000m_Neighbourhood');
-			//container Variant_LnDist_100m_Neighbourhood := ReadCoefficientsT('Verblijfsrecreatie',ModelParameters/Verblijfsrec_coeff_date,'_LnDist_100m_Neighbourhood');
-			//container Variant_LnDist_1000m_Neighbourhood := ReadCoefficientsT('Verblijfsrecreatie',ModelParameters/Verblijfsrec_coeff_date,'_LnDist_1000m_Neighbourhood');
-		}
-		
-		Template MakeProbabilityMapT_Verblijfsrec
-		: Descr = "Template voor het maken van een geschiktheidskaart voor verblijfsrecreatie op basis van een logit model met verschillende varianten."
-		{
-			parameter<String> Sectorname;
-			parameter<String> Variantname;
-			parameter<String> Radius;
-			
-			attribute<Float32> raw (AllocDomain) := ='MakeDefined(
-				ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/Constant
-				+ (Diversen/Per_AllocDomain/DistTo_Airports_2019 / 1[km])                       * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_airport_km_2019
-				+ (Diversen/Per_AllocDomain/DistTo_Highway_acces_exit_2018 / 1[km])             * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_highway_km_2018 
-				+ (Diversen/Per_AllocDomain/DistTo_Trainstation_2019 / 1[km])                   * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_train_km_2019
-				+ (Diversen/Per_AllocDomain/DistTo_Urban_Contour_2000 / 1[km])                  * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_urbancontour_km_2000
-				// + (Diversen/Per_AllocDomain/DistTo_EHS_1990 / 1[km])                         * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_ehs_km_1990
-				+ log(Diversen/Per_AllocDomain/tt_100kinhab_min / 1[min])                       * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/ln_tt_100kinhab_min_2017 
-				+ (Diversen/Per_AllocDomain/Hedonic_landPrice_2007 / 1[Eur_m2])                 * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/landPrice_2007
-				+ (Diversen/Per_AllocDomain/BelevingLandschap/NoMissing2[float32])              * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/landscape_quality
-				+ (Diversen/Per_AllocDomain/DistTo_Natura2000_2020 / 1[km])                     * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_natura2000_km_2020
-				
-				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_agriculture    * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_a
-				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_infrastructure * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_i
-				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_forest         * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_f
-				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_othernature    * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_o
-				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_residential    * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_r
-				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_water          * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_w
-				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_diversity      * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_d
-				,0f
-			)', Descr = "Berekening van de raw score voor geschiktheid op basis van de co�ffici�nten en de variabelen.";
-			
-			attribute<Float32> exponentiated (AllocDomain):= AllocDomain/IsStudyArea ? exp(raw) / (1f + exp(raw)) : 0f, Descr = "Berekening van de exponentiated score voor geschiktheid op basis van de raw score. Buiten het studiegebied is de geschiktheid 0.";
-		}
-		
-		Template ReadCoefficientsT
-		: Descr = "Template voor het inlezen van de logit co�ffici�nten voor verschillende modelvarianten voor verblijfsrecreatie."
-		{
-			parameter<String> Sectorname;
-			parameter<String> Datum;
-			parameter<String> Variantname;
-			
-			unit<UInt32> AdminDomain
-			:  StorageName = "='%RSo_DataDir%/Vastgoed/logitcoeff_Has'+Sectorname+'_'+Datum+''+Variantname+'.csv'"
-			,  StorageType = "gdal.vect"
-			,  StorageReadOnly = "True" 
-			{
-				attribute<String> parm;
-				attribute<String> name := replace(parm, 'construction', 'buildingsite', '_cons', 'Constant', 'buildingsite', 'construction', 'o.', '', ' ', '_','-','');
-			}
-			
-			container Result := for_each_nedv(AdminDomain/name, 'rjoin(rlookup('+quote(lowercase(AdminDomain/name))+', lowercase(AdminDomain/name)), id(AdminDomain), AdminDomain/estimate)[float32]', void, float32), Descr = "Inlezen van de co�ffici�nten voor de logit model voor verblijfsrecreatie op basis van de naam van de variabele.";
-		}
-	}
+container Suitabilities
+: Descr = "Bepalen van geschiktheden voor verschillende sectoren op basis van logit modellen, prijsindeces en regionale en nationale kenmerken."
+{
+	container Wonen
+	{
+		container Woningwaarde_perWoningType := 
+			for_each_ne(
+				Classifications/Vastgoed/WP4/name
+				, 'Templates/Suitabilities/Woningwaarde_perWoningType_T('+string(id(Classifications/Vastgoed/WP4))+'[Classifications/Vastgoed/WP4])'
+			), Descr = "Bepalen van de woningwaarde per woningtype op basis van de prijsindex en de regionale en nationale kenmerken van de woningen.";
+		
+		#include<RegionalAvgCharacteristics.dms>
+		#include<UAI.dms>
+		#include<PrijsIndex.dms>
+		#include<Grondproductiekosten.dms>
+		#include<Verwervingskosten.dms>
+		
+		container Sloopkosten := 
+			for_each_nedv(
+				Classifications/Vastgoed/WP4/name
+				, 'MakeDefined(SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/Model_StartYear)+'/VBO/per_Gebruiksdoel/woon/Select/Oppervlaktes/per_WP4_AdminDomain/'+Classifications/Vastgoed/WP4/name+' * 1[verblijfsobject] * /ModelParameters/Wonen/Sloopkosten/'+Classifications/Vastgoed/WP4/name+', 0[eur])' 
+				, AdminDomain
+				, eur
+			), Descr = "Haal de woning oppervlak per woningtype op"
+		{
+			attribute<eur> Totaal               (AdminDomain) := ='add('+AsItemList(Classifications/Vastgoed/WP4/name)+')';
+			attribute<eur> Totaal_niet_woningen (AdminDomain) := ='SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/Model_StartYear)+'/pand/Oppervlaktes/VBOopp_perGebruiksdoel/niet_woon_AdminDomain * /ModelParameters/Wonen/Sloopkosten/Kantoor';
+		} 
+	} 
+	
+	#include<Geschiktheden_Werken.dms>
+	
+	container Verblijfsrecreatie : using = "SourceData/Actoren/Banen;Classifications/Grondgebruik;Classifications/Actor"
+	{
+		container ProbabilityMap_Verblijfsrecreatie
+		: Descr = "Bepalen van de geschiktheid van locaties voor verblijfsrecreatie op basis van een logit model met verschillende varianten."
+		{
+			container Variant_Dist_1000m_Neighbourhood   := MakeProbabilityMapT_Verblijfsrec('Verblijfsrecreatie','Dist_1000m_Neighbourhood', '1000');
+		}
+		
+		container ReadCoefficients_Verblijfsrecreatie
+		: Descr = "Inlezen van de logit coëfficiënten voor verschillende modelvarianten voor verblijfsrecreatie."
+		{
+			//container Variant_Dist_100m_Neighbourhood  := ReadCoefficientsT('Verblijfsrecreatie',ModelParameters/Verblijfsrec_coeff_date,'_Dist_100m_Neighbourhood');
+			container Variant_Dist_1000m_Neighbourhood := ReadCoefficientsT('Verblijfsrecreatie',ModelParameters/Verblijfsrec_coeff_date,'_Dist_1000m_Neighbourhood');
+			//container Variant_LnDist_100m_Neighbourhood := ReadCoefficientsT('Verblijfsrecreatie',ModelParameters/Verblijfsrec_coeff_date,'_LnDist_100m_Neighbourhood');
+			//container Variant_LnDist_1000m_Neighbourhood := ReadCoefficientsT('Verblijfsrecreatie',ModelParameters/Verblijfsrec_coeff_date,'_LnDist_1000m_Neighbourhood');
+		}
+		
+		Template MakeProbabilityMapT_Verblijfsrec
+		: Descr = "Template voor het maken van een geschiktheidskaart voor verblijfsrecreatie op basis van een logit model met verschillende varianten."
+		{
+			parameter<String> Sectorname;
+			parameter<String> Variantname;
+			parameter<String> Radius;
+			
+			attribute<Float32> raw (AllocDomain) := ='MakeDefined(
+				ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/Constant
+				+ (Diversen/Per_AllocDomain/DistTo_Airports_2019 / 1[km])                       * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_airport_km_2019
+				+ (Diversen/Per_AllocDomain/DistTo_Highway_acces_exit_2018 / 1[km])             * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_highway_km_2018 
+				+ (Diversen/Per_AllocDomain/DistTo_Trainstation_2019 / 1[km])                   * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_train_km_2019
+				+ (Diversen/Per_AllocDomain/DistTo_Urban_Contour_2000 / 1[km])                  * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_urbancontour_km_2000
+				// + (Diversen/Per_AllocDomain/DistTo_EHS_1990 / 1[km])                         * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_ehs_km_1990
+				+ log(Diversen/Per_AllocDomain/tt_100kinhab_min / 1[min])                       * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/ln_tt_100kinhab_min_2017 
+				+ (Diversen/Per_AllocDomain/Hedonic_landPrice_2007 / 1[Eur_m2])                 * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/landPrice_2007
+				+ (Diversen/Per_AllocDomain/BelevingLandschap/NoMissing2[float32])              * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/landscape_quality
+				+ (Diversen/Per_AllocDomain/DistTo_Natura2000_2020 / 1[km])                     * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/dist_natura2000_km_2020
+				
+				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_agriculture    * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_a
+				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_infrastructure * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_i
+				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_forest         * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_f
+				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_othernature    * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_o
+				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_residential    * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_r
+				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_water          * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_w
+				+ Diversen/Per_AllocDomain/Avg_shr_LUType_neigh_1000r_diversity      * ReadCoefficients_Verblijfsrecreatie/Variant_'+Variantname+'/Result/avg_shr_luType_1996_neigh_'+Radius+'r_d
+				,0f
+			)', Descr = "Berekening van de raw score voor geschiktheid op basis van de coëfficiënten en de variabelen.";
+			
+			attribute<Float32> exponentiated (AllocDomain):= AllocDomain/IsStudyArea ? exp(raw) / (1f + exp(raw)) : 0f, Descr = "Berekening van de exponentiated score voor geschiktheid op basis van de raw score. Buiten het studiegebied is de geschiktheid 0.";
+		}
+		
+		Template ReadCoefficientsT
+		: Descr = "Template voor het inlezen van de logit coëfficiënten voor verschillende modelvarianten voor verblijfsrecreatie."
+		{
+			parameter<String> Sectorname;
+			parameter<String> Datum;
+			parameter<String> Variantname;
+			
+			unit<UInt32> AdminDomain
+			:  StorageName = "='%RSo_DataDir%/Vastgoed/logitcoeff_Has'+Sectorname+'_'+Datum+''+Variantname+'.csv'"
+			,  StorageType = "gdal.vect"
+			,  StorageReadOnly = "True" 
+			{
+				attribute<String> parm;
+				attribute<String> name := replace(parm, 'construction', 'buildingsite', '_cons', 'Constant', 'buildingsite', 'construction', 'o.', '', ' ', '_','-','');
+			}
+			
+			container Result := for_each_nedv(AdminDomain/name, 'rjoin(rlookup('+quote(lowercase(AdminDomain/name))+', lowercase(AdminDomain/name)), id(AdminDomain), AdminDomain/estimate)[float32]', void, float32), Descr = "Inlezen van de coëfficiënten voor de logit model voor verblijfsrecreatie op basis van de naam van de variabele.";
+		}
+	}
 }
