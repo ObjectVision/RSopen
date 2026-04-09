@@ -1,3 +1,19 @@
+# ================================================================================
+#
+# Dit is RSOpen, de open source versie van het model RuimteScanner.
+# Het script wordt uitgegeven onder GNU-GPL licentie.
+#
+# RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving,
+# i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+# Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+# Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+# Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+#
+# Meet en vergelijkt de rekenprestaties van GeoDMS-runs. Voert experimenten uit, slaat resultaten op (pickle) en
+# genereert interactieve Bokeh-grafieken voor analyse van performance-verschillen tussen configuraties.
+#
+# ================================================================================
+
 import os
 import re
 import psutil
