@@ -1,85 +1,98 @@
-container Grondgebruik : using = "SourceData/Grondgebruik"
-{
-	container Verandering
-	{
-		unit<UInt32> Regio := SourceData/RegioIndelingen/Provincie/StudyArea;
-		
-		unit<UInt8> VeranderingK := combine_uint8(Classifications/Grondgebruik/CBSKlasse/Aggr2, /Classifications/Actor/Sector)
-		{
-			attribute<String> Van_name       := Classifications/Grondgebruik/CBSKlasse/Aggr2/name[first_rel];
-			attribute<String> Naar_name      := /Classifications/Actor/Sector/name[second_rel];
-			attribute<String> name           := 'Van_'+Van_name+'_Naar_'+Naar_name;
-			attribute<String> Label          := name, DialogType = "LabelText";
-			
-			attribute<UInt8>  from_TransCode := uint8(first_rel) + 1b;
-			attribute<UInt8>  to_TransCode   := (uint8(second_rel) + 1b) * 10b;
-			attribute<UInt8>  TransCode      := from_TransCode + to_TransCode;
-			
-			attribute<UInt32> count          := pcount(LU_Mutatie)[uint32];
-			
-			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
-		}
-		
-		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr2>       Basisjaar   (AdminDomain) := Classifications/Grondgebruik/CBSKlasse/Aggr2_rel[/BaseData/StartState/Grondgebruik/Per_AdminDomain/gg_CBS];
-		attribute<Classifications/Actor/Sector>                       Zichtjaar   (AdminDomain) := Classifications/Actor/Sector/xSubsector/Sector_rel[Stand/SubSector_rel];
-		
-		attribute<UInt8>        LU_Basisjaar (rdc_25m) := uint8(basisjaar) + 1b;
-		attribute<UInt8>        LU_Y2050     (rdc_25m) := (uint8(Zichtjaar) + 1b)  * 10b;
-		attribute<VeranderingK> LU_Mutatie   (rdc_25m) := rlookup(LU_Basisjaar + LU_Y2050, VeranderingK/TransCode);
-		
-		container Per_NL0 := 
-			for_each_nedv(
-				VeranderingK/name
-				,'sum_uint32(LU_Mutatie == VeranderingK/V/'+VeranderingK/name+')[float32] * AdminDomain/NrHaPerCell'
-				, void
-				, ha
-			);
-		
-		attribute<ha> Per_NL (VeranderingK) := = 'union_data(VeranderingK, '+asItemList('Per_NL0/'+VeranderingK/name)+')';
-		
-		container Per_Regio := 
-			for_each_nedv(
-				VeranderingK/name
-				,'sum_uint32(LU_Mutatie == VeranderingK/V/'+VeranderingK/name+', Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell'
-				, Regio
-				, ha
-			);
-			
-		attribute<LU_ModelType> LU_MT_Basisjaar          (AdminDomain) := ThisCasus/Zichtjaren/Basisjaar/Landgebruikskaart/Result_SA;
-		attribute<LU_ModelType> LU_MT_Zichtjaar          (AdminDomain) := ThisCasus/Zichtjaren/Y2050/Landgebruikskaart/Result_SA;
-		
-		attribute<Sector> LU_Sector_Basisjaar          (AdminDomain) := LU_ModelType/Sector_rel[ThisCasus/Zichtjaren/Basisjaar/Landgebruikskaart/Result_SA];
-		attribute<Sector> LU_Sector_Zichtjaar          (AdminDomain) := LU_ModelType/Sector_rel[ThisCasus/Zichtjaren/Y2050/Landgebruikskaart/Result_SA];
-		
-		attribute<bool> Verstedelijking (AdminDomain) := ThisCasus/Zichtjaren/Y2050/Sector_rel_Verstedelijking_Buitenstedelijk
-		{
-			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain);
-		}
-		
-		attribute</SourceData/Grondgebruik/ABCD/ABCD_subK> VerstedelijkingInABCD (AdminDomain) := (/SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m[uint8] / uint8(ThisCasus/Zichtjaren/Y2050/Sector_rel_Verstedelijking_Buitenstedelijk))[/SourceData/Grondgebruik/ABCD/ABCD_subK];
-		
-		attribute<bool> VerstedelijkingOpVruchtbareLandbouwgronden (AdminDomain) := VerstedelijkingInABCD == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A
-		{
-			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain);
-			parameter<ha> Per_NL := sum(float32(.) * AdminDomain/NrHaPerCell);
-		}
-	}
-	
-	// container Groen
-	// {
-		// attribute</Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> InBasisjaar (AdminDomain) := Basisjaar/Grondgebruik/Groen;
-		// attribute</Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> InZichtjaar (AdminDomain) := (InBasisjaar[uint8] / (!Stand/TovStandBasisjaar/toevoeging/AnyVastgoed)[uint8])[/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen];
-		
-		// container Toename :=
-			// for_each_nedv(
-				// /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name,
-				// '(float32(InZichtjaar ==  /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/'+/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name+') -
-				  // float32(InBasisjaar ==  /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/'+/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name+')) *
-				  // AdminDomain/NrHaPerCell',
-				// AdminDomain, ha
-			// )
-		// {
-			// attribute<ha> Totaal (AdminDomain) := = 'add('+asItemList(/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name)+')';
-		// }
-	// }
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Deze file specificeert de container 'Grondgebruik', met o.a.: Verandering, V, Per_NL0, Per_Regio.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Grondgebruik : using = "SourceData/Grondgebruik"
+{
+	container Verandering
+	{
+		unit<UInt32> Regio := SourceData/RegioIndelingen/Provincie/StudyArea;
+		
+		unit<UInt8> VeranderingK := combine_uint8(Classifications/Grondgebruik/CBSKlasse/Aggr2, /Classifications/Actor/Sector)
+		{
+			attribute<String> Van_name       := Classifications/Grondgebruik/CBSKlasse/Aggr2/name[first_rel];
+			attribute<String> Naar_name      := /Classifications/Actor/Sector/name[second_rel];
+			attribute<String> name           := 'Van_'+Van_name+'_Naar_'+Naar_name;
+			attribute<String> Label          := name, DialogType = "LabelText";
+			
+			attribute<UInt8>  from_TransCode := uint8(first_rel) + 1b;
+			attribute<UInt8>  to_TransCode   := (uint8(second_rel) + 1b) * 10b;
+			attribute<UInt8>  TransCode      := from_TransCode + to_TransCode;
+			
+			attribute<UInt32> count          := pcount(LU_Mutatie)[uint32];
+			
+			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+		}
+		
+		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr2>       Basisjaar   (AdminDomain) := Classifications/Grondgebruik/CBSKlasse/Aggr2_rel[/BaseData/StartState/Grondgebruik/Per_AdminDomain/gg_CBS];
+		attribute<Classifications/Actor/Sector>                       Zichtjaar   (AdminDomain) := Classifications/Actor/Sector/xSubsector/Sector_rel[Stand/SubSector_rel];
+		
+		attribute<UInt8>        LU_Basisjaar (rdc_25m) := uint8(basisjaar) + 1b;
+		attribute<UInt8>        LU_Y2050     (rdc_25m) := (uint8(Zichtjaar) + 1b)  * 10b;
+		attribute<VeranderingK> LU_Mutatie   (rdc_25m) := rlookup(LU_Basisjaar + LU_Y2050, VeranderingK/TransCode);
+		
+		container Per_NL0 := 
+			for_each_nedv(
+				VeranderingK/name
+				,'sum_uint32(LU_Mutatie == VeranderingK/V/'+VeranderingK/name+')[float32] * AdminDomain/NrHaPerCell'
+				, void
+				, ha
+			);
+		
+		attribute<ha> Per_NL (VeranderingK) := = 'union_data(VeranderingK, '+asItemList('Per_NL0/'+VeranderingK/name)+')';
+		
+		container Per_Regio := 
+			for_each_nedv(
+				VeranderingK/name
+				,'sum_uint32(LU_Mutatie == VeranderingK/V/'+VeranderingK/name+', Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell'
+				, Regio
+				, ha
+			);
+			
+		attribute<LU_ModelType> LU_MT_Basisjaar          (AdminDomain) := ThisCasus/Zichtjaren/Basisjaar/Landgebruikskaart/Result_SA;
+		attribute<LU_ModelType> LU_MT_Zichtjaar          (AdminDomain) := ThisCasus/Zichtjaren/Y2050/Landgebruikskaart/Result_SA;
+		
+		attribute<Sector> LU_Sector_Basisjaar          (AdminDomain) := LU_ModelType/Sector_rel[ThisCasus/Zichtjaren/Basisjaar/Landgebruikskaart/Result_SA];
+		attribute<Sector> LU_Sector_Zichtjaar          (AdminDomain) := LU_ModelType/Sector_rel[ThisCasus/Zichtjaren/Y2050/Landgebruikskaart/Result_SA];
+		
+		attribute<bool> Verstedelijking (AdminDomain) := ThisCasus/Zichtjaren/Y2050/Sector_rel_Verstedelijking_Buitenstedelijk
+		{
+			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain);
+		}
+		
+		attribute</SourceData/Grondgebruik/ABCD/ABCD_subK> VerstedelijkingInABCD (AdminDomain) := (/SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m[uint8] / uint8(ThisCasus/Zichtjaren/Y2050/Sector_rel_Verstedelijking_Buitenstedelijk))[/SourceData/Grondgebruik/ABCD/ABCD_subK];
+		
+		attribute<bool> VerstedelijkingOpVruchtbareLandbouwgronden (AdminDomain) := VerstedelijkingInABCD == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A
+		{
+			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain);
+			parameter<ha> Per_NL := sum(float32(.) * AdminDomain/NrHaPerCell);
+		}
+	}
+	
+	// container Groen
+	// {
+		// attribute</Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> InBasisjaar (AdminDomain) := Basisjaar/Grondgebruik/Groen;
+		// attribute</Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> InZichtjaar (AdminDomain) := (InBasisjaar[uint8] / (!Stand/TovStandBasisjaar/toevoeging/AnyVastgoed)[uint8])[/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen];
+		
+		// container Toename :=
+			// for_each_nedv(
+				// /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name,
+				// '(float32(InZichtjaar ==  /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/'+/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name+') -
+				  // float32(InBasisjaar ==  /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/'+/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name+')) *
+				  // AdminDomain/NrHaPerCell',
+				// AdminDomain, ha
+			// )
+		// {
+			// attribute<ha> Totaal (AdminDomain) := = 'add('+asItemList(/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name)+')';
+		// }
+	// }
 }
