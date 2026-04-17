@@ -1,0 +1,354 @@
+//////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                      //
+//                             (C) Basisconfiguratie 2011                               //
+//                                                                                      //
+//                         Planbureau voor de Leefomgeving                              //
+//                               December 2011                                          //
+//////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                      //
+//     * In het geval van externe publicatie van onderzoeksresultaten waarbij gebruik   //
+//       is gemaakt van de verstrekte gegevens dient de gebruiker deze resultaten aan   //
+//       het PBL mede te delen middels de toezending van 2 exemplaren van de betref-    //
+//       fende publicatie aan het hoofd van het team ROL van het PBL.                   //
+//                                                                                      //
+//     * In elke publicatie waarin de gegevens van het PBL in enige vorm zijn opgenomen,//
+//       zal de gebruiker de vermelding opnemen: "Bron: Planbureau voor de Leefomgeving"//
+//       Indien het een bewerking van de gegevens betreft, dient te worden opgenomen:   //
+//       "Gebaseerd op Planbureau voor de Leefomgeving gegevens".                       //
+//                                                                                      //
+//     * Het PBL is onder geen enkele voorwaarde aansprakelijk tegenover gebruiker voor //
+//       enige schade, mede begrepen winstderving, verlies van gegevens, schade         //
+//       tengevolge van fouten of onjuistheden in gegevens, schade tengevolge van fouten//
+//       of onvolkomenheden in de documentatie of andere incidentele of gevolgschade    //
+//       welke voortvloeit uit of in verband staat met gebruik of het niet kunnen ge-   //
+//       bruiken van gegevens.                                                          //
+//                                                                                      //
+//     * Het PBL staat niet in voor de juistheid van de resultaten die worden verkregen //
+//       door combinatie van diverse, op zichzelf staande PBL-gegevens onderling,       //
+//       of met die uit andere bronnen.                                                 //
+//                                                                                      //
+//////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                      //
+// Deze DMS-file wordt aangeroepen door stam.dms .                                      //
+// In deze configuratiefile worden de cases voor het berekenen van het toekomstig       //
+// grondgebruik geconfigureerd. De cases betreffen verschillende periodes.              //
+//                                                                                      //
+//////////////////////////////////////////////////////////////////////////////////////////
+
+container Indicators
+{
+	container PV:  = PVTempl('PV', 1.055);
+	container PVs: = PVTempl('PVs', 1.040);
+	container V:   = PVTempl('V', 1.0);
+	
+	container PVTempl: IsTemplate = "True"
+	{
+		//
+		parameter<string> PVRef;
+		parameter<float64> r;
+		//
+		
+// 		parameter<string> PVRef: = PV ? 'PV': 'V';
+		
+// 		parameter<float64>  r: [0.055]; //check
+// 		parameter<float64> sr: [0.040]; //check
+		
+		//denominator PV calculation
+		container D: = for_each_nedv(Classifications/Time/name, 'r[float64]^float64('+string(Classifications/Time/t)+')', void, float64);
+	
+		container Phoenix: expr =
+			"for_each_ne("
+				"/Classifications/ScenarioComponenten/CO2PriceK/name"
+				", 'ScenTempl('+ string(id(/Classifications/ScenarioComponenten/CO2PriceK))+'[/Classifications/ScenarioComponenten/CO2PriceK])'"
+			")";
+			
+		container ScenTempl: IsTemplate = "true"
+		{
+			//
+			parameter</Classifications/ScenarioComponenten/CO2PriceK> Scen;
+			//
+			
+			container ClassificationsSrc: = /Zichtjaren/Evaluation/Laagveen/Classifications;
+			
+			container CO2Emission:       = CaseTempl(/BrondataSource/Phoenix/ModelResults/Nl/MaaiveldDaling_NL_scen,   'CumCO2_Tonha_uit_BD_NL', false, false);
+			container PumpingCosts:      = CaseTempl(/BrondataSource/Phoenix/ModelResults/Waterbeheerskosten/KostenNL, 'Pomp',            true, true);
+			container Stuwkosten:        = CaseTempl(/BrondataSource/Phoenix/ModelResults/Waterbeheerskosten/KostenNL, 'Stuw_Ontkoppeld', true, true);
+			container Waterkeringkosten: = CaseTempl(/BrondataSource/Phoenix/ModelResults/Waterbeheerskosten/KostenNL, 'Waterkering',     true, true);
+			
+			container CO2Costs
+			{
+				parameter<eur_ton> PriceCO2: = /Classifications/ScenarioComponenten/CO2PriceK/Price[Scen];
+				
+				container Local
+				{
+					container Results: expr =
+						"for_each_nedvl("
+							" ClassificationsSrc/Case/name"
+							",'CO2Emission/Local/Results/'+ ClassificationsSrc/Case/name +'* float64(PriceCO2) * -1[float64]"
+							" / D/'+ ClassificationsSrc/case/TimeName"
+							", domain_grid, float64"
+							", ClassificationsSrc/Case/Label"
+						")"
+					{
+						parameter</Classifications/Time/TotaalJaar> TotaalJaar: = /Classifications/Time/TotaalJaar/TotaalJaar;
+						
+						unit<uint32> SubPeriod: Expr = "select_with_org_rel(Classifications/Time/TotaalJaarnr = TotaalJaar)"
+						{
+							attribute<string> name: Expr = "Classifications/Time/Name[org_rel]";
+						}
+						
+						parameter<string>PeriodListExpr: = 'add('+AsItemList('Results/'+Classifications/Time/Name+'/@SCEN@')+') - Results/Y2010_Y2010/@SCEN@[float64]';
+						
+						container Cum: =
+							for_each_nedvl(
+								  ClassificationsSrc/Scenario/Name
+								, replace(PeriodListExpr, '@SCEN@', ClassificationsSrc/Scenario/Name)
+								, domain_grid, float64
+								, ClassificationsSrc/Scenario/Label
+							);
+					}
+				}
+			}
+			
+			container TotalCostsWater // tijdelijk stuwkosten uitgezet omdat die niet berekend worden! (pending for input from bas).
+			{
+				container Local
+				{
+					container Results: expr =
+						"for_each_nedvl("
+							" ClassificationsSrc/Case/name"
+							",'add(PumpingCosts/Local/Results/'+ ClassificationsSrc/Case/name +', Waterkeringkosten/Local/Results/'+ ClassificationsSrc/Case/name + ', Stuwkosten/Local/Results/'+ ClassificationsSrc/Case/name + ')'"
+							", domain_grid, float64"
+							", ClassificationsSrc/Case/Label"
+						")"
+					{
+						container Cum: =
+							for_each_nedvl(
+								  ClassificationsSrc/Scenario/Name
+								, 'add(PumpingCosts/Local/Results/Cum/'+ ClassificationsSrc/Scenario/name +', Waterkeringkosten/Local/Results/Cum/'+ ClassificationsSrc/Scenario/name + ')'
+								, domain_grid, float64
+								, ClassificationsSrc/Scenario/Label
+							);
+					}
+				}
+			}
+			
+			container TotalCosts
+			{
+				container Local
+				{
+					container Results: expr =
+						"for_each_nedvl("
+							" ClassificationsSrc/Case/name"
+							",'add(TotalCostsWater/Local/Results/'+ ClassificationsSrc/Case/name +', CO2Costs/Local/Results/'+ ClassificationsSrc/Case/name+')'"
+							", domain_grid, float64"
+							", ClassificationsSrc/Case/Label"
+						")"
+					{
+						container Cum: =
+							for_each_nedvl(
+								  ClassificationsSrc/Scenario/Name
+								, 'add(TotalCostsWater/Local/Results/Cum/'+ ClassificationsSrc/Scenario/name +', CO2Costs/Local/Results/Cum/'+ ClassificationsSrc/Scenario/name + ')'
+								, domain_grid, float64
+								, ClassificationsSrc/Scenario/Label
+							);
+					}
+				}
+			}
+			
+			container CaseTempl: IsTemplate = "True"
+			{
+				//
+				container IndicatorSrc;
+				parameter<string> AttrRef;
+				parameter<Bool> IsMonetary;
+				parameter<Bool> IsCost;
+				//
+				
+				parameter<float64> CostFactor: = IsCost ? -1[float64]: 1[float64];
+				
+				container D: =
+					for_each_nedv(
+						Classifications/Time/name
+						, 'IsMonetary ?
+							r[float64]^ float64('+ string(Classifications/Time/t) + ')
+							: 1[float64]'
+						, void, float64
+					);
+
+				container Local
+				{
+					attribute<bool> DDPossible (domain_grid): = bool(Laagveen/StudyArea/DDPossible);
+					
+					container ResultsDD: expr =
+						"for_each_nedvl("
+							" ClassificationsSrc/Case/name"
+							",  '(float64(IndicatorSrc/'+ ClassificationsSrc/Case/Phoenix_rel/ScenNameDD +'/' + AttrRef + '/'+ ClassificationsSrc/Case/Phoenix_rel/TimeName +') / float64(StudyArea)"
+							"  - float64(IndicatorSrc/'+ ClassificationsSrc/Case/Phoenix_rel/ScenNameDD +'/' + AttrRef + '/'+ ClassificationsSrc/Case/Phoenix_rel/PrevTimeName +') / float64(StudyArea))"
+							" * CostFactor"
+							" / D/'+ ClassificationsSrc/case/TimeName"
+							", domain_grid, float64"
+							", ClassificationsSrc/Case/Label"
+						")";
+						
+					container ResultsNoDD: expr =
+						"for_each_nedvl("
+							" ClassificationsSrc/Case/name"
+							",  '(float64(IndicatorSrc/'+ ClassificationsSrc/Case/Phoenix_rel/ScenNameNoDD +'/' + AttrRef + '/'+ ClassificationsSrc/Case/Phoenix_rel/TimeName +') / float64(StudyArea)"
+							"  - float64(IndicatorSrc/'+ ClassificationsSrc/Case/Phoenix_rel/ScenNameNoDD +'/' + AttrRef + '/'+ ClassificationsSrc/Case/Phoenix_rel/PrevTimeName +') / float64(StudyArea))"
+							" * CostFactor"
+							" / D/'+ ClassificationsSrc/case/TimeName"
+							", domain_grid, float64"
+							", ClassificationsSrc/Case/Label"
+						")";
+						
+					container Results: expr =
+						"for_each_nedvl("
+							" ClassificationsSrc/Case/name"
+							",'value(DDPossible ? ResultsDD/'+ ClassificationsSrc/Case/name +': ResultsNoDD/'+ ClassificationsSrc/Case/name + ', float64)'"
+							", domain_grid, float64"
+							", ClassificationsSrc/Case/Label"
+						")"
+					{
+						parameter</Classifications/Time/TotaalJaar> TotaalJaar: = /Classifications/Time/TotaalJaar/TotaalJaar;
+						
+						unit<uint32> SubPeriod: Expr = "select_with_org_rel(Classifications/Time/TotaalJaarnr = TotaalJaar)"
+						{
+							attribute<string> name: Expr = "Classifications/Time/Name[org_rel]";
+						}
+						
+						parameter<string>PeriodListExpr: = 'add('+AsItemList('Results/'+Classifications/Time/Name+'/@SCEN@')+') - Results/Y2010_Y2010/@SCEN@[float64]';
+						
+						container Cum: =
+							for_each_nedvl(
+								  ClassificationsSrc/Scenario/Name
+								, replace(PeriodListExpr, '@SCEN@', ClassificationsSrc/Scenario/Name)
+								, domain_grid, float64
+								, ClassificationsSrc/Scenario/Label
+							);
+					}
+				}
+			}
+		}
+		
+		container LUS
+		{
+			container Dairy:      = IndicatorTempl(Classifications/Dairy);
+			
+			container IndicatorTempl: IsTemplate = "True"
+			{
+				//
+				container ClassificationsSrc;
+				//
+				
+				container BaseYear
+				{
+					container Local
+					{
+						parameter<string> IndicatorExpr:= 'merge(invert(ClassificationsSrc/SubAllocTypeUnit/org_rel)[LandUse/BaseYear/AllocType], float64, '+ AsItemList('/Zichtjaren/Scenarios/Indexation_NoDD/RunPeriods/Y2010_Y2010/Geschiktheid/ModelTypes/'+ClassificationsSrc/SubAllocTypeUnit/Name + '/@IND@[float64]') + ')';
+						
+						container Results: expr =
+							"for_each_nedvl("
+								"  ClassificationsSrc/IndicatorUnit/name"
+								", replace(indicatorExpr, '@IND@', ClassificationsSrc/IndicatorUnit/name)+"
+								"'[float64]'"
+								", domain_grid, float64"
+								", ClassificationsSrc/IndicatorUnit/Label"
+							")";
+					
+						container PerSubAllocType: expr =
+							"for_each_nedvl("
+								"  ClassificationsSrc/SubAllocTypeIndicator/name"
+								",'Results/'+ ClassificationsSrc/SubAllocTypeIndicator/IndicatorName + ' * LandUse/BaseYear/ggRatio/'+ ClassificationsSrc/SubAllocTypeIndicator/SubAllocTypeName"
+								", domain_grid, float64"
+								", ClassificationsSrc/SubAllocTypeIndicator/Label"
+							")";
+					}
+				}
+				
+				container Cases
+				{
+					container D: =
+						for_each_nedv(
+							ClassificationsSrc/Combi/name
+							, string(ClassificationsSrc/Combi/Monetary)+ '
+								? r[float64]^ float64('+ string(Classifications/Time/t[Classifications/Case/first_rel[ClassificationsSrc/Combi/second_rel]])+ ')
+								: 1[float64]'
+							, void, float64
+						);
+
+					container Local
+					{
+						parameter<string> IndicatorExpr: = 'merge(invert(ClassificationsSrc/SubAllocTypeUnit/org_rel)[@LandUse@], float64, '+ AsItemList('/Zichtjaren/Scenarios/@SCEN@/RunPeriods/@TIME@/Geschiktheid/ModelTypes/'+ClassificationsSrc/SubAllocTypeUnit/Name + '/@IND@[float64]') + ')';
+						
+						// attribute<float64> merge (domain_grid) := merge(
+																	// invert( ClassificationsSrc/SubAllocTypeUnit/org_rel )[ LandUse/Cases/AllocType/Y2010_Y2010/Indexation_NoDD ]
+																	// , float64
+																	// , /Zichtjaren/Scenarios/Indexation_NoDD/RunPeriods/Y2010_Y2010/Geschiktheid/ModelTypes/agr_gg_vee_extensief/Totaal_ha_year [float64]
+																	// , /Zichtjaren/Scenarios/Indexation_NoDD/RunPeriods/Y2010_Y2010/Geschiktheid/ModelTypes/agr_gg_vee/Totaal_ha_year [float64]
+																	// , /Zichtjaren/Scenarios/Indexation_NoDD/RunPeriods/Y2010_Y2010/Geschiktheid/ModelTypes/agr_gg_vee_intensief/Totaal_ha_year [float64]
+																	// , /Zichtjaren/Scenarios/Indexation_NoDD/RunPeriods/Y2010_Y2010/Geschiktheid/ModelTypes/natuur_gras/Totaal_ha_year [float64]
+																	// );
+
+						// /Zichtjaren/Evaluation/Laagveen/Results/Indicators/PV/LUS/Dairy/Cases/Local/ResultsSrc/MakeResults/Totaal_ha_year/Y2010_Y2010/Indexation_NoDD
+						
+						container ResultsSrc
+						{
+							container MakeResults :=
+								for_each_nedvlat(
+									  ClassificationsSrc/Combi/name
+									,'('+ replace(indicatorExpr, '@LandUse@', 'LandUse/Cases/AllocType/'+ClassificationsSrc/Combi/casename, '@SCEN@', ClassificationsSrc/Combi/ScenName, '@TIME@', ClassificationsSrc/Combi/TimeName,'@IND@', ClassificationsSrc/Combi/IndicatorName)+'[float64] 
+										* float64('+ string(ClassificationsSrc/Combi/PeriodDuration) + ')[float64])
+										/ D/'+ ClassificationsSrc/Combi/name
+									, domain_grid
+									, float64
+									, ClassificationsSrc/Combi/Label
+									,'%LocalDataProjDir%/Indicators/'+ PVRef + '/'+ ClassificationsSrc/Combi/Label+'.tif'
+									, 'gdalwrite.grid'
+								);
+								
+							container ReadResults: expr =
+								"for_each_ndvla("
+									"  ClassificationsSrc/Combi/name"
+									", domain_grid, float64"
+									", ClassificationsSrc/Combi/Label"
+									",'%LocalDataProjDir%/Indicators/'+ PVRef + '/'+ ClassificationsSrc/Combi/Label+'.tif'"
+								")";
+						}
+						
+						container Results: = ResultsSrc/MakeResults
+						{
+							parameter</Classifications/Time/TotaalJaar> TotaalJaar: = /Classifications/Time/TotaalJaar/TotaalJaar;
+							
+							unit<uint32> SubPeriod: Expr = "select_with_org_rel(Classifications/Time/TotaalJaarnr = TotaalJaar)"
+							{
+								attribute<string> name: Expr = "Classifications/Time/Name[org_rel]";
+			
+							}
+			
+							parameter<string>LastPeriodName: = last(SubPeriod/name);
+							parameter<string>PeriodListExpr: = 'add('+AsItemList('Results/@IND@/'+Classifications/Time/Name+'/@SCEN@')+') - Results/@IND@/Y2010_Y2010/@SCEN@[float64]';
+							
+							container Cum: =
+								for_each_nedvl(
+									  ClassificationsSrc/ScenarioCombi/Name
+									, replace(PeriodListExpr, '@IND@', ClassificationsSrc/ScenarioCombi/IndicatorName,'@SCEN@', ClassificationsSrc/ScenarioCombi/ScenName)
+									, domain_grid, float64
+									, ClassificationsSrc/ScenarioCombi/Label
+								);
+						}
+							
+						container PerSubAllocType :=
+							for_each_nedvl(
+								ClassificationsSrc/SubAllocTypeCombi/name
+								,'Results/'+ ClassificationsSrc/SubAllocTypeCombi/CombiName + ' * float64(LandUse/Cases/ggRatio/'+ClassificationsSrc/SubAllocTypeCombi/SubAllocTypeName+'/'+ClassificationsSrc/SubAllocTypeCombi/CaseName+')'
+								, domain_grid
+								, float64
+								, ClassificationsSrc/SubAllocTypeCombi/Label
+							);
+					}
+				}
+			}
+		}
+	}
+}
