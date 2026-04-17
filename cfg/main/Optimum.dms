@@ -1,0 +1,248 @@
+//////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                      //
+//                             (C) Basisconfiguratie 2011                               //
+//                                                                                      //
+//                         Planbureau voor de Leefomgeving                              //
+//                               December 2011                                          //
+//////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                      //
+//     * In het geval van externe publicatie van onderzoeksresultaten waarbij gebruik   //
+//       is gemaakt van de verstrekte gegevens dient de gebruiker deze resultaten aan   //
+//       het PBL mede te delen middels de toezending van 2 exemplaren van de betref-    //
+//       fende publicatie aan het hoofd van het team ROL van het PBL.                   //
+//                                                                                      //
+//     * In elke publicatie waarin de gegevens van het PBL in enige vorm zijn opgenomen,//
+//       zal de gebruiker de vermelding opnemen: "Bron: Planbureau voor de Leefomgeving"//
+//       Indien het een bewerking van de gegevens betreft, dient te worden opgenomen:   //
+//       "Gebaseerd op Planbureau voor de Leefomgeving gegevens".                       //
+//                                                                                      //
+//     * Het PBL is onder geen enkele voorwaarde aansprakelijk tegenover gebruiker voor //
+//       enige schade, mede begrepen winstderving, verlies van gegevens, schade         //
+//       tengevolge van fouten of onjuistheden in gegevens, schade tengevolge van fouten//
+//       of onvolkomenheden in de documentatie of andere incidentele of gevolgschade    //
+//       welke voortvloeit uit of in verband staat met gebruik of het niet kunnen ge-   //
+//       bruiken van gegevens.                                                          //
+//                                                                                      //
+//     * Het PBL staat niet in voor de juistheid van de resultaten die worden verkregen //
+//       door combinatie van diverse, op zichzelf staande PBL-gegevens onderling,       //
+//       of met die uit andere bronnen.                                                 //
+//                                                                                      //
+//////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                      //
+// Deze DMS-file wordt aangeroepen door stam.dms .                                      //
+// In deze configuratiefile worden de cases voor het berekenen van het toekomstig       //
+// grondgebruik geconfigureerd. De cases betreffen verschillende periodes.              //
+//                                                                                      //
+//////////////////////////////////////////////////////////////////////////////////////////
+
+container Optimum
+{
+	unit<uint32> PG:= /Geography/RegioIndelingen/peilgebied;
+	
+	attribute<PG> PeilGrid (domain_grid): = /Geography/RegioGrids/peilgebied;
+	
+	container Scenario: =
+		for_each_ne(
+			/Classifications/ScenarioComponenten/EvalK/name,
+			'ScenTempl('+ string(id(/Classifications/ScenarioComponenten/EvalK))+'[/Classifications/ScenarioComponenten/EvalK])'
+		);
+	
+	container ScenTempl: IsTemplate = "true"
+	{
+		//
+		parameter</Classifications/ScenarioComponenten/EvalK> Scen;
+		//
+		
+		parameter<float32> CO2Price: = /Classifications/ScenarioComponenten/EvalK/CO2Price[Scen];
+		parameter<string> EvalKName: = /Classifications/ScenarioComponenten/EvalK/name[Scen];
+		
+		//de scenario's uit de dalloc (farming conditions) die gegeven het eval scenario (exo drivers: co2, melkprijs, DD) waarin deze berekend werden mogen worden vergeleken		
+		unit<uint32> ScenTechSubset: = select_with_org_rel(ScenarioComponenten/DrainageK/DeepDrainage_name == /Classifications/ScenarioComponenten/EvalK/DeepDrainage_name[Scen])
+		{
+			attribute<string> name: expr = "ScenarioComponenten/DrainageK/name[org_rel]";
+			attribute<UInt32> BrushColor(.): DialogType = "BrushColor", expr = "ScenarioComponenten/DrainageK/BrushColor[org_rel]";
+		}
+		
+		unit<uint32> ScenTechSubsetPlus: expr = "Range(uint32, uint32(0), uint32(#ScenTechSubset + 1[uint32]))"
+		{
+			attribute<string> name: expr = "union_data(., ScenTechSubset/name, 'vernatting')";
+			attribute<string> Label: expr= "name", DialogType = "LabelText";
+			attribute<UInt32> BrushColor(.): DialogType = "BrushColor", expr = "union_data(., ScenTechSubset/BrushColor, rgb(0,153,153))";
+			
+			container V: Expr= "for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .)";
+		}
+		
+		parameter<string> CO2Price_name:  = /Classifications/ScenarioComponenten/EvalK/CO2Price_name[Scen];
+
+		parameter<string> PhoenixIndicatorSrc: = 'Laagveen/Results/Indicators/PVs/Phoenix/'+ CO2Price_name;
+		parameter<string> LUSIndicatorSrc: =     'Laagveen/Results/Indicators/PV/LUS';
+
+		container Classifications
+		{
+			unit<uint8> Indicators: NrOfRows = 3
+			{
+				attribute<string> name: ['WaterManagement','CO2','Total_Dairy'];
+				attribute<string> SrcRef: ['/TotalCostsWater/Local/Results/Cum/','/CO2Costs/Local/Results/Cum/','/Dairy/Cases/Local/Results/Cum/Totaal_ha_year/'];
+				attribute<bool>IsFromLUS: [false, false, true];
+				
+				container StakeholderShares
+				{
+					attribute<float64> Farmer                        (..): [0.0, 0.0, 1.0];
+					attribute<float64> Environment                   (..): [0.0, 1.0, 0.0];
+					attribute<float64> FarmerEnvironment             (..): [0.0, 1.0, 1.0];
+					attribute<float64> FarmerEnvironmentWaterboard   (..): [1.0, 1.0, 1.0];
+				}
+			}
+			
+			unit<uint8> Stakeholders: NrOfRows = 4
+			{
+				attribute<string> name: ['Farmer','Environment', 'FarmerEnvironment', 'FarmerEnvironmentWaterboard'];
+			}
+		}
+		
+		container IndicatorSrc
+		{
+			parameter<string> MakeExprPerScen: [
+				"for_each_nedvat("
+					"ScenTechSubset/name,"
+					"'@IND@' + ScenTechSubset/name+'[float64]',"
+					"domain_grid, float64,"
+					"'%LocalDataProjDir%/Indicators/@YEAR@/@SCEN@/@IND2@/'+ScenTechSubset/name+'.tif',"
+					"'tif'"
+				")"
+			];
+			
+			container MakeIndicators: =
+				for_each_ne(
+					Classifications/Indicators/name,
+					Classifications/Indicators/IsFromLUS ?
+						replace(MakeExprPerScen, '@YEAR@', string(/EndYear), '@IND@', LUSIndicatorSrc     + Classifications/Indicators/SrcRef, '@SCEN@', CO2Price_name ,'@IND2@', Classifications/indicators/name):
+						replace(MakeExprPerScen, '@YEAR@', string(/EndYear), '@IND@', PhoenixIndicatorSrc + Classifications/Indicators/SrcRef, '@SCEN@', CO2Price_name ,'@IND2@', Classifications/indicators/name)
+				);
+			
+			parameter<string> ReadExprPerScen: [
+				"for_each_ndva("
+					"ScenTechSubset/name,"
+					"domain_grid, float64,"
+					"'%LocalDataProjDir%/Indicators/@YEAR@/@SCEN@/@IND2@/'+ScenTechSubset/name+'.tif'"
+				")"
+			];
+				
+			container ReadIndicators: =
+				for_each_ne(
+					Classifications/Indicators/name,
+						replace(ReadExprPerScen, '@YEAR@', string(/EndYear),'@SCEN@', CO2Price_name ,'@IND2@', Classifications/indicators/name)
+				);
+		}
+		
+		container Indicators: = = DiscAllocOntkoppeld ? 'IndicatorSrc/ReadIndicators': 'IndicatorSrc/MakeIndicators';
+// 		container Indicators: = IndicatorSrc/ReadIndicators
+			
+		container PerStakeholder:=
+			for_each_ne(
+				classifications/Stakeholders/name,
+				'StakeHolderTempl('+string(id(classifications/Stakeholders))+ '[classifications/Stakeholders])'
+			);
+			
+		container StakeholderTempl: IsTemplate = "true"
+		{
+			//
+			parameter<classifications/Stakeholders> id;
+			//
+			
+			unit<uint8> Indicators: = Classifications/indicators
+			{
+				attribute<float64> StakeholderShare: = ='classifications/Indicators/StakeholderShares/'+ classifications/stakeholders/name[id];
+			}
+		
+			parameter<string> ExprPerScen: [
+				"for_each_nedv("
+					"ScenTechSubset/name,"
+					"'@SCEN@/Indicators/@IND@/'+ ScenTechSubset/name+'* @IND2@[float64]',"
+					"domain_grid, float64"
+				")"
+			];
+			
+			container PerIndicator: =
+				for_each_ne(
+					Indicators/name,
+					replace(ExprPerScen, '@SCEN@', EvalKName ,'@IND@', Indicators/name, '@IND2@', string(Indicators/StakeholderShare[Indicators]))
+				);
+				
+			parameter<string> AggregateExpr: [
+				"for_each_nedv("
+					"ScenTechSubset/name,"
+					"'any(IsDefined(PerIndicator/@IND@/'+ScenTechSubset/name+'), PeilGrid) ? sum(PerIndicator/@IND@/'+ScenTechSubset/name+', PeilGrid): 0[float64] / 0[float64]',"
+					"PG, float64"
+				")"
+			];
+				
+			container PerAggregateIndicator: =
+				for_each_ne(
+					Classifications/Indicators/name,
+						replace(AggregateExpr, '@IND@', Classifications/indicators/name)
+				);
+				
+			parameter<string>IndicatorListExpr: = 'add('+AsItemList('PerAggregateIndicator/'+Indicators/name+'/@SCEN@')+ ')';
+
+			container Total:=
+				for_each_nedv(
+					ScenTechSubset/name,
+					replace(IndicatorListExpr, '@SCEN@', ScenTechSubset/name),
+					PG, float64
+				)
+			{
+				container Optimum1
+				{
+					attribute<float64> Score (PG): = = 'Max_Elem('+ AsItemList(ScenTechSubset/name)+ ')[float64]';
+					
+					attribute<ScenTechSubset> Alternative (PG): = = '!IsDefined(Score) ? value(0[float64] / 0[float64], ScenTechSubset): argmax('+ AsItemList(ScenTechSubset/name)+ ')[ScenTechSubset]';
+					
+					container Grid
+					{
+						attribute<ScenTechSubset> Alternative (domain_grid): = ../Alternative[PeilGrid];
+						parameter<string> IndicatorListExpr: = 'merge(uint16(Alternative), float64,'+ AsItemList('...../PerIndicator/@/'+ ScenTechSubset/name)+')';
+							
+						container PerIndicator: =
+							for_each_nedv(
+								Indicators/name,
+								replace(IndicatorListExpr, '@', Indicators/name),
+								domain_grid, float64
+							)
+						{
+							attribute<float64> Total (domain_grid): = = 'add('+AsItemList(Indicators/name)+')';
+						}
+							
+						attribute<Laagveen/Classifications/AllocType> LandUseEndYr (domain_grid): = =
+							'merge(uint16(Alternative), Laagveen/Classifications/AllocType,'+ AsItemList('Results/LandUse/Cases/AllocType/'+ Laagveen/Results/Indicators/PV/LUS/Dairy/Cases/Local/Results/LastPeriodName+'/'+ ScenTechSubset/name)+')';
+					}
+				}
+				
+				container Optimum 	// actieve vernatting, natuurgras en 0 co2 e 0 net rev als Optimum/score < 0. betekent dat geen enkele co2 uitstoot en noch kosten noch revenues van gras voorondersteld in deze gevallen
+									// dat bij actieve vernatting natuur gras ontstaat en dat hierbij noch net rev noch co2 uitstoot plaatsvindt is aanname. Waarschijnljk zijn opbrengste mogelijk die co2 uitstoor overstijgen bij vernatten: reed bijv.
+				{
+					attribute<float64> Score (PG): = Max_Elem(0[float64], Optimum1/Score[float64]);
+					
+					attribute<ScenTechSubsetPlus> Alternative (PG): = Optimum1/Score < 0[float64] ? ScenTechSubsetPlus/V/vernatting: Optimum1/Alternative[ScenTechSubsetPlus];
+					
+					container Grid
+					{
+						attribute<ScenTechSubsetPlus> Alternative (domain_grid): = ../Alternative[PeilGrid];
+
+						container PerIndicator: =
+							for_each_nedv(
+								Indicators/name,
+								'Alternative == ScenTechSubsetPlus/V/vernatting ? 0[float64]: Optimum1/Grid/PerIndicator/'+Indicators/name,
+								domain_grid, float64
+							)
+						{
+							attribute<float64> Total (domain_grid): = = 'add('+AsItemList(Indicators/name)+')';
+						}
+						
+						attribute<Laagveen/Classifications/AllocType> LandUseEndYr (domain_grid): = Alternative == ScenTechSubsetPlus/V/vernatting ? Laagveen/Classifications/AllocType/V/natuur_gras: Optimum1/Grid/LandUseEndYr;
+					}
+				}
+			}
+		}
+	}
+}
