@@ -16,7 +16,8 @@
 container Allocatie
 : Descr = "Container waar de daadwerkelijke allocatie in deze iteratie wordt gekozen."
 {
-	parameter<String> sector_domain_name := lowercase(Sector_name) == lowercase('Wind') ? 'CompactedAdminDomain' : 'CompactedAllocDomain';
+	// parameter<String> sector_domain_name := lowercase(Sector_name) == lowercase('Wind') ? 'CompactedAdminDomain' : 'CompactedAllocDomain';
+	parameter<String> sector_domain_name := 'CompactedAdminDomain';
 	unit<uint64>      sector_domain      := =sector_domain_name;
 	
 	container GeschikthedenLiggenBovenAfkapgrenzen :=
@@ -48,8 +49,30 @@ container Allocatie
 		? 'merge(value(Resultaat[CompactedAdminDomain/'+sector_domain_name+'_rel], UInt16), OP ,'+asItemList('Subsectoren/'+Subsector/name+'/CompactedAdminDomain/Geschiktheid_ArgMax_OP')+')'
 		: 'const(null_b, CompactedAdminDomain, OP)', Descr = "De OP van de subsector die in deze cel het hoogst scoort, of undefined als er geen subsector is.";
 	
-	attribute<Bool>              Beschikbaar           (CompactedAdminDomain) := = 'merge(value(Resultaat[CompactedAdminDomain/'+sector_domain_name+'_rel], UInt16), bool,'+asItemList('Subsectoren/'+Subsector/name+'/CompactedAdminDomain/Beschikbaar')+')', Descr = "Is deze cel ook daadwerkelijk beschikbaar voor allocatie.";
-	attribute<OP>                per_OP                (CompactedAdminDomain) := Beschikbaar ? Resultaat_OP : (0/0)[OP], Descr = "De OP van de gealloceerde subsector, of undefined als deze toch niet beschikbaar bleek te zijn.";
-	attribute<Sector/xSubsector> per_SectorxSubsector0 (CompactedAdminDomain) := ='(Subsector/SectorxSubSector_rel[Resultaat])[CompactedAdminDomain/'+sector_domain_name+'_rel]', Descr = "De SectorxSubsector van de gealloceerde subsector.";
-	attribute<Sector/xSubsector> per_SectorxSubsector  (CompactedAdminDomain) := Beschikbaar ? per_SectorxSubsector0 : (0/0)[Sector/xSubsector], Descr = "De SectorxSubsector van de gealloceerde subsector, of undefined als deze toch niet beschikbaar bleek te zijn.";
+	attribute<Bool>              Beschikbaar                  (CompactedAdminDomain) := = 'merge(value(Resultaat, UInt16), bool,'+asItemList('Subsectoren/'+Subsector/name+'/CompactedAdminDomain/Beschikbaar')+')', Descr = "Is deze cel ook daadwerkelijk beschikbaar voor allocatie.";
+	attribute<OP>                per_OP_initial               (CompactedAdminDomain) := Beschikbaar ? Resultaat_OP : (0/0)[OP], Descr = "De OP van de gealloceerde subsector, of undefined als deze toch niet beschikbaar bleek te zijn.";
+	attribute<Sector/xSubsector> per_SectorxSubsector_initial (CompactedAdminDomain) := Beschikbaar ? Subsector/SectorxSubSector_rel[Resultaat] : (0/0)[Sector/xSubsector], Descr = "De SectorxSubsector van de gealloceerde subsector, of undefined als deze toch niet beschikbaar bleek te zijn.";
+	attribute<Sector/xSubsector> per_SectorxSubsector_recoll           (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, per_SectorxSubsector_initial);
+	
+	unit<uint32> VindAangeslotenCellen := district_8(IsDefined(per_SectorxSubsector_recoll))
+	{
+		attribute<ha>   Oppervlakte              (AdminDomain) := (pcount(Districts)[float32] * AdminDomain/NrHaPerCell)[Districts];
+		attribute<bool> IsNonGroup               (AdminDomain) := Oppervlakte == const(max(Oppervlakte), AdminDomain) && max(Oppervlakte) >= 0.5f * rdc_meter/areaal; //
+		attribute<bool> IsAllocGroupLargeEnough  (AdminDomain) := SourceData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain 
+																	? Oppervlakte >= ModelParameters/minimum_alloc_group_size_Binnenstedelijk && NOT(IsNonGroup)
+																	: Oppervlakte >= ModelParameters/minimum_alloc_group_size_Buitenstedelijk && NOT(IsNonGroup);
+		attribute<bool> IsAfgewezen              (AdminDomain) := SourceData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain 
+																	? Oppervlakte < ModelParameters/minimum_alloc_group_size_Binnenstedelijk && NOT(IsNonGroup)
+																	: Oppervlakte < ModelParameters/minimum_alloc_group_size_Buitenstedelijk && NOT(IsNonGroup); 
+	}
+	
+	//viel in vorige iter af.
+	
+	attribute<bool>              IsAllocGroupLargeEnough (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, VindAangeslotenCellen/IsAllocGroupLargeEnough);
+	attribute<bool>              IsAfgewezen0           (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, VindAangeslotenCellen/IsAfgewezen);
+	
+	attribute<Sector/xSubsector> per_SectorxSubsector    (CompactedAdminDomain) := IsDefined(per_SectorxSubsector_initial) && IsAllocGroupLargeEnough ? per_SectorxSubsector_initial : null_b;
+	attribute<OP>                per_OP                  (CompactedAdminDomain) := IsDefined(per_OP_initial) && IsAllocGroupLargeEnough ? per_OP_initial : null_b;
+	
+	
 }
