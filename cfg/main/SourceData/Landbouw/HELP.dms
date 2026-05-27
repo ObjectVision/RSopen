@@ -1,0 +1,222 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Is Deep Draining possible in this scenario? De dikte van het veenpakket is in meter en is afkomstig van het
+// ondergrond bestand dat met het Atlantis model gemaakt is. Dit ondergrond bestand is voor een heel groot deel
+// (excl Flevoland) gebaseerd op geotop. 0: Kleiner risico, 1: Nagenoeg gelijk risico, 2: Enig groter risico, 3:
+// Matig groter risico, 4: Aanzienlijk groter risico
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container HELP : using = "Classifications/Landbouw/phoenix"
+{
+	attribute<Float32> DDPossible (rdc_25m) := float32(DD30_uit_droogleggingzomer_00), Descr = "Is Deep Draining possible in this scenario?"; 
+	
+	attribute<Classifications/Landbouw/HELPbodems> HELPbodemsNL (rdc_25m)
+	:	Label       = "HELPbodemsNL"
+	,	Source      = "Bron14, 3 maart 2015"
+					  "vergridding met maximum combined area optie op HELP_nummer veld in HELPbodemsNL.shp"
+	,	StorageName = "%RS_Lb_DataDir%/Landgebruik/HELPbodemsNL_met_HELP_nummer_mca.tif";
+
+	attribute<Bool> DD30_uit_droogleggingzomer_00 (rdc_25m)
+	:	Label       = "DD30_uit_droogleggingzomer_00"
+	,	Source      = "export van resultaat /BronDataSource/Phoenix/ModelResults/AnalysePeilgebieden/DroogleggingZomer_DD_deel/Nl/PINoDD/J000_ en verwerking in ArcGIS tot boolean-tif"
+					  "https:\//pbl.sliksvn.com/ruimtescanner/PBL/SourceData/Trunk/LUMOS revison 5012"
+					  "https:\//pbl.sliksvn.com/ruimtescanner/PBL/ProjDir/branches/PeatyMeadows_Stripped revision 5010"
+					  "geodms 7177x64"
+	,	url         = ""
+	,	StorageName = "%RS_Lb_DataDir%/water/DD30_uit_droogleggingzomer_00.tif";
+
+	attribute<Classifications/Landbouw/BodemKlasse14k> Bodem_HELP1 (rdc_25m):
+		Label = "Soil map used to create yield reduction maps",
+		Source = "Michiel van Eupen 2010",
+		StorageName = "%RS_Lb_DataDir%/landgebruik/bodem_help.tif";
+
+	attribute<Classifications/Landbouw/BodemKlasse14k> Bodem_HELP             (rdc_25m) := MakeDefined(Bodem_HELP1, 0b);
+	attribute<bool>                                    Bodem_HELP_kleiig      (rdc_25m) := Bodem_HELP >= BodemKlasse14k/V/V_W && Bodem_HELP <= BodemKlasse14k/V/K5;
+	attribute<bool>                                    Bodem_HELP_zandig      (rdc_25m) := Bodem_HELP >= BodemKlasse14k/V/Z30 && Bodem_HELP <= BodemKlasse14k/V/Grind30;
+
+	attribute<Bool>    Verhoogd      (rdc_100m) := const(FALSE, rdc_100m);
+	attribute<Float32> Verhoogd_NULL (rdc_100m) := !Verhoogd ? 1[float32] : 'null'[float32];
+	parameter<Float32> NULL_mbd:= 'null'[meterbd];
+	
+	container GHG_maaiveld_cm:  =
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'GHG_maaiveld_cm' 
+			 , '((MaaiveldHoogte_mNAP_sc/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP_sc)-(GHG_mNAP_sc/'+WaterschapZichtjaarScenario/Label+'GHG_mNAP_sc))*100[float32]'
+			,  rdc_100m
+			,  float32
+			,  'Gemiddeld hoogste grondwaterstand (GHG) in meter maaiveld met stedelijke correctie'
+		);
+
+	container GHG_maaiveld_HELPKlasse:=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'GHG_maaiveld_cm_HELPKlasse' 
+			 , 'Classify(Help/GHG_maaiveld_cm/'+ WaterschapZichtjaarScenario/Label+'GHG_maaiveld_cm[int32], Classifications/Landbouw/GHGHELPKlasse/Classes)'
+			,  rdc_100m
+			,  Classifications/Landbouw/GHGHELPKlasse
+			,  'Gemiddeld hoogste grondwaterstand (GHG) in HELPKlassen (elke 5 cm) met stedelijke correctie'
+		);
+	
+	parameter<String> merge_ghg_Indexation_NoDD := asitemlist('GHG_maaiveld_HELPKlasse/' + Waterschap/name + '/PINoDD/@Y@GHG_maaiveld_cm_HELPKlasse');
+	parameter<String> merge_glg_Indexation_NoDD := asitemlist('GLG_maaiveld_HELPKlasse/' + Waterschap/name + '/PINoDD/@Y@GLG_maaiveld_cm_HELPKlasse');
+	
+	parameter<String> merge_ghg_Fixation_NoDD := asitemlist('GHG_maaiveld_HELPKlasse/' + Waterschap/name + '/PFNoDD/@Y@GHG_maaiveld_cm_HELPKlasse');
+	parameter<String> merge_glg_Fixation_NoDD := asitemlist('GLG_maaiveld_HELPKlasse/' + Waterschap/name + '/PFNoDD/@Y@GLG_maaiveld_cm_HELPKlasse');
+	
+	parameter<String> merge_ghg_Indexation_DD := asitemlist('GHG_maaiveld_HELPKlasse/' + Waterschap/name + '/PidD/@Y@GHG_maaiveld_cm_HELPKlasse');
+	parameter<String> merge_glg_Indexation_DD := asitemlist('GLG_maaiveld_HELPKlasse/' + Waterschap/name + '/PidD/@Y@GLG_maaiveld_cm_HELPKlasse');
+	
+	container GHG_merged_Indexation_NoDD := 
+		for_each_nedv(
+			Zichtjaar/Label,
+			'MakeDefined('+replace(merge_ghg_Indexation_NoDD, '@Y@', Zichtjaar/Label)+')',
+			rdc_100m, Classifications/Landbouw/GHGHELPKlasse
+		);
+	container GHG_merged_Fixation_NoDD := 
+		for_each_nedv(
+			Zichtjaar/Label,
+			'MakeDefined('+replace(merge_ghg_Fixation_NoDD, '@Y@', Zichtjaar/Label)+')',
+			rdc_100m, Classifications/Landbouw/GHGHELPKlasse
+		);
+	container GHG_merged_Indexation_DD := 
+		for_each_nedv(
+			Zichtjaar/Label,
+			'MakeDefined('+replace(merge_ghg_Indexation_DD, '@Y@', Zichtjaar/Label)+')',
+			rdc_100m, Classifications/Landbouw/GHGHELPKlasse
+		);
+	container GLG_merged_Indexation_NoDD := 
+		for_each_nedv(
+			Zichtjaar/Label,
+			'MakeDefined('+replace(merge_glg_Indexation_NoDD, '@Y@', Zichtjaar/Label)+')',
+			rdc_100m, Classifications/Landbouw/GLGHELPKlasse
+		);
+	container GLG_merged_Fixation_NoDD := 
+		for_each_nedv(
+			Zichtjaar/Label,
+			'MakeDefined('+replace(merge_glg_Fixation_NoDD, '@Y@', Zichtjaar/Label)+')',
+			rdc_100m, Classifications/Landbouw/GLGHELPKlasse
+		);
+	container GLG_merged_Indexation_DD := 
+		for_each_nedv(
+			Zichtjaar/Label,
+			'MakeDefined('+replace(merge_glg_Indexation_DD, '@Y@', Zichtjaar/Label)+')',
+			rdc_100m, Classifications/Landbouw/GLGHELPKlasse
+		);
+
+	// nodig voor HELP-tabellen tov maaiveld ipv tov NAP
+	container GLG_maaiveld_cm:=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'GLG_maaiveld_cm' 
+			 , '((MaaiveldHoogte_mNAP_sc/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP_sc)-(GLG_mNAP_sc/'+WaterschapZichtjaarScenario/Label+'GLG_mNAP_sc))*100[float32]'
+			,  rdc_100m
+			,  float32
+			,  'Gemiddeld hoogste grondwaterstand (GLG) in meter maaiveld'
+		);
+
+	container GLG_maaiveld_HELPKlasse:=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'GLG_maaiveld_cm_HELPKlasse' 
+			 , 'Classify(Help/GLG_maaiveld_cm/'+ WaterschapZichtjaarScenario/Label+'GLG_maaiveld_cm[int32], Classifications/Landbouw/GLGHELPKlasse/Classes)'
+			,  rdc_100m
+			,  Classifications/Landbouw/GLGHELPKlasse
+			,  'Gemiddeld hoogste grondwaterstand (GLG) in HELPKlassen (elke 5 cm)'
+		);
+		
+	container MaaiveldHoogte_mNAP_sc :=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'MaaiveldHoogte_mNAP' + '_sc' 
+			, 'not(Verhoogd)
+			 ? (MaaiveldHoogte_mNAP/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP)
+			 : MaaiveldHoogte_mNAP/'+WaterschapZichtjaarScenario/samenvoeg_nr1_nr3+'/J000_MaaiveldHoogte_mNAP'
+			,  rdc_100m
+			,  meterhoogte
+			,  'MaaiveldHoogte in meter NAP met stedelijke correctie'
+		);
+		
+	container MaaiveldHoogte_mNAP_src :=
+		for_each_ndvda(
+			 WaterschapZichtjaarScenario/Label + 'MaaiveldHoogte_mNAP' 
+			,  rdc_100m
+			,  meterhoogte
+			,  'MaaiveldHoogte in meter NAP'
+			, '%RS_Lb_DataDir%/Phoenix/' + WaterschapZichtjaarScenario/filename +'MaaiveldHoogte_mNAP.tif'
+		);
+		
+	container MaaiveldHoogte_mNAP :=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'MaaiveldHoogte_mNAP' 
+			 , '((MaaiveldHoogte_mNAP_src/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP)<-1999[float32])'
+			'? NULL_mbd'
+			': (MaaiveldHoogte_mNAP_src/'+WaterschapZichtjaarScenario/Label+'MaaiveldHoogte_mNAP)'
+			,  rdc_100m
+			,  meterhoogte
+			,  'Cumulatieve MaaiveldDaling waarbij -9999 op null wordt gezet tbv compatibiliteit tussen geodmsversies 7.125-7.130, zie ook http://mantis.objectvision.nl/view.php?id=739'
+		);
+	container GHG_mNAP_sc :=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'GHG_mNAP' + '_sc' 
+			, 'not(Verhoogd)
+			 ? (GHG_mNAP/'+WaterschapZichtjaarScenario/Label+'GHG_mNAP)
+			 : GHG_mNAP/'+WaterschapZichtjaarScenario/samenvoeg_nr1_nr3+'/J000_GHG_mNAP'
+			,  rdc_100m
+			,  float32
+			,  'Gemiddeld hoogste grondwaterstand (GHG) in meter NAP met stedelijke correctie'
+		);
+
+	container GLG_mNAP_sc :=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'GLG_mNAP' + '_sc' 
+			, 'not(Verhoogd) 
+			 ? (GLG_mNAP/'+WaterschapZichtjaarScenario/Label+'GLG_mNAP)
+			 : GLG_mNAP/'+WaterschapZichtjaarScenario/samenvoeg_nr1_nr3+'/J000_GLG_mNAP'
+			,  rdc_100m
+			,  float32
+			,  'Gemiddeld laagste grondwaterstand (GLG) in meter NAPmet stedelijke correctie'
+		);
+		
+	container GHG_mNAP :=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'GHG_mNAP' 
+			 , '((GHG_mNAP_src/'+WaterschapZichtjaarScenario/Label+'GHG_mNAP)<-1999[float32])'
+			'? NULL_mbd'
+			': (GHG_mNAP_src/'+WaterschapZichtjaarScenario/Label+'GHG_mNAP)'
+			,  rdc_100m
+			,  float32
+			,  'Cumulatieve MaaiveldDaling waarbij -9999 op null wordt gezet tbv compatibiliteit tussen geodmsversies 7.125-7.130, zie ook http://mantis.objectvision.nl/view.php?id=739'
+		);
+
+	container GLG_mNAP :=
+		for_each_nedvd(
+			 WaterschapZichtjaarScenario/Label + 'GLG_mNAP' 
+			 , '((GLG_mNAP_src/'+WaterschapZichtjaarScenario/Label+'GLG_mNAP)<-1999[float32])'
+			'? NULL_mbd'
+			': (GLG_mNAP_src/'+WaterschapZichtjaarScenario/Label+'GLG_mNAP)'
+			,  rdc_100m
+			,  float32
+			,  'Cumulatieve MaaiveldDaling waarbij -9999 op null wordt gezet tbv compatibiliteit tussen geodmsversies 7.125-7.130, zie ook http://mantis.objectvision.nl/view.php?id=739'
+		);
+	container GHG_mNAP_src :=
+		for_each_ndvda(
+			 WaterschapZichtjaarScenario/Label + 'GHG_mNAP' 
+			,  rdc_100m
+			,  float32
+			,  'Gemiddeld hoogste grondwaterstand (GHG) in meter NAP'
+			, '%RS_Lb_DataDir%/Phoenix/' + WaterschapZichtjaarScenario/filename +'GHG_mNAP.tif'
+		);
+
+	container GLG_mNAP_src :=
+		for_each_ndvda(
+			 WaterschapZichtjaarScenario/Label + 'GLG_mNAP' 
+			,  rdc_100m
+			,  float32
+			,  'Gemiddeld laagste grondwaterstand (GLG) in meter NAP'
+			, '%RS_Lb_DataDir%/Phoenix/' + WaterschapZichtjaarScenario/filename +'GLG_mNAP.tif'
+		);
+}
