@@ -88,6 +88,168 @@ container Landbouw : using = "Classifications/Landbouw"
 	
 	container Yield_Reduction
 	{
+		container WWL_relatie_database
+		{
+			unit<spoint> dmgwet
+			: StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database.nc:dmgwet"
+			, StorageType = "gdal.grid"
+			, StorageReadOnly = "TRUE";
+			unit<spoint> dmgdry
+			: StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database.nc:dmgdry"
+			, StorageType = "gdal.grid"
+			, StorageReadOnly = "TRUE";
+			unit<spoint> dmgind
+			: StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database.nc:dmgind"
+			, StorageType = "gdal.grid"
+			, StorageReadOnly = "TRUE";
+			unit<spoint> dmgdir
+			: StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database.nc:dmgdir"
+			, StorageType = "gdal.grid"
+			, StorageReadOnly = "TRUE";
+
+			unit<spoint> dmgtot
+			: StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database.nc:dmgtot"
+			, StorageType = "gdal.grid"
+			, StorageReadOnly = "TRUE";
+
+			unit<uint32> banden := cat_range(0, 2844)
+			{
+				attribute<uint32> bandnr := id(.) + 1;
+				attribute<string> name := 'b'+string(bandnr);
+			}
+
+			container dmgtot_bands := 
+				for_each_ndvs(
+					banden/name
+					, dmgtot
+					, float32
+					, "BANDS=" + string(id(banden))
+				) 
+				, StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database.nc:dmgtot"
+				, StorageType     = "gdal.grid"
+				, StorageReadOnly = "True";
+
+			container dmgwet_bands := 
+				for_each_ndvs(
+					banden/name
+					, dmgwet
+					, float32
+					, "BANDS=" + string(id(banden))
+				) 
+				, StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database.nc:dmgwet"
+				, StorageType     = "gdal.grid"
+				, StorageReadOnly = "True";
+
+			container dmgdry_bands := 
+				for_each_ndvs(
+					banden/name
+					, dmgdry
+					, float32
+					, "BANDS=" + string(id(banden))
+				) 
+				, StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database.nc:dmgdry"
+				, StorageType     = "gdal.grid"
+				, StorageReadOnly = "True";
+			
+			// =======  checks voor wat kolom/rij info bevat.
+			// parameter<float32> nat_peak := max(dmgwet_bands/b2);  // natste hoek
+			// parameter<float32> dry_peak := max(dmgdry_bands/b985);  // droogste hoek
+			parameter<float32> tot_peak := max(dmgtot_bands/b1117);  // droogste hoek
+
+			// parameter<dmgwet> nat_idx := max_index(dmgwet_bands/b2);    // veen + gras: natste hoek
+			// parameter<dmgdry> dry_idx := max_index(dmgdry_bands/b985);  // zand + aardappel: droogste hoek
+			parameter<dmgtot> tot_idx := max_index(dmgtot_bands/b1117);  // bodem 3007, zwak lemige zandgrond met cultuurdek, plus gras, geen beregening, klimaat 0
+
+			// parameter<uint32> nat_row := uint32(PointRow(id(dmgwet)[nat_idx]));
+			// parameter<uint32> nat_col := uint32(PointCol(id(dmgwet)[nat_idx]));
+			// parameter<uint32> dry_row := uint32(PointRow(id(dmgdry)[dry_idx]));
+			// parameter<uint32> dry_col := uint32(PointCol(id(dmgdry)[dry_idx]));
+
+			// parameter<dmgwet> cell_r0_c300 := point_xy(300s, 0s, dmgwet); // value(  0u * 301u + 300u, wwl_grid);   // rij 0,   kol 300
+			// parameter<dmgwet> cell_r300_c0 := point_xy(0s, 300s, dmgwet); // value(300u * 301u +   0u, wwl_grid);   // rij 300, kol 0
+			// parameter<float32>  v_r0_c300     := dmgwet_bands/b2[cell_r0_c300];
+			// parameter<float32>  v_r300_c0     := dmgwet_bands/b2[cell_r300_c0];			
+		}
+
+		unit<spoint> wwl_grid := WWL_relatie_database/dmgtot;   // 301 x 301
+
+		parameter<uint32>  beregeningsscenario := 1;
+		parameter<uint32>  zichtjaar_klimaat   := 0;
+		parameter<float32> gxg_sign            := -1f; 
+
+		container codes
+		{
+			// alleen de 9 gewassen die in de nc-dimensie zitten
+			unit<uint32> gewas := cat_range(0, 9)
+			{
+				attribute<uint32> code  : [1, 6, 7, 9, 12, 13, 20, 22, 23];
+				attribute<string> label := Classifications/Grondgebruik/WWLKlasse/label[rlookup(code, uint32(Classifications/Grondgebruik/WWLKlasse/EK))];
+			}			
+			unit<uint32> bodem := union_unit_uint32(Classifications/Grondgebruik/Bodem/BOFEK_K)
+			{ 
+				attribute<uint32> code  := union_data(., Classifications/Grondgebruik/Bodem/BOFEK_K/EK);
+				attribute<string> label := union_data(., Classifications/Grondgebruik/Bodem/BOFEK_K/label);
+			}
+		}
+
+		unit<uint32> combo := range(uint32, 0, 2844)
+		{
+			attribute<uint32>      band       :=  id(combo) + 1;
+			attribute<uint32>      klimaat    :=  id(combo)        % 2;
+			attribute<uint32>      irrigatie  := (id(combo) /  2)  % 2;
+			attribute<codes/gewas> gewas_rel  := value((id(combo) /  4)  % 9, codes/gewas);
+			attribute<codes/bodem> bodem_rel  := value(id(combo) / 36, codes/bodem);
+			attribute<uint32>      gewas_code := codes/gewas/code[gewas_rel];
+			attribute<uint32>      bodem_code := codes/bodem/code[bodem_rel];
+		}
+
+		unit<uint32> combo_sel := select_with_org_rel(combo/irrigatie == beregeningsscenario && combo/klimaat == zichtjaar_klimaat)
+		{
+			attribute<uint32> bodem_code := combo/bodem_code[org_rel];
+			attribute<uint32> gewas_code := combo/gewas_code[org_rel];
+			attribute<uint32> band       := combo/band[org_rel];
+		}
+
+		unit<uint32> lut := combine(combo_sel, wwl_grid)   // 711 x 90.601 ≈ 64M
+		{
+			attribute<spoint>  wwl_lin    := second_rel;          // 0..90600 
+			attribute<uint32>  wwl_row    := uint32(PointRow(wwl_lin));
+			attribute<uint32>  wwl_col    := uint32(PointCol(wwl_lin));
+
+			attribute<uint32>  ghg        := 300 - wwl_row;   // rij = ghg, cm = 300 - index
+			attribute<uint32>  glg        := 300 - wwl_col;   // kolom = glg, idem			
+			attribute<uint32>  bodem_code := combo_sel/bodem_code[first_rel];
+			attribute<uint32>  gewas_code := combo_sel/gewas_code[first_rel];
+			attribute<uint64>  key		  := ((uint64(bodem_code)*32u64 + uint64(gewas_code))*512u64 + uint64(ghg))*512u64 + uint64(glg);
+
+			attribute<float32> dmgtot_stack  := ='union_data(., ' + AsItemList('WWL_relatie_database/dmgtot_bands/b' + string(combo_sel/band)) + ')';
+		}
+
+		container input
+		{
+			attribute<uint32> bodem_code (AdminDomain) := SourceData/Bodem/BOFEK/BOFEK_CODE;
+			attribute<uint32> gewas_code (AdminDomain) := uint32(Classifications/Grondgebruik/LGNKlasse/WWL_ID)[SourceData/Grondgebruik/LGN/m25];
+
+			parameter<float32> gxg_sign  := 1f;    // positief = diepte onder maaiveld
+			parameter<float32> gxg_scale := 100f;    // op 100 zetten als de kaart in meters staat
+
+			attribute<float32> ghg_cm (AdminDomain) := gxg_scale * gxg_sign * SourceData/Water/Grondwaterstanden/BAU1/GHG_W2050BP18_tijdreeks1929_2011;
+			attribute<float32> glg_cm (AdminDomain) := gxg_scale * gxg_sign * SourceData/Water/Grondwaterstanden/BAU1/GLG_W2050BP18_tijdreeks1929_2011;
+
+			attribute<int32> ghg_idx (AdminDomain) := IsDefined(ghg_cm) ? int32(max_elem(0f, min_elem(300f, ghg_cm)) + 0.5f) : null_i;
+			attribute<int32> glg_idx (AdminDomain) := IsDefined(glg_cm) ? int32(max_elem(0f, min_elem(300f, glg_cm)) + 0.5f) : null_i;
+
+			parameter<float32> frac_glg_dieper := mean(float32(glg_idx >= ghg_idx));  // ligt ie dicht bij 1, dan is gxg_sign == -1, ligt ie nabij 0, dan moet gxg_sign == 1
+		}
+		attribute<uint64>  key              (AdminDomain) := ((uint64(input/bodem_code)*32u64 + uint64(input/gewas_code))*512u64 + uint64(input/ghg_idx))*512u64 + uint64(input/glg_idx);
+		attribute<uint32>  match            (AdminDomain) := rlookup(key, lut/key);
+
+		// ----- RESULT
+		attribute<float32> opbrengstderving (AdminDomain) := lut/dmgtot_stack[match] / 100f;
+
+
+	// ================================================================================================================================================================
+
 		unit<uint8> BeregeningScenarios := cat_range(0b, 3b)
 		{
 			attribute<string> VariantName : ['GeenBeregening','Beregening_allepercelen_ongelim','Beregening_percelenmetinstal_ongelim'];
