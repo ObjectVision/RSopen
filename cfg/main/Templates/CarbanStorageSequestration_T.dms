@@ -1,0 +1,65 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template CarbanStorageSequestration_T 
+: using = "Classifications;SourceData/Landbouw;/Classifications/Grondgebruik/LGNKlasse"
+, Descr = ""
+{
+	parameter<String>  Zichtjaar_name;
+	//
+	
+	parameter<Bool>      IsStartYear         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	parameter<Int16>     PrevZichtjaar_value := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel);
+	parameter<Int16>     Zichtjaar_value     := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
+	parameter<Bool>      IsFirstAllocYear    := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
+	parameter<jaar>      Periode             := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
+	
+	parameter<float32>   C_to_CO2            := 44f / 12f;   // ton C -> ton CO2
+	parameter<Ha>        cell_area_ha        := AdminDomain/NrHaPerCell;       
+	parameter<bool>      build_on_inherited  := False;       // bij LU-change, e.g. landbouw->natuur, behoud je dan de eerdere C in de bodem?
+		
+	attribute<LGNKlasse>             LU_LGNKlasse_rel     (AdminDomain) := /SourceData/Grondgebruik/LGN/m25;
+
+	attribute<CarbonClass>           LU_CC_Basisjaar_rel  (AdminDomain) := rjoin(LU_LGNKlasse_rel, CarbonClass/LGN_rel, id(CarbonClass));
+	attribute<CarbonClass>           prevLU_CC_rel        (AdminDomain) := =IsStartYear ? 'LU_CC_Basisjaar_rel' : 'PrevIndicatoren/CarbonStorageSequestration/LU_CC_rel';
+
+	attribute<CarbonClass>           LU_CC_Exogeen_rel    (AdminDomain) := =IsFirstAllocYear ? '/VariantData/'+Variant_name+'/ExogeenOpleggen/carbonclass_rel' : 'const(null_b, AdminDomain)';
+	attribute<CarbonClass>           LU_CC_Allocatie_rel  (AdminDomain) := IsDefined(Stand/Subsector_rel) ? CarbonClass/v/Dichtbebouwde_stedelijke_gebieden : null_b;
+	attribute<CarbonClass>           LU_CC_rel            (AdminDomain) := IsDefined(Stand/Subsector_rel) ? LU_CC_Allocatie_rel : MakeDefined(LU_CC_Exogeen_rel, LU_CC_Basisjaar_rel);
+
+	attribute<ton_ha>                Cmax_Basisjaar       (AdminDomain) := LU_CC_Basisjaar_rel -> CarbonClass/Cmax_ha;
+	attribute<ton_ha>                Cmax_Prev            (AdminDomain) := prevLU_CC_rel -> CarbonClass/Cmax_ha;
+	attribute<ton_ha>                Cstock_Prev          (AdminDomain) := =IsStartYear ? 'Cmax_Basisjaar' : 'Cmax_Prev';
+
+	attribute<ton_ha_jaarlijks>      Cseq_Zichtjaar       (AdminDomain) := LU_CC_rel -> CarbonClass/Cseq_ha;
+	attribute<ton_ha>                Cmax_Zichtjaar       (AdminDomain) := LU_CC_rel -> CarbonClass/Cmax_ha;
+	attribute<bool>                  IsLUchanged          (AdminDomain) := LU_CC_rel != prevLU_CC_rel;
+
+	attribute<ton_ha>                Cstock_Zichtjaar     (AdminDomain) := !IsLUchanged
+																			? min_elem(Cstock_Prev + Periode * Cseq_Zichtjaar, Cmax_Zichtjaar)
+																			: (Cmax_Zichtjaar <= Cstock_Prev)
+																				? Cmax_Zichtjaar
+																				: min_elem((build_on_inherited ? Cstock_Prev : 0[ton_ha]) + Periode * Cseq_Zichtjaar, Cmax_Zichtjaar);
+
+	attribute<ton_ha>                Cseq_ThisPeriod_ha   (AdminDomain) := Cstock_Zichtjaar - Cstock_Prev;
+	attribute<ton_ha>                CO2seq_ThisPeriod_ha (AdminDomain) := Cseq_ThisPeriod_ha * C_to_CO2;
+	attribute<ton>                   CO2seq_ThisPeriod    (AdminDomain) := CO2seq_ThisPeriod_ha * cell_area_ha;
+
+	parameter<string> StorageStr := IsStartYear 
+		? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/CarbanStorageSequestration_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+		: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/CarbanStorageSequestration_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif';
+	
+	attribute<ton>                   Write_Result_SA      (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? CO2seq_ThisPeriod : null_f, StorageName = "=StorageStr", StorageType = "gdalwrite.grid";
+}
+
+
+
