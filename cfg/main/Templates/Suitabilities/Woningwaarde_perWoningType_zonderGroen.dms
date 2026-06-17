@@ -1,0 +1,69 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Kopie van Woningwaarde_perWoningType_T, maar met de groen-nabij term VERWIJDERD uit de locatiebijdrage. Levert
+// dus de hedonische woningprijs ZONDER groen (P_rest) per woningtype per AdminDomain cel. Bedoeld voor de
+// groenwaardering in de indicatoren (issue #481): daar wordt het groen voor basis- en zichtjaar zelf opgelegd
+// (P_rest * exp(d_groennabij * g)), met een eigen groen-definitie. Voeg hier dus GEEN groenterm toe.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Woningwaarde_perWoningType_zonderGroen_T
+: Descr = "Hedonische woningprijs ZONDER groen-nabij term (P_rest), per woningtype. Groen wordt buiten deze template opgelegd."
+{
+	parameter</Classifications/Vastgoed/WP4> WP4_id;
+	//
+
+	parameter<String> WP4_name := /Classifications/Vastgoed/WP4/name[WP4_id];
+
+	parameter<String> CalcStr0: ['(@X@)'];
+
+	parameter<String> CalcStr :=
+		'	Pand/Basisjaar > 0[Eur_Woning]
+				? exp(
+					Constant
+					+ Pand/Generiek
+					+ Pand/Basisjaar
+					+ Locatie
+					)[Eur_Woning]
+				: 0[Eur_Woning]';
+
+	attribute<Eur_Woning> PrijsZonderGroen (AdminDomain) := = CalcStr, Descr = "De hedonische woningprijs ZONDER de groen-nabij term (P_rest).";
+
+	attribute<Float32> Locatie (AdminDomain) := = replace(CalcStr0, '@X@',
+		'add(
+			log(Src/Locatie/tt_500kinhab_min / 1[min])         * Src/Prijs/lntt_500k_inw,
+			Src/Locatie/UAI_dynamisch                          * Src/Prijs/UAI_2021,
+			log(Src/Locatie/tt_Trainstation_2006_min / 1[min]) * Src/Prijs/lntt_stations
+		)'
+	), Descr = "De locatiegebonden bijdrage aan de woningprijs, ZONDER groen-nabij (die term wordt in de indicator zelf toegevoegd).";
+
+	container Pand
+	{
+		attribute<Float32> Generiek (AdminDomain) := = replace(CalcStr0, '@X@',
+			'add(
+				log(Src/Pand/'+WP4_name+'_lotsize[float32])     * MakeDefined(Src/Prijs/lnlotsize,0f),
+				Src/Pand/'+WP4_name+'_d_highrise[float32]       * MakeDefined(Src/Prijs/d_highrise,0f),
+				Src/Pand/'+WP4_name+'_nrooms[float32]           * Src/Prijs/nrooms,
+				Src/Pand/'+WP4_name+'_d_maintgood[float32]      * Src/Prijs/d_maintgood,
+				1f                                              * Src/Prijs/Y'+/ModelParameters/NVM_coeff_Year+'
+			)'
+		), Descr = "De generieke bijdrage aan de woningprijs op basis van de kenmerken van het woonpand";
+		attribute<Float32> Basisjaar (AdminDomain) := = replace(CalcStr0, '@X@', 'log(MakeDefined(SourceData/Vastgoed/BAG/PerJaar/Y'+string(/ModelParameters/BAG_RecentYear)+'/VBO/Per_Gebruiksdoel/woon/Select/Oppervlaktes/per_WP4_AdminDomain/'+WP4_name+' / 1[m2_vbo],1f)) * Src/Prijs/lnsize'), Descr = "De bijdrage aan de woningprijs op basis van de woonoppervlakte van het woonpand";
+	}
+
+	parameter<Float32> Constant := = replace(CalcStr0, '@X@', 'Src/Prijs/Constant'), Descr = "De constante term in de woningprijsformule";
+
+	container Src
+	{
+		container Prijs := = 'BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4_name+'/Result', Descr = "De coefficienten voor de woningprijsformule voor dit WP4";
+		container Pand    := BaseData/Suitabilities/Wonen/RegionalAvgCharacteristics/perWP4/RegionalAvgCharacteristics, Descr = "De gemiddelde kenmerken van woningen per regio voor dit WP4";
+		container Locatie := SourceData/Diversen/Per_AdminDomain, Descr = "De locatiekenmerken per AdminDomain";
+	}
+}
