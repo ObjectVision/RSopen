@@ -57,7 +57,65 @@ container StartState_metBAGnieuwbouw :=
 				)[uint8]'
 			: 'const(null_b, CompactedAdminDomain, Sector/xSubsector)', Descr = "Bepaal de initiele subsector_rel op basis van BAGnieuwbouw. Door de argmax in de stand te bepalen.";
 	
-	attribute<OP> OP_rel (CompactedAdminDomain) := const(0b/0b, CompactedAdminDomain, OP), Descr = "initialisatie attribute om later geupdatet te worden.";
+	// Issue #550: ken aan BAG-nieuwbouw cellen een representatief Ontwikkelpakket (OP) toe, zodat OP-afhankelijke
+	// indicatoren (o.a. groenwaarde/woningprijs) werken. Match op geobserveerde kenmerken: dominante WP4 (verplicht),
+	// dominante VSSH (gemeente-kans P_SH; voorkeur, niet hard), en dichtstbijzijnde OP qua dichtheid + woonoppervlakte
+	// per woning. De woning-AANTALLEN blijven uit de echte BAG-tellingen komen; deze OP-rel levert alleen de kenmerken.
+	container OPMatch_BAGnieuwbouw
+	: Descr = "Issue #550: OP-toekenning voor BAG-nieuwbouw cellen via kenmerk-match (WP4 + VSSH + dichtheid + woonoppervlakte)."
+	{
+		container n_perWP4 :=
+			for_each_nedv(
+				Classifications/Vastgoed/WP4/name
+				, 'BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+					+ ' + BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/count_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+					+ ' + BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+				, CompactedAdminDomain
+				, Woning
+			), Descr = "Nieuwbouw-woningen per WP4 per cel (som van de drie nieuw-VBO sets).";
+
+		container opp_perWP4 :=
+			for_each_nedv(
+				Classifications/Vastgoed/WP4/name
+				, 'BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/Opp_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+					+ ' + BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/Opp_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+					+ ' + BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/Opp_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+				, CompactedAdminDomain
+				, meter2
+			), Descr = "Nieuwbouw woon-gebruiksoppervlak per WP4 per cel (som van de drie nieuw-VBO sets).";
+
+		attribute<Woning> n_tot   (CompactedAdminDomain) := ='add('+asItemList('n_perWP4/'+Classifications/Vastgoed/WP4/name)+')', Descr = "Totaal aantal nieuwbouw-woningen per cel.";
+		attribute<meter2> opp_tot (CompactedAdminDomain) := ='add('+asItemList('opp_perWP4/'+Classifications/Vastgoed/WP4/name)+')', Descr = "Totaal nieuwbouw woon-gebruiksoppervlak per cel.";
+
+		attribute<Classifications/Vastgoed/WP4> domWP4 (CompactedAdminDomain) := ='ArgMax_ifdefined('+asItemList('n_perWP4/'+Classifications/Vastgoed/WP4/name+' > 0[Woning] ? n_perWP4/'+Classifications/Vastgoed/WP4/name+'[float32] : null_f')+')[Classifications/Vastgoed/WP4]'
+			, Descr = "Dominante WP4 op basis van aantal nieuwbouw-woningen (null als geen nieuwbouw).";
+
+		attribute<Classifications/Vastgoed/VSSH> domVSSH (CompactedAdminDomain) :=
+			BaseData/StartState/Verdeling_VSSH/per_Gemeente/P_SH_perCompactedAdminDomain > 0.5f
+				? Classifications/Vastgoed/VSSH/V/SocialeHuur
+				: Classifications/Vastgoed/VSSH/V/VrijeSector
+			, Descr = "Dominante VSSH via gemeente-kans sociale huur (consistent met BAG_nieuwbouw/Wonen).";
+
+		attribute<float32>   cel_dichtheid (CompactedAdminDomain) := n_tot[float32] / AdminDomain/NrHaPerCell[float32], Descr = "Geobserveerde woningdichtheid per cel (woningen/ha, als float32 voor vergelijking met OP/Dichtheid).";
+		attribute<float32>   cel_opp       (CompactedAdminDomain) := opp_tot[float32] / n_tot[float32], Descr = "Geobserveerde gemiddelde woonoppervlakte per woning (m2).";
+
+		attribute<OP> OP_rel (CompactedAdminDomain) :=
+			= 'n_tot > 0[Woning] 
+				? ArgMax_ifdefined('
+					+ asItemList(
+						'OP/WP4_rel['+string(id(OP))+'[OP]] == domWP4'
+						' ? 0f - ( (OP/VSSH_rel['+string(id(OP))+'[OP]] == domVSSH ? 0f : 1000000f)'
+						' + abs((OP/Dichtheid['+string(id(OP))+'[OP]][float32] - cel_dichtheid[float32]) / cel_dichtheid[float32])'
+						' + (cel_opp > 0f ? abs((OP/Woonoppervlakte_woning['+string(id(OP))+'[OP]][float32] - cel_opp) / cel_opp) : 0f) )'
+						' : null_f'
+					)+ ')[OP] 
+				: const(0b/0b, CompactedAdminDomain, OP)'
+			, Descr = "Best passend OP: zelfde WP4 (verplicht), voorkeur zelfde VSSH, dan minimale relatieve afstand in dichtheid + woonoppervlakte/woning. Undefined waar geen nieuwbouw.";
+
+		attribute<Bool> IsBAGnieuwbouwWonen (CompactedAdminDomain) := IsDefined(OP_rel), Descr = "Vlag voor BAG-nieuwbouw wonen-cellen, los van OP_rel. Gebruikt om bestaande indicatoren (verharding/waterberging) hun BAG-fallback te laten behouden nu BAG-cellen wel een OP_rel hebben (issue #550).";
+	}
+
+	attribute<OP> OP_rel (CompactedAdminDomain) := OPMatch_BAGnieuwbouw/OP_rel, Descr = "Issue #550: OP voor BAG-nieuwbouw cellen via kenmerk-match; undefined waar geen nieuwbouw (wordt later door allocatie gevuld via MakeDefined in Iter_T).";
 	
 	container PandFootprint :=
 		for_each_nedv(

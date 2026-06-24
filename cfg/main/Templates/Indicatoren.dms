@@ -341,24 +341,30 @@ Template Indicatoren_T
 		}
 
 		container Nieuwbouw
-		: Descr = "Groenwaarde van nieuwbouwwoningen (zichtjaar): de in de prijs ingebakken premie voor groen-nabij."
+		: Descr = "Groenwaarde van nieuwbouwwoningen: de in de prijs ingebakken premie voor groen-nabij, over de cumulatieve nieuwbouw sinds het basisjaar (issue #558)."
 		{
 			unit<UInt8> OP := ThisVariantClassifications/Vastgoed/OP;
 
-			attribute<Eur_Woning> P_nieuwbouw          (AdminDomain) := = '(add('+asItemList('float32(Stand/OP_rel == '+string(id(OP))+'[OP]) * ThisVariantData/Suitability/src/Wonen/Impl/Woningwaarde_perOP/'+OP/name+'/Prijs_perWoning_zWeging')+'))[Eur_Woning]',	Descr = "Hedonische nieuwbouwprijs van de in deze cel gealloceerde OP.";
-			attribute<float32>    Groen_coeff          (AdminDomain) := d_groennabij[OP/WP4_rel[Stand/OP_rel]], Descr = "groen coefficient horend bij specifiek WP4_rel";
-			attribute<float32>    GroenNabij_basisjaar (AdminDomain) := float32(../GroenNabij_Basisjaar);
-			attribute<Woning>     n_nieuwbouw          (AdminDomain) := SloopNieuwbouwWonen/Nieuwbouw/Totaal, Descr = "Aantal in deze periode gealloceerde nieuwbouwwoningen per cel.";
-			attribute<Eur_Woning> P_rest               (AdminDomain) := P_nieuwbouw * exp(-groen_coeff * GroenNabij_basisjaar), Descr = "Nieuwbouwprijs zonder groenterm.";
-			attribute<Eur>        dWaarde              (AdminDomain) := float32(GroenNabij_Zichtjaar) * n_nieuwbouw * P_rest * (exp(Groen_coeff) - 1f),	Descr = "Groenwaarde van nieuwbouw per cel: aantal * (prijs met groen - prijs zonder groen), waar groen-nabij aanwezig.";
+			attribute<Eur_Woning> P_nieuwbouw            (AdminDomain) := = '(add('+asItemList('float32(Stand/OP_rel == '+string(id(OP))+'[OP]) * ThisVariantData/Suitability/src/Wonen/Impl/Woningwaarde_perOP/'+OP/name+'/Prijs_perWoning_zWeging')+'))[Eur_Woning]',	Descr = "Hedonische nieuwbouwprijs van de in deze cel gealloceerde OP.";
+			attribute<float32>    Groen_coeff            (AdminDomain) := d_groennabij[OP/WP4_rel[Stand/OP_rel]], Descr = "groen coefficient horend bij specifiek WP4_rel";
+			attribute<float32>    GroenNabij_basisjaar   (AdminDomain) := float32(../GroenNabij_Basisjaar);
+			attribute<Woning>     n_nieuwbouw_cumulatief (AdminDomain) := max_elem(Stand/Aantal_Woningen_Totaal - StandBasisjaar/Aantal_Woningen_Totaal, 0[Woning]), Descr = "Cumulatieve nieuwbouw t.o.v. basisjaar: voorraad zichtjaar - voorraad basisjaar, geklemd op >=0. Telt alle bouw basisjaar->zichtjaar (incl. eerste-decennium BAG-nieuwbouw, issue #550, die in Stand maar niet in StandBasisjaar zit) i.p.v. enkel de bouw van het laatste decennium (issue #558). Netto-verschil netteert sloop/herontwikkeling weg, zodat er geen dubbeltelling met de Bestaand-term ontstaat.";
+			attribute<Eur_Woning> P_rest                 (AdminDomain) := P_nieuwbouw * exp(-groen_coeff * GroenNabij_basisjaar), Descr = "Nieuwbouwprijs zonder groenterm.";
+			attribute<Eur>        dWaarde                (AdminDomain) := float32(GroenNabij_Zichtjaar) * n_nieuwbouw_cumulatief * P_rest * (exp(Groen_coeff) - 1f),	Descr = "Groenwaarde van cumulatieve nieuwbouw per cel: aantal * (prijs met groen - prijs zonder groen), waar groen-nabij aanwezig.";
 		}
 
-		attribute<Eur> Totaal (AdminDomain) := MakeDefined(Bestaand/dWaarde, 0[Eur]) + MakeDefined(Nieuwbouw/dWaarde, 0[Eur]),	Descr = "Totale groenwaarde-effect per cel: verandering bestaande voorraad + nieuwbouwpremie.";
-
-		attribute<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen (AdminDomain) := Bestaand/dWaarde, StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen')", StorageType = "gdalwrite.grid";
-		attribute<Eur> WaardeDoorGroenNabij_NieuwbouwWoningen                  (AdminDomain) := Nieuwbouw/dWaarde, StorageName = "=replace(StorageStr, '@V@', 'WaardeDoorGroenNabij_NieuwbouwWoningen')", StorageType = "gdalwrite.grid";
-		attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen          (AdminDomain) := Totaal, StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen')", StorageType = "gdalwrite.grid";
+		attribute<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen (AdminDomain) := switch(
+																									case(Bestaand/dWaarde < 0.01f && Bestaand/dWaarde > -0.01f, 0f)
+																									,Bestaand/dWaarde
+																								), StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen')", StorageType = "gdalwrite.grid";
+		attribute<Eur> WaardeDoorGroenNabij_NieuwbouwWoningen                  (AdminDomain) := switch(
+																									case(Nieuwbouw/dWaarde < 0.01f && Nieuwbouw/dWaarde > -0.01f, 0f)
+																									,Nieuwbouw/dWaarde
+																								), StorageName = "=replace(StorageStr, '@V@', 'WaardeDoorGroenNabij_NieuwbouwWoningen')", StorageType = "gdalwrite.grid";
+		attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen          (AdminDomain) := MakeDefined(WaardeVeranderingDoorGroenVerandering_BestaandeWoningen, 0[Eur]) + MakeDefined(WaardeDoorGroenNabij_NieuwbouwWoningen, 0[Eur]), StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen')", StorageType = "gdalwrite.grid";
 
 		parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
 	}
+
+	#include<Woningwaarde.dms>
 }
