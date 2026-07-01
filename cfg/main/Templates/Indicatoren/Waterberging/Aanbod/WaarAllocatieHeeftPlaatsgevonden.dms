@@ -19,29 +19,37 @@ container WaarAllocatieHeeftPlaatsgevonden
 		attribute<Bool>    IsBAGnieuwbouwWonen                             (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), FALSE), Descr = "BAG-nieuwbouw wonen-cel, onafhankelijk van OP_rel (issue #550: BAG-cellen hebben nu een gematchte OP_rel, dus IsNull(OP_rel) volstaat niet meer).";
 		attribute<Bool>    BAGNieuwbouwAllocatieHeeftPlaatsgevonden        (AdminDomain) := AllocatieHeeftPlaatsgevonden && (IsNull(Stand/OP_rel) || IsBAGnieuwbouwWonen);
 		attribute<meter2>  StandPandFootprintWaarAllocHeeftPlaatsgevonden  (AdminDomain) := ='min_elem(AdminDomain/NrHaPerCell[meter2], Stand/PandFootprint_Wonen / float32(AllocatieHeeftPlaatsgevonden)) / float32(AllocatieHeeftPlaatsgevonden)';
-
-		parameter<float32> FractieUitgeefbaar                                            := ModelParameters/Wonen/FractieUitgeefbaar, Descr = "De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt";
-		parameter<float32> FractieGrasInGroen                                            := ModelParameters/Wonen/DefaultFractiesGrasBoomStruikInGroen/Gras;
-		parameter<float32> FractieVerhard                                                := min_elem(ModelParameters/Wonen/DefaultVerharding * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f);
-
+		
+		parameter<float32> DefaultFractieUitgeefbaar := ModelParameters/Wonen/DefaultFractieUitgeefbaar, Descr = "De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt";
+		parameter<float32> DefaultFractieGrasInGroen := ModelParameters/Wonen/DefaultFractiesGrasBoomStruikInGroen/Gras;
+		parameter<float32> FractieDoorlatendGroenSrc := VariantParameters/VariantK/FractieDoorlatendGroenNieuwbouw[Variant_rel];
+		
+		attribute<float32> FractieDoorlatendGroen (AdminDomain) := FractieDoorlatendGroenSrc * float32(/BaseData/Omgeving/NbSOPToepassingsgebied/Hoog_NL);
+		
+		parameter<float32> DefaultVerharding      := min_elem(ModelParameters/Wonen/DefaultVerharding * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f); // waarom niet obv deze o.a. /VariantParameters/Ontwikkelpakketten/NettoBuurt/Default/InUitgeefbaarExPandFootprint/Verhard
+		
 		container OpDaken
 		{
 			parameter<float32> FractieGroenDak := /VariantParameters/VariantK/FractieGroenDakNieuwbouw[Variant_rel];
+			parameter<float32> FractieBlauwDak := /VariantParameters/VariantK/FractieBlauwDakNieuwbouw[Variant_rel];
 			
 			attribute<meter2> Dakoppervlak      (AdminDomain) := StandPandFootprintWaarAllocHeeftPlaatsgevonden;
 			attribute<meter2> DakoppervlakGroen (AdminDomain) := Dakoppervlak * FractieGroenDak;
-			attribute<meter3> Resultaat         (AdminDomain) := DakoppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDak];
+			attribute<meter2> DakoppervlakBlauw (AdminDomain) := Dakoppervlak * FractieBlauwDak;
+			attribute<meter3> Resultaat         (AdminDomain) := add(
+				DakoppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDak],
+				DakoppervlakBlauw * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/BlauwDak]
+			);
 		}
 		
 		container OpOverigVerhardUitgeefbaar
 		{
 			parameter<float32> FractieHalfverharding := /VariantParameters/VariantK/FractieHalfverhardingNieuwbouwUitgeefbaar[Variant_rel];
 			
-
-
 			attribute<meter2> VerhardOppervlak      (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
-																		? (AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * FractieVerhard * FractieUitgeefbaar
+																		? (AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * DefaultVerharding * DefaultFractieUitgeefbaar
 																		: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Uitgeefbaar/Buitenruimte/Verhard[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
+																		
 			attribute<meter2> VerhardOppervlakGroen (AdminDomain) := VerhardOppervlak * FractieHalfverharding;
 			attribute<meter3> Resultaat             (AdminDomain) := VerhardOppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Halfverharding];
 		}
@@ -50,9 +58,10 @@ container WaarAllocatieHeeftPlaatsgevonden
 		{
 			parameter<float32> FractieHalfverharding := /VariantParameters/VariantK/FractieHalfverhardingNieuwbouwOpenbaar[Variant_rel];
 			
-			attribute<meter2> VerhardOppervlak      (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
-																		? (AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * FractieVerhard * (1f - FractieUitgeefbaar)
-																		: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Openbaar/Verhard[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
+			attribute<meter2> VerhardOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+															? (AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * DefaultVerharding * (1f - DefaultFractieUitgeefbaar) // Er zit dus geen water in BAG_nieuwbouw? Aanpassen.
+															: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Openbaar/Verhard[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
+															
 			attribute<meter2> VerhardOppervlakGroen (AdminDomain) := VerhardOppervlak * FractieHalfverharding;
 			attribute<meter3> Resultaat             (AdminDomain) := VerhardOppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Halfverharding];
 		}
@@ -60,26 +69,66 @@ container WaarAllocatieHeeftPlaatsgevonden
 		container OpGrasUitgeefbaar
 		{
 			parameter<float32> FractieWadi := /VariantParameters/VariantK/FractieWadiNieuwbouwUitgeefbaarGras[Variant_rel];
+			parameter<float32> FractieRest := 1f - FractieWadi;
 			
-			attribute<meter2> GrasOppervlak     (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
-																		? FractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/Wonen/Verhard_NieuweOntwikkeling) * FractieUitgeefbaar
-																		: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Uitgeefbaar/Buitenruimte/Groen/Gras[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
-			attribute<meter2> GrasOppervlakWadi (AdminDomain) := GrasOppervlak * FractieWadi;
-			attribute<meter3> Resultaat         (AdminDomain) := GrasOppervlakWadi * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
+			attribute<float32> FractieDoorlatendGroen (AdminDomain) := min_elem(const(FractieRest, AdminDomain), Wonen/FractieDoorlatendGroen);
+			
+			attribute<meter2> GrasOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+															? DefaultFractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/Wonen/Verhard_NieuweOntwikkeling) * DefaultFractieUitgeefbaar
+															: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Uitgeefbaar/Buitenruimte/Groen/Gras[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
+			
+			attribute<meter2> GrasOppervlakWadi            (AdminDomain) := GrasOppervlak * FractieWadi;
+			attribute<meter2> GrasOppervlakDoorlatendGroen (AdminDomain) := GrasOppervlak * FractieDoorlatendGroen;
+			
+			attribute<meter3> ResultaatWadi            (AdminDomain) := GrasOppervlakWadi            * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
+			attribute<meter3> ResultaatDoorlatendGroen (AdminDomain) := GrasOppervlakDoorlatendGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/DoorlatendGroen];
+			attribute<meter3> Resultaat                (AdminDomain) := ResultaatWadi + ResultaatDoorlatendGroen;
 		}
 		
 		container OpGrasOpenbaar
 		{
 			parameter<float32> FractieWadi := /VariantParameters/VariantK/FractieWadiNieuwbouwOpenbaarGras[Variant_rel];
+			parameter<float32> FractieRest := 1f - FractieWadi;
 			
-			attribute<meter2> GrasOppervlak     (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
-																		? FractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/Wonen/Verhard_NieuweOntwikkeling) * (1f - FractieUitgeefbaar)
+			attribute<float32> FractieDoorlatendGroen (AdminDomain) := min_elem(const(FractieRest, AdminDomain), Wonen/FractieDoorlatendGroen);
+			
+			attribute<meter2> GrasOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+																		? DefaultFractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/Wonen/Verhard_NieuweOntwikkeling) * (1f - DefaultFractieUitgeefbaar)
 																		: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Openbaar/Groen/Gras[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
-			attribute<meter2> GrasOppervlakWadi (AdminDomain) := GrasOppervlak * FractieWadi;
-			attribute<meter3> Resultaat         (AdminDomain) := GrasOppervlakWadi * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
+			
+			attribute<meter2> GrasOppervlakWadi            (AdminDomain) := GrasOppervlak * FractieWadi;
+			attribute<meter2> GrasOppervlakDoorlatendGroen (AdminDomain) := GrasOppervlak * FractieDoorlatendGroen;
+			
+			attribute<meter3> ResultaatWadi            (AdminDomain) := GrasOppervlakWadi            * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
+			attribute<meter3> ResultaatDoorlatendGroen (AdminDomain) := GrasOppervlakDoorlatendGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/DoorlatendGroen];
+			attribute<meter3> Resultaat                (AdminDomain) := ResultaatWadi + ResultaatDoorlatendGroen;
 		}
 		
-		attribute<meter3> Totaal (AdminDomain) := OpDaken/Resultaat + OpOverigVerhardUitgeefbaar/Resultaat + OpVerhardOpenbaar/Resultaat + OpGrasUitgeefbaar/Resultaat/ + OpGrasOpenbaar/Resultaat;
+		container OpOverigGroen
+		{
+			attribute<meter2> OverigGroenOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+																		? (1f - DefaultFractieGrasInGroen) * (AdminDomain/NrHaPerCell[meter2] - Verharding/Wonen/Verhard_NieuweOntwikkeling)
+																		: AdminDomain/NrHaPerCell[float32] * (
+																			ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Groen[Stand/OP_rel] -
+																			ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Groen/Gras[Stand/OP_rel]
+																		);
+			
+			attribute<meter2> OverigGroenOppervlakDoorlatendGroen (AdminDomain) := OverigGroenOppervlak * FractieDoorlatendGroen;
+			
+			attribute<meter3> Resultaat (AdminDomain) := OverigGroenOppervlakDoorlatendGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/DoorlatendGroen];
+		}
+		
+		container OpWater
+		{
+			parameter<float32> FractieBergingOpWater := /VariantParameters/VariantK/FractieBergingOpWaterNieuwbouw[Variant_rel];
+			
+			attribute<meter2> WaterOppervlak (AdminDomain) := AdminDomain/NrHaPerCell[float32] * ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Water[Stand/OP_rel]; // Op BAGNieuwbouw zit geen water. Zie opmerking hierboven.
+			attribute<meter2> WaterOppervlakBergingOpWater (AdminDomain) := WaterOppervlak * FractieBergingOpWater;
+			
+			attribute<meter3> Resultaat (AdminDomain) := WaterOppervlakBergingOpWater * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/BergingOpWater];
+		}
+		
+		attribute<meter3> Totaal (AdminDomain) := OpDaken/Resultaat + OpOverigVerhardUitgeefbaar/Resultaat + OpVerhardOpenbaar/Resultaat + OpGrasUitgeefbaar/Resultaat/ + OpGrasOpenbaar/Resultaat + OpOverigGroen/Resultaat + OpWater/Resultaat;
 	}
 	
 	container Werken             := WerkenEnVerblijfsrecreatie('Werken');
@@ -96,7 +145,7 @@ container WaarAllocatieHeeftPlaatsgevonden
 		//
 		
 		attribute<Bool>    AllocatieHeeftPlaatsgevonden                    (AdminDomain) := = 'Stand/Sector_rel == /Classifications/Actor/Sector/V/'+Sector_ref;
-		parameter<float32> FractieUitgeefbaar                                            := = 'ModelParameters/'+Sector_ref+'/FractieUitgeefbaar', Descr = "De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt";
+		parameter<float32> DefaultFractieUitgeefbaar                                     := = 'ModelParameters/'+Sector_ref+'/DefaultFractieUitgeefbaar', Descr = "De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt";
 		parameter<float32> FractieGrasInGroen                                            := = 'VariantParameters/FractiesGroenIn'+Sector_ref+'/DezeVariant/FractieGrasInGroen';
 		
 		attribute<meter2>  StandPandFootprintWaarAllocHeeftPlaatsgevonden  (AdminDomain) := ='min_elem(AdminDomain/NrHaPerCell[meter2], Stand/PandFootprint_'+Sector_ref+' / float32(AllocatieHeeftPlaatsgevonden)) / float32(AllocatieHeeftPlaatsgevonden)';
@@ -114,7 +163,7 @@ container WaarAllocatieHeeftPlaatsgevonden
 		{
 			parameter<float32> FractieHalfverharding := /VariantParameters/VariantK/FractieHalfverhardingNieuwbouwUitgeefbaar[Variant_rel];
 			
-			attribute<meter2> VerhardOppervlak      (AdminDomain) := = '(AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * VariantParameters/FractiesGroenIn'+Sector_ref+'/DezeVariant/Verhard * FractieUitgeefbaar';
+			attribute<meter2> VerhardOppervlak      (AdminDomain) := = '(AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * VariantParameters/FractiesGroenIn'+Sector_ref+'/DezeVariant/Verhard * DefaultFractieUitgeefbaar';
 			attribute<meter2> VerhardOppervlakGroen (AdminDomain) := VerhardOppervlak * FractieHalfverharding;
 			attribute<meter3> Resultaat             (AdminDomain) := VerhardOppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Halfverharding];
 		}
@@ -123,7 +172,7 @@ container WaarAllocatieHeeftPlaatsgevonden
 		{
 			parameter<float32> FractieHalfverharding := /VariantParameters/VariantK/FractieHalfverhardingNieuwbouwOpenbaar[Variant_rel];
 			
-			attribute<meter2> VerhardOppervlak      (AdminDomain) := = '(AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * VariantParameters/FractiesGroenIn'+Sector_ref+'/DezeVariant/Verhard * (1f - FractieUitgeefbaar)';
+			attribute<meter2> VerhardOppervlak      (AdminDomain) := = '(AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * VariantParameters/FractiesGroenIn'+Sector_ref+'/DezeVariant/Verhard * (1f - DefaultFractieUitgeefbaar)';
 			attribute<meter2> VerhardOppervlakGroen (AdminDomain) := VerhardOppervlak * FractieHalfverharding;
 			attribute<meter3> Resultaat             (AdminDomain) := VerhardOppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Halfverharding];
 		}
@@ -132,7 +181,7 @@ container WaarAllocatieHeeftPlaatsgevonden
 		{
 			parameter<float32> FractieWadi := /VariantParameters/VariantK/FractieWadiNieuwbouwUitgeefbaarGras[Variant_rel];
 			
-			attribute<meter2> GrasOppervlak     (AdminDomain) := = 'FractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/'+Sector_ref+'/Verhard) * FractieUitgeefbaar';
+			attribute<meter2> GrasOppervlak     (AdminDomain) := = 'FractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/'+Sector_ref+'/Verhard) * DefaultFractieUitgeefbaar';
 			attribute<meter2> GrasOppervlakWadi (AdminDomain) := GrasOppervlak * FractieWadi;
 			attribute<meter3> Resultaat         (AdminDomain) := GrasOppervlakWadi * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
 		}
@@ -141,7 +190,7 @@ container WaarAllocatieHeeftPlaatsgevonden
 		{
 			parameter<float32> FractieWadi := /VariantParameters/VariantK/FractieWadiNieuwbouwOpenbaarGras[Variant_rel];
 			
-			attribute<meter2> GrasOppervlak     (AdminDomain) := = 'FractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/'+Sector_ref+'/Verhard) * (1f - FractieUitgeefbaar)';
+			attribute<meter2> GrasOppervlak     (AdminDomain) := = 'FractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/'+Sector_ref+'/Verhard) * (1f - DefaultFractieUitgeefbaar)';
 			attribute<meter2> GrasOppervlakWadi (AdminDomain) := GrasOppervlak * FractieWadi;
 			attribute<meter3> Resultaat         (AdminDomain) := GrasOppervlakWadi * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
 		}
