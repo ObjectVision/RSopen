@@ -22,8 +22,8 @@ Template Zichtjaar_T
 	container Impl0;
 	//
 	parameter<YearRange> Zichtjaar_value := rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/YearRange_rel);
-	parameter<Jaar>      AantalJarenWerkGroeiAanpassing := /ModelParameters/AlleenEindjaar && Zichtjaar_value > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt 
-														? (ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt - rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel))[Jaar]
+	parameter<Jaar>      AantalJarenWerkGroeiAanpassing := /ModelParameters/AlleenEindjaar && Zichtjaar_value > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt
+														? ModelParameters/Werken/Groeifactor/Groeifactor_WanneerToepassen * (ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt - rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel))[Jaar] //ook hier de 0.5-factor, anders verdunt AlleenEindjaar ~2x sterker dan sequentieel (#591)
 														: Zichtjaar_value > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt 
 															? 0[jaar] 
 															: ModelParameters/Werken/Groeifactor/Groeifactor_WanneerToepassen * (Zichtjaar_value - rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel))[Jaar];
@@ -45,17 +45,21 @@ Template Zichtjaar_T
 			), Descr = "Exogeen opgelegde gebieden leegmaken."
 		{
 			attribute<Woning>          Totaal        (CompactedAdminDomain) := ='add('+asItemList(WP2xVSSH/name)+')';
-			attribute<m2PandFootprint> Footprint     (CompactedAdminDomain) := StateVoorAllocatie0/Wonen/Footprint;
+			attribute<m2PandFootprint> Footprint     (CompactedAdminDomain) := = (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
+																					? 'NeedsToBeEmptieDueToExogenousDevelopments ? 0[m2PandFootprint] : StateVoorAllocatie0/Wonen/Footprint'
+																					: 'StateVoorAllocatie0/Wonen/Footprint'; //footprint mee legen met de woningen in exogeen opgelegd gebied (#596)
 		}
 		
 		container Werken0 := 
 			for_each_nedv(
 				Jobs6/name
 				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector) //om te kunnen rekenen zonder werken als sectorAllocRegio
-					? 'const(0[Job], CompactedAdminDomain)' 
-					: 'NeedsToBeEmptieDueToExogenousDevelopments
-						? 0[Job]
-						: MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/Groeifactor_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)), 0[job])'
+					? 'const(0[Job], CompactedAdminDomain)'
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen; daarna houdt de zeef deze cellen leeg (#596)
+						? 'NeedsToBeEmptieDueToExogenousDevelopments
+							? 0[Job]
+							: MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/Groeifactor_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)), 0[job])'
+						: 'MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/Groeifactor_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)), 0[job])'
 				, CompactedAdminDomain
 				, job
 			), Descr = "noemer voor verandering door van werkdichtheid (banen/cel) in bestaand gebied. Eenheid is job, maar Impliciet aantal jobs per cell. Dus dichtheid.";
@@ -68,14 +72,28 @@ Template Zichtjaar_T
 					: 'Werken0/Zak_dienstverlening', Descr = "Eenmalig ophoging van het aantal kantoorbanen per cel. Het idee erachter is dat je door verdikking meer mensen/banen in een kantoorgebouw kwijt kunt en je minder nieuwe kantoren hoeft te bouwen. Hierdoor krijg je wellicht al overrealisatie voordat de allocatie begint. Maar je hoeft dus geen nieuwe kantoorruimte te creeren.";
 		}
 
-		container Verblijfsrecreatie := 
+		container PandFootprint :=
+			for_each_nedv(
+				Jobs6/name
+				, (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
+					? 'NeedsToBeEmptieDueToExogenousDevelopments
+						? 0[m2PandFootprint]
+						: StateVoorAllocatie0/PandFootprint/'+Jobs6/name
+					: 'StateVoorAllocatie0/PandFootprint/'+Jobs6/name
+				, CompactedAdminDomain
+				, m2PandFootprint
+			), Descr = "Werk-pandfootprint mee legen met de banen in exogeen opgelegd gebied (#596).";
+
+		container Verblijfsrecreatie :=
 			for_each_nedv(
 				VerblijfsrecreatieK/Subsector_name
 				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector) //om te kunnen rekenen zonder Verblijfsrecreatie als sectorAllocRegio
-					? 'const(0[float32], CompactedAdminDomain)' 
-					: 'NeedsToBeEmptieDueToExogenousDevelopments
-						? 0[float32]
-						: StateVoorAllocatie0/Verblijfsrecreatie/'+VerblijfsrecreatieK/Subsector_name
+					? 'const(0[float32], CompactedAdminDomain)'
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen (#596)
+						? 'NeedsToBeEmptieDueToExogenousDevelopments
+							? 0[float32]
+							: StateVoorAllocatie0/Verblijfsrecreatie/'+VerblijfsrecreatieK/Subsector_name
+						: 'StateVoorAllocatie0/Verblijfsrecreatie/'+VerblijfsrecreatieK/Subsector_name
 				, CompactedAdminDomain
 				, float32
 			), Descr = "Exogeen opgelegde gebieden leegmaken.";
@@ -99,10 +117,12 @@ Template Zichtjaar_T
 			for_each_nedv(
 				ZonK/Subsector_name
 				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasZonSector) //om te kunnen rekenen zonder Zon als sectorAllocRegio
-					? 'const(0[float32], CompactedAdminDomain)' 
-					: 'NeedsToBeEmptieDueToExogenousDevelopments
-						? 0[float32]
-						: StateVoorAllocatie0/Zon/'+ZonK/Subsector_name
+					? 'const(0[float32], CompactedAdminDomain)'
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen (#596)
+						? 'NeedsToBeEmptieDueToExogenousDevelopments
+							? 0[float32]
+							: StateVoorAllocatie0/Zon/'+ZonK/Subsector_name
+						: 'StateVoorAllocatie0/Zon/'+ZonK/Subsector_name
 				, CompactedAdminDomain
 				, float32
 			), Descr = "Exogeen opgelegde gebieden leegmaken.";
