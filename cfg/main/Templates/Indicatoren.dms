@@ -2,7 +2,7 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
 // Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
@@ -143,10 +143,20 @@ Template Indicatoren_T
 	// #include<Gebruiksoppervlak.dms>
 	#include<SloopNieuwbouwWonen.dms>
 	// #include<Materiaalgebruik.dms>
-	// #include<Inbreiding.dms>
 	#include<Dichtheid.dms>
 	#include<Bereikbaarheid.dms>
 	#include<Grondgebruik.dms>
+	
+	container Inbreiding
+	{
+		attribute<Woning> Aantal_Woningen_Totaal_BijTovBasisjaar (AdminDomain) := Stand/Aantal_Woningen_Totaal - Basisjaar/Stand/Aantal_Woningen_Totaal;
+		
+		attribute<bool> BestaandBebouwdGebied                (AdminDomain) := /BaseData/Omgeving/BBGSamengesteld;
+		attribute<bool> BestaandGroenInBestaandBebouwdGebied (AdminDomain) := IsDefined(Basisjaar/Grondgebruik/Groen) && BestaandBebouwdGebied;
+		
+		parameter<float32> FractieWoningenErbijInBestaandBebouwdGebied                := sum(Aantal_Woningen_Totaal_BijTovBasisjaar * float32(BestaandBebouwdGebied)) / sum(Aantal_Woningen_Totaal_BijTovBasisjaar)[float32];
+		parameter<float32> FractieWoningenErbijInBestaandGroenInBestaandBebouwdGebied := sum(Aantal_Woningen_Totaal_BijTovBasisjaar * float32(BestaandGroenInBestaandBebouwdGebied)) / sum(Aantal_Woningen_Totaal_BijTovBasisjaar)[float32];
+	}
 	
 	container Landgebruikskaart   := Templates/Landgebruikskaart/Make_Landgebruikskaart_T(Zichtjaar_name, Stand);
 	
@@ -178,7 +188,7 @@ Template Indicatoren_T
 			attribute<string> name: 
 			[
 				 'Groenaanbod'                                  // Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
-				,'Cumulatief_Groenaanbod_over_woningen'         // Totale oppervlakte groen binnen de gegeven straal maal het aantal woningen in die cel (m²). In dichtgebouwd gebied nieuw groen toevoegen, maak je veel mensen gelukkig mee. Echter, ze realiseren zich dan niet dat je het moet delen met al die andere mensen (indicator 3).
+				,'Cumulatief_Groenaanbod_over_woningen'         // Totale oppervlakte groen binnen de gegeven straal maal het aantal woningen in die cel (m²). In dichtgebouwd gebied nieuw groen toevoegen maak je veel mensen gelukkig mee. Echter, ze realiseren zich dan niet dat je het moet delen met al die andere mensen (indicator 3).
 				,'Drukte_gecorrigeerd_groenaanbod_per_woning'   // Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning).
 			];
 			
@@ -205,61 +215,162 @@ Template Indicatoren_T
 	
 	#include<Verharding.dms>
 	#include<Waterberging.dms>
-
-	container Mortaliteit : using = "Classifications/Grondgebruik;Classifications/Actor"
-	, Descr = "Afname mortaliteit door meer groen (#484). De kans op overlijden neemt met 4% af wanneer de groenindex (NDVI) binnen 500 meter van het woonadres met 0,1 toeneemt. Bron: RIVM-rapport 2026-0008 (project GRIP)."
+	
+	container SterfteAfnameDoorGroenToename : using = "Classifications/Grondgebruik;Classifications/Actor"
+	, Descr = "Sterfte (mortaliteit) i.r.t. groen (#484). De kans op overlijden van bewoners neemt met 4% af wanneer de groenindex (NDVI) binnen 500 meter van het woonadres met 0,1 toeneemt. Bron: RIVM-rapport 2026-0008 (project GRIP)."
 	{
-		attribute<LGNKlasse>      LGN               (AdminDomain) := /SourceData/Grondgebruik/LGN/m25;
-		attribute<LU_ModelType>   LU_Basisjaar      (AdminDomain) := ThisYear/Grondgebruik/Verandering/LU_MT_Basisjaar;
-		attribute<LU_ModelType>   LU_Zichtjaar      (AdminDomain) := ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar;
-		attribute<Bool>           IsVeranderd       (AdminDomain) := LU_Zichtjaar != LU_Basisjaar;
-
-		attribute<INL_Beheertype> NieuweNatuur      (AdminDomain) := ThisVariantData/ExogeenOpleggen/Natuur_BT;
-		attribute<Bool>           HeeftNieuweNatuur (AdminDomain) := IsVeranderd && IsDefined(NieuweNatuur);
-
-		// NDVI per cel, in volgorde van betrouwbaarheid:
-		//  1. onveranderde cel       -> huidig gebruik op basis van de LGN-klasse.
-		//  2. veranderd naar natuur  -> NDVI van het opgelegde MNP-beheertype (de bron van de nieuwe natuur).
-		//  3. overig veranderd       -> NDVI-bereik van het toegekende LU_ModelType (stedelijk/landbouw, of natuur zonder beheertype-detail).
-		attribute<Bool>    IsNatuurTypeExcluded (AdminDomain) := HeeftNieuweNatuur
-																	? INL_Beheertype/ndvi_excl[NieuweNatuur]
-																	: IsVeranderd 
-																		? LU_ModelType/ndvi_excl[LU_Zichtjaar] 
-																		: LGNKlasse/ndvi_excl[LGN];
-
-		attribute<Float32> NDVI_min            (AdminDomain) := IsNatuurTypeExcluded ? null_f : (HeeftNieuweNatuur ? INL_Beheertype/ndvi_min[NieuweNatuur] : (IsVeranderd ? LU_ModelType/ndvi_min[LU_Zichtjaar] : LGNKlasse/ndvi_min[LGN]));
-		attribute<Float32> NDVI_mid            (AdminDomain) := IsNatuurTypeExcluded ? null_f : (HeeftNieuweNatuur ? INL_Beheertype/ndvi_mid[NieuweNatuur] : (IsVeranderd ? LU_ModelType/ndvi_mid[LU_Zichtjaar] : LGNKlasse/ndvi_mid[LGN]));
-		attribute<Float32> NDVI_max            (AdminDomain) := IsNatuurTypeExcluded ? null_f : (HeeftNieuweNatuur ? INL_Beheertype/ndvi_max[NieuweNatuur] : (IsVeranderd ? LU_ModelType/ndvi_max[LU_Zichtjaar] : LGNKlasse/ndvi_max[LGN]));
-
-		attribute<Float32> NDVI_min_500m       (AdminDomain) := potential(NDVI_min, /Geography/Distmatrices_25m/pot500m/Flat2) / potential(float32(IsDefined(NDVI_min)), /Geography/Distmatrices_25m/pot500m/Flat2);
-		attribute<Float32> NDVI_mid_500m       (AdminDomain) := potential(NDVI_mid, /Geography/Distmatrices_25m/pot500m/Flat2) / potential(float32(IsDefined(NDVI_mid)), /Geography/Distmatrices_25m/pot500m/Flat2);
-		attribute<Float32> NDVI_max_500m       (AdminDomain) := potential(NDVI_max, /Geography/Distmatrices_25m/pot500m/Flat2) / potential(float32(IsDefined(NDVI_max)), /Geography/Distmatrices_25m/pot500m/Flat2);
-
-		attribute<Float32> Delta_NDVI_min_500m (AdminDomain) := NDVI_min_500m - Basisjaar/Mortaliteit/NDVI_min_500m;
-		attribute<Float32> Delta_NDVI_mid_500m (AdminDomain) := NDVI_mid_500m - Basisjaar/Mortaliteit/NDVI_mid_500m;
-		attribute<Float32> Delta_NDVI_max_500m (AdminDomain) := NDVI_max_500m - Basisjaar/Mortaliteit/NDVI_max_500m;
-
-		parameter<Float32> EffectPerNDVI                     := 0.04f / 0.1f, Descr = "4% lagere kans op overlijden per 0,1 NDVI-toename binnen 500 meter van het woonadres (RIVM).";
-		parameter<Float32> ReferentieSterfte                 := 0.01f       , Descr = "Referentiesterfte: gemiddeld aandeel van de bewoners dat per jaar overlijdt.";
-		parameter<Float32> PersonenPerWoning                 := 2.1f        , Descr = "Gemiddelde huishoudensgrootte om woningen naar bewoners te vertalen.";
-
-		attribute<Float32> Bewoners            (AdminDomain) := Stand/Aantal_Woningen_Totaal * PersonenPerWoning / 1[Woning];
-
-
-		parameter<string> StorageStr := lowercase(Zichtjaar_name) == lowercase('Basisjaar') 
-			? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/VermedenSterfgevallenPerJaarDoorGroen_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
-			: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/VermedenSterfgevallenPerJaarDoorGroen_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+		parameter<Bool> IsStartYear := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+		parameter<Bool> IsFirstAllocYear := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
 		
-		// Positief = vermeden sterfgevallen per jaar door toename groen; negatief = extra sterfgevallen door afname groen.
-		attribute<Float32> VermedenSterfgevallenPerJaar_min (AdminDomain) := Delta_NDVI_min_500m * EffectPerNDVI * ReferentieSterfte * Bewoners, StorageName = "=replace(StorageStr, '@V@', 'min')", StorageType = "gdalwrite.grid";
-		attribute<Float32> VermedenSterfgevallenPerJaar_mid (AdminDomain) := Delta_NDVI_mid_500m * EffectPerNDVI * ReferentieSterfte * Bewoners, StorageName = "=replace(StorageStr, '@V@', 'mid')", StorageType = "gdalwrite.grid";
-		attribute<Float32> VermedenSterfgevallenPerJaar_max (AdminDomain) := Delta_NDVI_max_500m * EffectPerNDVI * ReferentieSterfte * Bewoners, StorageName = "=replace(StorageStr, '@V@', 'max')", StorageType = "gdalwrite.grid";
-
-		parameter<Float32> Totaal_VermedenSterfgevallenPerJaar_min := sum(VermedenSterfgevallenPerJaar_min);
-		parameter<Float32> Totaal_VermedenSterfgevallenPerJaar_mid := sum(VermedenSterfgevallenPerJaar_mid);
-		parameter<Float32> Totaal_VermedenSterfgevallenPerJaar_max := sum(VermedenSterfgevallenPerJaar_max);
+		parameter<Int16> Zichtjaar_value     := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
+		parameter<Int16> PrevZichtjaar_value := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel);
+		
+		parameter<jaar> Periode := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
+		parameter<jaar> PeriodeTovBasisjaar := Zichtjaar_Value[jaar] - /ModelParameters/Model_StartYear[jaar];
+		
+		parameter<jaarlijks>      ReferentieSterfte := 0.01[jaarlijks], Descr = "Referentiesterfte: gemiddeld aandeel van de bewoners dat per jaar overlijdt.";
+		parameter<Persoon_Woning> PersonenPerWoning := 2.1[Persoon_Woning], Descr = "Gemiddelde huishoudensgrootte om woningen naar bewoners te vertalen.";
+		parameter<Float32>        EffectPerNDVI     := 0.04f / 0.1f, Descr = "4% lagere kans op overlijden per 0,1 NDVI-toename binnen 500 meter van het woonadres (RIVM).";
+		
+		parameter<string> NDVI_variant_ref  := VariantParameters/VariantK/NDVI_variant_ref[Variant_rel];
+		
+		parameter<string> CalcStrNDVI := 'potential(@, /Geography/Distmatrices_25m/pot500m/Flat2) / potential(float32(IsDefined(@)), /Geography/Distmatrices_25m/pot500m/Flat2)';
+		parameter<string> CalcStrSterfteAfname := 'ReferentieSterfte * @NDVIToename@ * EffectPerNDVI * @Bewoners@ * @Periode@';
+		
+		unit<uint8> OP := = Zichtjaar_name+'/impl/StandVar/OP';
+		unit<uint8> OPSubklasseK := Classifications/Grondgebruik/OPSubklasseK;
+		
+		container OP_Buurt := = Zichtjaar_name+'/impl/StandVar/OP_Buurt';
+		
+		container BaseYear
+		{
+			attribute<Woning>  Woningen (AdminDomain) := Basisjaar/Stand/Aantal_Woningen_Totaal;
+			attribute<Persoon> Bewoners (AdminDomain) := Woningen * PersonenPerWoning;
+			
+			container NDVI
+			{
+				attribute<float32> SrcSrc (AdminDomain) := = 'LGNKlasse/ndvi_'+NDVI_variant_ref+'[/SourceData/Grondgebruik/LGN/m25] / float32(!LGNKlasse/ndvi_excl[/SourceData/Grondgebruik/LGN/m25])';
+				attribute<float32> Src    (AdminDomain) := SrcSrc;
+				attribute<float32> Result (AdminDomain) := = replace(CalcStrNDVI, '@', 'Src');
+			}
+		}
+		
+		container PrevZichtjaar := =IsFirstAllocYear || IsStartYear ? 'BaseYear' : 'PrevIndicatoren/SterfteAfnameDoorGroenToename/Zichtjaar';
+		
+		container Zichtjaar
+		{
+			attribute<Woning>  Woningen (AdminDomain) := Stand/Aantal_Woningen_Totaal;
+			attribute<Persoon> Bewoners (AdminDomain) := Woningen * PersonenPerWoning;
+			
+			container NDVI
+			{
+				container SrcSrc
+				{
+					attribute<float32> UitGrondgebruikExogeen (AdminDomain) := = IsStartYear ? 'const(null_b, AdminDomain)' : 'INL_Beheertype/ndvi_'+NDVI_variant_ref+'[ThisVariantData/ExogeenOpleggen/Natuur_BT]';
+					attribute<float32> UitGrondgebruikAlloc   (AdminDomain) := = IsStartYear ? 'const(null_b, AdminDomain)' : 'LGNKlasse/ndvi_'+NDVI_variant_ref+'[ThisVariantClassifications/Actor/Sector/LGNKlasse_rel[Stand/Sector_rel]]';
+					
+					container UitGrondgebruikOPAlloc
+					{
+						container PerOPSubklasse := for_each_ne(OPSubklasseK/name, 'OPSubklasseT('+string(id(OPSubklasseK))+'[OPSubklasseK])');
+						
+						attribute<float32> NDVI (OP) := =  'add('+AsItemList('PerOPSubklasse/'+OPSubklasseK/name+'/NDVI_OP')+')';
+						
+						attribute<OP>      OP_rel (AdminDomain) := Stand/OP_rel;
+						attribute<float32> Result (AdminDomain) := NDVI[OP_rel];
+						
+						Template OPSubklasseT
+						{
+							//
+							parameter<OPSubklasseK> id;
+							//
+							
+							parameter<string> SrcRef := OPSubklasseK/SrcRef[id];
+							
+							parameter<float32> NDVI       := = 'OPSubklasseK/NDVI_'+NDVI_variant_ref+'[id]';
+							parameter<float32> NDVI_NbSOP := = 'OPSubklasseK/NDVI_NbSOP_'+NDVI_variant_ref+'[id]';
+							
+							attribute<float32> NDVI_OP0      (OP) := = '(OP_Buurt/Terreinoppervlakte/Totaal/'+SrcRef+'[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32]) * '+string(NDVI)+'[float32]';
+							attribute<float32> NDVI_NbSOP_OP (OP) := = '(OP_Buurt/Terreinoppervlakte/Totaal/'+SrcRef+'[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32]) * '+string(NDVI_NbSOP)+'[float32]';
+							attribute<float32> NDVI_OP       (OP) := OP/IsNbSOP ? NDVI_NbSOP_OP : NDVI_OP0;
+						}
+					}
+				}
+				
+				attribute<float32> Src    (AdminDomain) := ='IsDefined(SrcSrc/UitGrondgebruikOPAlloc/Result) ? SrcSrc/UitGrondgebruikOPAlloc/Result : IsDefined(SrcSrc/UitGrondgebruikAlloc) ? SrcSrc/UitGrondgebruikAlloc :  MakeDefined(SrcSrc/UitGrondgebruikExogeen, PrevZichtjaar/NDVI/Src)';
+				attribute<float32> Result (AdminDomain) := = replace(CalcStrNDVI, '@', 'Src');
+				
+				container Delta
+				{
+					attribute<float32> NDVIToename   (AdminDomain) := Zichtjaar/NDVI/Result - PrevZichtjaar/NDVI/Result;
+					attribute<float32> SterfteAfname (AdminDomain) := = replace(CalcStrSterfteAfname, '@NDVIToename@', 'NDVIToename', '@Bewoners@', 'Zichtjaar/Bewoners', '@Periode@', 'Periode');
+					
+					attribute<bool> NDVINeemtToe   (AdminDomain) := NDVIToename > 0.00001f;
+					attribute<bool> SterfteNeemtAf (AdminDomain) := SterfteAfname > 0.00001f;
+				}
+				
+			}
+		}
+		
+		container DeltaTovBasisjaar
+		{
+			attribute<float32> NDVIToename   (AdminDomain) := Zichtjaar/NDVI/Result - BaseYear/NDVI/Result;
+			attribute<float32> SterfteAfname (AdminDomain) := = replace(CalcStrSterfteAfname, '@NDVIToename@', 'NDVIToename', '@Bewoners@', 'Zichtjaar/Bewoners','@Periode@', 'PeriodeTovBasisjaar');
+		}
 	}
-
+	
+	// container Mortaliteit : using = "Classifications/Grondgebruik;Classifications/Actor"
+	// , Descr = "Afname mortaliteit door meer groen (#484). De kans op overlijden neemt met 4% af wanneer de groenindex (NDVI) binnen 500 meter van het woonadres met 0,1 toeneemt. Bron: RIVM-rapport 2026-0008 (project GRIP)."
+	// {
+		// parameter<string> StorageStr := lowercase(Zichtjaar_name) == lowercase('Basisjaar') 
+			// ? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/VermedenSterfgevallenPerJaarDoorGroen_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+			// : '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/VermedenSterfgevallenPerJaarDoorGroen_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+		
+		// attribute<LGNKlasse>      LGN               (AdminDomain) := /SourceData/Grondgebruik/LGN/m25;
+		// attribute<LU_ModelType>   LU_Basisjaar      (AdminDomain) := ThisYear/Grondgebruik/Verandering/LU_MT_Basisjaar;
+		// attribute<LU_ModelType>   LU_Zichtjaar      (AdminDomain) := ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar;
+		// attribute<Bool>           IsVeranderd       (AdminDomain) := LU_Zichtjaar != LU_Basisjaar;
+		
+		// attribute<INL_Beheertype> NieuweNatuur      (AdminDomain) := ThisVariantData/ExogeenOpleggen/Natuur_BT;
+		// attribute<Bool>           HeeftNieuweNatuur (AdminDomain) := IsVeranderd && IsDefined(NieuweNatuur);
+		
+		// // NDVI per cel, in volgorde van betrouwbaarheid:
+		// //  1. onveranderde cel       -> huidig gebruik op basis van de LGN-klasse.
+		// //  2. veranderd naar natuur  -> NDVI van het opgelegde MNP-beheertype (de bron van de nieuwe natuur).
+		// //  3. overig veranderd       -> NDVI-bereik van het toegekende LU_ModelType (stedelijk/landbouw, of natuur zonder beheertype-detail).
+		// attribute<Bool>    IsNatuurTypeExcluded (AdminDomain) := HeeftNieuweNatuur
+																	// ? INL_Beheertype/ndvi_excl[NieuweNatuur]
+																	// : IsVeranderd 
+																		// ? LU_ModelType/ndvi_excl[LU_Zichtjaar] 
+																		// : LGNKlasse/ndvi_excl[LGN];
+		
+		// attribute<Float32> NDVI_min            (AdminDomain) := IsNatuurTypeExcluded ? null_f : (HeeftNieuweNatuur ? INL_Beheertype/ndvi_min[NieuweNatuur] : (IsVeranderd ? LU_ModelType/ndvi_min[LU_Zichtjaar] : LGNKlasse/ndvi_min[LGN]));
+		// attribute<Float32> NDVI_mid            (AdminDomain) := IsNatuurTypeExcluded ? null_f : (HeeftNieuweNatuur ? INL_Beheertype/ndvi_mid[NieuweNatuur] : (IsVeranderd ? LU_ModelType/ndvi_mid[LU_Zichtjaar] : LGNKlasse/ndvi_mid[LGN]));
+		// attribute<Float32> NDVI_max            (AdminDomain) := IsNatuurTypeExcluded ? null_f : (HeeftNieuweNatuur ? INL_Beheertype/ndvi_max[NieuweNatuur] : (IsVeranderd ? LU_ModelType/ndvi_max[LU_Zichtjaar] : LGNKlasse/ndvi_max[LGN]));
+		
+		// attribute<Float32> NDVI_min_500m       (AdminDomain) := potential(NDVI_min, /Geography/Distmatrices_25m/pot500m/Flat2) / potential(float32(IsDefined(NDVI_min)), /Geography/Distmatrices_25m/pot500m/Flat2);
+		// attribute<Float32> NDVI_mid_500m       (AdminDomain) := potential(NDVI_mid, /Geography/Distmatrices_25m/pot500m/Flat2) / potential(float32(IsDefined(NDVI_mid)), /Geography/Distmatrices_25m/pot500m/Flat2);
+		// attribute<Float32> NDVI_max_500m       (AdminDomain) := potential(NDVI_max, /Geography/Distmatrices_25m/pot500m/Flat2) / potential(float32(IsDefined(NDVI_max)), /Geography/Distmatrices_25m/pot500m/Flat2);
+		
+		// attribute<Float32> Delta_NDVI_min_500m (AdminDomain) := NDVI_min_500m - Basisjaar/Mortaliteit/NDVI_min_500m;
+		// attribute<Float32> Delta_NDVI_mid_500m (AdminDomain) := NDVI_mid_500m - Basisjaar/Mortaliteit/NDVI_mid_500m;
+		// attribute<Float32> Delta_NDVI_max_500m (AdminDomain) := NDVI_max_500m - Basisjaar/Mortaliteit/NDVI_max_500m;
+		
+		// parameter<Float32> EffectPerNDVI                     := 0.04f / 0.1f, Descr = "4% lagere kans op overlijden per 0,1 NDVI-toename binnen 500 meter van het woonadres (RIVM).";
+		// parameter<Float32> ReferentieSterfte                 := 0.01f       , Descr = "Referentiesterfte: gemiddeld aandeel van de bewoners dat per jaar overlijdt.";
+		// parameter<Float32> PersonenPerWoning                 := 2.1f        , Descr = "Gemiddelde huishoudensgrootte om woningen naar bewoners te vertalen.";
+		
+		// attribute<Float32> Bewoners            (AdminDomain) := Stand/Aantal_Woningen_Totaal * PersonenPerWoning / 1[Woning];
+		
+		// // Positief = vermeden sterfgevallen per jaar door toename groen; negatief = extra sterfgevallen door afname groen.
+		// attribute<Float32> VermedenSterfgevallenPerJaar_min (AdminDomain) := Delta_NDVI_min_500m * EffectPerNDVI * ReferentieSterfte * Bewoners, StorageName = "=replace(StorageStr, '@V@', 'min')", StorageType = "gdalwrite.grid";
+		// attribute<Float32> VermedenSterfgevallenPerJaar_mid (AdminDomain) := Delta_NDVI_mid_500m * EffectPerNDVI * ReferentieSterfte * Bewoners, StorageName = "=replace(StorageStr, '@V@', 'mid')", StorageType = "gdalwrite.grid";
+		// attribute<Float32> VermedenSterfgevallenPerJaar_max (AdminDomain) := Delta_NDVI_max_500m * EffectPerNDVI * ReferentieSterfte * Bewoners, StorageName = "=replace(StorageStr, '@V@', 'max')", StorageType = "gdalwrite.grid";
+		
+		// parameter<Float32> Totaal_VermedenSterfgevallenPerJaar_min := sum(VermedenSterfgevallenPerJaar_min);
+		// parameter<Float32> Totaal_VermedenSterfgevallenPerJaar_mid := sum(VermedenSterfgevallenPerJaar_mid);
+		// parameter<Float32> Totaal_VermedenSterfgevallenPerJaar_max := sum(VermedenSterfgevallenPerJaar_max) * SterfteAfnameDoorGroenToename/PeriodeTovBasisjaar;
+	// }
+	
 	container Funderingsschade
 	{
 		container Src := = 'ThisVariantData/Suitability/'+Zichtjaar_name+'/Wonen/eengezins_VrijeSector/perOP/StedelijkerEGVS/Verwervingskosten/Funderingsschade'; // Dit kan any WP4 of OP zijn.
