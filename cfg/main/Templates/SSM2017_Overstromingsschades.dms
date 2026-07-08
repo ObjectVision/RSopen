@@ -2,7 +2,7 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
 // Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
@@ -20,12 +20,12 @@ Template SSM2017_Overstromingsschades_T : using = "Classifications/Vastgoed"
 	parameter<String> Zichtjaar_name;
 	//
 	
-	parameter<Bool>   IsStartYear := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	parameter<Bool> IsStartYear := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
 	
 	#include<Parameters.dms>
 	#include<Grondgebruik.dms>
 	
-	attribute<Int32> Diepte (AdminDomain) := SourceData/Water/dieptekaart == -9999f || SourceData/Water/dieptekaart > 10f ? 0i/0i : (SourceData/Water/dieptekaart * 100f)[int32]; //convert naar int van cm
+	attribute<Int32> DiepteOud (AdminDomain) := SourceData/Water/dieptekaartOud == -9999f || SourceData/Water/dieptekaartOud > 10f ? 0i/0i : (SourceData/Water/dieptekaartOud * 100f)[int32]; //convert naar cm in integers
 	
 	container Schadefuncties
 	{
@@ -51,8 +51,10 @@ Template SSM2017_Overstromingsschades_T : using = "Classifications/Vastgoed"
 			
 			unit<UInt32> Read: StorageName = "='%RSo_DataDir%/Omgeving/Water/Schade/SSM_Schadefuncties/'+Filename", StorageReadOnly = "TRUE", StorageType = "gdal.vect"
 			{
-				attribute<Int32>   Waterdiepte  := int32(float32(wd_m_) * 100f);
-				attribute<Float32> SchadeFActor := float32(factor);
+				attribute<Int32>   WaterdiepteOud  := int32(float32(wd_m_) * 100f);
+				attribute<NrCm> Waterdiepte := rounded_convert(wd_m_[meter], NrCm); //afronden op hele cm: exacte match in rjoin, zie issue #607
+				parameter<NrCm> MaxWaterdiepte := max(Waterdiepte); //grootste diepte in de schadefunctie; diepere cellen worden hierop geclampt (schadefactor blijft daarboven maximaal)
+				attribute<Float32> SchadeFactor := float32(factor);
 			}
 		}
 	}
@@ -74,29 +76,19 @@ Template SSM2017_Overstromingsschades_T : using = "Classifications/Vastgoed"
 			attribute<Eur> Totaal (AdminDomain) := ='Add('+asItemList(RegionaalBinnendijks/name+'/Totaal')+')';
 		}
 		
-		attribute<Eur>  Result_Hoofdwatersysteem_Binnendijks     (AdminDomain) := Hoofdwatersysteem_Binnendijks/Totaal; //, StorageName = "='%LocalDataProjDir%/Output/SSM/'+Casus_name+'/'+Zichtjaar_name+'/Hoofdwatersysteem_Binnendijks.tif'", StorageType = "gdalwrite.grid";
-		attribute<Eur>  Result_Hoofdwatersysteem_Buitendijks     (AdminDomain) := Hoofdwatersysteem_Buitendijks/Totaal; //, StorageName = "='%LocalDataProjDir%/Output/SSM/'+Casus_name+'/'+Zichtjaar_name+'/Hoofdwatersysteem_Buitendijks.tif'", StorageType = "gdalwrite.grid";
-		attribute<Eur>  Result_Regionaalwatersysteem_Binnendijks (AdminDomain) := Regionaalwatersysteem_Binnendijks/Totaal; //, StorageName = "='%LocalDataProjDir%/Output/SSM/'+Casus_name+'/'+Zichtjaar_name+'/Regionaalwatersysteem_Binnendijks.tif'", StorageType = "gdalwrite.grid";
-		attribute<Eur>  Result_Totaal                            (AdminDomain) := Result_Hoofdwatersysteem_Binnendijks//, StorageName = "='%LocalDataProjDir%/Output/SSM/'+Casus_name+'/'+Zichtjaar_name+'/Totaal.tif'", StorageType = "gdalwrite.grid"
-		{
-			// attribute<Eur>  PerProvincie (/SourceData/RegioIndelingen/Provincie/StudyArea) := sum(., /SourceData/RegioIndelingen/Provincie/StudyArea/Per_AdminDomain);
-			// parameter<Eur>  PerNL := sum(.);
-		}
+		attribute<Eur>  Result_Hoofdwatersysteem_Binnendijks     (AdminDomain) := Hoofdwatersysteem_Binnendijks/Totaal, StorageName = "=replace(StorageStr, '@V@', 'Hoofdwatersysteem_Binnendijks')", StorageType = "gdalwrite.grid";
+		attribute<Eur>  Result_Hoofdwatersysteem_Buitendijks     (AdminDomain) := Hoofdwatersysteem_Buitendijks/Totaal, StorageName = "=replace(StorageStr, '@V@', 'Hoofdwatersysteem_Buitendijks')", StorageType = "gdalwrite.grid";
+		attribute<Eur>  Result_Regionaalwatersysteem_Binnendijks (AdminDomain) := Regionaalwatersysteem_Binnendijks/Totaal, StorageName = "=replace(StorageStr, '@V@', 'Regionaalwatersysteem_Binnendijks')", StorageType = "gdalwrite.grid";
+
+		parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/SSM_Overstromingsschade_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
 		
-		attribute<Eur>   Result_Dijkring (SourceData/Water/dijkringen/dijkring2020) := sum(Result_Totaal,SourceData/Water/dijkringen/dijkring2020/per_rdc_25m);
-		attribute<Bool>  Waterdiepte_buiten_dijkring  (AdminDomain)                  := IsDefined(Diepte) && !IsDefined(SourceData/Water/dijkringen/dijkring2020/per_rdc_25m);
-		attribute<Eur>   Result_buiten_dijkring       (AdminDomain)                  := Waterdiepte_buiten_dijkring ? Result_Totaal : 0f/0f;//tbv check
-		// attribute<Eur>   Read_Result_Totaal           (AdminDomain) : StorageName = "='%LocalDataProjDir%/Output/SSM/'+Casus_name+'/'+Zichtjaar_name+'/Totaal.tif'", StorageReadOnly = "TRUE", StorageType = "tif"
-		// {
-			// attribute<Eur>  PerProvincie (/SourceData/RegioIndelingen/Provincie/StudyArea) := sum(., /SourceData/RegioIndelingen/Provincie/StudyArea/Per_AdminDomain);
-			// parameter<Eur>  PerNL := sum(.);
-		// }
-		
-		attribute<Eur>  Result_Totaal_tov_basisjaar (AdminDomain) := =IsStartYear ? 'const(null_f, AdminDomain, Eur)' : 'Result_Totaal - Basisjaar/Overstromingsschade/Resultaat/Result_Totaal'
+		attribute<Eur>  Result_Hoofdwatersysteem_Binnendijks_tov_basisjaar (AdminDomain) := =IsStartYear ? 'const(null_f, AdminDomain, Eur)' : 'Result_Hoofdwatersysteem_Binnendijks - Basisjaar/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks'
 		{
 			attribute<Eur>  PerProvincie (/SourceData/RegioIndelingen/Provincie/StudyArea) := sum(., /SourceData/RegioIndelingen/Provincie/StudyArea/Per_AdminDomain);
 			parameter<Eur>  PerNL := sum(.);
 		}
+		attribute<Eur>  Result_Hoofdwatersysteem_Buitendijks_tov_basisjaar (AdminDomain) := =IsStartYear ? 'const(null_f, AdminDomain, Eur)' : 'Result_Hoofdwatersysteem_Buitendijks - Basisjaar/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks';
+		attribute<Eur>  Result_Regionaalwatersysteem_Binnendijks_tov_basisjaar (AdminDomain) := =IsStartYear ? 'const(null_f, AdminDomain, Eur)' : 'Result_Regionaalwatersysteem_Binnendijks - Basisjaar/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks';
 	}
 	
 	Template PerCategorie_T
@@ -117,7 +109,7 @@ Template SSM2017_Overstromingsschades_T : using = "Classifications/Vastgoed"
 		unit<Float32> Unit := =Unit_str;
 		unit<Float32> DamageUnit := =DamageUnit_str;
 		
-		parameter<DamageUnit> s_i  := =''+TypeDijk+'/MaxDamage_Direct['+TypeDijk+'/V/'+Categorie+'][DamageUnit]';  //maximale schade euro per eenheid in Categorie i
+		parameter<DamageUnit> s_i  := =          ''+TypeDijk+'/MaxDamage_Direct['+TypeDijk+'/V/'+Categorie+'][DamageUnit]';  //maximale schade euro per eenheid in Categorie i
 		parameter<DamageUnit> SN_i := =HeeftBU ? ''+TypeDijk+'/MaxDamage_Indirect_Netto['+TypeDijk+'/V/'+Categorie+'][DamageUnit]' : '0[DamageUnit]'; //maximale netto schade per eenheid in Categorie i
 		parameter<DamageUnit> SB_i := =HeeftBU ? ''+TypeDijk+'/MaxDamage_Indirect_Bruto['+TypeDijk+'/V/'+Categorie+'][DamageUnit]' : '0[DamageUnit]'; //maximale bruto schade per eenheid in Categorie i
 		
@@ -126,13 +118,13 @@ Template SSM2017_Overstromingsschades_T : using = "Classifications/Vastgoed"
 		parameter<Float32> M_i  := 1f;   //multiplier voor indirecte schade voor Categorie i
 		parameter<Float32> n    := ='sum_uint32('+TypeDijk+'/Use)[float32]';    //Totaal aantal Categorieen
 		
-		attribute<Float32> α_i (AdminDomain) := ='rjoin(Diepte, Schadefuncties/Read_DamageFunctions/Function_'+Direct_DamageFunction+'/Read/waterdiepte, Schadefuncties/Read_DamageFunctions/Function_'+Direct_DamageFunction+'/Read/SchadeFActor)';  //schadefactor direct in Categorie i
-		attribute<Float32> β_i (AdminDomain) := =HeeftBU ? 'rjoin(Diepte, Schadefuncties/Read_DamageFunctions/Function_'+Indirect_BU_DamageFunction+'/Read/waterdiepte, Schadefuncties/Read_DamageFunctions/Function_'+Indirect_BU_DamageFunction+'/Read/SchadeFActor)' : 'const(0f, AdminDomain)';  //schadefactor bedrijfsuitval in Categorie i
+		attribute<Float32> α_i (AdminDomain) := =          'rjoin(min_elem_alldefined('+TypeDijk+'/Diepte, Schadefuncties/Read_DamageFunctions/Function_'+Direct_DamageFunction+'/Read/MaxWaterdiepte), Schadefuncties/Read_DamageFunctions/Function_'+Direct_DamageFunction+'/Read/waterdiepte, Schadefuncties/Read_DamageFunctions/Function_'+Direct_DamageFunction+'/Read/SchadeFactor)';  //schadefactor direct in Categorie i; diepte geclampt op tabelmax; alldefined: geen diepte = geen schade (min_elem zou null als tabelmax interpreteren)
+		attribute<Float32> β_i (AdminDomain) := =HeeftBU ? 'rjoin(min_elem_alldefined('+TypeDijk+'/Diepte, Schadefuncties/Read_DamageFunctions/Function_'+Indirect_BU_DamageFunction+'/Read/MaxWaterdiepte), Schadefuncties/Read_DamageFunctions/Function_'+Indirect_BU_DamageFunction+'/Read/waterdiepte, Schadefuncties/Read_DamageFunctions/Function_'+Indirect_BU_DamageFunction+'/Read/SchadeFActor)' : 'const(0f, AdminDomain)';  //schadefactor bedrijfsuitval in Categorie i; diepte geclampt op tabelmax; alldefined: geen diepte = geen schade
 		
 		attribute<unit> η_i (AdminDomain) := =Path_str;  //aantal eenheden in Categorie i
 		
 		attribute<Eur> Direct   (AdminDomain) :=  α_i * η_i * s_i;
-		attribute<Eur> Indirect (AdminDomain) := ((α_i * η_i * SN_i + (1f - α_i) * SB_i * 1[unit]) * β_i * id * (1f - SF_i) * M_i) * float32(η_i > 0f);
+		attribute<Eur> Indirect (AdminDomain) := ((α_i * η_i * SN_i + (1f - α_i) * SB_i * η_i) * β_i * id * (1f - SF_i) * M_i) * float32(η_i > 0f);
 		attribute<Eur> Totaal   (AdminDomain) := Direct + Indirect;
 	}
 }

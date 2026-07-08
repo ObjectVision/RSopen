@@ -2,7 +2,7 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
 // Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
@@ -21,17 +21,45 @@ Template Zichtjaar_T
 	container StateVoorAllocatie0;
 	container Impl0;
 	//
-	
-	parameter<Jaar> AantalJaren := (rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/YearRange_rel) - rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel))[Jaar];
+	parameter<YearRange> Zichtjaar_value := rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/YearRange_rel);
+	parameter<Jaar>      AantalJarenWerkGroeiAanpassing := /ModelParameters/AlleenEindjaar && Zichtjaar_value > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt
+														? ModelParameters/Werken/Groeifactor/Groeifactor_WanneerToepassen * (ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt - rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel))[Jaar] //ook hier de 0.5-factor, anders verdunt AlleenEindjaar ~2x sterker dan sequentieel (#591)
+														: Zichtjaar_value > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt 
+															? 0[jaar] 
+															: ModelParameters/Werken/Groeifactor/Groeifactor_WanneerToepassen * (Zichtjaar_value - rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel))[Jaar];
 	
 	container StateVoorAllocatie := StateVoorAllocatie0
 	{
+		attribute<bool> NeedsToBeEmptieDueToExogenousDevelopments (CompactedAdminDomain) := ='collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, IsDefined(/VariantData/'+variant_name+'/ExogeenOpleggen/Totaal))';
+
+		container Wonen := 
+			for_each_nedv(
+				WP2xVSSH/name
+				, (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //om te kunnen rekenen zonder wonen als sectorAllocRegio
+					? 'NeedsToBeEmptieDueToExogenousDevelopments
+						? 0[Woning]
+						: StateVoorAllocatie0/Wonen/'+WP2xVSSH/name
+					: 'StateVoorAllocatie0/Wonen/'+WP2xVSSH/name
+				, CompactedAdminDomain
+				, Woning
+			), Descr = "Exogeen opgelegde gebieden leegmaken."
+		{
+			attribute<Woning>          Totaal        (CompactedAdminDomain) := ='add('+asItemList(WP2xVSSH/name)+')';
+			attribute<m2PandFootprint> Footprint     (CompactedAdminDomain) := = (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
+																					? 'NeedsToBeEmptieDueToExogenousDevelopments ? 0[m2PandFootprint] : StateVoorAllocatie0/Wonen/Footprint'
+																					: 'StateVoorAllocatie0/Wonen/Footprint'; //footprint mee legen met de woningen in exogeen opgelegd gebied (#596)
+		}
+		
 		container Werken0 := 
 			for_each_nedv(
 				Jobs6/name
 				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector) //om te kunnen rekenen zonder werken als sectorAllocRegio
-					? 'const(0[Job], CompactedAdminDomain)' 
-					: 'MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/Groeifactor_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJaren)), 0[job])'
+					? 'const(0[Job], CompactedAdminDomain)'
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen; daarna houdt de zeef deze cellen leeg (#596)
+						? 'NeedsToBeEmptieDueToExogenousDevelopments
+							? 0[Job]
+							: MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/Groeifactor_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)), 0[job])'
+						: 'MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/Groeifactor_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)), 0[job])'
 				, CompactedAdminDomain
 				, job
 			), Descr = "noemer voor verandering door van werkdichtheid (banen/cel) in bestaand gebied. Eenheid is job, maar Impliciet aantal jobs per cell. Dus dichtheid.";
@@ -43,6 +71,32 @@ Template Zichtjaar_T
 					? 'MakeDefined(1f / ((1f / Werken0/Zak_dienstverlening) * (1f + VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+'])), 0[job])'
 					: 'Werken0/Zak_dienstverlening', Descr = "Eenmalig ophoging van het aantal kantoorbanen per cel. Het idee erachter is dat je door verdikking meer mensen/banen in een kantoorgebouw kwijt kunt en je minder nieuwe kantoren hoeft te bouwen. Hierdoor krijg je wellicht al overrealisatie voordat de allocatie begint. Maar je hoeft dus geen nieuwe kantoorruimte te creeren.";
 		}
+
+		container PandFootprint :=
+			for_each_nedv(
+				Jobs6/name
+				, (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
+					? 'NeedsToBeEmptieDueToExogenousDevelopments
+						? 0[m2PandFootprint]
+						: StateVoorAllocatie0/PandFootprint/'+Jobs6/name
+					: 'StateVoorAllocatie0/PandFootprint/'+Jobs6/name
+				, CompactedAdminDomain
+				, m2PandFootprint
+			), Descr = "Werk-pandfootprint mee legen met de banen in exogeen opgelegd gebied (#596).";
+
+		container Verblijfsrecreatie :=
+			for_each_nedv(
+				VerblijfsrecreatieK/Subsector_name
+				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector) //om te kunnen rekenen zonder Verblijfsrecreatie als sectorAllocRegio
+					? 'const(0[float32], CompactedAdminDomain)'
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen (#596)
+						? 'NeedsToBeEmptieDueToExogenousDevelopments
+							? 0[float32]
+							: StateVoorAllocatie0/Verblijfsrecreatie/'+VerblijfsrecreatieK/Subsector_name
+						: 'StateVoorAllocatie0/Verblijfsrecreatie/'+VerblijfsrecreatieK/Subsector_name
+				, CompactedAdminDomain
+				, float32
+			), Descr = "Exogeen opgelegde gebieden leegmaken.";
 
 		container Wind
 		{
@@ -58,6 +112,21 @@ Template Zichtjaar_T
 			attribute<Meter> Ashoogte                      (CompactedAdminDomain) := ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/Ashoogte, Descr = "De Ashoogte van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
 			attribute<Meter> Rotordiameter                 (CompactedAdminDomain) := ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/Rotordiameter, Descr = "De Rotordiameter van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
 		}
+
+		container Zon := 
+			for_each_nedv(
+				ZonK/Subsector_name
+				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasZonSector) //om te kunnen rekenen zonder Zon als sectorAllocRegio
+					? 'const(0[float32], CompactedAdminDomain)'
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen (#596)
+						? 'NeedsToBeEmptieDueToExogenousDevelopments
+							? 0[float32]
+							: StateVoorAllocatie0/Zon/'+ZonK/Subsector_name
+						: 'StateVoorAllocatie0/Zon/'+ZonK/Subsector_name
+				, CompactedAdminDomain
+				, float32
+			), Descr = "Exogeen opgelegde gebieden leegmaken.";
+
 		
 		//debug
 		container RestClaims
@@ -66,17 +135,16 @@ Template Zichtjaar_T
 			attribute<Float32> Wonen_Stand     (NVM) := sum(StateVoorAllocatie/Wonen/Totaal, NVM/Per_CompactedAdminDomain);
 			attribute<Float32> Wonen_RestClaim (NVM) := Wonen_Claim - Wonen_Stand;
 
-		
+			attribute<Float32> Nijverheid_Claim     (NVM) := = replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/NVM_Werken/Nijverheid','@Z@' , Context/ThisZichtjaar_name);
+			attribute<Float32> Nijverheid_Stand     (NVM) := sum(StateVoorAllocatie/Werken/Nijverheid, NVM/Per_CompactedAdminDomain);
+			attribute<Float32> Nijverheid_RestClaim (NVM) := Nijverheid_Claim - Nijverheid_Stand;
 		}
-		
 	}
 	
 	container Context
 	{
 		container ThisZichtjaar := ..;
 		parameter<String> ThisZichtjaar_name := ../name;
-		
-		
 	}
 	
 	container Sequences :=
@@ -112,11 +180,12 @@ Template Zichtjaar_T
 	
 	container Impl := Impl0
 	{
-		parameter<String>  Generate  := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+';WriteStand/wonen/Footprint'", Descr = "Generate parameter to trigger generation of the stand files for this zichtjaar";
-
-		parameter<Bool>   Ontkoppeld := ='ModelParameters/StandAllocatieOntkoppeld', Descr = "Of de stand allocatie ontkoppeld is van de sector allocatie. Als dat zo is, worden de stand bestanden eerst ingelezen, gecompacteerd, en na de sector allocatie weer teruggeschreven. Als dat niet zo is, worden de stand bestanden direct overschreven.";
+		parameter<String>  Generate   := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+Extra_str", Descr = "Generate parameter to trigger generation of the stand files for this zichtjaar";
 		
-		unit<UInt32>      StandVar          := ='ThisVariantClassifications/StandVar';
+		parameter<string>  Extra_str  := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';WriteStand/wonen/Footprint' : '';
+		parameter<Bool>    Ontkoppeld := ='ModelParameters/StandAllocatieOntkoppeld', Descr = "Of de stand allocatie ontkoppeld is van de sector allocatie. Als dat zo is, worden de stand bestanden eerst ingelezen, gecompacteerd, en na de sector allocatie weer teruggeschreven. Als dat niet zo is, worden de stand bestanden direct overschreven.";
+		
+		unit<UInt8>       StandVar          := ='ThisVariantClassifications/StandVar';
 		parameter<string> AllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', Casus_name, '@JAAR@', name, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
 		
 		container ReadStand_UNCHECKED :=
@@ -211,7 +280,7 @@ Template Zichtjaar_T
 		{
 			container wonen
 			{
-				attribute<m2PandFootprint> Footprint  (AdminDomain) := CalcStand/Wonen/Footprint, StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Wonen/Footprint')", StorageType = "gdalwrite.grid";
+				attribute<m2PandFootprint> Footprint  (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? 'CalcStand/Wonen/Footprint' : 'const(null_f, AdminDomain, m2PandFootprint)', StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Wonen/Footprint')", StorageType = "gdalwrite.grid";
 			}
 		}
 			
@@ -231,9 +300,13 @@ Template Zichtjaar_T
 		}
 	}
 	
-	container StateNaAllocatie := = Impl/Ontkoppeld ? 'Impl/ReadStand_Compacted' : 'Impl/CalcStand_Compacted'
+	container StateNaAllocatie := = Impl/Ontkoppeld ? 'Impl/ReadStand_Compacted' : 'Impl/WriteStand_Compacted'
 	{
-		container WindPath :=  = Impl/Ontkoppeld ? 'Impl/ReadStand_Compacted/Wind' : 'Impl/CalcStand_Compacted/Wind';
+		container WindPath :=  = Impl/Ontkoppeld && ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector 
+									? 'Impl/ReadStand_Compacted/Wind' 
+									: ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector
+										? 'Impl/WriteStand_Compacted/Wind'
+										: '.';
 		container Wind := WindPath
 		{
 			unit<uint64> Objects := select_with_attr_by_cond(WindPath, WindPath/Totaal > 0f)

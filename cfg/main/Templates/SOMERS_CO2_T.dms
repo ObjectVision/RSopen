@@ -2,7 +2,7 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
 // Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
@@ -22,18 +22,20 @@ Template SOMERS_CO2_T
 	parameter<String>  Zichtjaar_name;
 	//
 	
-	parameter<Bool>  IsStartYear         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
-	parameter<Int16> PrevZichtjaar_value := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel);
-	parameter<Int16> Zichtjaar_value     := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
-	parameter<Bool>  IsFirstAllocYear    := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
-	parameter<jaar>  Periode := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
-	parameter<jaarlijks> Rentevoet := ModelParameters/Landbouw/Rentevoet;// TO DO: check vooronderstelde waarde
+	parameter<Bool>      IsStartYear         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	parameter<Int16>     PrevZichtjaar_value := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel);
+	parameter<Int16>     Zichtjaar_value     := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
+	parameter<Bool>      IsFirstAllocYear    := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
+	parameter<jaar>      Periode             := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
+	parameter<jaarlijks> Rentevoet           := ModelParameters/Landbouw/Rentevoet;// TO DO: check vooronderstelde waarde
 	
 	unit<UInt32> Huidige_Percelen := Veenweide_percelen
 	{
-		parameter<WinterdroogleggingK>   WinterdroogleggingK_rel   := = 'WinterdroogleggingK/v/'+/VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel];
-		parameter<ZomerdroogleggingK>    ZomerdroogleggingK_rel    := = 'ZomerdroogleggingK/v/'+/VariantParameters/VariantK/ZomerdroogleggingK_ref[Variant_rel];
-		parameter<InfiltratieMaatregelK> InfiltratieMaatregelK_rel := = 'InfiltratieMaatregelK/v/'+/VariantParameters/VariantK/InfiltratieMaatregelK_ref[Variant_rel];
+		parameter<Bool> UseActualDroogleggingDataInThisVariant := VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel] == 'shp';
+
+		attribute<ZomerdroogleggingK>    ZomerdroogleggingK_rel     := = UseActualDroogleggingDataInThisVariant ? 'Veenweide_percelen/ZomerdroogleggingK_rel' : 'const(ZomerdroogleggingK/v/'+/VariantParameters/VariantK/ZomerdroogleggingK_ref[Variant_rel]+', .)';
+		attribute<WinterdroogleggingK>   WinterdroogleggingK_rel    := = UseActualDroogleggingDataInThisVariant ? 'Veenweide_percelen/WinterdroogleggingK_rel' : 'const(WinterdroogleggingK/v/'+/VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel]+', .)';
+		parameter<InfiltratieMaatregelK> InfiltratieMaatregelK_rel  := = 'InfiltratieMaatregelK/v/'+/VariantParameters/VariantK/InfiltratieMaatregelK_ref[Variant_rel];
 		
 		attribute<CombinatieTabel> CombinatieTabel_rel          := combine_Data(CombinatieTabel, WeerregioK_rel, KwelsituatieK_rel, PerceelsbreedteK_rel, BodemK_rel, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
 		attribute<CombinatieTabel> CT_rel_perGrid (AdminDomain) := CombinatieTabel_rel[AdminDomain_rel];
@@ -60,9 +62,19 @@ Template SOMERS_CO2_T
 		
 		// Voorlopige aanname: de jaarlijkse uitstoot is constant en de veenlaag is oneindig dik. Needs work.
 		attribute<kg> Cumulatief_overZichtjaar  (AdminDomain) := NaLUC * Periode;
-		attribute<kg> Cumulatief_sindsStartyear (AdminDomain) := = IsFirstAllocYear ? 'Cumulatief_overZichtjaar' : 'PrevIndicatoren/SOMERS_CO2/Emissies/'+Emissie_name+'/Cumulatief_sindsStartyear + Cumulatief_overZichtjaar';
+		attribute<kg> Cumulatief_sindsStartyear (AdminDomain) := = IsFirstAllocYear 
+																		? 'Cumulatief_overZichtjaar'
+																		: IsStartYear 
+																			? 'Jaarlijks * 1[jaar]' 
+																			: 'PrevIndicatoren/SOMERS_CO2_Laagveen/Emissies/'+Emissie_name+'/Cumulatief_sindsStartyear + Cumulatief_overZichtjaar';
 		
 		parameter<mton> Cumulatief_sindsStartyear_StGebied := sum(Cumulatief_sindsStartyear)[mton];
+
+		parameter<string> StorageStr := IsStartYear 
+			? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/SOMERS_CO2_Emissies_kg_'+Emissie_name+'_Cumulatief_sindsStartyear_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+			: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/SOMERS_CO2_Emissies_kg_'+Emissie_name+'_Cumulatief_sindsStartyear_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+		
+		attribute<kg>                   Write_Result_SA      (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Cumulatief_sindsStartyear : null_f, StorageName = "=StorageStr", StorageType = "gdalwrite.grid";
 	}
 	
 	Template EmissieXPrijsT
@@ -79,7 +91,7 @@ Template SOMERS_CO2_T
 		
 		container Kapitalisatie := Kapitalisatie_T(null_b, Rentevoet, Periode);
 		
-		attribute<EUR> NPV (AdminDomain) := Jaarlijks * Kapitalisatie/Factor, StorageName = "='%LocalDataProjDir%/Indicatoren/SOMERS_CO2/Kosten/'+Casus_name +'/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Emissie_name+'_'+Prijs_name+'.tif'", StorageType = "gdalwrite.grid";
+		attribute<EUR> NPV (AdminDomain) := Jaarlijks * Kapitalisatie/Factor, StorageName = "='%LocalDataProjDir%/Indicatoren/SOMERS_CO2_Laagveen/Kosten/'+Casus_name +'/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Emissie_name+'_'+Prijs_name+'.tif'", StorageType = "gdalwrite.grid";
 		
 		parameter<EUR> NPV_StGebied := sum(NPV);
 	}

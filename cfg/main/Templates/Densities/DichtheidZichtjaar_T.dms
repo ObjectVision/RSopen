@@ -2,7 +2,7 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
 // Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
@@ -12,6 +12,8 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 Template DichtheidZichtjaar_T
+: Descr = "Berekent de dichtheden waarmee actoren en objecten in een bepaald zichtjaar worden toegewezen. Per sector en subsector wordt een dichtheid afgeleid, die deels is gebaseerd op de waargenomen dichtheid in het basisjaar en 
+	deels op tijdsafhankelijke aanpassingen (zoals de groei van het ruimtebeslag per baan in nijverheid en logistiek). Wordt aangeroepen per zichtjaar."
 {
 	//
 	parameter<Time/Zichtjaar> id;
@@ -21,7 +23,13 @@ Template DichtheidZichtjaar_T
 	parameter<String>    Zichtjaar_PrevName := Time/Zichtjaar/PrevName[id];
 	parameter<YearRange> YearRange_rel      := Time/Zichtjaar/YearRange_rel[id];
 	parameter<YearRange> PrevYearRange_rel  := Time/Zichtjaar/PrevYearRange_rel[id];
-	
+	parameter<Jaar>      AantalJarenWerkGroeiAanpassing := /ModelParameters/AlleenEindjaar && YearRange_rel > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt
+														? ModelParameters/Werken/Groeifactor/Groeifactor_WanneerToepassen * (ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt - PrevYearRange_rel)[Jaar] //ook hier de 0.5-factor, anders verdunt AlleenEindjaar ~2x sterker dan sequentieel (#591)
+														: YearRange_rel > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt 
+															? 0[jaar] 
+															: ModelParameters/Werken/Groeifactor/Groeifactor_WanneerToepassen * (YearRange_rel - PrevYearRange_rel)[Jaar];
+
+
 	container SectorxSubsectoren := 
 		for_each_ne(
 			Sector/xSubsector/name
@@ -35,42 +43,52 @@ Template DichtheidZichtjaar_T
 			container Subsectoren := for_each_nedv(Actor/Jobs6/name, 'MakeDefined(Banen_perHa/Subsectoren/'+Actor/Jobs6/name+',0f)', AllocDomain, Job_ha);
 			
 			container PandFootprint_perJob
+			: Descr = "Pandvoetafdruk in m2 per baan per subsector. Wordt elk zichtjaar verhoogd met (1 + Groeifactor * AantalJarenWerkGroeiAanpassing) ten opzichte van het vorige zichtjaar. De groeifactor is gebaseerd op de waargenomen jaarlijkse stijging van het ruimtebeslag per baan tussen 1996 en 2019."
 			{
-				container Src := = iif(id > 0[Time/Zichtjaar], Zichtjaar_PrevName+'/Src/Werken/PandFootprint_perJob/Subsectoren', 'Basisjaar/PandFootprint_perJob');
+				container Src := = iif(id > 0[Time/Zichtjaar], Zichtjaar_PrevName+'/Src/Werken/PandFootprint_perJob/Subsectoren0', 'Basisjaar/PandFootprint_perJob'); //keten loopt via Subsectoren0 (zonder kantoor-override), anders compoundt de eenmalige m2BVO_job_Kantoor_groeifactor elk zichtjaar (#590)
 				
-				container Subsectoren0 := for_each_nedv(
-					Actor/Jobs6/name,
-					'(Src/'+Actor/Jobs6/name+' * (1f + (VariantParameters/VariantK/Groeifactor_'+Actor/Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * (YearRange_rel - PrevYearRange_rel)[jaar])))',
-					AllocDomain, m2PandFootprint_job
-				);
-				
-				container Subsectoren := Subsectoren0;
+				container Subsectoren0 := 
+					for_each_nedv(
+						Actor/Jobs6/name
+						, '(Src/'+Actor/Jobs6/name+' * (1f + (VariantParameters/VariantK/Groeifactor_'+Actor/Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)))'
+						, AllocDomain
+						, m2PandFootprint_job
+				), Descr = "Pandvoetafdruk per baan per subsector, met de variantspecifieke groeifactor lineair toegepast op het aantal jaren sinds het vorige zichtjaar.";
+
+				container Subsectoren := Subsectoren0
+				{
+					attribute<m2PandFootprint_job> Zak_dienstverlening (AllocDomain) := = 'Subsectoren0/Zak_dienstverlening * (1f + (VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+']))', Descr = "Spiegel van de kantoor-override in Job_Perm2PandFootprint/Subsectoren, zodat de pandfootprint per gealloceerde kantoorbaan consistent is met de banendichtheid (#590). Eenmalige factor t.o.v. het basisjaar; de zichtjaar-keten loopt via Subsectoren0.";
+				}
 			}
 			
 			container Job_Perm2PandFootprint
+			: Descr = "Banen per m2 pandvoetafdruk, ofwel de inverse van PandFootprint_perJob. Wordt los uitgerekend omdat zakelijke dienstverlening hier een afwijkende groeifactor krijgt (m2BVO_job_Kantoor_groeifactor) die de juist afnemende ruimtevraag per kantoorbaan reflecteert."
 			{
-				container Src := = iif(id > 0[Time/Zichtjaar], Zichtjaar_PrevName+'/Src/Werken/Job_Perm2PandFootprint/Subsectoren', 'Basisjaar/Job_Perm2PandFootprint');
+				container Src := = iif(id > 0[Time/Zichtjaar], Zichtjaar_PrevName+'/Src/Werken/Job_Perm2PandFootprint/Subsectoren0', 'Basisjaar/Job_Perm2PandFootprint'); //keten loopt via Subsectoren0 (zonder kantoor-override), anders compoundt de eenmalige m2BVO_job_Kantoor_groeifactor elk zichtjaar (#590)
 				
 				container Subsectoren0 := //uitkomst in job/m2, factor gaat over groei m2/job. Src=job/m2
 					for_each_nedv(
 						Actor/Jobs6/name 
-						, '1f / ((1f / Src/'+Actor/Jobs6/name+') * (1f + (VariantParameters/VariantK/Groeifactor_'+Actor/Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * (YearRange_rel - PrevYearRange_rel)[jaar])))'
+						, '1f / ((1f / Src/'+Actor/Jobs6/name+') * (1f + (VariantParameters/VariantK/Groeifactor_'+Actor/Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)))'
 						, AllocDomain
 						, job_m2PandFootprint
-					);
-				
+					), Descr = "Banen per m2 per subsector. De groeifactor gaat over de groei van m2 per baan; deze wordt hier omgedraaid zodat de uitkomst in baan per m2 staat.";
+
 				container Subsectoren := Subsectoren0
 				{
-					attribute<job_m2PandFootprint> Zak_dienstverlening (AllocDomain) := = '1f / ((1f / Subsectoren0/Zak_dienstverlening) * (1f + (VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+'])))';
+					attribute<job_m2PandFootprint> Zak_dienstverlening (AllocDomain) := = '1f / ((1f / Subsectoren0/Zak_dienstverlening) * (1f + (VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+'])))', Descr = "Overschrijft de standaardwaarde voor zakelijke dienstverlening met een eigen groeifactor (m2BVO_job_Kantoor_groeifactor). De kantorenliteratuur en empirische data laten zien dat het ruimtebeslag per kantoorbaan over de tijd afneemt in plaats van toeneemt.";
 				}
 			}
 			
 			container Banen_perHa
+			: Descr = "Banen per hectare per subsector. Berekend door banen per m2 pandvoetafdruk te vermenigvuldigen met de pandvoetafdruk per hectare uit het basisjaar."
 			{
-				container Subsectoren := for_each_nedv(
-					Actor/Jobs6/name,
-					'Job_Perm2PandFootprint/Subsectoren/'+Actor/Jobs6/name+' * Basisjaar/PandFootprint_perHa/'+Actor/Jobs6/name+'/result', 
-					AllocDomain, Job_ha
+				container Subsectoren := 
+					for_each_nedv(
+						Actor/Jobs6/name
+						, 'Job_Perm2PandFootprint/Subsectoren/'+Actor/Jobs6/name+' * Basisjaar/PandFootprint_perHa/'+Actor/Jobs6/name+'/result'
+						, AllocDomain
+						, Job_ha
 				);
 			}
 			
@@ -83,6 +101,7 @@ Template DichtheidZichtjaar_T
 		}
 		
 		container Zon
+		: Descr = "Dichtheid voor de allocatie van zonneparken, uitgedrukt in MW per hectare. Wanneer de variant toestaat om zon te combineren met bestaande groen-locaties, wordt op die plekken een lager vermogen per hectare aangehouden."
 		{
 			container Subsectoren
 			{
@@ -90,6 +109,15 @@ Template DichtheidZichtjaar_T
 					VariantK/ZonCombinerenMetBestaandGroen[Variant_rel] && BaseData/StartState/Grondgebruik/Per_AllocDomain/IsGroen 
 						? const(ModelParameters/Zon/Vermogen_ha[MW_ha], AllocDomain) * ModelParameters/Zon/FractieVermogenHaIndienZonCombinerenMetBestaandGroen 
 						: const(ModelParameters/Zon/Vermogen_ha[MW_ha], AllocDomain);
+			}
+		}
+		
+		container Waterberging
+		: Descr = "Bergingscapaciteit voor water per hectare, afgeleid uit de dieptekaart. Wordt gebruikt om de regionale opgave voor waterberging te alloceren op basis van de fysieke capaciteit van een locatie."
+		{
+			container Subsectoren
+			{
+				attribute<meter3_ha> Totaal (AllocDomain) := sum(SourceData/Water/Dieptekaart * AdminDomain/NrMeter2PerCell, AdminDomain/AllocDomain_rel) / AllocDomain/NrHaPerCell;
 			}
 		}
 	}

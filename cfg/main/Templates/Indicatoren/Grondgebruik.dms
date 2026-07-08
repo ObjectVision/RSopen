@@ -2,7 +2,7 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
 // Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
@@ -15,6 +15,8 @@ container Grondgebruik : using = "SourceData/Grondgebruik"
 {
 	container Verandering
 	{
+		parameter<string> Zichtjaar_name := ThisYear/Zichtjaar_name;
+
 		unit<UInt32> Regio := SourceData/RegioIndelingen/Provincie/StudyArea;
 		
 		unit<UInt8> VeranderingK := combine_uint8(Classifications/Grondgebruik/CBSKlasse/Aggr2, /Classifications/Actor/Sector)
@@ -58,41 +60,44 @@ container Grondgebruik : using = "SourceData/Grondgebruik"
 				, ha
 			);
 			
-		attribute<LU_ModelType> LU_MT_Basisjaar          (AdminDomain) := ThisCasus/Zichtjaren/Basisjaar/Landgebruikskaart/Result_SA;
-		attribute<LU_ModelType> LU_MT_Zichtjaar          (AdminDomain) := ThisCasus/Zichtjaren/Y2050/Landgebruikskaart/Result_SA;
+		attribute<LU_ModelType> LU_MT_Basisjaar          (AdminDomain) := ThisCasus/Basisjaar/Landgebruikskaart/Result_SA;
+		attribute<LU_ModelType> LU_MT_Zichtjaar          (AdminDomain) := Landgebruikskaart/Result_SA;
 		
-		attribute<Sector> LU_Sector_Basisjaar          (AdminDomain) := LU_ModelType/Sector_rel[ThisCasus/Zichtjaren/Basisjaar/Landgebruikskaart/Result_SA];
-		attribute<Sector> LU_Sector_Zichtjaar          (AdminDomain) := LU_ModelType/Sector_rel[ThisCasus/Zichtjaren/Y2050/Landgebruikskaart/Result_SA];
+		attribute<Sector> LU_Sector_Basisjaar          (AdminDomain) := LU_ModelType/Sector_rel[LU_MT_Basisjaar];
+		attribute<Sector> LU_Sector_Zichtjaar          (AdminDomain) := LU_ModelType/Sector_rel[LU_MT_Zichtjaar];
 		
-		attribute<bool> Verstedelijking (AdminDomain) := ThisCasus/Zichtjaren/Y2050/Sector_rel_Verstedelijking_Buitenstedelijk
+		attribute<Bool> Sector_rel_Verstedelijking                  (AdminDomain) := /Classifications/Actor/Sector/IsStedelijk[Sector_rel];	
+		attribute<Bool> Sector_rel_Verstedelijking_Buitenstedelijk  (AdminDomain) := !/SourceData/RegioIndelingen/Bevolkingskern_2011/Is_BBG_AdminDomain ? Sector_rel_Verstedelijking : false;
+		
+		attribute<bool> Verstedelijking                             (AdminDomain) := Sector_rel_Verstedelijking_Buitenstedelijk
 		{
 			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain);
+			parameter<ha> Per_NL := sum(float32(.) * AdminDomain/NrHaPerCell);
 		}
 		
-		attribute</SourceData/Grondgebruik/ABCD/ABCD_subK> VerstedelijkingInABCD (AdminDomain) := (/SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m[uint8] / uint8(ThisCasus/Zichtjaren/Y2050/Sector_rel_Verstedelijking_Buitenstedelijk))[/SourceData/Grondgebruik/ABCD/ABCD_subK];
+		attribute</SourceData/Grondgebruik/ABCD/ABCD_subK> VerstedelijkingInABCD (AdminDomain) := (/SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m[uint8] / uint8(Sector_rel_Verstedelijking_Buitenstedelijk))[/SourceData/Grondgebruik/ABCD/ABCD_subK];
 		
 		attribute<bool> VerstedelijkingOpVruchtbareLandbouwgronden (AdminDomain) := VerstedelijkingInABCD == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A
 		{
 			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain);
 			parameter<ha> Per_NL := sum(float32(.) * AdminDomain/NrHaPerCell);
+			parameter<float32> TovTotaal := Per_NL[float32] / sum(float32(VerstedelijkingInABCD) * AdminDomain/NrHaPerCell);
 		}
+
+		// Aantal cellen landbouwgrond dat verdwijnt door iets tussen 2120 en basisjaar
+		attribute<bool> VerdwenenLandbouw (AdminDomain) := LU_ModelType/IsLandbouw[LU_MT_Basisjaar] &&  NOT(LU_ModelType/IsLandbouw)[LU_MT_Zichtjaar], StorageName = "=replace(StorageStr, '@V@', 'VerdwenenLandbouw')", StorageType = "tif";
+		// Aantal cellen vruchtbare landbouwgrond dat verdwijnt door iets tussen 2120 en basisjaar
+		attribute<bool> VerdwenenVruchtbareLandbouw (AdminDomain) := VerdwenenLandbouw ? SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A : FALSE, StorageName = "=replace(StorageStr, '@V@', 'VerdwenenVruchtbareLandbouw')", StorageType = "tif";
+
+		parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+
+
+		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> Groen_Basisjaar  (AdminDomain) := ThisCasus/Basisjaar/Grondgebruik/Groen;
+		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> Groen_Zichtjaar  (AdminDomain) := switch(
+																			case(LU_MT_Basisjaar == LU_MT_Zichtjaar, Groen_Basisjaar)
+																			, case(LU_ModelType/IsLandbouw[LU_MT_Zichtjaar], Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/overige_agrarisch_gebruik)
+																			, case(LU_MT_Zichtjaar == LU_ModelType/V/Natuur_Totaal, Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/Natuur)
+																			, null_b
+																			);
 	}
-	
-	// container Groen
-	// {
-		// attribute</Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> InBasisjaar (AdminDomain) := Basisjaar/Grondgebruik/Groen;
-		// attribute</Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> InZichtjaar (AdminDomain) := (InBasisjaar[uint8] / (!Stand/TovStandBasisjaar/toevoeging/AnyVastgoed)[uint8])[/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen];
-		
-		// container Toename :=
-			// for_each_nedv(
-				// /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name,
-				// '(float32(InZichtjaar ==  /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/'+/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name+') -
-				  // float32(InBasisjaar ==  /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/'+/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name+')) *
-				  // AdminDomain/NrHaPerCell',
-				// AdminDomain, ha
-			// )
-		// {
-			// attribute<ha> Totaal (AdminDomain) := = 'add('+asItemList(/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/name)+')';
-		// }
-	// }
 }
