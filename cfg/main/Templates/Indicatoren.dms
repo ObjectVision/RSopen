@@ -435,68 +435,98 @@ Template Indicatoren_T
 	}
 
 	container WaardeNabijheidGroen
-	: Descr = "Hedonische waardering van nabij groen voor woningen (issue #481). Semi-log model: prijs = exp(... + d_groennabij * groen_nabij + ...)."
+	: Descr = "Hedonische waardering van natuur- en waternabijheid voor woningen (issues #481/#566). Semi-log rs_groen-model: prijs = exp(... + b_nat * fr_natuur_tot2500m + b_wat * fr_water_500m). Fracties per cel gemeten zoals in de schatting (PriceIndices spec rs_groen, LGN2024): natuur als aandeel in de schijf 0-2500m (gerekend op het 100m-grid), water als aandeel in de schijf 0-500m."
 	{
-		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> Groen_Basisjaar  (AdminDomain) := ThisYear/Grondgebruik/Verandering/Groen_Basisjaar;
-		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> Groen_Zichtjaar  (AdminDomain) := ThisYear/Grondgebruik/Verandering/Groen_Zichtjaar;
-
-		attribute<bool>    IsGroenCel_Basisjaar (AdminDomain) := IsDefined(Groen_Basisjaar),	Descr = "Per-cel groen (CBS IsGroen_breed) in basisjaar.";
-		attribute<bool>    IsGroenCel_Zichtjaar (AdminDomain) := IsDefined(Groen_Zichtjaar),	Descr = "Per-cel groen in zichtjaar; ongewijzigde cellen houden hun basisjaar-groen.";
-
 		parameter<string>  AD_short := ModelParameters/Advanced/AdminDomain_ref;
-		attribute<bool>    GroenNabij_Basisjaar (AdminDomain) := = 'potential(IsGroenCel_Basisjaar[float32], /Geography/Distmatrices_'+AD_short+'/pot100m/Flat2) >= 0.5f * potential(const(1f, AdminDomain), /Geography/Distmatrices_'+AD_short+'/pot100m/Flat2)',	Descr = "Groen-nabij basisjaar (>=50% groen binnen 100m).";
-		attribute<bool>    GroenNabij_Zichtjaar (AdminDomain) := = 'potential(IsGroenCel_Zichtjaar[float32], /Geography/Distmatrices_'+AD_short+'/pot100m/Flat2) >= 0.5f * potential(const(1f, AdminDomain), /Geography/Distmatrices_'+AD_short+'/pot100m/Flat2)',	Descr = "Groen-nabij zichtjaar (>=50% groen binnen 100m).";
 
-		attribute<float32> d_groennabij (/Classifications/Vastgoed/WP4) := = 'union_data(/Classifications/Vastgoed/WP4, '+asItemList('/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+/Classifications/Vastgoed/WP4/name+'/Result/d_groennabij')+')',	Descr = "Hedonische coefficient voor groen-nabij per WP4.";
+		container Fracties
+		: Descr = "Natuur- en waterfracties per cel voor basis- en zichtjaar. Basisjaar komt 1-op-1 uit de statische LGN-groenfracties (zelfde bron en definitie als de schatting); zichtjaar-celwaarden volgen het Groen_Zichtjaar-patroon: ongewijzigd grondgebruik houdt de LGN-basisjaarwaarde, allocatie-mutaties overschrijven."
+		{
+			attribute<float32> Natuur_Basisjaar (AdminDomain) := SourceData/Grondgebruik/LGN/Groenfracties/fr_natuur_tot2500m[AdminDomain/rdc_25m_rel], Descr = "Aandeel natuur in de schijf 0-2500m, basisjaar (LGN).";
+			attribute<float32> Water_Basisjaar  (AdminDomain) := SourceData/Grondgebruik/LGN/Groenfracties/fr_water_500m[AdminDomain/rdc_25m_rel],      Descr = "Aandeel water in de schijf 0-500m, basisjaar (LGN).";
+
+			attribute<float32> NatuurCel_Basisjaar (AdminDomain) := SourceData/Grondgebruik/LGN/Groenfracties/natuur[AdminDomain/rdc_25m_rel];
+			attribute<float32> WaterCel_Basisjaar  (AdminDomain) := SourceData/Grondgebruik/LGN/Groenfracties/water[AdminDomain/rdc_25m_rel];
+
+			attribute<float32> NatuurCel_Zichtjaar (AdminDomain) := switch(
+					case(ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar == ThisYear/Grondgebruik/Verandering/LU_MT_Basisjaar, NatuurCel_Basisjaar)
+					, case(ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar == /Classifications/Actor/LU_ModelType/V/Natuur_Totaal, 1f)
+					, 0f
+				), Descr = "Natuur per cel in het zichtjaar (hedonische definitie): ongewijzigd grondgebruik houdt de LGN-basisjaarwaarde; cellen die naar Natuur_Totaal veranderen (allocatie of exogene oplegging) worden 1; overige veranderingen (verstedelijking, landbouw) worden 0.";
+
+			attribute<bool>    IsBAGnieuwbouwWonen (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), FALSE), Descr = "BAG-nieuwbouwcel (issue #550): heeft wel een gematchte OP_rel maar geen fysieke OP-inrichting; houdt daarom de basisjaar-waterwaarde.";
+			attribute<float32> WaterCel_Zichtjaar  (AdminDomain) := switch(
+					case(ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar == ThisYear/Grondgebruik/Verandering/LU_MT_Basisjaar, WaterCel_Basisjaar)
+					, case(IsDefined(Stand/OP_rel) && !IsBAGnieuwbouwWonen, ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Water[Stand/OP_rel][float32] / 10000f)
+					, WaterCel_Basisjaar
+				), Descr = "Water per cel in het zichtjaar: LU-water verandert nooit (#596), maar op cellen die naar wonen zijn ontwikkeld bepaalt de OP-inrichting het wateraandeel (NbS-Blauw-pakketten hebben tot ~0,68 openbaar water); Terreinoppervlak is m2 per ha, dus /10000 voor de celfractie.";
+
+			// zichtjaar-fracties: zelfde kernels en (statische) noemers als de basisjaar-meting
+			attribute<float32> NatuurCel_Zichtjaar_100m (rdc_100m) := mean(NatuurCel_Zichtjaar, AdminDomain/rdc_100m_rel);
+			attribute<float32> Natuur_Zichtjaar_100m    (rdc_100m) := potential(NatuurCel_Zichtjaar_100m, /Geography/Distmatrices_100m/pot2500m/Flat2) / SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_2500m_100m;
+			attribute<float32> Natuur_Zichtjaar         (AdminDomain) := Natuur_Zichtjaar_100m[AdminDomain/rdc_100m_rel], Descr = "Aandeel natuur in de schijf 0-2500m, zichtjaar.";
+
+			attribute<float32> Water_Zichtjaar (AdminDomain) := = 'potential(WaterCel_Zichtjaar, /Geography/Distmatrices_'+AD_short+'/pot500m/Flat2) / SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_500m[AdminDomain/rdc_25m_rel]', Descr = "Aandeel water in de schijf 0-500m, zichtjaar.";
+		}
+
+		attribute<float32> b_natuur (/Classifications/Vastgoed/WP4) := = 'union_data(/Classifications/Vastgoed/WP4, '+asItemList('/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+/Classifications/Vastgoed/WP4/name+'/Result/fr_natuur_tot2500m')+')',	Descr = "Hedonische coefficient voor de natuurfractie (0-2500m) per WP4, uit de rs_groen-set.";
+		attribute<float32> b_water  (/Classifications/Vastgoed/WP4) := = 'union_data(/Classifications/Vastgoed/WP4, '+asItemList('/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+/Classifications/Vastgoed/WP4/name+'/Result/fr_water_500m')+')',	Descr = "Hedonische coefficient voor de waterfractie (0-500m) per WP4, uit de rs_groen-set.";
 
 		unit<uint32> Bestaand := /BaseData/Suitabilities/Wonen/Verwervingskosten/vbo_startjaar
-		, Descr = "Waardeverandering van de bestaande woningvoorraad door verandering in groen-nabij."
+		, Descr = "Waardeverandering van de bestaande woningvoorraad door verandering in natuur- en waternabijheid."
 		{
 			container PrijsZonderGroen_perWP4 :=
 				for_each_ne(
 					/Classifications/Vastgoed/WP4/name
 					, 'Templates/Suitabilities/Woningwaarde_perWoningType_zonderGroen_T('+string(id(/Classifications/Vastgoed/WP4))+'[/Classifications/Vastgoed/WP4])'
-				), Descr = "Hedonische woningprijs zonder groen (P_rest), per WP4.";
+				), Descr = "Hedonische woningprijs zonder de groen/water-termen (P_rest), per WP4.";
 
 			attribute<Eur_Woning> P_rest  :=
 				= '(add('+asItemList(
 						'float32(WP4_rel == /Classifications/Vastgoed/WP4/V/'+/Classifications/Vastgoed/WP4/name+') * PrijsZonderGroen_perWP4/'+/Classifications/Vastgoed/WP4/name+'/PrijsZonderGroen[AdminDomain_rel]'
 				  )+'))'
-			,	Descr = "Hedonische woningprijs zonder groen per VBO.";
+			,	Descr = "Hedonische woningprijs zonder de groen/water-termen per VBO.";
 
-			attribute<float32>    Groen_coeff                   := d_groennabij[WP4_rel], Descr = "groen coefficient horend bij specifiek WP4_rel";
-			attribute<float32>    GroenNabij_basisjaar          := float32(../GroenNabij_Basisjaar[AdminDomain_rel]);
-			attribute<float32>    GroenNabij_Zichtjaar          := float32(../GroenNabij_Zichtjaar[AdminDomain_rel]);
+			attribute<float32>    b_nat_vbo           := b_natuur[WP4_rel], Descr = "Natuurcoefficient horend bij het WP4 van deze VBO.";
+			attribute<float32>    b_wat_vbo           := b_water[WP4_rel],  Descr = "Watercoefficient horend bij het WP4 van deze VBO.";
+			attribute<float32>    GroenTerm_Basisjaar := b_nat_vbo * Fracties/Natuur_Basisjaar[AdminDomain_rel] + b_wat_vbo * Fracties/Water_Basisjaar[AdminDomain_rel];
+			attribute<float32>    GroenTerm_Zichtjaar := b_nat_vbo * Fracties/Natuur_Zichtjaar[AdminDomain_rel] + b_wat_vbo * Fracties/Water_Zichtjaar[AdminDomain_rel];
 
-			attribute<Eur_Woning> P_basisjaar                   := P_rest * exp(groen_coeff * GroenNabij_basisjaar), Descr = "Prijs met onze groen-basisjaar definitie.";
-			attribute<Eur_Woning> P_zichtjaar                   := P_rest * exp(groen_coeff * GroenNabij_Zichtjaar), Descr = "Prijs met onze groen-zichtjaar definitie.";
+			attribute<Eur_Woning> P_basisjaar                   := P_rest * exp(GroenTerm_Basisjaar), Descr = "Prijs met de basisjaar-fracties.";
+			attribute<Eur_Woning> P_zichtjaar                   := P_rest * exp(GroenTerm_Zichtjaar), Descr = "Prijs met de zichtjaar-fracties.";
 
-			attribute<Eur_Woning> dWaarde_perVBO                := P_zichtjaar - P_basisjaar, Descr = "Waardeverandering per bestaande woning door verandering in groen-nabij.";
+			attribute<Eur_Woning> dWaarde_perVBO                := P_zichtjaar - P_basisjaar, Descr = "Waardeverandering per bestaande woning door verandering in natuur/water-nabijheid.";
 			attribute<Eur>        dWaarde         (AdminDomain) := sum(dWaarde_perVBO, AdminDomain_rel) * 1[woning],  Descr = "Som van de waardeverandering van bestaande woningen per cel.";
 		}
 
 		container Nieuwbouw
-		: Descr = "Groenwaarde van nieuwbouwwoningen: de in de prijs ingebakken premie voor groen-nabij, over de cumulatieve nieuwbouw sinds het basisjaar (issue #558)."
+		: Descr = "Groen/waterwaarde van nieuwbouwwoningen: de in de prijs ingebakken premie voor natuur- en waternabijheid, over de cumulatieve nieuwbouw sinds het basisjaar (issue #558)."
 		{
 			unit<UInt8> OP := ThisVariantClassifications/Vastgoed/OP;
 
-			attribute<Eur_Woning> P_nieuwbouw            (AdminDomain) := = '(add('+asItemList('float32(Stand/OP_rel == '+string(id(OP))+'[OP]) * ThisVariantData/Suitability/src/Wonen/Impl/Woningwaarde_perOP/'+OP/name+'/Prijs_perWoning_zWeging')+'))[Eur_Woning]',	Descr = "Hedonische nieuwbouwprijs van de in deze cel gealloceerde OP.";
-			attribute<float32>    Groen_coeff            (AdminDomain) := d_groennabij[OP/WP4_rel[Stand/OP_rel]], Descr = "groen coefficient horend bij specifiek WP4_rel";
-			attribute<float32>    GroenNabij_basisjaar   (AdminDomain) := float32(../GroenNabij_Basisjaar);
+			attribute<Eur_Woning> P_nieuwbouw            (AdminDomain) := = '(add('+asItemList('float32(Stand/OP_rel == '+string(id(OP))+'[OP]) * ThisVariantData/Suitability/src/Wonen/Impl/Woningwaarde_perOP/'+OP/name+'/Prijs_perWoning_zWeging')+'))[Eur_Woning]',	Descr = "Hedonische nieuwbouwprijs van de in deze cel gealloceerde OP; bevat sinds #566 de basisjaar-bevroren groen/water-termen.";
+			attribute<float32>    B_nat                  (AdminDomain) := b_natuur[OP/WP4_rel[Stand/OP_rel]], Descr = "Natuurcoefficient horend bij het WP4 van de gealloceerde OP.";
+			attribute<float32>    B_wat                  (AdminDomain) := b_water[OP/WP4_rel[Stand/OP_rel]],  Descr = "Watercoefficient horend bij het WP4 van de gealloceerde OP.";
 			attribute<Woning>     n_nieuwbouw_cumulatief (AdminDomain) := max_elem(Stand/Aantal_Woningen_Totaal - StandBasisjaar/Aantal_Woningen_Totaal, 0[Woning]), Descr = "Cumulatieve nieuwbouw t.o.v. basisjaar: voorraad zichtjaar - voorraad basisjaar, geklemd op >=0. Telt alle bouw basisjaar->zichtjaar (incl. eerste-decennium BAG-nieuwbouw, issue #550, die in Stand maar niet in StandBasisjaar zit) i.p.v. enkel de bouw van het laatste decennium (issue #558). Netto-verschil netteert sloop/herontwikkeling weg, zodat er geen dubbeltelling met de Bestaand-term ontstaat.";
-			attribute<Eur_Woning> P_rest                 (AdminDomain) := P_nieuwbouw * exp(-groen_coeff * GroenNabij_basisjaar), Descr = "Nieuwbouwprijs zonder groenterm.";
-			attribute<Eur>        dWaarde                (AdminDomain) := float32(GroenNabij_Zichtjaar) * n_nieuwbouw_cumulatief * P_rest * (exp(Groen_coeff) - 1f),	Descr = "Groenwaarde van cumulatieve nieuwbouw per cel: aantal * (prijs met groen - prijs zonder groen), waar groen-nabij aanwezig.";
+			attribute<float32>    GroenTerm_Basisjaar    (AdminDomain) := B_nat * Fracties/Natuur_Basisjaar + B_wat * Fracties/Water_Basisjaar;
+			attribute<float32>    GroenTerm_Zichtjaar    (AdminDomain) := B_nat * Fracties/Natuur_Zichtjaar + B_wat * Fracties/Water_Zichtjaar;
+			attribute<Eur_Woning> P_rest                 (AdminDomain) := P_nieuwbouw * exp(-GroenTerm_Basisjaar), Descr = "Nieuwbouwprijs zonder de groen/water-termen (de suitability-prijs bevat de basisjaar-termen, die hier worden uitgedeeld).";
+			attribute<Eur>        dWaarde                (AdminDomain) := n_nieuwbouw_cumulatief * P_rest * (exp(GroenTerm_Zichtjaar) - 1f),	Descr = "Groen/waterwaarde van cumulatieve nieuwbouw per cel: aantal * (prijs met zichtjaar-fracties - prijs zonder groen/water-termen).";
 		}
 
+		// near-zero -> null (issue #566: 0-waarden transparant in de kaart; null wordt NoData in de tif)
 		attribute<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen (AdminDomain) := switch(
-																									case(Bestaand/dWaarde < 0.01f && Bestaand/dWaarde > -0.01f, 0f)
+																									case(Bestaand/dWaarde < 0.01f && Bestaand/dWaarde > -0.01f, null_f)
 																									,Bestaand/dWaarde
 																								), StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen')", StorageType = "gdalwrite.grid";
 		attribute<Eur> WaardeDoorGroenNabij_NieuwbouwWoningen                  (AdminDomain) := switch(
-																									case(Nieuwbouw/dWaarde < 0.01f && Nieuwbouw/dWaarde > -0.01f, 0f)
+																									case(Nieuwbouw/dWaarde < 0.01f && Nieuwbouw/dWaarde > -0.01f, null_f)
 																									,Nieuwbouw/dWaarde
 																								), StorageName = "=replace(StorageStr, '@V@', 'WaardeDoorGroenNabij_NieuwbouwWoningen')", StorageType = "gdalwrite.grid";
-		attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen          (AdminDomain) := MakeDefined(WaardeVeranderingDoorGroenVerandering_BestaandeWoningen, 0[Eur]) + MakeDefined(WaardeDoorGroenNabij_NieuwbouwWoningen, 0[Eur]), StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen')", StorageType = "gdalwrite.grid";
+		attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen          (AdminDomain) := switch(
+																									case(IsNull(WaardeVeranderingDoorGroenVerandering_BestaandeWoningen) && IsNull(WaardeDoorGroenNabij_NieuwbouwWoningen), null_f)
+																									,MakeDefined(WaardeVeranderingDoorGroenVerandering_BestaandeWoningen, 0[Eur]) + MakeDefined(WaardeDoorGroenNabij_NieuwbouwWoningen, 0[Eur])
+																								), StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen')", StorageType = "gdalwrite.grid";
 
 		parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
 	}
