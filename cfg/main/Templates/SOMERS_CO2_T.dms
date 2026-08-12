@@ -54,12 +54,24 @@ Template SOMERS_CO2_T
 		attribute<CombinatieTabel> CombinatieTabel_rel          := PasTerugvalToe && !HeeftRekenregelVoorMaatregel ? CombinatieTabel_zonderMaatregel : CombinatieTabel_variant;
 		attribute<CombinatieTabel> CT_rel_perGrid (AdminDomain) := CombinatieTabel_rel[AdminDomain_rel], IntegrityCheck = "not(all(IsNull(this)))", Descr = "Als deze IntegrityCheck faalt, krijgt geen enkel veenweideperceel een SOMERS-rekenregel. Kijk dan naar NrPercelenZonderRekenregel en NrPercelenZonderPeilvak om te zien welke as de null veroorzaakt.";
 
+		// Issue #619: sleutels voor de vervangingsniveaus, gebruikt in EmissieT als de exacte combinatie niet in de datasheet staat.
+		// De infiltratiemaatregel is hier die van de terugval, zodat een perceel niet twee keer op dezelfde as kan stuklopen.
+		attribute<InfiltratieMaatregelK> InfiltratieMaatregelK_gebruikt := PasTerugvalToe && not(HeeftRekenregelVoorMaatregel) ? InfiltratieMaatregelK_terugval : InfiltratieMaatregelK_rel;
+
+		attribute<CombiZonderBreedte>           CombiZonderBreedte_rel                          := combine_Data(CombiZonderBreedte, WeerregioK_rel, KwelsituatieK_rel, BodemK_rel, InfiltratieMaatregelK_gebruikt, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		attribute<CombiZonderPerceelskenmerken> CombiZonderPerceelskenmerken_rel                := combine_Data(CombiZonderPerceelskenmerken, BodemK_rel, InfiltratieMaatregelK_gebruikt, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		attribute<CombiZonderBodem>             CombiZonderBodem_rel                            := combine_Data(CombiZonderBodem, InfiltratieMaatregelK_gebruikt, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+
+		attribute<CombiZonderBreedte>           CombiZonderBreedte_perGrid           (AdminDomain) := CombiZonderBreedte_rel[AdminDomain_rel];
+		attribute<CombiZonderPerceelskenmerken> CombiZonderPerceelskenmerken_perGrid (AdminDomain) := CombiZonderPerceelskenmerken_rel[AdminDomain_rel];
+		attribute<CombiZonderBodem>             CombiZonderBodem_perGrid             (AdminDomain) := CombiZonderBodem_rel[AdminDomain_rel];
+
 		// Issue #619: het wegvallen van percelen uit de lookup gebeurde stil. Deze tellingen maken per variant en zichtjaar
 		// zichtbaar hoeveel percelen geen rekenregel krijgen, zodat Mton-totalen van varianten met een noemer vergeleken worden.
 		attribute<Datasheet> Datasheet_rel                    := rjoin(CombinatieTabel_rel, Datasheet/CombinatieTabel_rel, id(Datasheet)), Descr = "De gevonden SOMERS-rekenregel, undefined waar de combinatie niet in de datasheet voorkomt.";
 		parameter<UInt32>    NrPercelen                       := sum(const(1u, .));
 		parameter<UInt32>    NrPercelenZonderPeilvak          := sum(uint32(IsNull(Veenweide_percelen/Peilvakken_rel))), Descr = "Percelen waarvan het zwaartepunt buiten elk peilvak valt. Deze krijgen de fallback uit VariantK.";
-		parameter<UInt32>    NrPercelenZonderRekenregel       := sum(uint32(IsNull(Datasheet_rel))), Descr = "Percelen die geen SOMERS-rekenregel krijgen en dus geen emissie. Hoort 0 te zijn; zie issue #619.";
+		parameter<UInt32>    NrPercelenZonderRekenregel       := sum(uint32(IsNull(Datasheet_rel))), Descr = "Percelen waarvoor de datasheet geen exacte rekenregel heeft. Die krijgen het gemiddelde van de dichtstbijzijnde groep, zie EmissieT/PerHa.";
 		parameter<UInt32>    NrPercelenMetTerugvalMaatregel   := sum(uint32(PasTerugvalToe && not(HeeftRekenregelVoorMaatregel) && IsDefined(Datasheet_rel))), Descr = "Percelen die alleen dankzij de terugval een rekenregel krijgen, omdat de datasheet er geen heeft bij de infiltratiemaatregel van deze variant. Nul voor varianten zonder maatregel.";
 		parameter<float32>   FractiePercelenZonderRekenregel  := float32(NrPercelenZonderRekenregel) / float32(NrPercelen);	}
 	
@@ -73,7 +85,26 @@ Template SOMERS_CO2_T
 		parameter<string> Emissie_name;
 		//
 		
-		attribute<kg_jaarlijks> Jaarlijks (AdminDomain) := = 'rjoin(Huidige_Percelen/CT_rel_perGrid, Datasheet/CombinatieTabel_rel, value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks)) * AdminDomain/NrHaPerCell';
+		// Issue #619: de datasheet dekt niet alle combinaties. Waar de exacte rekenregel ontbreekt wordt gemiddeld over een
+		// steeds grovere groep, waarbij drooglegging en infiltratiemaatregel altijd exact blijven. Zo blijft het verschil
+		// tussen de varianten zuiver en krijgt elk perceel een waarde. Het laatste niveau is altijd gevuld.
+		attribute<kg_ha_jaarlijks> Gem_ZonderBreedte           (CombiZonderBreedte)           := = 'mean(value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks), Datasheet/CombiZonderBreedte_rel)';
+		attribute<kg_ha_jaarlijks> Gem_ZonderPerceelskenmerken (CombiZonderPerceelskenmerken) := = 'mean(value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks), Datasheet/CombiZonderPerceelskenmerken_rel)';
+		attribute<kg_ha_jaarlijks> Gem_ZonderBodem             (CombiZonderBodem)             := = 'mean(value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks), Datasheet/CombiZonderBodem_rel)';
+
+		attribute<kg_ha_jaarlijks> PerHa_exact (AdminDomain) := = 'rjoin(Huidige_Percelen/CT_rel_perGrid, Datasheet/CombinatieTabel_rel, value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks))', Descr = "De exacte rekenregel uit de datasheet, undefined waar de combinatie ontbreekt.";
+
+		attribute<kg_ha_jaarlijks> PerHa (AdminDomain) :=
+			MakeDefined(PerHa_exact
+			, MakeDefined(Gem_ZonderBreedte[Huidige_Percelen/CombiZonderBreedte_perGrid]
+			, MakeDefined(Gem_ZonderPerceelskenmerken[Huidige_Percelen/CombiZonderPerceelskenmerken_perGrid]
+			,             Gem_ZonderBodem[Huidige_Percelen/CombiZonderBodem_perGrid])))
+			, IntegrityCheck = "not(any(IsDefined(Veenweide_percelen/AdminDomain_rel) && IsNull(this)))"
+			, Descr = "Als deze IntegrityCheck faalt, is er een cel met een veenweideperceel zonder emissiewaarde. Dat is precies wat issue #619 heeft opgelost, dus er is dan een nieuwe bron van nulls bijgekomen.";
+
+		attribute<kg_jaarlijks> Jaarlijks (AdminDomain) := PerHa * AdminDomain/NrHaPerCell;
+		parameter<ton_jaarlijks> Totaal_StGebied            := sum(Jaarlijks)[ton_jaarlijks];
+		parameter<ton_jaarlijks> Totaal_viaGemiddelde       := sum(IsNull(PerHa_exact) ? Jaarlijks : 0[kg_jaarlijks])[ton_jaarlijks], Descr = "Het deel van de uitstoot dat op een groepsgemiddelde berust in plaats van op een exacte rekenregel, zie issue #619.";
 		
 		attribute<kg_jaarlijks> NaLUC (AdminDomain) :=
 			LU_ModelType/IsStedelijk[ThisYear/Landgebruikskaart/Result_SA]
