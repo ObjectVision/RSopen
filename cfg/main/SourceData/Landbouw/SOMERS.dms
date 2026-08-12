@@ -43,10 +43,22 @@ container SOMERS
 
 		attribute<float32>                      drooglegging_zomer             := -dlz_med_clean, Descr = "zomerdrooglegging obv mediane maaiveldniveau";
 		attribute<float32>                      drooglegging_winter            := -dlw_med_clean, Descr = "winterdrooglegging obv mediane maaiveldniveau";
-		attribute<float32>                      winter_tov_zomer               := drooglegging_zomer - drooglegging_winter; 
+		attribute<float32>                      winter_tov_zomer               := drooglegging_zomer - drooglegging_winter;
 
-		attribute<ZomerdroogleggingK>           ZomerdroogleggingK_rel         := Classify(drooglegging_zomer, ZomerdroogleggingK/ClassBreaks);
-		attribute<WinterdroogleggingK>          WinterdroogleggingK_rel        := Classify(winter_tov_zomer, WinterdroogleggingK/ClassBreaks);
+		// Issue #619: Classify geeft null voor waarden onder de laagste klassegrens. Zonder klemmen viel een peilvak dat natter
+		// is dan de natste SOMERS-rekenregel volledig uit de lookup (null in combine_Data maakt de hele combinatie null), en dus
+		// uit de emissiekaart. Klemmen op de laagste klassegrens kent zo'n peilvak de natste rekenregel toe in plaats van geen.
+		// De grenzen worden uit de klassificatie afgeleid, zodat ze meebewegen als de SOMERS-datasheet wordt uitgebreid.
+		parameter<float32>                      ZomerdroogleggingK_LaagsteLB   := min(ZomerdroogleggingK/ClassBreaks);
+		parameter<float32>                      WinterdroogleggingK_LaagsteLB  := min(WinterdroogleggingK/ClassBreaks);
+
+		// De IsDefined-guard houdt peilvakken zonder droogleggingsdata expliciet null; die worden in SOMERS_CO2_T opgevangen
+		// door de variant-fallback. Zonder guard zouden ze hier stilzwijgend de natste klasse krijgen.
+		attribute<float32>                      drooglegging_zomer_geklemd     := IsDefined(drooglegging_zomer) ? max_elem(drooglegging_zomer, ZomerdroogleggingK_LaagsteLB)  : null_f;
+		attribute<float32>                      winter_tov_zomer_geklemd       := IsDefined(winter_tov_zomer)   ? max_elem(winter_tov_zomer,   WinterdroogleggingK_LaagsteLB) : null_f;
+
+		attribute<ZomerdroogleggingK>           ZomerdroogleggingK_rel         := Classify(drooglegging_zomer_geklemd, ZomerdroogleggingK/ClassBreaks);
+		attribute<WinterdroogleggingK>          WinterdroogleggingK_rel        := Classify(winter_tov_zomer_geklemd, WinterdroogleggingK/ClassBreaks);
 	}
 
 	unit<UInt32> InfiltratieMaatregelK := unique(Datasheet/InfiltratieMaatregel)
@@ -62,8 +74,11 @@ container SOMERS
 		attribute<String> Label := name;
 		container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
 		
+		// Issue #619: de laagste klasse had null_f als ondergrens. Classify slaat een undefined klassegrens over, waardoor elk
+		// perceel met wegzijging sterker dan 0.8 mm/d geen kwelklasse kreeg en daarmee uit de emissiekaart viel, in alle
+		// varianten. De ondergrens is nu een echt getal, ruim onder elke voorkomende kwelwaarde.
 		attribute<Float32> LB := switch(
-									 case(values == '< -0.8 mm/d', null_f)
+									 case(values == '< -0.8 mm/d', -1000000f)
 									,case(values == '-0.8 - -0.3 mm/d', -0.8f)
 									,case(values == '-0.3 - 0.3 mm/d', -0.3f)
 									,case(values == '0.3 - 0.8 mm/d', 0.3f)
