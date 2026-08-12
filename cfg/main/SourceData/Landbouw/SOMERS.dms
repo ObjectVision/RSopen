@@ -29,12 +29,9 @@ container SOMERS
 		attribute<KwelsituatieK>          KwelsituatieK_rel          := rlookup(lowercase(Kwelsituatie_mm_d_), lowercase(KwelsituatieK/values));
 		attribute<InfiltratieMaatregelK>  InfiltratieMaatregelK_rel  := rlookup(lowercase(InfiltratieMaatregel), lowercase(InfiltratieMaatregelK/values));
 		
-		attribute<CombinatieTabel>        CombinatieTabel_rel        := combine_Data(CombinatieTabel, WeerregioK_rel, KwelsituatieK_rel, PerceelsbreedteK_rel, BodemK_rel, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		attribute<BasiscombinatieK>       BasiscombinatieK_rel       := rlookup(uint32(Basiscombinatie), BasiscombinatieK/values);
 
-		// Issue #619: sleutels van de steeds grovere groepen waarover gemiddeld wordt als de exacte combinatie ontbreekt.
-		attribute<CombiZonderBreedte>           CombiZonderBreedte_rel           := combine_Data(CombiZonderBreedte, WeerregioK_rel, KwelsituatieK_rel, BodemK_rel, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
-		attribute<CombiZonderPerceelskenmerken> CombiZonderPerceelskenmerken_rel := combine_Data(CombiZonderPerceelskenmerken, BodemK_rel, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
-		attribute<CombiZonderBodem>             CombiZonderBodem_rel             := combine_Data(CombiZonderBodem, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		attribute<CombinatieTabel>        CombinatieTabel_rel        := combine_Data(CombinatieTabel, BasiscombinatieK_rel, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
 	}
 	
 	unit<UInt32> Peilvakken 
@@ -142,16 +139,18 @@ container SOMERS
 		container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
 	}
 	
-	unit<UInt32> CombinatieTabel := combine(WeerregioK, KwelsituatieK, PerceelsbreedteK, BodemK, InfiltratieMaatregelK, WinterdroogleggingK, ZomerdroogleggingK);
+	// Issue #619: de datasheet kent 290 basiscombinaties van bodemtype, perceelsbreedte, kwel en weerregio. Die dekken 95% van
+	// het areaal; de overige 5% is door Deltares zelf aan een van die 290 toegewezen, in volgorde van de minst invloedrijke
+	// parameter (weerregio) naar de meest invloedrijke (perceelsbreedte). Die toewijzing staat per perceel in de kolom
+	// Basiscomb. Door daarop te koppelen in plaats van de vier kenmerken zelf opnieuw te klassificeren, krijgt elk perceel de
+	// rekenregel die Deltares ervoor bedoeld heeft, en is er geen eigen substituut of gemiddelde meer nodig.
+	unit<UInt32> BasiscombinatieK := unique(uint32(Datasheet/Basiscombinatie))
+	{
+		attribute<String> name  := 'Basiscombinatie_'+string(values);
+		attribute<String> Label := name;
+	}
 
-	// Issue #619: de datasheet dekt 290 van de 750 mogelijke combinaties van bodemtype, perceelsbreedte, kwel en weerregio,
-	// omdat er voor de rest te weinig meetdata was. Percelen met zo'n ontbrekende combinatie kregen daardoor geen rekenregel.
-	// Deze drie eenheden zijn steeds grovere groepen om over te middelen, zodat zo'n perceel het gemiddelde krijgt van de
-	// rekenregels die er het dichtst bij liggen in plaats van een landelijk gemiddelde. Drooglegging en infiltratiemaatregel
-	// blijven altijd exact, want dat zijn de assen waarop de varianten van elkaar verschillen.
-	unit<UInt32> CombiZonderBreedte           := combine(WeerregioK, KwelsituatieK, BodemK, InfiltratieMaatregelK, WinterdroogleggingK, ZomerdroogleggingK), Descr = "Perceelsbreedte weggemiddeld, bodemtype, kwel en weerregio behouden.";
-	unit<UInt32> CombiZonderPerceelskenmerken := combine(BodemK, InfiltratieMaatregelK, WinterdroogleggingK, ZomerdroogleggingK), Descr = "Ook kwel en weerregio weggemiddeld, bodemtype behouden.";
-	unit<UInt32> CombiZonderBodem             := combine(InfiltratieMaatregelK, WinterdroogleggingK, ZomerdroogleggingK), Descr = "Ook bodemtype weggemiddeld. Nodig voor bodemtypen die de datasheet helemaal niet kent, zoals zVp en AVk.";
+	unit<UInt32> CombinatieTabel := combine(BasiscombinatieK, InfiltratieMaatregelK, WinterdroogleggingK, ZomerdroogleggingK);
 	
 	unit<UInt32> Veenweide_percelen 
 	: StorageName = "%RS_Lb_DataDir%/SOMERS/parcels_rekenregels_nobv_website.shp"
@@ -159,11 +158,12 @@ container SOMERS
 	, StorageReadOnly = "TRUE"
 	, DialogData = "rdc_meter"
 	{
-		attribute<PerceelsbreedteK>        PerceelsbreedteK_rel      := Classify(float32(Breedte_m_), PerceelsbreedteK/ClassBreaks);
-		attribute<WeerregioK>              WeerregioK_rel            := rlookup(lowercase(weerregio), lowercase(WeerregioK/name_engl));
-		attribute<KwelsituatieK>           KwelsituatieK_rel         := Classify(float32(Kwel_mm_d_), KwelsituatieK/ClassBreaks);
-		attribute<BodemK>                  BodemK_rel                := rlookup(lowercase(bodem), lowercase(BodemK/name));
-		 
+		// Issue #619: de basiscombinatie komt uit de brondata zelf en wordt niet meer afgeleid uit bodem, breedte, kwel en
+		// weerregio. Voor 11.346 percelen (Koppeling = indirect) heeft Deltares een naburige combinatie toegewezen omdat de
+		// eigen combinatie te weinig meetdata had; die toewijzing volgen we nu in plaats van hem zelf over te doen.
+		attribute<BasiscombinatieK>        BasiscombinatieK_rel      := rlookup(uint32(Basiscomb), BasiscombinatieK/values);
+		attribute<Bool>                    IsIndirectGekoppeld       := lowercase(Koppeling) == 'indirect';
+
 
 		attribute<ZomerdroogleggingK>      ZomerdroogleggingK_rel    := Peilvakken/ZomerdroogleggingK_rel[Peilvakken_rel];
 		attribute<WinterdroogleggingK>     WinterdroogleggingK_rel   := Peilvakken/WinterdroogleggingK_rel[Peilvakken_rel];
