@@ -33,13 +33,35 @@ Template SOMERS_CO2_T
 	{
 		parameter<Bool> UseActualDroogleggingDataInThisVariant := VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel] == 'shp';
 
-		attribute<ZomerdroogleggingK>    ZomerdroogleggingK_rel     := = UseActualDroogleggingDataInThisVariant ? 'Veenweide_percelen/ZomerdroogleggingK_rel' : 'const(ZomerdroogleggingK/v/'+/VariantParameters/VariantK/ZomerdroogleggingK_ref[Variant_rel]+', .)';
-		attribute<WinterdroogleggingK>   WinterdroogleggingK_rel    := = UseActualDroogleggingDataInThisVariant ? 'Veenweide_percelen/WinterdroogleggingK_rel' : 'const(WinterdroogleggingK/v/'+/VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel]+', .)';
+		// Issue #619: percelen zonder peilvak, en peilvakken zonder dlz_med of dlw_med, leverden geen droogleggingsklasse. Die
+		// null maakte via combine_Data de hele combinatie null, waardoor het perceel uit de emissiekaart verdween in plaats van
+		// een emissie te krijgen. De fallback komt uit VariantK, zodat de aanname in de variantdefinitie staat en niet hier.
+		attribute<ZomerdroogleggingK>    ZomerdroogleggingK_rel     := = UseActualDroogleggingDataInThisVariant ? 'MakeDefined(Veenweide_percelen/ZomerdroogleggingK_rel, const(ZomerdroogleggingK/v/'+/VariantParameters/VariantK/ZomerdroogleggingK_fallback_ref[Variant_rel]+', .))' : 'const(ZomerdroogleggingK/v/'+/VariantParameters/VariantK/ZomerdroogleggingK_ref[Variant_rel]+', .)';
+		attribute<WinterdroogleggingK>   WinterdroogleggingK_rel    := = UseActualDroogleggingDataInThisVariant ? 'MakeDefined(Veenweide_percelen/WinterdroogleggingK_rel, const(WinterdroogleggingK/v/'+/VariantParameters/VariantK/WinterdroogleggingK_fallback_ref[Variant_rel]+', .))' : 'const(WinterdroogleggingK/v/'+/VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel]+', .)';
 		parameter<InfiltratieMaatregelK> InfiltratieMaatregelK_rel  := = 'InfiltratieMaatregelK/v/'+/VariantParameters/VariantK/InfiltratieMaatregelK_ref[Variant_rel];
-		
-		attribute<CombinatieTabel> CombinatieTabel_rel          := combine_Data(CombinatieTabel, WeerregioK_rel, KwelsituatieK_rel, PerceelsbreedteK_rel, BodemK_rel, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
-		attribute<CombinatieTabel> CT_rel_perGrid (AdminDomain) := CombinatieTabel_rel[AdminDomain_rel];
-	}
+
+		// Issue #619: de SOMERS-datasheet bevat voor AWIS geen rekenregels voor moerige- en waardgronden (vWz, kWp, zWp, Wo, iWp).
+		// Zonder terugval verdwenen die percelen uit de emissiekaart, terwijl de uitstoot niet ophoudt omdat de maatregel er niet
+		// kan. Waar de infiltratiemaatregel van de variant geen rekenregel oplevert wordt daarom de rekenregel zonder maatregel
+		// gebruikt. Dit is een aanname die bij Deltares getoetst moet worden en per variant uit te zetten is via VariantK.
+		parameter<Bool>                  PasTerugvalToe             := VariantParameters/VariantK/InfiltratieMaatregelK_terugval[Variant_rel];
+		parameter<InfiltratieMaatregelK> InfiltratieMaatregelK_terugval := InfiltratieMaatregelK/v/Geen_infiltratiemaatregel;
+
+		attribute<CombinatieTabel> CombinatieTabel_variant      := combine_Data(CombinatieTabel, WeerregioK_rel, KwelsituatieK_rel, PerceelsbreedteK_rel, BodemK_rel, InfiltratieMaatregelK_rel,       WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		attribute<CombinatieTabel> CombinatieTabel_zonderMaatregel := combine_Data(CombinatieTabel, WeerregioK_rel, KwelsituatieK_rel, PerceelsbreedteK_rel, BodemK_rel, InfiltratieMaatregelK_terugval, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		attribute<Bool>            HeeftRekenregelVoorMaatregel := IsDefined(rjoin(CombinatieTabel_variant, Datasheet/CombinatieTabel_rel, id(Datasheet)));
+
+		attribute<CombinatieTabel> CombinatieTabel_rel          := PasTerugvalToe && !HeeftRekenregelVoorMaatregel ? CombinatieTabel_zonderMaatregel : CombinatieTabel_variant;
+		attribute<CombinatieTabel> CT_rel_perGrid (AdminDomain) := CombinatieTabel_rel[AdminDomain_rel], IntegrityCheck = "not(all(IsNull(this)))", Descr = "Als deze IntegrityCheck faalt, krijgt geen enkel veenweideperceel een SOMERS-rekenregel. Kijk dan naar NrPercelenZonderRekenregel en NrPercelenZonderPeilvak om te zien welke as de null veroorzaakt.";
+
+		// Issue #619: het wegvallen van percelen uit de lookup gebeurde stil. Deze tellingen maken per variant en zichtjaar
+		// zichtbaar hoeveel percelen geen rekenregel krijgen, zodat Mton-totalen van varianten met een noemer vergeleken worden.
+		attribute<Datasheet> Datasheet_rel                    := rjoin(CombinatieTabel_rel, Datasheet/CombinatieTabel_rel, id(Datasheet)), Descr = "De gevonden SOMERS-rekenregel, undefined waar de combinatie niet in de datasheet voorkomt.";
+		parameter<UInt32>    NrPercelen                       := sum(const(1u, .));
+		parameter<UInt32>    NrPercelenZonderPeilvak          := sum(uint32(IsNull(Veenweide_percelen/Peilvakken_rel))), Descr = "Percelen waarvan het zwaartepunt buiten elk peilvak valt. Deze krijgen de fallback uit VariantK.";
+		parameter<UInt32>    NrPercelenZonderRekenregel       := sum(uint32(IsNull(Datasheet_rel))), Descr = "Percelen die geen SOMERS-rekenregel krijgen en dus geen emissie. Hoort 0 te zijn; zie issue #619.";
+		parameter<UInt32>    NrPercelenMetTerugvalMaatregel   := sum(uint32(PasTerugvalToe && not(HeeftRekenregelVoorMaatregel) && IsDefined(Datasheet_rel))), Descr = "Percelen die alleen dankzij de terugval een rekenregel krijgen, omdat de datasheet er geen heeft bij de infiltratiemaatregel van deze variant. Nul voor varianten zonder maatregel.";
+		parameter<float32>   FractiePercelenZonderRekenregel  := float32(NrPercelenZonderRekenregel) / float32(NrPercelen);	}
 	
 	container Emissies := for_each_ne(CO2/EmissieK/name, 'EmissieT('+quote(CO2/EmissieK/name)+')');
 	
