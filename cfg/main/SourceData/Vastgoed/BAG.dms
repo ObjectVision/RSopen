@@ -99,12 +99,20 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 						, 'sum_uint32(vbo/gerelateerdPand/gebruiksdoel_plus_rel == vbo_gebruiksdoel_plus/v/'+vbo_gebruiksdoel_plus/name+', vbo/gerelateerdPand/Pand_rel)'
 						, pand
 						, uint32
-					), Descr = "Count het aantal vbo binnen een pand per gebruiksdoel"
+					), Descr = "Count het aantal vbo binnen een pand per gebruiksdoel. Let op: telt vbo-pand relaties, een vbo met meerdere gerelateerde panden telt bij elk pand mee. Bewust zo gehouden voor de pandtypering (welke functies zitten er in dit pand); gebruik Vbos_perGebruiksdoel_uniek voor sommeerbare tellingen."
 				{
 					attribute<UInt32>                Totaal        (pand) := ='add('+asList(vbo_gebruiksdoel_plus/name,',')+')';
 					attribute<vbo_gebruiksdoel_plus> dominant      (pand) := ='ArgMax_ifdefined_uint8('+asList(vbo_gebruiksdoel_plus/name+' > 0 ? '+vbo_gebruiksdoel_plus/name+' : null_u',',')+')', Descr = "Bepaalt het dominant gebruiksdoel binnen een pand op basis van het hoogste aantal vbo's binnen dat gebruiksdoel.";
 					attribute<bool>                  HeeftGeenWoon (pand) := woon == 0;
 				}
+
+				container Vbos_perGebruiksdoel_uniek :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						, 'sum_uint32(vbo/gebruiksdoel_plus_rel == vbo_gebruiksdoel_plus/v/'+vbo_gebruiksdoel_plus/name+', vbo/eerste_pand_rel)'
+						, pand
+						, uint32
+					), Descr = "Count het aantal vbo per pand per gebruiksdoel, waarbij elke vbo precies één keer telt (bij het eerste gerelateerde pand binnen de jaarset). Gebruik dit voor sommeerbare tellingen (standen per cel of gebied).";
 			}
 			
 			container BepalingGebruiksdoel 
@@ -188,31 +196,42 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 				container VBOopp_perWP2 :=
 					for_each_nedv(
 						WP2/name
-						,'sum((vbo/WP2_rel == WP2/V/'+WP2/name+'[WP2] ? vbo/oppervlakte_trunc : 0[m2_vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[Units/verblijfsobject]'
+						,'sum(vbo/WP2_rel == WP2/V/'+WP2/name+'[WP2] ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/eerste_pand_rel) * 1[Units/verblijfsobject]'
 						, pand
 						, meter2
-					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling.";
-					
+					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling en de WP2_opp stand. Elke vbo telt precies één keer mee (bij het eerste gerelateerde pand), zodat de som over panden het totale vbo-oppervlak geeft.";
+
 				container VBOopp_perWP4 :=
 					for_each_nedv(
 						WP4/name
-						,'sum((vbo/WP4_rel == WP4/V/'+WP4/name+'[WP4] ? vbo/oppervlakte_trunc : 0[m2_vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[Units/verblijfsobject]'
+						,'sum(vbo/WP4_rel == WP4/V/'+WP4/name+'[WP4] ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/eerste_pand_rel) * 1[Units/verblijfsobject]'
 						, pand
 						, meter2
-					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling.";
-					
+					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling en de WP4_opp stand. Elke vbo telt precies één keer mee (bij het eerste gerelateerde pand), zodat de som over panden het totale vbo-oppervlak geeft.";
+
 				container VBOopp_perGebruiksdoel :=
 					for_each_nedv(
 						vbo_gebruiksdoel_plus/name
 						, 'sum((vbo/Impl/gebruiksdoelen_cbs/'+vbo_gebruiksdoel_plus/name+' ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[verblijfsobject]'
 						, pand
 						, meter2
-					), Descr = "per gebruiksdoel de vbo oppervlakte in een pand"
+					), Descr = "per gebruiksdoel de vbo oppervlakte in een pand. Let op: telt vbo-pand relaties, een vbo met meerdere gerelateerde panden telt bij elk pand mee. Bewust zo gehouden voor de footprint-verdeling binnen een pand; gebruik VBOopp_perGebruiksdoel_uniek voor sommeerbare grootheden."
 				{
 					attribute<meter2> niet_woon           (pand) := sum((vbo/Impl/gebruiksdoelen_cbs/niet_woon ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[verblijfsobject];
-					
+
 					//nodig voor sloopkosten niet woningen in BaseData/Suitabilities
-					attribute<meter2> niet_woon_AdminDomain (AdminDomain) := sum(niet_woon[pand/ToedelingsMatrix/Pand_rel] * pand/ToedelingsMatrix/ToedelingPand, pand/ToedelingsMatrix/AdminDomain_rel), Descr = "sommeer het aantal woningen over CAD cellen, gebaseerd op de uitsmeer-pand-relatie. Zodat grote panden netjes over meerdere cellen worden verdeeld.";
+					attribute<meter2> niet_woon_AdminDomain (AdminDomain) := sum(../VBOopp_perGebruiksdoel_uniek/niet_woon[pand/ToedelingsMatrix/Pand_rel] * pand/ToedelingsMatrix/ToedelingPand, pand/ToedelingsMatrix/AdminDomain_rel), Descr = "sommeer het niet-woon vbo-oppervlak over cellen, gebaseerd op de uitsmeer-pand-relatie. Zodat grote panden netjes over meerdere cellen worden verdeeld. Gebruikt de unieke telling zodat vbo's met meerdere gerelateerde panden niet dubbel meetellen in de sloopkosten.";
+				}
+
+				container VBOopp_perGebruiksdoel_uniek :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						, 'sum(vbo/Impl/gebruiksdoelen_cbs/'+vbo_gebruiksdoel_plus/name+' ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo], vbo/eerste_pand_rel) * 1[verblijfsobject]'
+						, pand
+						, meter2
+					), Descr = "per gebruiksdoel de vbo oppervlakte in een pand, waarbij elke vbo precies één keer telt (bij het eerste gerelateerde pand binnen de jaarset). Gebruik dit voor sommeerbare grootheden (m2 per cel of gebied)."
+				{
+					attribute<meter2> niet_woon           (pand) := sum(vbo/Impl/gebruiksdoelen_cbs/niet_woon ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo], vbo/eerste_pand_rel) * 1[verblijfsobject];
 				}
 				
 				container Footprint_perGebruiksdoel :=
@@ -251,7 +270,8 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 			{
 				container Counts
 				{
-					container Vbos_perGebruiksdoel      := collect_attr_by_cond(Pand/Counts/Vbos_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					container Vbos_perGebruiksdoel       := collect_attr_by_cond(Pand/Counts/Vbos_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					container Vbos_perGebruiksdoel_uniek := collect_attr_by_cond(Pand/Counts/Vbos_perGebruiksdoel_uniek, met_vbo, pand/met_vbo_selection_condition);
 					attribute<Float32>  Monumentaal_Per_AllocDomain (AllocDomain) := sum(float32(Bouwjaar_trunc <= 1900[yr])[ToedelingsMatrix_AllocDomain/Pand_rel] * ToedelingsMatrix_AllocDomain/ToedelingPand, ToedelingsMatrix_AllocDomain/AllocDomain_rel);
 					attribute<Float32>  Per_AllocDomain             (AllocDomain) := sum(ToedelingsMatrix_AllocDomain/ToedelingPand, ToedelingsMatrix_AllocDomain/AllocDomain_rel);
 				}
@@ -259,6 +279,7 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 				{
 					container Footprint_perGebruiksdoel      := collect_attr_by_cond(Pand/Oppervlaktes/Footprint_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
 					container VBOopp_perGebruiksdoel         := collect_attr_by_cond(Pand/Oppervlaktes/VBOopp_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					container VBOopp_perGebruiksdoel_uniek   := collect_attr_by_cond(Pand/Oppervlaktes/VBOopp_perGebruiksdoel_uniek, met_vbo, pand/met_vbo_selection_condition);
 					container Fractie_VBOOpp_perGebruiksdoel := collect_attr_by_cond(Pand/Oppervlaktes/Fractie_VBOOpp_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
 					attribute<m2_pand> vbo_opp (..) := collect_by_cond(met_vbo, pand/met_vbo_selection_condition, Pand/Oppervlaktes/vbo_opp);
 				}
@@ -283,13 +304,14 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 		}
 		
 		unit<UInt32> vbo  := select_with_attr_by_cond(VolledigeBAG/VBOs/vbo
-														, VolledigeBAG/VBOs/vbo/IsVoorraad 
-															&& VolledigeBAG/VBOs/vbo/Begindatum < int32(JaarStr+'0101') 
+														, VolledigeBAG/VBOs/vbo/IsVoorraad
+															&& VolledigeBAG/VBOs/vbo/Begindatum < int32(JaarStr+'0101')
 															&& VolledigeBAG/VBOs/vbo/Einddatum >= int32(JaarStr+'0101'))
 		, Descr = "set met verblijfsobjecten op 1 januari van elk jaar die voorraad zijn volgens de CBS definitie."
 		{
 			parameter<String>                Selection_string      := 'Voorraad';
 			attribute<gerelateerdPand>       gerelateerdPand_rel   := rlookup(vbo_bag_nr, gerelateerdPand/vbo_bag_nr);
+			attribute<pand>                  eerste_pand_rel       := gerelateerdPand_rel -> Pand_rel, Descr = "Unieke toekenning van elke vbo aan precies één pand: het eerste gerelateerde pand binnen de jaarset. Null voor vbo's zonder gerelateerd pand in de jaarset. Gebruik dit als partitie voor sommeerbare grootheden (aantallen, m2), zodat vbo's met meerdere gerelateerde panden niet dubbel tellen.";
 			
 			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel := Impl/gebruiksdoel_plus_rel;
 			attribute<yr>                    Bouwjaar_trunc        := gerelateerdPand_rel -> Bouwjaar_trunc;
