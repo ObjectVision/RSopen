@@ -25,6 +25,13 @@ set LocalDataProjDir=C:\LocalData\RSopen
 
 set MT_FLAGS=/S1 /S2 /S3
 
+REM Overrulet ModelParameters/StandAllocatieOntkoppeld. Dit is een BATCH-instelling: hij bepaalt of de allocatie
+REM per zichtjaar een eigen GeoDmsRun-proces krijgt (TRUE) of dat alle zichtjaren in een proces gaan (FALSE).
+REM TRUE  begrenst het geheugengebruik per proces en maakt doorstarten na een fout mogelijk.
+REM FALSE is sneller omdat de stand niet via tif heen en weer gaat, maar vraagt wel dat het geheugen de hele
+REM       keten in een keer aankan, en bij een fout begin je opnieuw bij het basisjaar.
+set StandAllocatieOntkoppeld=TRUE
+
 set CurrentDir=%CD%
 CD ..
 set ProjDir=%CD%

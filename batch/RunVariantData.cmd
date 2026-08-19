@@ -17,6 +17,11 @@ REM ============================================================================
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteVariantData/per_Variant/%RSL_VARIANT_NAME%/Generate_Run1
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
+REM Run2 maakt de opbrengsten per ontwikkelpakket. Die stap ontbrak hier, terwijl de leeskant ze wel nodig heeft
+REM zodra VariantDataOntkoppeld op TRUE staat (zie Opbrengsten_perOP_src in VariantData/Geschiktheden.dms).
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteVariantData/per_Variant/%RSL_VARIANT_NAME%/Generate_Run2
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+
 exit /B
 
 
