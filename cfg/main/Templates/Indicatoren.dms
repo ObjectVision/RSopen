@@ -412,7 +412,7 @@ Template Indicatoren_T
 		parameter<string>  AD_short := ModelParameters/Advanced/AdminDomain_ref;
 
 		container Fracties
-		: Descr = "Natuur- en waterfracties per cel voor basis- en zichtjaar. Basisjaar komt 1-op-1 uit de statische LGN-groenfracties (zelfde bron en definitie als de schatting); zichtjaar-celwaarden volgen het Groen_Zichtjaar-patroon: ongewijzigd grondgebruik houdt de LGN-basisjaarwaarde, allocatie-mutaties overschrijven."
+		: Descr = "Natuur- en waterfracties per cel voor basis- en zichtjaar. Basisjaar komt 1-op-1 uit de statische LGN-groenfracties (zelfde bron en definitie als de schatting). Zichtjaar-celwaarden: waar de allocatie een ontwikkelpakket fysiek heeft ingericht bepaalt die inrichting de celwaarde (openbaar water, en openbaar groen voor zover ModelParameters/Wonen/OPGroenAlsNatuur_ref dat als natuur laat tellen, #566); daarbuiten houdt ongewijzigd grondgebruik de LGN-basisjaarwaarde en overschrijven de allocatie-mutaties."
 		{
 			attribute<float32> Natuur_Basisjaar    (AdminDomain) := SourceData/Grondgebruik/LGN/Groenfracties/fr_natuur_tot2500m[AdminDomain/rdc_25m_rel], Descr = "Aandeel natuur in de schijf 0-2500m, basisjaar (LGN).";
 			attribute<float32> Water_Basisjaar     (AdminDomain) := SourceData/Grondgebruik/LGN/Groenfracties/fr_water_500m[AdminDomain/rdc_25m_rel],      Descr = "Aandeel water in de schijf 0-500m, basisjaar (LGN).";
@@ -420,18 +420,30 @@ Template Indicatoren_T
 			attribute<float32> NatuurCel_Basisjaar (AdminDomain) := SourceData/Grondgebruik/LGN/Groenfracties/natuur[AdminDomain/rdc_25m_rel];
 			attribute<float32> WaterCel_Basisjaar  (AdminDomain) := SourceData/Grondgebruik/LGN/Groenfracties/water[AdminDomain/rdc_25m_rel];
 
+			// Inrichting van de gealloceerde ontwikkelpakketten, als fractie van de buurt (#566). Delen door
+			// Terreinoppervlakte/Totaal en niet door 10000: bij OPScaleRef = BrutoBuurt is de buurt geen hectare.
+			unit<UInt8> OP       := ThisVariantClassifications/Vastgoed/OP;
+			container   OP_Buurt := ='ThisVariantClassifications/Vastgoed/OP_Buurt';
+
+			attribute<bool>    GroenTeltAlsNatuur  (OP) := = ModelParameters/Wonen/OPGroenAlsNatuur_ref == 'Alle' ? 'const(TRUE, OP)' : ModelParameters/Wonen/OPGroenAlsNatuur_ref == 'NbS' ? 'OP/IsNbSOP' : 'const(FALSE, OP)', Descr = "Telt het openbare groen van dit ontwikkelpakket mee als natuur? Zie ModelParameters/Wonen/OPGroenAlsNatuur_ref: default alleen de NbS-pakketten, die natuurinclusief zijn ingericht.";
+
+			attribute<float32> fr_natuur_OP        (OP) := GroenTeltAlsNatuur ? OP_Buurt/Terreinoppervlakte/Openbaar/Groen[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32] : 0f, Descr = "Aandeel van de buurt dat als openbaar groen wordt ingericht en hedonisch als natuur telt. Alleen het openbare deel: het uitgeefbare groen zit al via het perceel (lnlotsize) in de prijs, meetellen zou dubbeltellen.";
+			attribute<float32> fr_water_OP         (OP) := OP_Buurt/Terreinoppervlakte/Totaal/Water[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32], Descr = "Aandeel van de buurt dat als water wordt ingericht (uitgeefbaar plus openbaar); de natste NbS-pakketten komen tot ~0,65.";
+
+			attribute<bool>    IsBAGnieuwbouwWonen (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), FALSE), Descr = "BAG-nieuwbouwcel (issue #550): heeft wel een gematchte OP_rel maar geen fysieke OP-inrichting; houdt daarom de basisjaarwaarden.";
+			attribute<bool>    IsOPCel             (AdminDomain) := IsDefined(Stand/OP_rel) && !IsBAGnieuwbouwWonen, Descr = "Cel waar de allocatie een ontwikkelpakket fysiek heeft ingericht; die inrichting bepaalt dan de natuur- en watercelwaarde van het zichtjaar.";
+
 			attribute<float32> NatuurCel_Zichtjaar (AdminDomain) := switch(
-					case(ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar == ThisYear/Grondgebruik/Verandering/LU_MT_Basisjaar, NatuurCel_Basisjaar)
+					case(IsOPCel, fr_natuur_OP[Stand/OP_rel])
+					, case(ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar == ThisYear/Grondgebruik/Verandering/LU_MT_Basisjaar, NatuurCel_Basisjaar)
 					, case(ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar == /Classifications/Actor/LU_ModelType/V/Natuur_Totaal, 1f)
 					, 0f
-				), Descr = "Natuur per cel in het zichtjaar (hedonische definitie): ongewijzigd grondgebruik houdt de LGN-basisjaarwaarde; cellen die naar Natuur_Totaal veranderen (allocatie of exogene oplegging) worden 1; overige veranderingen (verstedelijking, landbouw) worden 0.";
+				), Descr = "Natuur per cel in het zichtjaar (hedonische definitie). Volgorde: een fysiek ingericht ontwikkelpakket bepaalt de celwaarde via zijn openbare groen (#566, dus ook bij herontwikkeling waar het landgebruikstype gelijk blijft); daarna houdt ongewijzigd grondgebruik de LGN-basisjaarwaarde; cellen die naar Natuur_Totaal veranderen (allocatie of exogene oplegging) worden 1; overige veranderingen (verstedelijking zonder OP, landbouw) worden 0.";
 
-			attribute<bool>    IsBAGnieuwbouwWonen (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), FALSE), Descr = "BAG-nieuwbouwcel (issue #550): heeft wel een gematchte OP_rel maar geen fysieke OP-inrichting; houdt daarom de basisjaar-waterwaarde.";
 			attribute<float32> WaterCel_Zichtjaar  (AdminDomain) := switch(
-					case(ThisYear/Grondgebruik/Verandering/LU_MT_Zichtjaar == ThisYear/Grondgebruik/Verandering/LU_MT_Basisjaar, WaterCel_Basisjaar)
-					, case(IsDefined(Stand/OP_rel) && !IsBAGnieuwbouwWonen, ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Water[Stand/OP_rel][float32] / 10000f)
+					case(IsOPCel, fr_water_OP[Stand/OP_rel])
 					, WaterCel_Basisjaar
-				), Descr = "Water per cel in het zichtjaar: LU-water verandert nooit (#596), maar op cellen die naar wonen zijn ontwikkeld bepaalt de OP-inrichting het wateraandeel (NbS-Blauw-pakketten hebben tot ~0,68 openbaar water); Terreinoppervlak is m2 per ha, dus /10000 voor de celfractie.";
+				), Descr = "Water per cel in het zichtjaar: het landgebruikswater verandert nooit (#596), dus alleen een fysiek ingericht ontwikkelpakket wijzigt het wateraandeel. Sinds #566 gaat die test voor op de landgebruikstoets, zodat ook binnenstedelijke herontwikkeling met een blauw pakket meetelt en niet alleen uitleg.";
 
 			// zichtjaar-fracties: zelfde kernels en (statische) noemers als de basisjaar-meting
 			attribute<float32> NatuurCel_Zichtjaar_100m (rdc_100m) := mean(NatuurCel_Zichtjaar, AdminDomain/rdc_100m_rel);
