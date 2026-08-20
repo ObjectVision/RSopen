@@ -61,7 +61,9 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 			parameter<String> Selection_string      := 'Voorraad';
 			
 			//deze ontkoppeling is alleen voor debugging. Mocht je hier tegenaan lopen. Zet de modelparameter op false.
-			attribute<WP5>            WP5_rel                          := =ModelParameters/BAG_WP5_rel_Ontkoppeld ? 'AfleidingPandType/Results/WP5_rel' : 'AfleidingPandType/Write_WP5/WP5_rel';
+			attribute<WP5>            WP5_rel                          := =ModelParameters/BAG_WP5_rel_Ontkoppeld ? 'AfleidingPandType/Results/WP5_rel' : 'AfleidingPandType/Write_WP5/WP5_rel'
+			, IntegrityCheck = "=ModelParameters/BAG_WP5_rel_Ontkoppeld ? 'sum_uint32(counts/woon_VBOs > 1 && IsDefined(This) && This != WP5/V/Appartement) == 0' : 'TRUE'"
+			, Descr = "Woonpandtypering per pand. Het ontkoppelde bestand is een positionele array van een byte per pand, zonder sleutel; hoort het bij een andere pandenset, dan schuift de typering op en krijgen appartementenblokken het type van een ander pand, zonder dat GeoDMS iets meldt. De IntegrityCheck toetst daarom de afleidingsregel uit AfleidingPandtype.dms die per definitie geldt: een pand met meer dan een woon-vbo is een appartement. Faalt hij, verwijder dan het mmd-bestand onder Vastgoed/VolledigeTabel_@BAGdatum@/WP5 en genereer het opnieuw met BAG_WP5_rel_Ontkoppeld op FALSE.";
 			attribute<WP4>            WP4_rel                          := WP5/WP4_rel[WP5_rel], Descr = "Woonpand typering opgesplitst in vier typen: WP4, afgeleid van WP5";
 			attribute<WP3>            WP3_rel                          := WP5/WP3_rel[WP5_rel], Descr = "Woonpand typering opgesplitst in drie typen: WP3, afgeleid van WP5";
 			attribute<WP2>            WP2_rel                          := WP5/WP2_rel[WP5_rel], Descr = "Woonpand typering opgesplitst in twee typen: WP2, afgeleid van WP5";
@@ -87,8 +89,9 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 			container Counts
 			{
 				attribute<UInt32> VBOs             (..) := pcount(vbo/gerelateerdPand/pand_rel), Descr = "Tel aantal vbo's per pand";
-				attribute<UInt32> woon_VBOs        (..) := pcount(vbo/Per_gebruiksdoel/woon/select/gerelateerdPand/Pand_rel), Descr = "Tel aantal woon-vbo's per pand";
-			
+				attribute<UInt32> woon_VBOs        (..) := pcount(vbo/Per_gebruiksdoel/woon/select/gerelateerdPand/Pand_rel), Descr = "Tel aantal woon-vbo's per pand. Let op: dit telt vbo-pand relaties, een vbo met meerdere gerelateerde panden telt bij elk pand mee. Gebruik woon_VBOs_uniek voor tellingen die over panden gesommeerd het aantal woningen moeten geven.";
+				attribute<UInt32> woon_VBOs_uniek  (..) := pcount(vbo/Per_gebruiksdoel/woon/select/eerste_pand_rel), Descr = "Tel aantal woon-vbo's per pand, waarbij elke vbo precies één keer telt: bij het eerste gerelateerde pand binnen de jaarset. Gesommeerd over panden geeft dit het aantal unieke woon-vbo's met minimaal één pand in de jaarset.";
+
 				attribute<Float32> Per_AllocDomain (AllocDomain) := sum(ToedelingsMatrix_AllocDomain/ToedelingPand, ToedelingsMatrix_AllocDomain/AllocDomain_rel);
 				attribute<Float32> Per_AdminDomain (AdminDomain) := sum(ToedelingsMatrix/ToedelingPand, ToedelingsMatrix/AdminDomain_rel);
 				
@@ -98,12 +101,20 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 						, 'sum_uint32(vbo/gerelateerdPand/gebruiksdoel_plus_rel == vbo_gebruiksdoel_plus/v/'+vbo_gebruiksdoel_plus/name+', vbo/gerelateerdPand/Pand_rel)'
 						, pand
 						, uint32
-					), Descr = "Count het aantal vbo binnen een pand per gebruiksdoel"
+					), Descr = "Count het aantal vbo binnen een pand per gebruiksdoel. Let op: telt vbo-pand relaties, een vbo met meerdere gerelateerde panden telt bij elk pand mee. Bewust zo gehouden voor de pandtypering (welke functies zitten er in dit pand); gebruik Vbos_perGebruiksdoel_uniek voor sommeerbare tellingen."
 				{
 					attribute<UInt32>                Totaal        (pand) := ='add('+asList(vbo_gebruiksdoel_plus/name,',')+')';
 					attribute<vbo_gebruiksdoel_plus> dominant      (pand) := ='ArgMax_ifdefined_uint8('+asList(vbo_gebruiksdoel_plus/name+' > 0 ? '+vbo_gebruiksdoel_plus/name+' : null_u',',')+')', Descr = "Bepaalt het dominant gebruiksdoel binnen een pand op basis van het hoogste aantal vbo's binnen dat gebruiksdoel.";
 					attribute<bool>                  HeeftGeenWoon (pand) := woon == 0;
 				}
+
+				container Vbos_perGebruiksdoel_uniek :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						, 'sum_uint32(vbo/gebruiksdoel_plus_rel == vbo_gebruiksdoel_plus/v/'+vbo_gebruiksdoel_plus/name+', vbo/eerste_pand_rel)'
+						, pand
+						, uint32
+					), Descr = "Count het aantal vbo per pand per gebruiksdoel, waarbij elke vbo precies één keer telt (bij het eerste gerelateerde pand binnen de jaarset). Gebruik dit voor sommeerbare tellingen (standen per cel of gebied).";
 			}
 			
 			container BepalingGebruiksdoel 
@@ -187,31 +198,42 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 				container VBOopp_perWP2 :=
 					for_each_nedv(
 						WP2/name
-						,'sum((vbo/WP2_rel == WP2/V/'+WP2/name+'[WP2] ? vbo/oppervlakte_trunc : 0[m2_vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[Units/verblijfsobject]'
+						,'sum(vbo/WP2_rel == WP2/V/'+WP2/name+'[WP2] ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/eerste_pand_rel) * 1[Units/verblijfsobject]'
 						, pand
 						, meter2
-					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling.";
-					
+					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling en de WP2_opp stand. Elke vbo telt precies één keer mee (bij het eerste gerelateerde pand), zodat de som over panden het totale vbo-oppervlak geeft.";
+
 				container VBOopp_perWP4 :=
 					for_each_nedv(
 						WP4/name
-						,'sum((vbo/WP4_rel == WP4/V/'+WP4/name+'[WP4] ? vbo/oppervlakte_trunc : 0[m2_vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[Units/verblijfsobject]'
+						,'sum(vbo/WP4_rel == WP4/V/'+WP4/name+'[WP4] ? vbo/oppervlakte_trunc : 0[m2_vbo], vbo/eerste_pand_rel) * 1[Units/verblijfsobject]'
 						, pand
 						, meter2
-					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling.";
-					
+					), Descr = "wordt oa gebruikt in EigendomStaat tbv bepaling VS/SH verdeling en de WP4_opp stand. Elke vbo telt precies één keer mee (bij het eerste gerelateerde pand), zodat de som over panden het totale vbo-oppervlak geeft.";
+
 				container VBOopp_perGebruiksdoel :=
 					for_each_nedv(
 						vbo_gebruiksdoel_plus/name
 						, 'sum((vbo/Impl/gebruiksdoelen_cbs/'+vbo_gebruiksdoel_plus/name+' ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[verblijfsobject]'
 						, pand
 						, meter2
-					), Descr = "per gebruiksdoel de vbo oppervlakte in een pand"
+					), Descr = "per gebruiksdoel de vbo oppervlakte in een pand. Let op: telt vbo-pand relaties, een vbo met meerdere gerelateerde panden telt bij elk pand mee. Bewust zo gehouden voor de footprint-verdeling binnen een pand; gebruik VBOopp_perGebruiksdoel_uniek voor sommeerbare grootheden."
 				{
 					attribute<meter2> niet_woon           (pand) := sum((vbo/Impl/gebruiksdoelen_cbs/niet_woon ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo])[vbo/gerelateerdPand/vbo_rel], vbo/gerelateerdPand/Pand_rel) * 1[verblijfsobject];
-					
+
 					//nodig voor sloopkosten niet woningen in BaseData/Suitabilities
-					attribute<meter2> niet_woon_AdminDomain (AdminDomain) := sum(niet_woon[pand/ToedelingsMatrix/Pand_rel] * pand/ToedelingsMatrix/ToedelingPand, pand/ToedelingsMatrix/AdminDomain_rel), Descr = "sommeer het aantal woningen over CAD cellen, gebaseerd op de uitsmeer-pand-relatie. Zodat grote panden netjes over meerdere cellen worden verdeeld.";
+					attribute<meter2> niet_woon_AdminDomain (AdminDomain) := sum(../VBOopp_perGebruiksdoel_uniek/niet_woon[pand/ToedelingsMatrix/Pand_rel] * pand/ToedelingsMatrix/ToedelingPand, pand/ToedelingsMatrix/AdminDomain_rel), Descr = "sommeer het niet-woon vbo-oppervlak over cellen, gebaseerd op de uitsmeer-pand-relatie. Zodat grote panden netjes over meerdere cellen worden verdeeld. Gebruikt de unieke telling zodat vbo's met meerdere gerelateerde panden niet dubbel meetellen in de sloopkosten.";
+				}
+
+				container VBOopp_perGebruiksdoel_uniek :=
+					for_each_nedv(
+						vbo_gebruiksdoel_plus/name
+						, 'sum(vbo/Impl/gebruiksdoelen_cbs/'+vbo_gebruiksdoel_plus/name+' ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo], vbo/eerste_pand_rel) * 1[verblijfsobject]'
+						, pand
+						, meter2
+					), Descr = "per gebruiksdoel de vbo oppervlakte in een pand, waarbij elke vbo precies één keer telt (bij het eerste gerelateerde pand binnen de jaarset). Gebruik dit voor sommeerbare grootheden (m2 per cel of gebied)."
+				{
+					attribute<meter2> niet_woon           (pand) := sum(vbo/Impl/gebruiksdoelen_cbs/niet_woon ? vbo/oppervlakte_trunc : (0/0)[m2_Vbo], vbo/eerste_pand_rel) * 1[verblijfsobject];
 				}
 				
 				container Footprint_perGebruiksdoel :=
@@ -250,7 +272,8 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 			{
 				container Counts
 				{
-					container Vbos_perGebruiksdoel      := collect_attr_by_cond(Pand/Counts/Vbos_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					container Vbos_perGebruiksdoel       := collect_attr_by_cond(Pand/Counts/Vbos_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					container Vbos_perGebruiksdoel_uniek := collect_attr_by_cond(Pand/Counts/Vbos_perGebruiksdoel_uniek, met_vbo, pand/met_vbo_selection_condition);
 					attribute<Float32>  Monumentaal_Per_AllocDomain (AllocDomain) := sum(float32(Bouwjaar_trunc <= 1900[yr])[ToedelingsMatrix_AllocDomain/Pand_rel] * ToedelingsMatrix_AllocDomain/ToedelingPand, ToedelingsMatrix_AllocDomain/AllocDomain_rel);
 					attribute<Float32>  Per_AllocDomain             (AllocDomain) := sum(ToedelingsMatrix_AllocDomain/ToedelingPand, ToedelingsMatrix_AllocDomain/AllocDomain_rel);
 				}
@@ -258,6 +281,7 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 				{
 					container Footprint_perGebruiksdoel      := collect_attr_by_cond(Pand/Oppervlaktes/Footprint_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
 					container VBOopp_perGebruiksdoel         := collect_attr_by_cond(Pand/Oppervlaktes/VBOopp_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
+					container VBOopp_perGebruiksdoel_uniek   := collect_attr_by_cond(Pand/Oppervlaktes/VBOopp_perGebruiksdoel_uniek, met_vbo, pand/met_vbo_selection_condition);
 					container Fractie_VBOOpp_perGebruiksdoel := collect_attr_by_cond(Pand/Oppervlaktes/Fractie_VBOOpp_perGebruiksdoel, met_vbo, pand/met_vbo_selection_condition);
 					attribute<m2_pand> vbo_opp (..) := collect_by_cond(met_vbo, pand/met_vbo_selection_condition, Pand/Oppervlaktes/vbo_opp);
 				}
@@ -282,13 +306,14 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 		}
 		
 		unit<UInt32> vbo  := select_with_attr_by_cond(VolledigeBAG/VBOs/vbo
-														, VolledigeBAG/VBOs/vbo/IsVoorraad 
-															&& VolledigeBAG/VBOs/vbo/Begindatum < int32(JaarStr+'0101') 
+														, VolledigeBAG/VBOs/vbo/IsVoorraad
+															&& VolledigeBAG/VBOs/vbo/Begindatum < int32(JaarStr+'0101')
 															&& VolledigeBAG/VBOs/vbo/Einddatum >= int32(JaarStr+'0101'))
 		, Descr = "set met verblijfsobjecten op 1 januari van elk jaar die voorraad zijn volgens de CBS definitie."
 		{
 			parameter<String>                Selection_string      := 'Voorraad';
 			attribute<gerelateerdPand>       gerelateerdPand_rel   := rlookup(vbo_bag_nr, gerelateerdPand/vbo_bag_nr);
+			attribute<pand>                  eerste_pand_rel       := gerelateerdPand_rel -> Pand_rel, Descr = "Unieke toekenning van elke vbo aan precies één pand: het eerste gerelateerde pand binnen de jaarset. Null voor vbo's zonder gerelateerd pand in de jaarset. Gebruik dit als partitie voor sommeerbare grootheden (aantallen, m2), zodat vbo's met meerdere gerelateerde panden niet dubbel tellen.";
 			
 			attribute<vbo_gebruiksdoel_plus> gebruiksdoel_plus_rel := Impl/gebruiksdoel_plus_rel;
 			attribute<yr>                    Bouwjaar_trunc        := gerelateerdPand_rel -> Bouwjaar_trunc;
@@ -490,7 +515,9 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 		{
 			parameter<String> Selection_string             := 'AlleStatussen';
 
-			attribute<WP5>            WP5_rel                          := =ModelParameters/BAG_WP5_rel_Ontkoppeld ? 'AfleidingPandType/Results/WP5_rel' : 'AfleidingPandType/Write_WP5/WP5_rel';
+			attribute<WP5>            WP5_rel                          := =ModelParameters/BAG_WP5_rel_Ontkoppeld ? 'AfleidingPandType/Results/WP5_rel' : 'AfleidingPandType/Write_WP5/WP5_rel'
+			, IntegrityCheck = "=ModelParameters/BAG_WP5_rel_Ontkoppeld ? 'sum_uint32(counts/woon_VBOs > 1 && IsDefined(This) && This != WP5/V/Appartement) == 0' : 'TRUE'"
+			, Descr = "Woonpandtypering per pand. Zie de gelijknamige check op de voorraadset: het ontkoppelde bestand is positioneel, dus toetsen we de afleidingsregel dat een pand met meer dan een woon-vbo een appartement is.";
 			attribute<WP4>            WP4_rel                          := WP5/WP4_rel[WP5_rel];
 			attribute<WP3>            WP3_rel                          := WP5/WP3_rel[WP5_rel];
 			attribute<WP2>            WP2_rel                          := WP5/WP2_rel[WP5_rel];
@@ -762,12 +789,12 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 		{
 			unit<UInt32> vbo_domein := VBOs/vbo;
 			
-			unit<UInt32> Import
+			unit<UInt32> ImportRaw
 			:	StorageName = "= Result_fss_dir + '/pand.mmd'"
-			// :	StorageName = "= Result_fss_dir + '/pand.fss'"
-			,	StorageReadOnly = "True"
+			,	StorageReadOnly = "True";
+			unit<UInt32> Import := ImportRaw
 			{
-				attribute<rdc_mm>                       geometry_mm            (poly);
+//				attribute<rdc_mm>                       geometry_mm            (poly);
 				attribute<rdc_mm>                       geometry_mm_simpl      (poly) := geos_buffer_multi_polygon(geometry_mm, 100d, 4b);
 				attribute<rdc_meter>                    geometry               (poly) := geometry_mm[rdc_meter], DisableStorage = "TRUE";
 				attribute<rdc_meter>                    geometry_simpl         (poly) := geometry_mm_simpl[rdc_meter], DisableStorage = "TRUE";
@@ -775,12 +802,12 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 				attribute<rdc_meter>                    geometry_inflated_20cm (poly) := geos_buffer_multi_polygon(src/geometry, 0.2d, 4b), Descr = "tbv pand typering"; //use the geometry from src that is corrected for inverted winding order. 
 				// attribute<rdc_meter>                    geometry_inflated_20cm (poly) := geometry_inflated_20cm_dpoint;
 				
-				attribute<String>                       identificatie;
-				attribute<uint16>                       Bouwjaar;
-				attribute<Bool>                         IsNederland; //                  := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/rdc_Nederland/geometry));
-				attribute<Bool>                         IsFriesland; //                  := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/rdc_Friesland/geometry));
-				attribute<Bool>                         IsUtrecht; //                    := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/rdc_Utrecht/geometry));
-				attribute<Bool>                         IsNoord_Holland; //              := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/rdc_Noord_Holland/geometry));
+				// attribute<String>                       identificatie;
+				// attribute<uint16>                       Bouwjaar;
+				// attribute<Bool>                         IsNederland; //                  := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/rdc_Nederland/geometry));
+				// attribute<Bool>                         IsFriesland; //                  := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/rdc_Friesland/geometry));
+				// attribute<Bool>                         IsUtrecht; //                    := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/rdc_Utrecht/geometry));
+				// attribute<Bool>                         IsNoord_Holland; //              := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/rdc_Noord_Holland/geometry));
 				attribute<Bool>                         IsNoord_Brabant := IsDefined(point_in_polygon(centroid_or_mid(geometry), /Geography/StudyAreas/PerProv/Noord_Brabant/rdc_prov/geometry));
 				container meta := meta_src_template(., pand_status);
 			}
@@ -857,25 +884,18 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 		
 		container VBOs
 		{
-			unit<UInt32> Import
+			unit<UInt32> ImportRaw
 			:	StorageName = "= Result_fss_dir + '/vbo.mmd'"
-			// :	StorageName = "= Result_fss_dir + '/vbo.fss'"
 			,	StorageReadOnly = "True"
-			,	Descr = "Lees de source BAG files"
+			,	Descr = "Lees de source BAG files";
+
+			unit<UInt32> Import := ImportRaw
 			{
-				attribute<rdc_mm>                     geometry_mm;
 				attribute<rdc_meter>                  geometry  := geometry_mm[rdc_meter], DisableStorage = "TRUE";
-				attribute<String>                     identificatie;
-				attribute<Int32>                      oppervlakte;
-				attribute<String>                     nummeraanduiding_id;
-				attribute<Bool>                       IsNederland;//                  := IsDefined(point_in_polygon(geometry, /Geography/StudyAreas/rdc_Nederland/geometry));
-				attribute<Bool>                       IsFriesland;//                  := IsDefined(point_in_polygon(geometry, /Geography/StudyAreas/rdc_Friesland/geometry));
-				attribute<Bool>                       IsUtrecht  ;//                  := IsDefined(point_in_polygon(geometry, /Geography/StudyAreas/rdc_Utrecht/geometry));
-				attribute<Bool>                       IsNoord_Holland;//              := IsDefined(point_in_polygon(geometry, /Geography/StudyAreas/rdc_Noord_Holland/geometry));
 				attribute<Bool>                       IsNoord_Brabant := IsDefined(point_in_polygon(geometry, /Geography/StudyAreas/PerProv/Noord_Brabant/rdc_prov/geometry));
 				
-				unit<UInt32> gerelateerdPand
-				: Descr = "relatie tabel tussen panden en vbo's, deze relatie is 1 op n. Deze set bevat duplicaten, mogelijk wijzigingen in velden die wij helemaal niet gebruiken. Echter, deze set geeft enkel de associatie tussen de vbo's en panden. Dus deze mag veilig gecondenseerd worden!"
+				unit<UInt32> gerelateerdPand := ImportRaw/gerelateerdPand
+				, Descr = "relatie tabel tussen panden en vbo's, deze relatie is 1 op n. Deze set bevat duplicaten, mogelijk wijzigingen in velden die wij helemaal niet gebruiken. Echter, deze set geeft enkel de associatie tussen de vbo's en panden. Dus deze mag veilig gecondenseerd worden!"
 				{
 					// attribute<String> identificatie;
 					// attribute<String> pand_id;
@@ -884,12 +904,12 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 					attribute<.> uq_rel (src/gerelateerdPand) := rlookup(src/gerelateerdPand/values, key);
 				}
 				
-				container gebruiksdoelen :=
-					for_each_ndv(
-						vbo_gebruiksdoel/name
-						, Import
-						, bool
-					);
+				// container gebruiksdoelen :=
+				// 	for_each_ndv(
+				// 		vbo_gebruiksdoel/name
+				// 		, ImportRaw
+				// 		, bool
+				// 	);
 				
 				container meta := meta_src_template(., vbo_status);
 			}
@@ -971,21 +991,22 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 		
 		container Nummeraanduiding
 		{
-			unit<UInt32> Import
+			unit<UInt32> ImportRaw
 			:	StorageName = "= Result_fss_dir + '/nummeraanduiding.mmd'"
-			// :	StorageName = "= Result_fss_dir + '/nummeraanduiding.fss'"
 			,	StorageReadOnly = "True"
-			,	Descr = "Lees de source BAG files"
+			,	Descr = "Lees de source BAG files";
+
+			unit<UInt32> Import := ImportRaw
 			{
-				attribute<String>                     identificatie;
-				// attribute<String>                     openbareruimte_id;
+				// attribute<String>                     identificatie;
+				// // attribute<String>                     openbareruimte_id;
 				
-				attribute<String>                     straatnaam;
-				attribute<int32>                      huisnummer;
-				attribute<String>                     huisletter;
-				attribute<String>                     toevoeging;
-				attribute<String>                     postcode;
-				attribute<String>                     woonplaats;
+				// attribute<String>                     straatnaam;
+				// attribute<int32>                      huisnummer;
+				// attribute<String>                     huisletter;
+				// attribute<String>                     toevoeging;
+				// attribute<String>                     postcode;
+				// attribute<String>                     woonplaats;
 			}
 		}
 		
@@ -996,15 +1017,15 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 			unit<UInt8>  statusType;
 			// end case Parameters
 
-			attribute<String>     Status                 (domain);
-			attribute<statusType> status_rel             (domain) := rlookup(LowerCase(Status), LowerCase(statusType/Label));
+			// attribute<String>     Status                 (domain);
+			attribute<statusType> status_rel             (domain) := rlookup(LowerCase(ImportRaw/Meta/Status), LowerCase(statusType/Label));
 
-			attribute<Int32>      Begindatum             (domain);
-			attribute<Int32>      Einddatum              (domain);
+			attribute<Int32>      Begindatum             (domain) := ImportRaw/Meta/Begindatum;
+			attribute<Int32>      Einddatum              (domain) := ImportRaw/Meta/Einddatum;
 			// attribute<UInt32>     VOORKOMENidENTIFICATIE (domain); //een identificatienummer kan meerdere keren voorkomen. Dit is een volgnummer dat de versie weergeeft.
 
-			attribute<String>     TIJDSTIPREGISTRATIE    (domain);
-			attribute<String>     EINDREGISTRATIE        (domain);
+			attribute<String>     TIJDSTIPREGISTRATIE    (domain) := ImportRaw/Meta/TIJDSTIPREGISTRATIE;
+			attribute<String>     EINDREGISTRATIE        (domain) := ImportRaw/Meta/EINDREGISTRATIE;
 
 			// attribute<Int32>      DOCUMENTDATUM          (domain);
 			// attribute<String>     DOCUMENTNUMMER         (domain);

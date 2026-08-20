@@ -47,8 +47,8 @@ Template SOMERS_CO2_T
 		parameter<Bool>                  PasTerugvalToe             := VariantParameters/VariantK/InfiltratieMaatregelK_terugval[Variant_rel];
 		parameter<InfiltratieMaatregelK> InfiltratieMaatregelK_terugval := InfiltratieMaatregelK/v/Geen_infiltratiemaatregel;
 
-		attribute<CombinatieTabel> CombinatieTabel_variant      := combine_Data(CombinatieTabel, WeerregioK_rel, KwelsituatieK_rel, PerceelsbreedteK_rel, BodemK_rel, InfiltratieMaatregelK_rel,       WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
-		attribute<CombinatieTabel> CombinatieTabel_zonderMaatregel := combine_Data(CombinatieTabel, WeerregioK_rel, KwelsituatieK_rel, PerceelsbreedteK_rel, BodemK_rel, InfiltratieMaatregelK_terugval, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		attribute<CombinatieTabel> CombinatieTabel_variant         := combine_Data(CombinatieTabel, Veenweide_percelen/BasiscombinatieK_rel, InfiltratieMaatregelK_rel,       WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+		attribute<CombinatieTabel> CombinatieTabel_zonderMaatregel := combine_Data(CombinatieTabel, Veenweide_percelen/BasiscombinatieK_rel, InfiltratieMaatregelK_terugval, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
 		attribute<Bool>            HeeftRekenregelVoorMaatregel := IsDefined(rjoin(CombinatieTabel_variant, Datasheet/CombinatieTabel_rel, id(Datasheet)));
 
 		attribute<CombinatieTabel> CombinatieTabel_rel          := PasTerugvalToe && !HeeftRekenregelVoorMaatregel ? CombinatieTabel_zonderMaatregel : CombinatieTabel_variant;
@@ -59,9 +59,10 @@ Template SOMERS_CO2_T
 		attribute<Datasheet> Datasheet_rel                    := rjoin(CombinatieTabel_rel, Datasheet/CombinatieTabel_rel, id(Datasheet)), Descr = "De gevonden SOMERS-rekenregel, undefined waar de combinatie niet in de datasheet voorkomt.";
 		parameter<UInt32>    NrPercelen                       := sum(const(1u, .));
 		parameter<UInt32>    NrPercelenZonderPeilvak          := sum(uint32(IsNull(Veenweide_percelen/Peilvakken_rel))), Descr = "Percelen waarvan het zwaartepunt buiten elk peilvak valt. Deze krijgen de fallback uit VariantK.";
-		parameter<UInt32>    NrPercelenZonderRekenregel       := sum(uint32(IsNull(Datasheet_rel))), Descr = "Percelen die geen SOMERS-rekenregel krijgen en dus geen emissie. Hoort 0 te zijn; zie issue #619.";
+		parameter<UInt32>    NrPercelenZonderRekenregel       := sum(uint32(IsNull(Datasheet_rel))), Descr = "Percelen zonder rekenregel. Hoort 0 te zijn: elk perceel draagt zijn eigen basiscombinatie, en die bestaat altijd zonder infiltratiemaatregel.";
 		parameter<UInt32>    NrPercelenMetTerugvalMaatregel   := sum(uint32(PasTerugvalToe && not(HeeftRekenregelVoorMaatregel) && IsDefined(Datasheet_rel))), Descr = "Percelen die alleen dankzij de terugval een rekenregel krijgen, omdat de datasheet er geen heeft bij de infiltratiemaatregel van deze variant. Nul voor varianten zonder maatregel.";
-		parameter<float32>   FractiePercelenZonderRekenregel  := float32(NrPercelenZonderRekenregel) / float32(NrPercelen);	}
+		parameter<float32>   FractiePercelenZonderRekenregel  := float32(NrPercelenZonderRekenregel) / float32(NrPercelen);
+	}
 	
 	container Emissies := for_each_ne(CO2/EmissieK/name, 'EmissieT('+quote(CO2/EmissieK/name)+')');
 	
@@ -73,7 +74,12 @@ Template SOMERS_CO2_T
 		parameter<string> Emissie_name;
 		//
 		
-		attribute<kg_jaarlijks> Jaarlijks (AdminDomain) := = 'rjoin(Huidige_Percelen/CT_rel_perGrid, Datasheet/CombinatieTabel_rel, value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks)) * AdminDomain/NrHaPerCell';
+		attribute<kg_ha_jaarlijks> PerHa (AdminDomain) := = 'rjoin(Huidige_Percelen/CT_rel_perGrid, Datasheet/CombinatieTabel_rel, value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks))'
+			, IntegrityCheck = "not(any(IsDefined(Veenweide_percelen/AdminDomain_rel) && IsNull(this)))"
+			, Descr = "Als deze IntegrityCheck faalt, is er een cel met een veenweideperceel zonder emissiewaarde. Dat is precies wat issue #619 heeft opgelost, dus er is dan een nieuwe bron van nulls bijgekomen.";
+
+		attribute<kg_jaarlijks> Jaarlijks (AdminDomain) := PerHa * AdminDomain/NrHaPerCell;
+		parameter<ton_jaarlijks> Totaal_StGebied            := sum(Jaarlijks)[ton_jaarlijks];
 		
 		attribute<kg_jaarlijks> NaLUC (AdminDomain) :=
 			LU_ModelType/IsStedelijk[ThisYear/Landgebruikskaart/Result_SA]
