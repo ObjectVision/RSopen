@@ -1,0 +1,115 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Bevolking en sterfte per buurt, wijk en gemeente uit de CBS Kerncijfers wijken en buurten (KWB). Levert de
+// waargenomen sterftekans per regio, die in de mortaliteitsindicator (#484) de plaats inneemt van een vaste
+// landelijke referentiesterfte. Kleine regio's krijgen een naar het bovenliggende schaalniveau gekrompen
+// sterftekans, zodat een verzorgingshuis in een buurt van 70 inwoners geen sterftekans van 40% per jaar oplevert.
+// De leeftijds- en geslachtsverdeling wordt wel ingelezen maar nog niet gebruikt.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Bevolking : using = "Units;Geography;SourceData/RegioIndelingen"
+, Descr = "Bevolking en sterfte per buurt, wijk en gemeente uit de CBS Kerncijfers wijken en buurten (KWB)."
+{
+	parameter<String> Jaar := ModelParameters/Wonen/KWB_Jaar, Descr = "Welk jaar van de CBS Kerncijfers wijken en buurten wordt gebruikt. Bepaalt zowel het databestand als de CBS-gebiedsindeling waaraan de cijfers worden gekoppeld.";
+
+	unit<UInt32> KWB
+	:	StorageName     = "='%ProjDir%/Data/CBS_KWB/CBS_KWB_'+Jaar+'_bevolking_sterfte.csv'"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "True"
+	,	URL             = "https://github.com/ObjectVision/RSopen/issues/484"
+	,	Descr           = "CBS Kerncijfers wijken en buurten: een regel per land, gemeente, wijk en buurt. Aangeleverd vanuit Deltares in RSopen-issue #484. Aantallen op buurt- en wijkniveau zijn door het CBS afgerond op vijftallen."
+	{
+		attribute<String> gwb_code_10: Descr = "Regiocode, bijvoorbeeld NL00, GM0014, WK001400 of BU00140000.";
+		attribute<String> regio      : Descr = "Naam van de regio.";
+		attribute<String> gm_naam    : Descr = "Naam van de gemeente waarin de regio ligt.";
+		attribute<String> recs       : Descr = "Soort regio: Land, Gemeente, Wijk of Buurt.";
+		attribute<String> a_inw      : Descr = "Aantal inwoners.";
+		attribute<String> a_man      : Descr = "Aantal mannen.";
+		attribute<String> a_vrouw    : Descr = "Aantal vrouwen.";
+		attribute<String> a_00_14    : Descr = "Aantal inwoners van 0 tot 15 jaar.";
+		attribute<String> a_15_24    : Descr = "Aantal inwoners van 15 tot 25 jaar.";
+		attribute<String> a_25_44    : Descr = "Aantal inwoners van 25 tot 45 jaar.";
+		attribute<String> a_45_64    : Descr = "Aantal inwoners van 45 tot 65 jaar.";
+		attribute<String> a_65_oo    : Descr = "Aantal inwoners van 65 jaar of ouder.";
+		attribute<String> a_ste      : Descr = "Aantal sterfgevallen in het jaar.";
+
+		attribute<Persoon>           Inwoners      := a_inw[Persoon];
+		attribute<Persoon_jaarlijks> Sterfgevallen := a_ste[Persoon_jaarlijks];
+	}
+
+	parameter<KWB>               NL_rel           := rlookup('NL00', KWB/gwb_code_10), Descr = "De landelijke regel in de KWB-tabel.";
+	parameter<Persoon>           Inwoners_NL      := KWB/Inwoners[NL_rel];
+	parameter<Persoon_jaarlijks> Sterfgevallen_NL := KWB/Sterfgevallen[NL_rel];
+	parameter<jaarlijks>         Sterftekans_NL   := Sterfgevallen_NL / Inwoners_NL, Descr = "Landelijke sterftekans: het aandeel van de bevolking dat in het waarnemingsjaar overleed. Dit is de referentie waar kleine regio's naartoe krimpen.";
+
+	parameter<Persoon> KrimpGewicht := ModelParameters/Wonen/Sterfte_KrimpGewicht
+	, Descr = "Gewicht van de bovenliggende regio in de sterftekans van een regio, uitgedrukt in inwoners. Een regio met evenveel inwoners als dit gewicht telt voor de helft mee met de eigen waarneming en voor de helft met die van de bovenliggende regio. Op nul gezet krijgt elke regio zijn eigen ongecorrigeerde cijfer.";
+
+	container Gemeente
+	: Descr = "Sterfte per gemeente, gekrompen naar het landelijke cijfer."
+	{
+		unit<UInt32> Domain := ='SourceData/RegioIndelingen/CBS/Y'+Jaar+'/Gemeente';
+
+		attribute<KWB>               KWB_rel       (Domain) := rlookup(Domain/statcode, KWB/gwb_code_10);
+		attribute<Persoon>           Inwoners      (Domain) := MakeDefined(KWB/Inwoners[KWB_rel], 0[Persoon]);
+		attribute<Persoon_jaarlijks> Sterfgevallen (Domain) := MakeDefined(KWB/Sterfgevallen[KWB_rel], 0[Persoon_jaarlijks]);
+
+		attribute<jaarlijks>         Sterftekans_Ruw (Domain) := Inwoners > 0[Persoon] ? Sterfgevallen / Inwoners : null_f, Descr = "Het ongecorrigeerde waargenomen cijfer, ter vergelijking.";
+		attribute<jaarlijks>         Sterftekans     (Domain) := (Sterfgevallen + KrimpGewicht * Sterftekans_NL) / (Inwoners + KrimpGewicht);
+	}
+
+	container Wijk
+	: Descr = "Sterfte per wijk, gekrompen naar het gemeentecijfer."
+	{
+		unit<UInt32> Domain := ='SourceData/RegioIndelingen/CBS/Y'+Jaar+'/Wijk';
+
+		attribute<String>            Gemeente_code (Domain) := 'GM'+substr(Domain/statcode, 2, 4), Descr = "De eerste vier cijfers van een wijkcode zijn de gemeentecode.";
+		attribute<Gemeente/Domain>   Gemeente_rel  (Domain) := rlookup(Gemeente_code, Gemeente/Domain/statcode);
+		attribute<jaarlijks>         Sterftekans_Bovenliggend (Domain) := MakeDefined(Gemeente/Sterftekans[Gemeente_rel], Sterftekans_NL);
+
+		attribute<KWB>               KWB_rel       (Domain) := rlookup(Domain/statcode, KWB/gwb_code_10);
+		attribute<Persoon>           Inwoners      (Domain) := MakeDefined(KWB/Inwoners[KWB_rel], 0[Persoon]);
+		attribute<Persoon_jaarlijks> Sterfgevallen (Domain) := MakeDefined(KWB/Sterfgevallen[KWB_rel], 0[Persoon_jaarlijks]);
+
+		attribute<jaarlijks>         Sterftekans_Ruw (Domain) := Inwoners > 0[Persoon] ? Sterfgevallen / Inwoners : null_f;
+		attribute<jaarlijks>         Sterftekans     (Domain) := (Sterfgevallen + KrimpGewicht * Sterftekans_Bovenliggend) / (Inwoners + KrimpGewicht);
+	}
+
+	container Buurt
+	: Descr = "Sterfte per buurt, gekrompen naar het wijkcijfer. Dit is het niveau waarop de mortaliteitsindicator rekent."
+	{
+		unit<UInt32> Domain := ='SourceData/RegioIndelingen/CBS/Y'+Jaar+'/Buurt';
+
+		attribute<String>            Wijk_code (Domain) := 'WK'+substr(Domain/statcode, 2, 6), Descr = "De eerste zes cijfers van een buurtcode zijn de wijkcode.";
+		attribute<Wijk/Domain>       Wijk_rel  (Domain) := rlookup(Wijk_code, Wijk/Domain/statcode);
+		attribute<jaarlijks>         Sterftekans_Bovenliggend (Domain) := MakeDefined(Wijk/Sterftekans[Wijk_rel], Sterftekans_NL);
+
+		attribute<KWB>               KWB_rel       (Domain) := rlookup(Domain/statcode, KWB/gwb_code_10);
+		attribute<Persoon>           Inwoners      (Domain) := MakeDefined(KWB/Inwoners[KWB_rel], 0[Persoon]);
+		attribute<Persoon_jaarlijks> Sterfgevallen (Domain) := MakeDefined(KWB/Sterfgevallen[KWB_rel], 0[Persoon_jaarlijks]);
+
+		attribute<jaarlijks>         Sterftekans_Ruw (Domain) := Inwoners > 0[Persoon] ? Sterfgevallen / Inwoners : null_f;
+		attribute<jaarlijks>         Sterftekans     (Domain) := (Sterfgevallen + KrimpGewicht * Sterftekans_Bovenliggend) / (Inwoners + KrimpGewicht);
+
+		parameter<Persoon>           Inwoners_Totaal      := sum(Inwoners), IntegrityCheck = "abs(Inwoners_Totaal - Inwoners_NL) < 0.005f * Inwoners_NL", Descr = "Controle op de koppeling tussen KWB-tabel en gebiedsindeling: de buurten samen moeten vrijwel de landelijke bevolking tellen. Faalt dit, kijk dan of ModelParameters/Wonen/KWB_Jaar en de meest recente CBS-gebiedsindeling nog hetzelfde jaar zijn.";
+		parameter<Persoon_jaarlijks> Sterfgevallen_Totaal := sum(Sterfgevallen);
+	}
+
+	container Per_AdminDomain
+	: Descr = "De regionale cijfers uitgesmeerd over het rekenraster. Een cel krijgt het buurtcijfer, en waar geen buurt bekend is achtereenvolgens het gemeente- en het landelijke cijfer."
+	{
+		attribute<jaarlijks> Sterftekans_UitBuurt    (AdminDomain) := Buurt/Sterftekans[Buurt/Domain/Per_AdminDomain];
+		attribute<jaarlijks> Sterftekans_UitGemeente (AdminDomain) := Gemeente/Sterftekans[Gemeente/Domain/Per_AdminDomain];
+		attribute<jaarlijks> Sterftekans             (AdminDomain) := MakeDefined(MakeDefined(Sterftekans_UitBuurt, Sterftekans_UitGemeente), Sterftekans_NL);
+
+		attribute<Persoon>   Inwoners_UitBuurt       (AdminDomain) := Buurt/Inwoners[Buurt/Domain/Per_AdminDomain], Descr = "Het inwonertal van de hele buurt, niet van de cel. Alleen bedoeld om per buurt mee te rekenen.";
+	}
+}
