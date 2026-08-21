@@ -44,10 +44,18 @@ REM ========= EINDE PARAMETER INSTELLINGEN ===========
 REM deletes the old log file; each run adds the timed version to it.
 del log\log.txt
 
-set AlleenEindjaar=TRUE
+REM Default is sequentieel doorrekenen, dus alle zichtjaren. De padafhankelijkheid doet dan mee, en dat is
+REM nodig voor onder meer de geschiktheid voor wonen: die gebruikt de natuur en het water die aan het begin
+REM van een zichtjaar liggen, en dat kan alleen als de tussenliggende zichtjaren echt doorgerekend worden (#637).
+REM Geef J als eerste argument mee om toch alleen het eindjaar te rekenen.
+set AlleenEindjaar=FALSE
 
-if "%1%" equ "" CHOICE /M "Wil je alleen het eindjaar uitrekenen, dus de tussenliggende zichtjaren overslaan?"
-if ErrorLevel 2 set AlleenEindjaar=FALSE
+if "%1%" neq "" goto zichtjarenKeuzeGemaakt
+CHOICE /M "Wil je alleen het eindjaar uitrekenen, dus de tussenliggende zichtjaren overslaan?"
+if ErrorLevel 2 goto zichtjarenKeuzeGemaakt
+set AlleenEindjaar=TRUE
+:zichtjarenKeuzeGemaakt
+if "%1%" equ "J" set AlleenEindjaar=TRUE
 if "%1%" equ "N" set AlleenEindjaar=FALSE
 
 if "%2%" equ ""  CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"

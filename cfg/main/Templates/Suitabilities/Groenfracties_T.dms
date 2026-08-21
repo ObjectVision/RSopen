@@ -1,0 +1,86 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Natuur- en waterfracties rond een cel volgens de hedonische definitie uit de schatting (spec rs_groen,
+// LGN2024): natuur als aandeel in de schijf 0-2500m, water als aandeel in de schijf 0-500m. Het sjabloon rekent
+// die fracties voor een aangeleverde stand, zodat de indicator (stand aan het eind van het zichtjaar) en de
+// allocatie (stand aan het begin van het zichtjaar) dezelfde definitie gebruiken. Zie #481, #566 en #637.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Groenfracties_T
+: Descr = "Natuur- en waterfracties per cel volgens de hedonische definitie uit de schatting, voor een aangeleverde stand. Levert ook de prijsopslag per WP4 ten opzichte van het basisjaar."
+{
+	container Bron;
+	//
+
+	// Bron levert per AdminDomain-cel:
+	//   IsOPCel    (bool)         : is hier een ontwikkelpakket fysiek ingericht?
+	//   OP_rel     (OP)           : welk ontwikkelpakket, gebruikt waar IsOPCel geldt
+	//   LU_Mutatie (LU_ModelType) : het nieuwe landgebruik waar dat sinds het basisjaar is veranderd, anders null
+
+	parameter<String> AD_short := ModelParameters/Advanced/AdminDomain_ref;
+
+	unit<UInt8> OP       := ThisVariantClassifications/Vastgoed/OP;
+	container   OP_Buurt := ='ThisVariantClassifications/Vastgoed/OP_Buurt';
+	unit<UInt8> WP4      := /Classifications/Vastgoed/WP4;
+	unit<UInt8> LU       := /Classifications/Actor/LU_ModelType;
+
+	attribute<float32> Natuur_Basisjaar    (AdminDomain) := /SourceData/Grondgebruik/LGN/Groenfracties/fr_natuur_tot2500m[AdminDomain/rdc_25m_rel], Descr = "Aandeel natuur in de schijf 0-2500m, basisjaar (LGN).";
+	attribute<float32> Water_Basisjaar     (AdminDomain) := /SourceData/Grondgebruik/LGN/Groenfracties/fr_water_500m[AdminDomain/rdc_25m_rel],      Descr = "Aandeel water in de schijf 0-500m, basisjaar (LGN).";
+
+	attribute<float32> NatuurCel_Basisjaar (AdminDomain) := /SourceData/Grondgebruik/LGN/Groenfracties/natuur[AdminDomain/rdc_25m_rel];
+	attribute<float32> WaterCel_Basisjaar  (AdminDomain) := /SourceData/Grondgebruik/LGN/Groenfracties/water[AdminDomain/rdc_25m_rel];
+
+	// Inrichting van de gealloceerde ontwikkelpakketten, als fractie van de buurt (#566). Delen door
+	// Terreinoppervlakte/Totaal en niet door 10000: bij OPScaleRef = BrutoBuurt is de buurt geen hectare.
+	attribute<bool>    GroenTeltAlsNatuur  (OP) := = ModelParameters/Wonen/OPGroenAlsNatuur_ref == 'Alle' ? 'const(TRUE, OP)' : ModelParameters/Wonen/OPGroenAlsNatuur_ref == 'NbS' ? 'OP/IsNbSOP' : 'const(FALSE, OP)', Descr = "Telt het openbare groen van dit ontwikkelpakket mee als natuur? Zie ModelParameters/Wonen/OPGroenAlsNatuur_ref: default alleen de NbS-pakketten, die natuurinclusief zijn ingericht.";
+
+	attribute<float32> fr_natuur_OP        (OP) := GroenTeltAlsNatuur ? OP_Buurt/Terreinoppervlakte/Totaal/Groen[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32] : 0f, Descr = "Aandeel van de buurt dat als groen wordt ingericht (gras, boom en struik, uitgeefbaar plus openbaar) en hedonisch als natuur telt. Afspraak met Deltares 2026-08-20 in #566: al het groen in een NbS-pakket telt, niet alleen het openbare. De overlap met de lnlotsize-term (het eigen perceel zit al in de prijs) is verwaarloosbaar: een cel is 0,08% van de 500m-schijf en 0,003% van de 2500m-schijf, dus de fractie gaat vrijwel volledig over de omgeving.";
+	attribute<float32> fr_water_OP         (OP) := OP_Buurt/Terreinoppervlakte/Totaal/Water[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32], Descr = "Aandeel van de buurt dat als water wordt ingericht (uitgeefbaar plus openbaar); de natste NbS-pakketten komen tot ~0,65.";
+
+	attribute<bool>    IsLandbouwMutatie   (AdminDomain) := MakeDefined(LU/IsLandbouw[Bron/LU_Mutatie], FALSE), Descr = "Is de mutatie een landbouwklasse? De landbouwallocatie wisselt elk zichtjaar gewassen over vrijwel het hele landelijk gebied, en dat is in hedonische zin geen verandering van de landsdekking. Een gewaswissel mag de LGN-basisjaarwaarde daarom niet verlagen; alleen de expliciet natte klassen (riet, moerasbomen) tellen als winst. Zie #637.";
+	attribute<float32> NatuurCel_Mutatie   (AdminDomain) := float32(LU/IsNatuur_hedonisch[Bron/LU_Mutatie]);
+	attribute<float32> WaterCel_Mutatie    (AdminDomain) := float32(LU/IsWater_hedonisch[Bron/LU_Mutatie]);
+
+	attribute<float32> NatuurCel (AdminDomain) := switch(
+			case(Bron/IsOPCel, fr_natuur_OP[Bron/OP_rel])
+			, case(IsLandbouwMutatie, max_elem(NatuurCel_Basisjaar, NatuurCel_Mutatie))
+			, case(IsDefined(Bron/LU_Mutatie), NatuurCel_Mutatie)
+			, NatuurCel_Basisjaar
+		), Descr = "Natuur per cel bij de aangeleverde stand (hedonische definitie). Volgorde: een fysiek ingericht ontwikkelpakket bepaalt de celwaarde via zijn groen (#566, dus ook bij herontwikkeling waar het landgebruikstype gelijk blijft); daarna een landbouwmutatie, die de basisjaarwaarde alleen kan verhogen; daarna bepaalt de nieuwe klasse de waarde via de hedonische LGN-vlag; zonder mutatie blijft de LGN-basisjaarwaarde staan.";
+
+	attribute<float32> WaterCel (AdminDomain) := switch(
+			case(Bron/IsOPCel, fr_water_OP[Bron/OP_rel])
+			, case(IsLandbouwMutatie, max_elem(WaterCel_Basisjaar, WaterCel_Mutatie))
+			, case(IsDefined(Bron/LU_Mutatie), WaterCel_Mutatie)
+			, WaterCel_Basisjaar
+		), Descr = "Water per cel bij de aangeleverde stand, met dezelfde volgorde als NatuurCel. Sinds #637 telt niet alleen de wateraanleg binnen een ontwikkelpakket mee, maar ook gealloceerde waterberging en exogeen opgelegd open water, via LU_ModelType/IsWater_hedonisch.";
+
+	// fracties: zelfde kernels en (statische) noemers als de basisjaar-meting
+	attribute<float32> NatuurCel_100m (rdc_100m)    := mean(NatuurCel, AdminDomain/rdc_100m_rel);
+	attribute<float32> Natuur_100m    (rdc_100m)    := potential(NatuurCel_100m, /Geography/Distmatrices_100m/pot2500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_2500m_100m;
+	attribute<float32> Natuur         (AdminDomain) := Natuur_100m[AdminDomain/rdc_100m_rel], Descr = "Aandeel natuur in de schijf 0-2500m bij de aangeleverde stand.";
+
+	attribute<float32> Water          (AdminDomain) := = 'potential(WaterCel, /Geography/Distmatrices_'+AD_short+'/pot500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_500m[AdminDomain/rdc_25m_rel]', Descr = "Aandeel water in de schijf 0-500m bij de aangeleverde stand.";
+
+	attribute<float32> dNatuur        (AdminDomain) := Natuur - Natuur_Basisjaar, Descr = "Verandering van de natuurfractie ten opzichte van het basisjaar.";
+	attribute<float32> dWater         (AdminDomain) := Water  - Water_Basisjaar,  Descr = "Verandering van de waterfractie ten opzichte van het basisjaar.";
+
+	attribute<float32> b_natuur (WP4) := = 'MakeDefined(union_data(WP4, '+asItemList('/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4/name+'/Result/fr_natuur_tot2500m')+'), 0f)', Descr = "Hedonische coefficient voor de natuurfractie (0-2500m) per WP4, uit de rs_groen-set. MakeDefined om dezelfde reden als in Woningwaarde_OP_T: een oudere estimates-set zonder fr-termen geeft dan een bijdrage van 0 in plaats van null-prijzen.";
+	attribute<float32> b_water  (WP4) := = 'MakeDefined(union_data(WP4, '+asItemList('/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4/name+'/Result/fr_water_500m')+'), 0f)', Descr = "Hedonische coefficient voor de waterfractie (0-500m) per WP4, uit de rs_groen-set. Zie b_natuur voor de MakeDefined.";
+
+	container Prijsopslag_perWP4 :=
+		for_each_nedv(
+			WP4/name
+			, 'MakeDefined(exp(b_natuur[WP4/V/'+WP4/name+'] * dNatuur + b_water[WP4/V/'+WP4/name+'] * dWater) - 1f, 0f)'
+			, AdminDomain
+			, float32
+		), Descr = "Relatieve prijsverandering door de veranderde natuur- en waternabijheid, per woningtype (WP4). In het semi-log model zitten de groentermen multiplicatief in de prijs, dus prijs_stand = prijs_basisjaar * (1 + Prijsopslag). Nul waar niets is veranderd, en ook nul waar de fracties onbekend zijn, zodat een cel nooit uit de allocatie valt door een ontbrekende groenwaarde.";
+}
