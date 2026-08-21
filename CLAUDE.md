@@ -20,4 +20,12 @@ Gebruik geen gedachtenstreepjes (em dash of en dash als leesteken). Herschrijf d
 
 ## Schrijfstijl algemeen
 
-De regel over gedachtenstreepjes geldt ook buiten issues, dus in commit messages, documentatie en antwoorden in de chat.
+De regel over gedachtenstreepjes geldt ook buiten issues, dus in commit messages, documentatie en antwoorden in de chat. Geen 'authored by Claude' in de comments/commit messages etc.
+
+## Verwijzen naar issues en pull requests
+
+Schrijf verwijzingen altijd met hekje, dus #634 en niet "issue 634". Dit geldt in issues en comments, maar vooral ook in commit messages: zonder hekje herkent GitHub de verwijzing niet en verschijnt de commit niet in de tijdlijn van het issue.
+
+Zet de verwijzing in de eerste regel van de body van de commit message, niet in de onderwerpregel. Die blijft een korte beschrijving van de wijziging zelf.
+
+Sluitende woorden als "Fixes #634" sluiten het issue automatisch zodra de commit in main belandt. Gebruik die alleen wanneer het issue daarmee echt af is.
