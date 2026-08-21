@@ -14,11 +14,12 @@ REM allocatierun.
 REM
 REM ================================================================================
 
+REM Run1 maakt de EvidentBenut-tifs voor deze variant.
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteVariantData/per_Variant/%RSL_VARIANT_NAME%/Generate_Run1
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
-REM Run2 maakt de opbrengsten per ontwikkelpakket. Die stap ontbrak hier, terwijl de leeskant ze wel nodig heeft
-REM zodra VariantDataOntkoppeld op TRUE staat (zie Opbrengsten_perOP_src in VariantData/Geschiktheden.dms).
+REM Run2 maakt de opbrengsten per ontwikkelpakket. Die heeft de leeskant nodig zodra VariantDataOntkoppeld op TRUE
+REM staat (zie Opbrengsten_perOP_src in Templates/VariantData_T/Geschiktheden.dms).
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteVariantData/per_Variant/%RSL_VARIANT_NAME%/Generate_Run2
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 

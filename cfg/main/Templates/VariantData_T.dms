@@ -1,0 +1,287 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het instapsjabloon van de variantdata: hiervan bestaat een instantie per variant. Het wordt aangeroepen vanuit
+// container VariantData in VariantData.dms. Hierin wordt overal de compacted versie van de BaseData genomen en
+// worden variantspecifieke datasets opgeroepen of bewerkt.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template VariantData_T
+{
+	parameter<VariantParameters/VariantK> Variant_rel; //  := Modellering/AllCases/Variant_rel[case_id];
+	// parameter<Modellering/AllCases>       Case_id;
+	///
+	// parameter<Modellering/ScenarioK>      Scenario_rel := Modellering/AllCases/scenario_rel[case_id];
+	
+	// parameter<string> Scenario_name := Modellering/ScenarioK/name[Scenario_rel];
+	parameter<string> Variant_name  := VariantParameters/VariantK/name[Variant_rel];
+	// parameter<string> Casus_name    := Modellering/AllCases/label[Case_id];
+	
+	container ThisVariant := .;
+	container ThisVariantClassifications := ='CaseClassifications/'+Variant_name;
+	
+	container StateBasisjaar := 
+		for_each_nedvn(
+			Classifications/Modellering/StandVar_Prep/path
+			, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/StartState/StateBasisjaar/State/'+Classifications/Modellering/StandVar_Prep/path+')' 
+			, CompactedAdminDomain
+			, Classifications/Modellering/StandVar_Prep
+			, Classifications/Modellering/StandVar_Prep/unit_name
+		), Descr = "In de BaseData/StartState/StateBasisjaar wordt stand in het basisjaar al bepaald. Echter, in de deze container wordt hiervan alleen de waarden in het compacted domain geselecteerd om te worden gebruikt in de allocatie."
+	{
+		container wonen
+		{
+			attribute<Woning> Totaal     (CompactedAdminDomain) := ='add('+asItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
+			attribute<meter2> Footprint  (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/StartState/StateBasisjaar/State/Wonen/Footprint);
+		}
+	}
+	
+	container Claims :=
+		for_each_ne(
+			Modellering/ScenarioK/name
+			,'Zichtjaren_T('+string(id(Modellering/ScenarioK))+'[uint8])'
+		), Descr = "via dit template wordt per subsector per alloc regio per zichtjaar claims gegenereerd.", using = "Classifications/Time";
+	
+	Template Zichtjaren_T
+	{
+		parameter<Modellering/ScenarioK>      Scenario_rel;
+		///
+		parameter<string> Scenario_name := Modellering/ScenarioK/name[Scenario_rel];
+		parameter<string> Casus_name    := Scenario_name+'_'+Variant_name;
+		container ThisVariantClassifications := ='CaseClassifications/'+Variant_name;
+		
+		container Zichtjaren :=
+			for_each_ne(
+				Time/Zichtjaar/name
+				,'Templates/Claims/Zichtjaar_T('+string(id(Time/Zichtjaar))+'[Time/Zichtjaar], Claims, ThisVariantClassifications)'
+			), Descr = "via dit template wordt per subsector per alloc regio per zichtjaar claims gegenereerd.", using = "Classifications/Time";
+	}
+	#include<Dichtheid.dms>
+	
+	container PotentieleState := 
+		for_each_ne(
+			Time/Zichtjaar/name
+			, 'Templates/PotentieleState_T('+quote(Time/Zichtjaar/name)+', Density)'
+		), Descr = "De potentiele state bepaalt hoe een cel gevuld zou kunnen woren in de toekomst. Oftewel, met een bepaalde dichtheid, maar ook of het uberhaupt daar mag.";
+	
+	
+	
+	container Zeef := 
+		for_each_ne(
+			Time/Zichtjaar/name
+			, 'Templates/Beschikbaarheden/Zeef_Zichtjaar_T('+quote(Time/Zichtjaar/name)+', ., Density, Suitability)'
+		), Descr = "De zeef filtert locaties weg die op basis van variant parameters af moeten vallen. Dit bouwt voort op de zeef uit de BaseData die niet variant specifiek zijn."
+	{
+		container Basisjaar :=
+			for_each_ne(
+				ThisVariantClassifications/Actor/VariantXSectorxSubsector/combi_name
+				,'Templates/Beschikbaarheden/Zeef_Basisjaar_T(
+					ThisVariantClassifications/Actor/VariantXSectorxSubsector
+					,'+string(id(ThisVariantClassifications/Actor/VariantXSectorxSubsector))+'[ThisVariantClassifications/Actor/VariantXSectorxSubsector]
+					,VariantData
+				)'
+			), Descr = "Basisjaar.";
+			
+		// container CC_Actor := ='ThisVariantClassifications/Actor';
+	
+	}
+	
+	container Suitability := 
+		for_each_ne(
+			Time/Zichtjaar/name
+			, 'Templates/Suitabilities/Suitability_Zichtjaar_T('+quote(Time/Zichtjaar/name)+','+string(Time/Zichtjaar/YearRange_rel)+'[YearRange])'
+		), Descr = "De suitability per subsector wordt hier waarnodig variant specifiek gemaakt (i.e. wonen), of slechts het compacted domain van genomen (i.e. werken)."
+	{
+		#include<Geschiktheden.dms>
+	}
+	
+	#include<Trede.dms>
+	#include<Wind_restricties.dms>
+	
+	// container Bouwen
+	// : Descr = "Extra restricties waar niet gebouwd mag worden."
+	// {
+		// container Overstromingsgevaarzones :=
+			// for_each_nedv(
+				// /Classifications/Overstromingsgevaarzonering/zoneringK/name
+				// , 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/Overstromingsgevaarzonering) == /Classifications/Overstromingsgevaarzonering/zoneringK/V/'+/Classifications/Overstromingsgevaarzonering/zoneringK/name+'
+					// &&'+'VariantParameters/VariantK/GevaarRegimeZone'+string(id(/Classifications/Overstromingsgevaarzonering/zoneringK))+'[VariantParameters/VariantK/V/'+Variant_name+'] == Classifications/Modellering/OverstromingsMaatregelK/V/Bouwen'
+				// , CompactedAdminDomain
+				// , bool
+			// ), Descr = "In de variant parameters wordt opgegeven in welke overstromingsgevaren zones er wel of niet gebouwd mag worden. Deze worden hier geevalueerd en in een boolean compacted domain kaart verwerkt."
+		// {
+			// attribute<Bool> Totaal (CompactedAdminDomain) := = 'OR('+asItemList(/Classifications/Overstromingsgevaarzonering/zoneringK/name)+')';
+		// }
+	// }
+	
+	container NietBouwen
+	: Descr = "Extra restricties waar niet gebouwd mag worden."
+	{
+		container Overstromingsgevaarzones :=
+			for_each_nedv(
+				/Classifications/Overstromingsgevaarzonering/zoneringK/name
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/Overstromingsgevaarzonering) == /Classifications/Overstromingsgevaarzonering/zoneringK/V/'+/Classifications/Overstromingsgevaarzonering/zoneringK/name+'
+					&&'+'VariantParameters/VariantK/GevaarRegimeZone'+string(id(/Classifications/Overstromingsgevaarzonering/zoneringK))+'[VariantParameters/VariantK/V/'+Variant_name+'] == Classifications/Modellering/OverstromingsMaatregelK/V/NietBouwen'
+				, CompactedAdminDomain
+				, bool
+			), Descr = "In de variant parameters wordt opgegeven in welke overstromingsgevaren zones er wel of niet gebouwd mag worden. Deze worden hier geevalueerd en in een boolean compacted domain kaart verwerkt."
+		{
+			attribute<Bool> Totaal (CompactedAdminDomain) := = 'OR('+asItemList(/Classifications/Overstromingsgevaarzonering/zoneringK/name)+')';
+		}
+
+		attribute<bool> NietBouwen_Veen (CompactedAdminDomain)  := Variant_rel == VariantParameters/VariantK/v/NbSGenuanceerd ? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/AndersBouwen_Veen_NbSgenuanceerd/bebouwingstype_nbsnuanc/NietBouwen) : const(FALSE, CompactedAdminDomain); 
+	}
+	
+	container BouwenMetMaatregelen
+	: Descr = "In deze module worden locaties bepaald waar alleen met maatregelen gebouwd mag worden"
+	{
+		container Overstromingsgevaarzones :=
+			for_each_nedv(
+				Classifications/Overstromingsgevaarzonering/zoneringK/name
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/Overstromingsgevaarzonering) == /Classifications/Overstromingsgevaarzonering/zoneringK/V/'+/Classifications/Overstromingsgevaarzonering/zoneringK/name+'
+					&& VariantParameters/VariantK/GevaarRegimeZone'+string(id(/Classifications/Overstromingsgevaarzonering/zoneringK))+'[VariantParameters/VariantK/V/'+Variant_name+'] == Classifications/Modellering/OverstromingsMaatregelK/V/BouwenMetMaatregelen'
+				, CompactedAdminDomain
+				, bool
+			)
+		{
+			attribute<Bool> Totaal (CompactedAdminDomain) := = 'OR('+asItemList(Classifications/Overstromingsgevaarzonering/zoneringK/name)+')';
+		}
+
+		attribute<bool> AangepastBouwen_Veen (CompactedAdminDomain)  := Variant_rel == VariantParameters/VariantK/v/NbSGenuanceerd ? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/AndersBouwen_Veen_NbSgenuanceerd/bebouwingstype_nbsnuanc/AangepastBouwen) : const(FALSE, CompactedAdminDomain); 
+	}
+	
+	#include<Plannen.dms>
+	
+	container Restricties := 
+		for_each_ne(
+			Actor/Sector/name
+			,'Templates/MaakRestrictieCombinaties_T('+quote(Actor/Sector/name)+')'
+		), Descr = "Via deze template wordt voor de relevante variant instelling combinaties van restrictie categorieen gemaakt.";
+	
+	
+	container Stimuli := 
+		for_each_ne(
+			Actor/Sector/name
+			,'Templates/MaakStimuliCombinaties_T('+quote(Actor/Sector/name)+')'
+		), Descr = "Via deze template wordt voor de relevante variant instelling combinaties van stimuli categorieen gemaakt.";
+		
+	container ExogeenOpleggen
+	: Descr = "Hier kan eventueel exogeen bepaald gebied worden opgelegd. Dit is enkel uitgewerkt voor de landbouw varianten. "
+	{
+		attribute<INL_Beheertype> Natuur_BT        (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/BAU 
+																		? 'SourceData/Grondgebruik/Natuur/ExoNatuur_BAU1'
+																		: Variant_rel == VariantParameters/VariantK/V/BAU2 
+																			? 'SourceData/Grondgebruik/Natuur/ExoNatuur_BAU2'
+																			: Variant_rel == VariantParameters/VariantK/V/NbSMax
+																				? 'MakeDefined(SourceData/Grondgebruik/Natuur/ExoNatuur_NbSMax, SourceData/Grondgebruik/Natuur/ExoNatuur_BAU1)' // tijdelijk BAU natuur toegevoegd totdat de andere landschappen ook natuur hebben aangeleverd
+																				: Variant_rel == VariantParameters/VariantK/V/NbSGenuanceerd
+																					? 'MakeDefined(SourceData/Grondgebruik/Natuur/ExoNatuur_NbSGenuanceerd, SourceData/Grondgebruik/Natuur/ExoNatuur_BAU1)' // tijdelijk BAU natuur toegevoegd totdat de andere landschappen ook natuur hebben aangeleverd
+																					: 'const(null_b, AdminDomain)';
+		
+		attribute<LU_ModelType> Natuur             (AdminDomain) := INL_Beheertype/LU_ModelType_rel[Natuur_BT];
+		
+		attribute<INL_Beheertype> Water_BT         (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/BAU 
+																		? 'SourceData/Grondgebruik/Natuur/ExoWater_BAU1'
+																		: Variant_rel == VariantParameters/VariantK/V/BAU2 
+																			? 'SourceData/Grondgebruik/Natuur/ExoWater_BAU2'
+																			: Variant_rel == VariantParameters/VariantK/V/NbSMax
+																				? 'SourceData/Grondgebruik/Natuur/ExoWater_NbSMax'
+																				: Variant_rel == VariantParameters/VariantK/V/NbSGenuanceerd
+																					? 'SourceData/Grondgebruik/Natuur/ExoWater_NbSGenuanceerd' // bouwsteen 9a en 9b leggen open water op in het veengebied
+																					: 'const(null_b, AdminDomain)';
+																				
+		attribute<LU_ModelType> Water              (AdminDomain) := INL_Beheertype/LU_ModelType_rel[Water_BT];
+		
+		attribute<CarbonClass>  CarbonClass_rel    (AdminDomain) := INL_Beheertype/carbonclass_rel[Natuur_BT];
+		// attribute<CarbonClass>  CarbonClass_rel    (AdminDomain) := INL_Beheertype/carbonclass_rel[Natuur_BT];
+
+		// attribute<LU_ModelType> RetentieGebied (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/WBS ? '(Classifications/Actor/LU_ModelType/V/Water_Totaal / uint8(SourceData/Water/Waterberging/IsReservoir))[Classifications/Actor/LU_ModelType]' : 'const(null_b, AdminDomain)';
+		// attribute<LU_ModelType> Natuur         (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/WBS ? 'SourceData/Grondgebruik/NVK/HDB2050_25m_diff' : '/SourceData/Grondgebruik/NVK/BAU2050_25m_diff';
+		
+		attribute<LU_ModelType> Totaal_org  (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Natuur : null_b;
+		// attribute<LU_ModelType> Totaal_org  (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? MakeDefined(Natuur, Water) : null_b;
+		// attribute<LU_ModelType> Totaal_test (AdminDomain) := const(null_b, AdminDomain);
+		attribute<LU_ModelType> Totaal      (AdminDomain) := Totaal_org;
+		// attribute<LU_ModelType> Totaal      (AdminDomain) := Totaal_test;
+		
+		parameter<UInt32> CountCellenOplegging := count(Totaal);
+	}
+	
+	container EvidentBenut
+	: Descr = "Bepaalt op basis van de BGT welke cellen al evident benut zijn, en valt daarmee af in de zeefanalyse.
+
+				De uitkomst hangt af van de gekozen BGT-klassenset (VariantParameters/EvidentBenut/BGT), niet van de
+				variant zelf. Toch staat de berekening hier per variant en dragen de bestanden de variantnaam. Twee
+				varianten met dezelfde klassenset leveren dus twee identieke bestanden op. Dat is een bewuste keuze:
+				het alternatief, een gedeeld bestand per klassenset, botst zodra twee varianten in een proces
+				samenkomen en allebei constateren dat het bestand nog niet bestaat, want dan schrijven ze er allebei
+				tegelijk naartoe (issue 20). In de praktijk wordt er per sessie aan een variant gerekend, dus die
+				dubbeling kost zelden iets, en dankzij de fingerprint gebeurt het hooguit een keer per variant."
+	{
+		parameter<String> KlassensetNaam := VariantParameters/VariantK/EvidentBenutVariant_BGT[Variant_rel]
+		, Descr = "Welke set BGT-klassen deze variant als evident benut beschouwt.";
+
+		attribute<Bool> Klassenset (VariantParameters/EvidentBenut/BGT) := ='VariantParameters/EvidentBenut/BGT/'+KlassensetNaam
+		, Descr = "De klassenset zelf, als vlag per BGT-klasse. Staat hier apart zodat de inhoud in de fingerprint kan.";
+
+		parameter<String> Fingerprint :=
+			  'bgt_date='      + /ModelParameters/BGT_file_date
+			+ ';study_area='   + /ModelParameters/StudyArea
+			+ ';variant='      + Variant_name
+			+ ';class_set='    + KlassensetNaam
+			+ ';class_count='  + string(#VariantParameters/EvidentBenut/BGT)
+			+ ';class_flags='  + asList(string(uint8(Klassenset)), '')
+			+ ';grid_size='    + string(AdminDomain/gridsize)
+		, Descr = "De volledige lijst invoeren die de uitkomst bepaalt. Let op de laatste twee: class_count vangt het bijkomen of wegvallen van een BGT-klasse, en class_flags is de nullen-en-enen-reeks van de klassenset zelf, zodat een wijziging BINNEN de set Default ook wordt opgemerkt. Zonder die reeks zou je de set kunnen aanpassen zonder dat de bestandsnaam of de fingerprint meebeweegt.";
+
+		parameter<string> StorageStr     := '%LocalDataProjDir%/VariantData/Grondgebruik/BGT/EvidentBenut_'+/ModelParameters/BGT_file_date+'_Modus_Per_AdminDomain_'+/ModelParameters/StudyArea+'_'+Variant_name+'.tif';
+		parameter<string> StorageStr_Zon := '%LocalDataProjDir%/VariantData/Grondgebruik/BGT/EvidentBenutZon_'+/ModelParameters/BGT_file_date+'_Modus_Per_AdminDomain_'+/ModelParameters/StudyArea+'_'+Variant_name+'.tif';
+
+		container Decoupling     := Templates/DecoupledFile_T(StorageStr,     Fingerprint);
+		container Decoupling_Zon := Templates/DecoupledFile_T(StorageStr_Zon, Fingerprint);
+
+		unit<uint32> src := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData
+		{
+			attribute<Bool> EvidentBenut    := Klassenset[visualisatiecode_rel];
+			attribute<Bool> EvidentBenutZon := visualisatiecode_rel == /Classifications/Grondgebruik/BGT/Classes/V/waterdeel_waterloop ? False : EvidentBenut; //ook waterloop EvidentBenut tbv vermijden Zon in havens Amsterdam en Rotterdam, ARK bij Utrecht
+
+			unit<uint64> per_2_5_all := poly2allgrids_uint64(geometry, rdc_2_5m)
+			{
+				attribute<Bool>    IsEvidentBenut                    := ../EvidentBenut[polygon_rel];
+				attribute<Bool>    IsEvidentBenutZon                 := ../EvidentBenutZon[polygon_rel];
+				attribute<Bool>    IsEvidentBenut_2_5m    (rdc_2_5m) := any(IsEvidentBenut, grid_rel);
+				attribute<Bool>    IsEvidentBenutZon_2_5m (rdc_2_5m) := any(IsEvidentBenutZon, grid_rel);
+			}
+		}
+
+		// Rekenen, schrijven en lezen staan bewust als drie aparte items, zoals ook bij Opbrengsten_perOP in
+		// Geschiktheden.dms. Alleen dan valt er iets te schakelen: stonden rekenen en schrijven in een item, dan
+		// moest het bestand er altijd zijn.
+		attribute<Bool> Calc_IsEvidentBenut_AdminDomain    (AdminDomain) := Modus(src/per_2_5_all/IsEvidentBenut_2_5m,    rdc_2_5m/rdc_25m_rel);
+		attribute<Bool> Calc_IsEvidentBenutZon_AdminDomain (AdminDomain) := Modus(src/per_2_5_all/IsEvidentBenutZon_2_5m, rdc_2_5m/rdc_25m_rel);
+
+		attribute<Bool> Make_IsEvidentBenut_AdminDomain    (AdminDomain) := Calc_IsEvidentBenut_AdminDomain,    StorageName = "=StorageStr",     StorageType = "tif", ExplicitSuppliers = "Decoupling/Write_Fingerprint";
+		attribute<Bool> Make_IsEvidentBenutZon_AdminDomain (AdminDomain) := Calc_IsEvidentBenutZon_AdminDomain, StorageName = "=StorageStr_Zon", StorageType = "tif", ExplicitSuppliers = "Decoupling_Zon/Write_Fingerprint";
+
+		attribute<Bool> Read_IsEvidentBenut_AdminDomain    (AdminDomain) : StorageName = "=StorageStr",     StorageReadOnly = "TRUE", StorageType = "tif";
+		attribute<Bool> Read_IsEvidentBenutZon_AdminDomain (AdminDomain) : StorageName = "=StorageStr_Zon", StorageReadOnly = "TRUE", StorageType = "tif";
+
+		attribute<Bool> IsEvidentBenut_AdminDomain (AdminDomain) :=
+			=	!ModelParameters/VariantDataOntkoppeld    ? 'Calc_IsEvidentBenut_AdminDomain'
+			:	 Decoupling/MayReuse                      ? 'Read_IsEvidentBenut_AdminDomain'
+			:	                                            'Make_IsEvidentBenut_AdminDomain'
+		, Descr = "Wat de rest van het model gebruikt, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand. Ontkoppeld met een geldig bestand leest de tif. Ontkoppeld zonder geldig bestand rekent en schrijft in een keer, zodat je er niet apart om hoeft te vragen.";
+
+		attribute<Bool> IsEvidentBenutZon_AdminDomain (AdminDomain) :=
+			=	!ModelParameters/VariantDataOntkoppeld    ? 'Calc_IsEvidentBenutZon_AdminDomain'
+			:	 Decoupling_Zon/MayReuse                  ? 'Read_IsEvidentBenutZon_AdminDomain'
+			:	                                            'Make_IsEvidentBenutZon_AdminDomain';
+	}
+}
