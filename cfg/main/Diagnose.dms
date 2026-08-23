@@ -342,4 +342,72 @@ container Diagnose
 	, StorageName = "='%LocalDataProjDir%/Diagnose/imperviousness.txt'", StorageType = "str"
 	, Descr = "Controle op de jaarschakelaar van de Copernicus-verhardingskaart. gem_actief hoort gelijk te zijn aan het jaar dat in ModelParameters/Advanced/ImperviousnessMapYear staat.";
 
+	// --- waterberging: hoe versnipperd is wat de zaaglijn uitkiest? ---
+	container WaterbergingClusterVerdeling
+	: Descr = "Verdeling van de gealloceerde cellen over clustergroottes in iteratie 0, dus wat de zaaglijn uitkiest voordat de toets op clusteromvang er iets van weggooit. Leest de districten die de allocatie zelf al bepaalt. Hiermee is te zien of de ondergrens van 2 ha te hoog is of dat de selectie versnipperd is."
+	{
+		parameter<String> PadIter0 := '/Allocatie/'+/Diagnose/Casus+'/Zichtjaren/'+/Diagnose/Jaar+'/Sequences/Seq_0/SectorAllocRegios/Waterbergingsregio_Waterberging/Iters_Normaal/Iter_0/Allocatie/';
+
+		attribute<Bool>    Gealloceerd (/Geography/AdminDomain) := =PadIter0+'Cleaned';
+		attribute<float32> ClusterOpp  (/Geography/AdminDomain) := =PadIter0+'VindAangeslotenCellen/Oppervlakte';
+
+		parameter<float32> HaPerCel := float32(/Geography/AdminDomain/NrHaPerCell);
+
+		parameter<float32> Totaal_ha    := sum(float32(Gealloceerd)) * HaPerCel;
+		parameter<float32> Onder04_ha   := sum(float32(Gealloceerd && ClusterOpp <  0.4f)) * HaPerCel;
+		parameter<float32> Van04tot1_ha := sum(float32(Gealloceerd && ClusterOpp >= 0.4f && ClusterOpp < 1f)) * HaPerCel;
+		parameter<float32> Van1tot2_ha  := sum(float32(Gealloceerd && ClusterOpp >= 1f   && ClusterOpp < 2f)) * HaPerCel;
+		parameter<float32> Vanaf2_ha    := sum(float32(Gealloceerd && ClusterOpp >= 2f)) * HaPerCel;
+		parameter<float32> Grootste_ha  := max(ClusterOpp * float32(Gealloceerd));
+
+		parameter<String> Samenvatting :=
+			  'gealloceerd_ha;'   + string(Totaal_ha)
+			+ ';onder_0,4ha;'     + string(Onder04_ha)
+			+ ';0,4_tot_1ha;'     + string(Van04tot1_ha)
+			+ ';1_tot_2ha;'       + string(Van1tot2_ha)
+			+ ';vanaf_2ha;'       + string(Vanaf2_ha)
+			+ ';grootste_cluster_ha;' + string(Grootste_ha)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/wb_clusterverdeling.txt'", StorageType = "str";
+	}
+
+	// --- waterberging: zit de gerealiseerde berging wel in cellen die diep genoeg zijn? ---
+	container WaterbergingDiepte
+	: Descr = "Splitst de gerealiseerde berging naar cellen die de Minimum_Waterschijf wel en niet halen. Cellen die hem niet halen krijgen geschiktheid 0, maar dat sluit ze niet uit; ze tellen wel met hun volle volume mee in de claimrealisatie. Wat hier bij te_ondiep staat is berging die op papier meetelt maar er fysiek niet in past."
+	{
+		parameter<String> PadLaatste := '/Allocatie/'+/Diagnose/Casus+'/Zichtjaren/'+/Diagnose/Jaar+'/Sequences/Seq_0/SectorAllocRegios/Waterbergingsregio_Waterberging/Iters_Normaal/Iter_'+string(/ModelParameters/Default_NrOfIters - 1b)+'/';
+
+		attribute<float32> Stand        (/Geography/CompactedAdminDomain) := =PadLaatste+'StateNaAllocatie/Waterberging/Totaal';
+		attribute<bool>    IsDiepGenoeg (/Geography/CompactedAdminDomain) :=
+			collect_by_cond(/Geography/CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/IsDiepGenoeg);
+
+		parameter<float32> HaPerCel := float32(/Geography/AdminDomain/NrHaPerCell);
+
+		parameter<String> Samenvatting :=
+			  'totaal_m3;'      + string(sum(Stand))
+			+ ';diep_genoeg_m3;'+ string(sum(Stand * float32(IsDiepGenoeg)))
+			+ ';te_ondiep_m3;'  + string(sum(Stand * float32(!IsDiepGenoeg)))
+			+ ';totaal_ha;'     + string(sum(float32(Stand > 0f)) * HaPerCel)
+			+ ';te_ondiep_ha;'  + string(sum(float32(Stand > 0f && !IsDiepGenoeg)) * HaPerCel)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/wb_diepte.txt'", StorageType = "str";
+	}
+
+	// --- claimrealisatie werken per Jobs6-subsector, en de grondbalans na de #634-correctie ---
+	parameter<String> claimtoets_werken := =('string('+Pad_Z+'ClaimRealisatie_Toets_Werken/Samenvatting)')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/claimtoets_werken.txt'", StorageType = "str";
+
+	parameter<String> grondbalans_bestemmingen := =('
+		  '+quote('verdwenen_vruchtbaar_ha;')+'      + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/VerdwenenVruchtbareLandbouw)) * float32(/Geography/AdminDomain/NrHaPerCell))
+		+ '+quote(';verstedelijking_vruchtbaar_ha;')+' + string('+Pad_Z+'Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden/Per_NL)
+		+ '+quote(';nieuwenatuur_vruchtbaar_ha;')+'    + string('+Pad_Z+'Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden/Per_NL)
+		+ '+quote(';waterberging_vruchtbaar_ha;')+'    + string('+Pad_Z+'Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden/Per_NL)
+		+ '+quote(';verstedelijking_klasseA_ha;')+'    + string('+Pad_Z+'Grondgebruik/Verandering/VerstedelijkingOpKlasseA/Per_NL)
+		+ '+quote(';nieuwenatuur_klasseA_ha;')+'       + string('+Pad_Z+'Grondgebruik/Verandering/NieuweNatuurOpKlasseA/Per_NL)
+		+ '+quote(';waterberging_klasseA_ha;')+'       + string('+Pad_Z+'Grondgebruik/Verandering/WaterbergingVeenOpKlasseA/Per_NL)
+		+ '+quote(';overlap_verst_natuur_ha;')+'      + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden && '+Pad_Z+'Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden)) * float32(/Geography/AdminDomain/NrHaPerCell))
+		+ '+quote(';overlap_verst_wb_ha;')+'          + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden && '+Pad_Z+'Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden)) * float32(/Geography/AdminDomain/NrHaPerCell))
+		+ '+quote(';overlap_natuur_wb_ha;')+'         + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden && '+Pad_Z+'Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden)) * float32(/Geography/AdminDomain/NrHaPerCell))
+	')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/grondbalans_bestemmingen.txt'", StorageType = "str"
+	, Descr = "Sluit de verdwenen vruchtbare landbouw op de drie bestemmingen? Met de oude definitie (klasse A, ongeacht vorig gebruik) telden de bestemmingen samen op tot meer dan het verlies. Zie #634.";
+
 }
