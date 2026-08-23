@@ -94,6 +94,38 @@ Template Zichtjaar_T
 	}
 	
 	#include<ClaimRealisatie.dms>
+
+	container ClaimRealisatie_Toets
+	: Descr = "Toets op het claimrealisatiemechanisme (#639). Regio's die voor de allocatie al aan hun claim voldeden tellen niet mee, want daar kan de realisatie niet anders dan boven 1 uitkomen. Van de overige regio's hoort de realisatie 1 te zijn, tenzij de geschikte ruimte op is; die restclaim stroomt dan door naar een hoger allocatieniveau en verschijnt daar bij een buurregio als overschrijding. Het saldo van tekort en overschot hoort daarom rond nul te liggen. Een regio die zonder dat patroon structureel afwijkt is het faalgeval."
+	{
+		unit<uint32> NVM := /SourceData/RegioIndelingen/NVM;
+
+		attribute<float32> RestClaim_VoorAlloc (NVM) := ='/Allocatie/'+Casus_name+'/Zichtjaren/'+Zichtjaar_name+'/StateVoorAllocatie/RestClaims/Wonen/Totaal_RestClaim';
+		attribute<float32> Claim               (NVM) := ='/Allocatie/'+Casus_name+'/Zichtjaren/'+Zichtjaar_name+'/StateVoorAllocatie/RestClaims/Wonen/Totaal_Claim';
+		attribute<float32> Realisatie          (NVM) := ClaimRealisatie/Per_AllocRegio/NVM/InDezeStudie/Aantal_Woningen_Totaal;
+
+		attribute<Bool> AlGehaald  (NVM) := RestClaim_VoorAlloc <= 0f;
+		attribute<Bool> TeltMee    (NVM) := !AlGehaald && IsDefined(Realisatie);
+		attribute<Bool> OpNorm     (NVM) := TeltMee && Realisatie >= 0.98f && Realisatie <= 1.02f;
+		attribute<Bool> OnderNorm  (NVM) := TeltMee && Realisatie <  0.98f;
+		attribute<Bool> BovenNorm  (NVM) := TeltMee && Realisatie >  1.02f;
+
+		attribute<float32> Afwijking_woningen (NVM) := Claim * (Realisatie - 1f), Descr = "Positief is meer gerealiseerd dan geclaimd, negatief is minder.";
+
+		parameter<uint32>  Nr_Regios        := sum(uint32(IsDefined(Realisatie)));
+		parameter<uint32>  Nr_AlGehaald     := sum(uint32(AlGehaald));
+		parameter<uint32>  Nr_TeltMee       := sum(uint32(TeltMee));
+		parameter<uint32>  Nr_OpNorm        := sum(uint32(OpNorm));
+		parameter<uint32>  Nr_OnderNorm     := sum(uint32(OnderNorm));
+		parameter<uint32>  Nr_BovenNorm     := sum(uint32(BovenNorm));
+
+		parameter<float32> Tekort_woningen    := -sum(Afwijking_woningen * float32(OnderNorm));
+		parameter<float32> Overschot_woningen :=  sum(Afwijking_woningen * float32(BovenNorm));
+		parameter<float32> Saldo_woningen     :=  sum(Afwijking_woningen * float32(TeltMee)), Descr = "Hoort rond nul te liggen als de doorstroom naar hogere allocatieniveaus behoudend is.";
+		parameter<float32> Saldo_AlGehaald    :=  sum(Afwijking_woningen * float32(AlGehaald)), Descr = "Overschrijding in de regio's die hun claim al gehaald hadden. Restclaim uit tekortkomende regio's kan door de COROP- en Provincie-passen ook hier landen, dus dit is de derde bestemming naast op-norm en boven-norm.";
+		parameter<float32> Saldo_Alles        :=  sum(Afwijking_woningen), Descr = "Alle regio's samen. Hoort rond nul te liggen: wat ergens niet gerealiseerd wordt, hoort elders terecht te komen.";
+	}
+
 	
 	// Wegge4sterd want werkt niet
 	// container Overflow
@@ -154,8 +186,14 @@ Template Zichtjaar_T
 		attribute<bool> BestaandBebouwdGebied                (AdminDomain) := /BaseData/Omgeving/BBGSamengesteld;
 		attribute<bool> BestaandGroenInBestaandBebouwdGebied (AdminDomain) := IsDefined(Basisjaar/Grondgebruik/Groen) && BestaandBebouwdGebied;
 		
-		parameter<float32> FractieWoningenErbijInBestaandBebouwdGebied                := sum(Aantal_Woningen_Totaal_BijTovBasisjaar * float32(BestaandBebouwdGebied)) / sum(Aantal_Woningen_Totaal_BijTovBasisjaar)[float32];
-		parameter<float32> FractieWoningenErbijInBestaandGroenInBestaandBebouwdGebied := sum(Aantal_Woningen_Totaal_BijTovBasisjaar * float32(BestaandGroenInBestaandBebouwdGebied)) / sum(Aantal_Woningen_Totaal_BijTovBasisjaar)[float32];
+		attribute<Woning> WoningenErbij (AdminDomain) := max_elem(Aantal_Woningen_Totaal_BijTovBasisjaar, 0[Woning])
+		, Descr = "Alleen de toename per cel. De fracties hieronder delen bruto door bruto: met het netto verschil in teller en noemer kantelt de maat zodra er ergens gesloopt wordt, en kan hij zelfs negatief worden. Zie #639.";
+		
+		parameter<float32> FractieWoningenErbijInBestaandBebouwdGebied                := sum(WoningenErbij * float32(BestaandBebouwdGebied)) / sum(WoningenErbij)[float32];
+		parameter<float32> FractieWoningenErbijInBestaandGroenInBestaandBebouwdGebied := sum(WoningenErbij * float32(BestaandGroenInBestaandBebouwdGebied)) / sum(WoningenErbij)[float32];
+		
+		parameter<float32> NettoVeranderingInBestaandBebouwdGebied := sum(Aantal_Woningen_Totaal_BijTovBasisjaar * float32(BestaandBebouwdGebied))[float32]
+		, Descr = "Netto verandering binnen bestaand bebouwd gebied, dus inclusief sloop. Een zinnig getal op zichzelf, maar geen inbreidingsaandeel.";
 	}
 	
 	container Landgebruikskaart   := Templates/Indicatoren/Landgebruikskaart/Make_Landgebruikskaart_T(Zichtjaar_name, Stand);
@@ -496,6 +534,12 @@ Template Zichtjaar_T
 		attribute<Bool> IsExogeneSloopCel (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, SloopAlsGevolgVanExogeneOplegging/NeedsToBeEmptiedDueToExogenousDevelopments), FALSE)
 		, Descr = "Cel die door exogeen opgelegde ontwikkeling (nieuwe natuur) wordt leeggemaakt; bestaande woningen worden daar gesloopt.";
 
+		attribute<Woning> GesloopteWoningen (AdminDomain) := IsExogeneSloopCel ? MakeDefined(StandBasisjaar/Aantal_Woningen_Totaal, 0[Woning]) : 0[Woning]
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/GesloopteWoningen_NieuweNatuur_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Issue #519: het aantal woningen uit het basisjaar dat in de leeggemaakte cellen stond, en dus wijkt voor de exogeen opgelegde nieuwe natuur. De kosten daarvan staan hieronder.";
+		parameter<Woning> GesloopteWoningen_Per_NL := sum(GesloopteWoningen), Descr = "Landelijk totaal. Staat naast het attribuut en niet erin, want een parameter binnen een attribuut met grid-opslag wordt meegeschreven en faalt.";
+
 		attribute<Eur>  Uitkoopkosten     (AdminDomain) := IsExogeneSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal, 0[Eur]) : 0[Eur]
 		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_NieuweNatuur_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
 		, StorageType = "gdalwrite.grid"
@@ -520,6 +564,12 @@ Template Zichtjaar_T
 		attribute<Bool> IsSloopCel         (AdminDomain) := IsWaterbergingsCel && IsVeenDeelgebied
 		, Descr = "Cel die voor waterberging in het veen wordt leeggemaakt; bestaande woningen worden daar gesloopt.";
 		
+		attribute<Woning> GesloopteWoningen (AdminDomain) := IsSloopCel ? MakeDefined(StandBasisjaar/Aantal_Woningen_Totaal, 0[Woning]) : 0[Woning]
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/GesloopteWoningen_WaterbergingVeen_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Het aantal woningen uit het basisjaar dat wijkt voor gealloceerde waterberging in het veen (#636, tegenhanger van #519).";
+		parameter<Woning> GesloopteWoningen_Per_NL := sum(GesloopteWoningen), Descr = "Landelijk totaal. Staat naast het attribuut en niet erin, want een parameter binnen een attribuut met grid-opslag wordt meegeschreven en faalt.";
+
 		attribute<Eur>  Uitkoopkosten      (AdminDomain) := IsSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal, 0[Eur]) : 0[Eur]
 		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_WaterbergingVeen_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
 		, StorageType = "gdalwrite.grid"
