@@ -272,4 +272,74 @@ container Diagnose
 	')
 	, StorageName = "='%LocalDataProjDir%/Diagnose/grondbalans.txt'", StorageType = "str";
 
+	// --- waterberging: past de opgave uberhaupt in het beschikbare bergingsvolume? ---
+	container WaterbergingVolume
+	: Descr = "Per waterbergingsregio de opgave in m3 naast het bergingsvolume dat in alle beschikbare cellen samen zit. Dat volume is precies het gewicht waarmee IterSubsector_T de zaaglijn bepaalt: nth_element_weighted telt cellen op in volgorde van geschiktheid tot het gewicht de restclaim haalt. Is de som over alle beschikbare cellen kleiner dan de opgave, dan wordt de zaaglijn undefined, valt hij terug op 0, wordt alles gealloceerd en blijft de realisatie per definitie onder 1. Meer iteraties helpen dan niet. Deze container rekent de allocatie niet mee."
+	{
+		unit<uint32> Regio := /SourceData/RegioIndelingen/Waterbergingsregio;
+
+		parameter<String> Scenario := replace(/Diagnose/Casus, '_'+/Diagnose/Variant, '')
+		, Descr = "De casusnaam zonder de variantnaam, dus het scenario waaronder de claims hangen.";
+
+		attribute<float32> Volume_perCel (/Geography/CompactedAdminDomain) :=
+			=/Diagnose/Pad_V+'PotentieleState/'+/Diagnose/Jaar+'/per_SectorxSubsectoren/Waterberging/Totaal/Zichtjaar'
+		, Descr = "Bergingsvolume in m3 per cel, al vermenigvuldigd met de beschikbaarheid in dit zichtjaar.";
+
+		attribute<bool> IsDiepGenoeg (/Geography/CompactedAdminDomain) :=
+			collect_by_cond(/Geography/CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/IsDiepGenoeg)
+		, Descr = "Haalt de cel de Minimum_Waterschijf? Zo niet, dan is de geschiktheid exact 0 en staat de cel onderaan de rij, maar hij blijft alloceerbaar.";
+
+		attribute<Regio> Regio_rel (/Geography/CompactedAdminDomain) := /SourceData/RegioIndelingen/Waterbergingsregio/Per_CompactedAdminDomain;
+
+		attribute<float32> Claim_m3       (Regio) := =/Diagnose/Pad_V+'Claims/'+/Diagnose/WaterbergingVolume/Scenario+'/Zichtjaren/'+/Diagnose/Jaar+'/SectorAllocRegios/Waterbergingsregio_Waterberging/Totaal';
+		attribute<float32> Volume_m3      (Regio) := sum(Volume_perCel, Regio_rel);
+		attribute<float32> Volume_diep_m3 (Regio) := sum(Volume_perCel * float32(IsDiepGenoeg), Regio_rel)
+		, Descr = "Alleen de cellen met een waterschijf vanaf Minimum_Waterschijf, dus de cellen met een geschiktheid boven nul.";
+		attribute<float32> Cellen         (Regio) := sum(float32(Volume_perCel > 0f), Regio_rel);
+		attribute<float32> Dekking        (Regio) := Volume_m3 / Claim_m3;
+		attribute<float32> Dekking_diep   (Regio) := Volume_diep_m3 / Claim_m3;
+
+		attribute<float32> Cellen_totaal (Regio) := sum(float32(IsDefined(Regio_rel)), Regio_rel)
+		, Descr = "Alle cellen in de regio, ongeacht beschikbaarheid, zodat een lege regio te onderscheiden is van een regio zonder beschikbare cellen.";
+
+		attribute<String> Regel (Regio) :=
+			MakeDefined(Regio/label, 'null') + ';' + string(MakeDefined(Claim_m3, -1f)) + ';' + string(MakeDefined(Volume_m3, -1f)) + ';' + string(MakeDefined(Volume_diep_m3, -1f))
+			+ ';' + string(MakeDefined(Cellen, -1f)) + ';' + string(MakeDefined(Cellen_totaal, -1f)) + ';' + string(MakeDefined(Dekking, -1f));
+
+		parameter<String> Samenvatting :=
+			'regio;claim_m3;volume_m3;volume_diep_m3;cellen_beschikbaar;cellen_totaal;dekking|' + AsList(Regel, '|')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/wb_volume.txt'", StorageType = "str";
+	}
+
+	// --- waterberging: convergeert de allocatie binnen het aantal iteraties? ---
+	container WaterbergingIteraties
+	: Descr = "Per iteratie de landelijke stand waterberging in m3 en het aantal cumulatief afgewezen cellen. Ligt de reeks aan het eind vlak, dan is het aantal iteraties niet de beperking en zit de rem in de morfologische cleaning en de minimale clusteromvang. Stijgt hij aan het eind nog, dan helpt ophogen van Default_NrOfIters wel. Het aantal iteraties volgt Default_NrOfIters, zodat deze container meebeweegt met de instelling die getest wordt."
+	{
+		parameter<String> PadIter := '/Allocatie/'+/Diagnose/Casus+'/Zichtjaren/'+/Diagnose/Jaar+'/Sequences/Seq_0/SectorAllocRegios/Waterbergingsregio_Waterberging/Iters_Normaal/';
+
+		unit<uint8> Iters := range(uint8, 0b, /ModelParameters/Default_NrOfIters)
+		{
+			attribute<String> name := 'Iter_'+string(id(.));
+			attribute<String> expr :=
+				  quote(name+';')
+				+ ' + string(sum('+PadIter+name+'/Stand_PerAllocRegio/Waterberging/Totaal))'
+				+ ' + ' + quote(';')
+				+ ' + string(sum(uint32('+PadIter+name+'/Allocatie/IsAfgewezen_Cumulatief)))'
+				+ ' + ' + quote('|');
+		}
+
+		parameter<String> Samenvatting := =quote('iter;stand_m3;afgewezen_cellen|')+' + '+AsList(Iters/expr, ' + ')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/wb_convergentie.txt'", StorageType = "str";
+	}
+
+	// --- verharding: welke Copernicus-kaart is actief, en verschilt 2024 van 2021? ---
+	parameter<String> imperviousness :=
+		  'jaar;'        + /ModelParameters/Advanced/ImperviousnessMapYear
+		+ ';gem_2021;'   + string(mean(float32(/SourceData/Grondgebruik/Imperviousness_Map/Y2021_25m)))
+		+ ';gem_2024;'   + string(mean(float32(/SourceData/Grondgebruik/Imperviousness_Map/Y2024_25m)))
+		+ ';gem_actief;' + string(mean(float32(/SourceData/Grondgebruik/Imperviousness_Map/InProcent)))
+		+ ';verhardingsbestand;' + /Classifications/Grondgebruik/BGT/Classes/Verharding_Impl/VerhardingFile
+	, StorageName = "='%LocalDataProjDir%/Diagnose/imperviousness.txt'", StorageType = "str"
+	, Descr = "Controle op de jaarschakelaar van de Copernicus-verhardingskaart. gem_actief hoort gelijk te zijn aan het jaar dat in ModelParameters/Advanced/ImperviousnessMapYear staat.";
+
 }
