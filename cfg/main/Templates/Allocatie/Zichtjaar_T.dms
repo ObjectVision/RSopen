@@ -232,6 +232,70 @@ Template Zichtjaar_T
 			), Descr = "De relatieve prijsverandering per woningtype op het compacted domain, klaar voor gebruik in de geschiktheid voor wonen (IterSubsector_T_Wonen). In het eerste zichtjaar expliciet nul, zodat de dure schijfberekening daar helemaal niet hoeft te draaien.";
 	}
 
+	container WerkenGeschiktheid
+	: Descr = "Werken-geschiktheid met de landgebruiksaandelen van het begin van dit zichtjaar (#647, analoog aan GroenNabijheid #637). De logit is geschat op start-of-period landgebruik: de aandelen wonen, natuur en water in de cel en het buurtaandeel overig bebouwd (1000 m) worden hier bijgewerkt met wat het model sinds het basisjaar heeft gealloceerd of exogeen opgelegd (beginstand van het zichtjaar, dus geen endogeniteit binnen het zichtjaar). Nieuw werken telt via het buurtaandeel mee en trekt zo vervolgallocaties aan (clustering). Bouwterrein en de UAI blijven statisch: daarvoor is geen modelbron. Alleen toevoegingen tellen; wat een cel voorheen was wordt niet van de statische aandelen afgetrokken, want nieuw gebruik landt vrijwel altijd op cellen die aan geen van deze aandelen bijdroegen. In het eerste zichtjaar zijn de mutaties leeg en is de kaart exact de statische kaart. Schakelaar: ModelParameters/Werken/GeschiktheidDynamisch, toegepast in IterSubsector_T."
+	{
+		parameter<bool> IsEersteZichtjaar := GroenNabijheid/IsEersteZichtjaar;
+
+		container Bron
+		: Descr = "Zelfde beginstand-bron als GroenNabijheid (#637): het nieuwe landgebruik waar dat sinds het basisjaar is veranderd, anders null."
+		{
+			attribute<LU_ModelType> LU_Mutatie (AdminDomain) := GroenNabijheid/Bron/LU_Mutatie;
+
+			//doelklassen conform de gg-indeling van de logit: wonen naar residential, werken naar otherbuiltup (telt alleen via de 1000m-buurtterm), natuur (hedonische definitie, inclusief riet en moerasbos, #637) naar nature, water inclusief waterberging naar unavailable
+			attribute<bool> LU_IsResidential  (LU_ModelType) := lowercase(LU_ModelType/Sector_name) == lowercase('Wonen');
+			attribute<bool> LU_IsOtherBuiltup (LU_ModelType) := lowercase(LU_ModelType/Sector_name) == lowercase('Werken');
+			attribute<bool> LU_IsNature       (LU_ModelType) := LU_ModelType/IsNatuur_hedonisch;
+			attribute<bool> LU_IsWater        (LU_ModelType) := LU_ModelType/IsWater_hedonisch;
+
+			attribute<float32> NieuwResidential  (AdminDomain) := float32(MakeDefined(LU_IsResidential[LU_Mutatie], FALSE));
+			attribute<float32> NieuwOtherBuiltup (AdminDomain) := float32(MakeDefined(LU_IsOtherBuiltup[LU_Mutatie], FALSE));
+			attribute<float32> NieuwNature       (AdminDomain) := float32(MakeDefined(LU_IsNature[LU_Mutatie], FALSE));
+			attribute<float32> NieuwWater        (AdminDomain) := float32(MakeDefined(LU_IsWater[LU_Mutatie], FALSE));
+		}
+
+		container Deltas
+		: Descr = "Toename van de aandelen per 100m-cel (het schattingsgrid), en van het buurtaandeel overig bebouwd met exact dezelfde kernel en noemer als de statische variabele (SourceData/Grondgebruik/BBG Avg_shr_LUType_neigh r1000)."
+		{
+			attribute<float32> dResidential  (Geography/rdc_100m) := mean(Bron/NieuwResidential,  AdminDomain/rdc_100m_rel);
+			attribute<float32> dOtherBuiltup (Geography/rdc_100m) := mean(Bron/NieuwOtherBuiltup, AdminDomain/rdc_100m_rel);
+			attribute<float32> dNature       (Geography/rdc_100m) := mean(Bron/NieuwNature,       AdminDomain/rdc_100m_rel);
+			attribute<float32> dWater        (Geography/rdc_100m) := mean(Bron/NieuwWater,        AdminDomain/rdc_100m_rel);
+
+			attribute<float32> dOtherBuiltup_ngh1000 (Geography/rdc_100m) := /Geography/rdc_100m/IsStudyArea
+				?	potential(dOtherBuiltup * float32(/Geography/rdc_100m/IsStudyArea), /Geography/Distmatrices/Impl_100m/pot1000m/PotRange/neighbourhood)
+					/ potential(float32(/Geography/rdc_100m/IsStudyArea), /Geography/Distmatrices/Impl_100m/pot1000m/PotRange/neighbourhood)
+				:	0f;
+		}
+
+		container PerSector := for_each_ne(Jobs6/name, 'PerSector_T('+quote(Jobs6/name)+')'), Descr = "Bijgewerkte kans per Jobs6-sector; zelfde MNL-formule als de statische kaart, met de coefficienten uit dezelfde CSV.";
+
+		Template PerSector_T
+		{
+			parameter<String> Sectorname;
+
+			attribute<Float32> raw (AdminDomain) := ='MakeDefined(
+				/BaseData/Suitabilities/Werken/ProbabilityMap_perSector/'+Sectorname+'/raw
+				+ Deltas/dResidential[AdminDomain/rdc_100m_rel]          * /BaseData/Suitabilities/Werken/ReadCoefficients/'+Sectorname+'/Result/lu_share_residential_2012
+				+ Deltas/dNature[AdminDomain/rdc_100m_rel]               * /BaseData/Suitabilities/Werken/ReadCoefficients/'+Sectorname+'/Result/lu_share_nature_2012
+				+ Deltas/dWater[AdminDomain/rdc_100m_rel]                * /BaseData/Suitabilities/Werken/ReadCoefficients/'+Sectorname+'/Result/lu_share_unavailable_2012
+				+ Deltas/dOtherBuiltup_ngh1000[AdminDomain/rdc_100m_rel] * /BaseData/Suitabilities/Werken/ReadCoefficients/'+Sectorname+'/Result/avgshr_LU12_ngh_1000r_otherbu
+				, -1e9f)', Descr = "Statische raw plus de coefficient maal de toename van elk aandeel sinds het basisjaar. Nodata blijft -1e9 (kans 0, #599).";
+			attribute<Float32> noemer        (AdminDomain) := ='1f + ' + asList('exp(PerSector/'+Jobs6/name+'/raw)', ' + ');
+			attribute<Float32> exponentiated (AdminDomain) := exp(raw) / noemer;
+			attribute<Float32> raw_ordinaal  (AdminDomain) := raw <= -1e8f ? null_f : raw, Descr = "Nodata wordt null zodat die cellen nooit in de kandidaatset komen (#599), conform de statische raw_ordinaal.";
+
+			parameter<bool> GebruikStatisch := IsEersteZichtjaar || !/ModelParameters/Werken/GeschiktheidDynamisch, Descr = "In het eerste zichtjaar zijn de mutaties per definitie leeg, en met de schakelaar uit geldt altijd de statische kaart; in beide gevallen hoeft de dynamische berekening niet te draaien.";
+
+			attribute<Float32> Totaal (CompactedAdminDomain) := = GebruikStatisch
+				? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Werken/ProbabilityMap_perSector/'+Sectorname+'/exponentiated)'
+				: 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, exponentiated)', Descr = "MNL-kans: statisch of per zichtjaar bijgewerkt. Gebruikt voor de keuze tussen subsectoren en, met GeschiktheidAlsRaw uit, ook als allocatie-input.";
+			attribute<Float32> Totaal_raw (CompactedAdminDomain) := = GebruikStatisch
+				? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Werken/ProbabilityMap_perSector/'+Sectorname+'/raw_ordinaal)'
+				: 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, raw_ordinaal)', Descr = "Raw-nut met null voor nodata: statisch of per zichtjaar bijgewerkt. Standaard allocatie-input (GeschiktheidAlsRaw), want binnen een subsector telt alleen de rangorde en de MNL-noemer verstoort die.";
+		}
+	}
+
 	parameter<bool> IsEersteZichtjaar_Vormtoets := first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
 	, Descr = "In het eerste zichtjaar bestaat SubSector_rel op de ingangsstand nog niet, dus dan mag die kant niet aangeroepen worden.";
 
