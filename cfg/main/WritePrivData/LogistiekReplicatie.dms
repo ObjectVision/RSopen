@@ -1,0 +1,90 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Replicatie-toets voor de logistieke pandenset. De huidige typering (IsLogistiekFunctie) hangt aan de statische
+// set van Nefs (Dutch Distribution Centres 2021); panden opgeleverd na 2021 kunnen daardoor nooit logistiek
+// worden. Deze toets bouwt per pand van het toetsjaar een featuretabel uit BAG en LISA (banen per sector via
+// point_in_polygon, footprint, hoogte, IBIS-ligging, huidig gebruiksdoel) en exporteert die samen met de
+// Nefs-vlag als ground truth. De eigenlijke criteria-afweging (drempels, dominantie, nabijheid) gebeurt buiten
+// GeoDMS op de geexporteerde tabel, zodat varianten zonder herberekening vergeleken kunnen worden.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container LogistiekReplicatie : using = "Units"
+, Descr = "Featuretabel-export om te toetsen of de Nefs-set (logistieke panden 2021) reproduceerbaar is uit BAG + LISA van hetzelfde jaar"
+{
+	parameter<String> JaarStr := '2021', Descr = "Toetsjaar: BAG-jaargang waarop de replicatie draait. Met 2021 (het Nefs-jaar) toets je de replicatie tegen de ground truth; met een recenter jaar kwantificeer je de logistieke nieuwbouw die de statische set mist.";
+	parameter<String> LISAJaarStr := '2023', Descr = "LISA-jaargang voor de punten. Mag afwijken van JaarStr: in het beoogde gebruik typeert de meest recente LISA de nieuwbouw van eerdere jaren, en vestigingsregistratie loopt achter op oplevering. Met een latere jaargang meet je dat effect.";
+
+	unit<UInt32> BronPand := ='SourceData/Vastgoed/BAG/PerJaar/Y'+JaarStr+'/pand'
+	, Descr = "Pandenset van het toetsjaar, verrijkt met de Nefs-vlag, de PHN-hoogte en de exportselectie"
+	{
+		attribute<rdc_meter> centr        := centroid_or_mid(geometry), Descr = "Middelpunt van het pand; t.b.v. nabijheidsanalyses op de geexporteerde tabel";
+		attribute<Bool>      InNefs       := IsDefined(rlookup(pand_bag_nr, SourceData/Vastgoed/Logistiek_panden/pand_bag_nr)), Descr = "Pand komt voor in de Nefs-set (alle functies, dus inclusief XXL retail)";
+		attribute<UInt32>    Nefs_functie := MakeDefined(rjoin(pand_bag_nr, SourceData/Vastgoed/Logistiek_panden/pand_bag_nr, SourceData/Vastgoed/Logistiek_panden/function_n), 0), Descr = "Functiecategorie uit de Nefs-set: 1=Trade/Import/Export, 2=Transport and logistic services, 3=XXL retail center (in het model uitgesloten), 4=Logistic co-activity, 0=niet in de Nefs-set";
+
+		attribute<PHN>       PHN_rel      := rlookup(pand_bag_nr, PHN/pand_bag_nr);
+		attribute<UInt16>    hoogte_cm    := MakeDefined(PHN/hoogte[PHN_rel], 0w), Descr = "Pandhoogte in cm uit PHN; 0 = onbekend";
+
+		attribute<Bool>      InExport     := (Footprint >= 500[m2PandFootprint] && Counts/woon_VBOs == 0) || InNefs, Descr = "Exportselectie: kandidaat volgens de Nefs-ondergrens (footprint minstens 500 m2, geen woonfunctie) of in de Nefs-set (zodat ook diens niet-kandidaten als ground truth meegaan)";
+	}
+
+	unit<UInt32> PHN
+	:	StorageName     = "%RSo_DataDir%/Vastgoed/PHN_20220101.fss"
+	,	StorageReadOnly = "True"
+	,	Descr           = "Pand Hoogte Nederland, stand 1-1-2022. Er is geen PHN-bestand voor het toetsjaar 2021 (alleen 2022, 2023 en 2026 zijn lokaal beschikbaar); de 2022-versie dekt vrijwel alle panden die op 1-1-2021 bestonden."
+	{
+		attribute<String> identificatie;
+		attribute<uint64> pand_bag_nr := uint64(identificatie);
+		attribute<UInt16> hoogte;
+	}
+
+	unit<UInt32> LISA_pnt
+	:	StorageName = "='%PrivDataDir%/LISA/LISA'+string(ModelParameters/LISA_FileYear)+'_'+LISAJaarStr+'_bas.csv'"
+	,	StorageType = "gdal.vect"
+	,	Descr       = "LISA-vestigingen van de LISA-jaargang, met de koppeling naar het pand van de BAG-jaargang waarin het punt valt. De banen-sommen per SBI-groep per pand worden buiten GeoDMS op de export gebouwd."
+	{
+		attribute<rdc_meter> geometry  := point_xy(float64(x_alt), float64(y_alt), rdc_meter);
+		attribute<UInt32>    banen_u32 := uint32(banen);
+		attribute<String>    SBI08;
+		attribute<BronPand>  pand_rel  := point_in_polygon(geometry, BronPand/geometry);
+	}
+
+	unit<UInt32> Export_Panden := select_with_org_rel(BronPand/InExport)
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/LogistiekReplicatie_Panden_'+JaarStr+'.csv'"
+	,	StorageType = "gdalwrite.vect"
+	,	Descr       = "Featuretabel per kandidaat-pand: identificatie, ligging, BAG-kenmerken, LISA-banen per sector en de Nefs-vlag als ground truth"
+	{
+		attribute<String>  pand_bag_nr        := string(BronPand/pand_bag_nr[org_rel]);
+		attribute<Float32> x                  := PointCol(BronPand/centr[org_rel])[float32];
+		attribute<Float32> y                  := PointRow(BronPand/centr[org_rel])[float32];
+		attribute<UInt32>  footprint_m2       := uint32(BronPand/Footprint[org_rel] / 1[m2PandFootprint]);
+		attribute<UInt16>  hoogte_cm          := BronPand/hoogte_cm[org_rel];
+		attribute<UInt32>  bouwjaar           := MakeDefined(uint32(BronPand/Bouwjaar_trunc[org_rel]), 0);
+		attribute<UInt32>  vbos               := BronPand/Counts/VBOs[org_rel];
+		attribute<UInt32>  woon_vbos          := BronPand/Counts/woon_VBOs[org_rel];
+		attribute<UInt32>  op_ibis            := uint32(BronPand/BepalingGebruiksdoel/LigtOpIBISterrein[org_rel]);
+		attribute<String>  doel               := MakeDefined(Classifications/Vastgoed/vbo_gebruiksdoel_plus/name[BronPand/dominant_gebruiksdoel[org_rel]], 'geen');
+		attribute<UInt32>  nefs_functie       := BronPand/Nefs_functie[org_rel];
+	}
+
+	unit<UInt32> Export_LISA_Alle := LISA_pnt
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/LogistiekReplicatie_LISAalle_'+LISAJaarStr+'_op_'+JaarStr+'.csv'"
+	,	StorageType = "gdalwrite.vect"
+	,	Descr       = "Alle LISA-punten met SBI-code en pandkoppeling; hiermee zijn fijnere SBI-indelingen (bijv. autohandel en handelsbemiddeling uitsluiten, nabijheid beperken tot vervoer/opslag) buiten GeoDMS te toetsen zonder herberekening"
+	{
+		attribute<Float32> x           := PointCol(LISA_pnt/geometry)[float32];
+		attribute<Float32> y           := PointRow(LISA_pnt/geometry)[float32];
+		attribute<UInt32>  banen       := LISA_pnt/banen_u32;
+		attribute<String>  sbi         := LISA_pnt/SBI08;
+		attribute<String>  pand_bag_nr := MakeDefined(string(BronPand/pand_bag_nr[LISA_pnt/pand_rel]), ''), Descr = "BAG-nummer van het pand waarin het punt valt; leeg als het punt buiten elk pand ligt";
+	}
+
+	parameter<String> Generate := 'Ready', ExplicitSuppliers = "Export_Panden;Export_LISA_Alle", Descr = "Triggerparameter om beide exports te genereren";
+}
