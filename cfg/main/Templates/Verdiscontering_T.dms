@@ -1,0 +1,94 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Verdiscontering naar de netto contante waarde in het basisjaar (#651). Bedragen in het model staan in prijzen
+// van het basisjaar maar vallen in de toekomst; zonder verdiscontering zijn 2060 en 2120 niet met elkaar en niet
+// met het basisjaar te vergelijken. De voeten staan in /ModelParameters en volgen de landelijke MKBA-richtlijn,
+// die een termijnstructuur voorschrijft: een hogere voet tot de horizongrens en een lagere daarna.
+//
+// Drie sjablonen, elk voor een ander soort bedrag:
+//   Verdiscontering_Horizon_T  eenmalig bedrag op een gegeven aantal jaren na het basisjaar.
+//   Verdiscontering_Stroom_T   jaarlijkse stroom over een reeks jaren; levert een annuiteitfactor in jaren.
+//   Verdiscontering_T          instapsjabloon per zichtjaar; bundelt beide voor dat zichtjaar.
+//
+// Staat LOS in Templates en niet onder Indicatoren: het wordt zowel vanuit de indicatoren als vanuit
+// Templates/Suitabilities/Suitability_Wonen_perOP_T (funderingsschade) aangeroepen.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Verdiscontering_Horizon_T
+: Descr = "Contantewaardefactor voor een eenmalig bedrag dat Horizon jaren na het basisjaar valt."
+{
+	//
+	parameter<jaar> Horizon;
+	//
+	
+	parameter<jaar>    Horizon_TotGrens := min_elem(Horizon, /ModelParameters/DiscontoHorizonGrens)
+	, Descr = "Het deel van de horizon dat onder de eerste discontovoet valt.";
+	parameter<jaar>    Horizon_NaGrens  := max_elem(Horizon - /ModelParameters/DiscontoHorizonGrens, 0[jaar])
+	, Descr = "Het deel van de horizon dat onder de tweede discontovoet valt.";
+	
+	parameter<Float32> Deler  := (1f + /ModelParameters/Discontovoet_TotHorizonGrens) ^ float32(Horizon_TotGrens / 1[jaar])
+	                           * (1f + /ModelParameters/Discontovoet_NaHorizonGrens)  ^ float32(Horizon_NaGrens  / 1[jaar])
+	, Descr = "De samengestelde deler over beide trappen van de termijnstructuur.";
+	
+	parameter<Float32> Factor := /ModelParameters/VerdisconteerIndicatoren ? 1f / Deler : 1f
+	, Descr = "Vermenigvuldig een bedrag dat op deze horizon valt hiermee om de netto contante waarde in het basisjaar te krijgen. Is 1 zolang /ModelParameters/VerdisconteerIndicatoren uit staat.";
+}
+
+Template Verdiscontering_Stroom_T
+: Descr = "Annuiteitfactor voor een constante jaarlijkse stroom over de jaren (Horizon_Van, Horizon_TotEnMet], geteld vanaf het basisjaar. Elk jaar in de reeks krijgt zijn eigen contantewaardefactor, zodat de termijnstructuur ook binnen een lange periode klopt. Vermenigvuldig een bedrag per jaar hiermee om de netto contante waarde in het basisjaar te krijgen."
+{
+	//
+	parameter<jaar> Horizon_Van;       // laatste jaar dat NIET meetelt, meestal het vorige zichtjaar
+	parameter<jaar> Horizon_TotEnMet;  // laatste jaar dat WEL meetelt, meestal dit zichtjaar
+	//
+	
+	unit<UInt32> JaarK := range(uint32, uint32(Horizon_Van / 1[jaar]) + 1u, uint32(Horizon_TotEnMet / 1[jaar]) + 1u)
+	, Descr = "Een regel per jaar in de periode. Leeg wanneer er geen periode is, bijvoorbeeld in het basisjaar."
+	{
+		attribute<jaar>    Horizon := id(.)[jaar];
+		attribute<jaar>    Horizon_TotGrens := min_elem(Horizon, /ModelParameters/DiscontoHorizonGrens);
+		attribute<jaar>    Horizon_NaGrens  := max_elem(Horizon - /ModelParameters/DiscontoHorizonGrens, 0[jaar]);
+		attribute<Float32> Deler   := (1f + /ModelParameters/Discontovoet_TotHorizonGrens) ^ float32(Horizon_TotGrens / 1[jaar])
+		                            * (1f + /ModelParameters/Discontovoet_NaHorizonGrens)  ^ float32(Horizon_NaGrens  / 1[jaar]);
+		attribute<Float32> Factor  := /ModelParameters/VerdisconteerIndicatoren ? 1f / Deler : 1f;
+	}
+	
+	parameter<jaar> Factor := MakeDefined(sum(JaarK/Factor), 0f)[jaar]
+	, Descr = "Som van de contantewaardefactoren over de jaren van de periode, in jaren, zodat een bedrag per jaar er direct mee vermenigvuldigd kan worden. Zonder verdiscontering is dit gewoon het aantal jaren.";
+}
+
+Template Verdiscontering_T
+: Descr = "Instapsjabloon per zichtjaar: de contantewaardefactor voor een eenmalig bedrag in dit zichtjaar, en de annuiteitfactor voor een jaarlijkse stroom sinds het vorige zichtjaar."
+{
+	//
+	parameter<String> Zichtjaar_name;
+	//
+	
+	parameter<Bool>  IsStartYear      := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	parameter<Bool>  IsFirstAllocYear := = IsStartYear ? 'FALSE' : 'rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar)';
+	
+	parameter<Int16> Zichtjaar_value     := = IsStartYear ? '/ModelParameters/Model_StartYear' : 'rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel)';
+	parameter<Int16> PrevZichtjaar_value := = IsStartYear ? '/ModelParameters/Model_StartYear' : 'rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel)';
+	
+	parameter<jaar> Horizon     := Zichtjaar_value[jaar]     - /ModelParameters/Model_StartYear[jaar]
+	, Descr = "Aantal jaren tussen het basisjaar en dit zichtjaar. Nul in het basisjaar zelf, waar de factor dus 1 is.";
+	parameter<jaar> PrevHorizon := PrevZichtjaar_value[jaar] - /ModelParameters/Model_StartYear[jaar]
+	, Descr = "Idem voor het vorige zichtjaar. Nul in het eerste zichtjaar, want daar is het basisjaar de voorganger.";
+	
+	container Eenmalig := Verdiscontering_Horizon_T(Horizon);
+	container Stroom   := Verdiscontering_Stroom_T(PrevHorizon, Horizon);
+	
+	parameter<Float32> Deler         := Eenmalig/Deler;
+	parameter<Float32> Factor        := Eenmalig/Factor
+	, Descr = "Voor een eenmalig bedrag dat in dit zichtjaar valt.";
+	parameter<jaar>    PeriodeFactor := Stroom/Factor
+	, Descr = "Voor een constante jaarlijkse stroom over de periode sinds het vorige zichtjaar.";
+}
