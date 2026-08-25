@@ -33,6 +33,13 @@ Template Zichtjaar_T
 	container StandBasisjaar := Basisjaar/Stand;
 	container StandKeuze := StandBasisjaar;
 	container ThisYear := .;
+	container Verdiscontering := Templates/Verdiscontering_T(Zichtjaar_name)
+	, Descr = "Netto contante waarde van dit zichtjaar naar het basisjaar (#651). Elke kosten- en waarde-indicator hieronder heeft naast het nominale bedrag een NCW-tegenhanger. De voeten en de aan/uit-schakelaar staan in /ModelParameters.
+				Een bedrag hoort de factor te krijgen van het jaar waarin het optreedt, en dat is niet voor elke indicator het zichtjaar zelf:
+				1) Een waardering van een toestand op een moment, zoals de overstromingsschade bij een doorbraak in dit zichtjaar of de waarde van de woningvoorraad, krijgt Verdiscontering/Factor: dat is de waarde op dat moment.
+				2) Een eenmalige uitgave of opbrengst bij een gebeurtenis, zoals uitkoop, sloop of de bouw van een woning, krijgt de factor van het zichtjaar waarin die gebeurtenis viel. Die posten zijn cumulatief sinds het basisjaar, dus de NCW wordt per periode opgebouwd: alleen wat er in deze periode bijkwam krijgt de factor van dit zichtjaar, opgeteld bij de NCW van het vorige zichtjaar. Met AlleenEindjaar op TRUE bestaat er maar een periode en valt alles noodgedwongen op het eindjaar.
+				3) Een jaarlijkse stroom over een periode, zoals de CO2-emissiekosten in SOMERS, krijgt Verdiscontering/PeriodeFactor: de som van de contantewaardefactoren over de jaren van die periode.";
+	parameter<Bool> IsFirstAllocYear := Verdiscontering/IsFirstAllocYear, Descr = "Is dit het eerste zichtjaar na het basisjaar? Bepaalt of een cumulatieve indicator een voorganger heeft om op door te tellen.";
 	container Impl
 	{
 		container Claims := ='ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/'+Zichtjaar_name;
@@ -438,15 +445,19 @@ Template Zichtjaar_T
 			attribute<Eur> k            (CompactedAdminDomain) := /SourceData/Vastgoed/Funderingsschade/per_pand/k, Descr = "Funderingsschade per cel: per-pand-toerekening k_i, na per-woning-cap (P99) en herverdeling binnen de buurt, uitgesmeerd via de toedelingsmatrix.";
 			attribute<Eur> Woningwaarde (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal), Descr = "Verwervingswaarde van de bestaande woningen per cel, zonder OP-beschikbaarheidsmasker; cap voor de waardevermindering.";
 			
-			parameter<Float32> NCW_deler := (1f+ModelParameters/Wonen/Discontovoet)^float32((VariantParameters/VariantK/JaarWaarinFunderingschadeZichtbaar[Variant_rel] - ModelParameters/Model_StartYear) / 1[YearRange]);
+			// Deze post was al verdisconteerd, met een eigen horizon: de schade valt niet in het zichtjaar maar in
+			// JaarWaarinFunderingschadeZichtbaar. Sinds #651 loopt dat via hetzelfde sjabloon als de suitability, met dezelfde
+			// voeten en dezelfde termijnstructuur; zolang dat jaar gelijk is aan Model_StartYear is de horizon nul en de factor 1.
+			// Dit is dus niet de Verdiscontering van het zichtjaar.
+			container Verdiscontering := Templates/Verdiscontering_Horizon_T(float32((VariantParameters/VariantK/JaarWaarinFunderingschadeZichtbaar[Variant_rel] - ModelParameters/Model_StartYear) / 1[YearRange])[jaar]);
 			
 			attribute<Eur> Herstelkosten      (CompactedAdminDomain) := = VariantParameters/VariantK/FunderingschadeWordtHersteld[Variant_rel]  // We gaan ervanuit dat deze geincasseerd worden, ongeacht evt sloop in een zichtjaar
-																				 ? 'k / NCW_deler'
+																				 ? 'k * Verdiscontering/Factor'
 																				 : 'const(0[Eur], CompactedAdminDomain)';																			
 			
 			attribute<Eur> Waardevermindering (CompactedAdminDomain) :=	= VariantParameters/VariantK/FunderingschadeWordtHersteld[Variant_rel] // We gaan ervan uit dat deze niet groter kan zijn dan de bestaande woningwaarde
 																				? 'const(0[Eur], CompactedAdminDomain)'
-																				: 'min_elem(k, Woningwaarde) / NCW_deler'; 
+																				: 'min_elem(k, Woningwaarde) * Verdiscontering/Factor'; 
 		}
 		
 		attribute<bool> AllocatieHeeftPlaatsgevonden (AdminDomain) := IsDefined(ThisYear/Sector_rel);
@@ -551,6 +562,17 @@ Template Zichtjaar_T
 																									,MakeDefined(WaardeVeranderingDoorGroenVerandering_BestaandeWoningen, 0[Eur]) + MakeDefined(WaardeDoorGroenNabij_NieuwbouwWoningen, 0[Eur])
 																								), StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen')", StorageType = "gdalwrite.grid";
 
+		// #651: netto contante waarde in het basisjaar van dezelfde drie kaarten. Dit is een waardering van een toestand op een
+		// moment, namelijk hoeveel de woningvoorraad in dit zichtjaar meer of minder waard is door de veranderde groen- en
+		// waternabijheid. Zo een bedrag hoort bij het zichtjaar zelf, dus een enkele factor is hier de goede bewerking. Geen
+		// opbouw per periode zoals bij uitkoop en sloop: er wordt niets uitgegeven, er wordt een stand gewaardeerd.
+		attribute<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW (AdminDomain) := WaardeVeranderingDoorGroenVerandering_BestaandeWoningen * Verdiscontering/Factor, StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW')", StorageType = "gdalwrite.grid";
+		attribute<Eur> WaardeDoorGroenNabij_NieuwbouwWoningen_NCW                  (AdminDomain) := WaardeDoorGroenNabij_NieuwbouwWoningen                  * Verdiscontering/Factor, StorageName = "=replace(StorageStr, '@V@', 'WaardeDoorGroenNabij_NieuwbouwWoningen_NCW')", StorageType = "gdalwrite.grid";
+		attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_NCW          (AdminDomain) := WaardeVeranderingDoorGroenVerandering_Woningen          * Verdiscontering/Factor, StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen_NCW')", StorageType = "gdalwrite.grid";
+		
+		parameter<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_Per_NL     := sum(WaardeVeranderingDoorGroenVerandering_Woningen),     Descr = "Landelijk totaal, nominaal ofwel in prijzen van het basisjaar zonder verdiscontering.";
+		parameter<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_NCW_Per_NL := sum(WaardeVeranderingDoorGroenVerandering_Woningen_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
+		
 		parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
 	}
 	
@@ -589,6 +611,38 @@ Template Zichtjaar_T
 		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_NieuweNatuur_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
 		, StorageType = "gdalwrite.grid"
 		, Descr = "Issue #549: sloopkosten (m2 per WP4 maal eenheidskost) van de bestaande woningen in de leeggemaakte cellen.";
+		
+		parameter<Eur>  Uitkoopkosten_Per_NL := sum(Uitkoopkosten), Descr = "Landelijk totaal, nominaal. Staat naast het attribuut om dezelfde reden als GesloopteWoningen_Per_NL.";
+		parameter<Eur>  Sloopkosten_Per_NL   := sum(Sloopkosten),   Descr = "Landelijk totaal, nominaal.";
+		
+		// #651: uitkoop en sloop zijn eenmalige uitgaven op het moment dat de cel wordt leeggemaakt, terwijl de kaarten hierboven
+		// cumulatief zijn sinds het basisjaar. De NCW wordt daarom per periode opgebouwd: wat er in deze periode bijkwam krijgt de
+		// factor van dit zichtjaar, en dat komt bovenop de NCW van het vorige zichtjaar. De exogene oplegging treedt in het eerste
+		// zichtjaar in werking, dus in de praktijk valt hier alles in de eerste periode; de opbouw staat er zodat het ook klopt
+		// wanneer die oplegging later zichtjaarafhankelijk zou worden.
+		attribute<Bool> IsNieuweSloopCel (AdminDomain) := = IsFirstAllocYear
+			? 'IsExogeneSloopCel'
+			: 'IsExogeneSloopCel && !PrevIndicatoren/UitkoopEnSloopkostenNieuweNatuur/IsExogeneSloopCel'
+		, Descr = "Cel die in deze periode is leeggemaakt, dus nog niet in het vorige zichtjaar.";
+
+		attribute<Eur>  Uitkoopkosten_DezePeriode (AdminDomain) := IsNieuweSloopCel ? Uitkoopkosten : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
+		attribute<Eur>  Sloopkosten_DezePeriode   (AdminDomain) := IsNieuweSloopCel ? Sloopkosten   : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
+
+		attribute<Eur>  Uitkoopkosten_NCW (AdminDomain) := = IsFirstAllocYear
+			? 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor'
+			: 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/UitkoopEnSloopkostenNieuweNatuur/Uitkoopkosten_NCW'
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_NieuweNatuur_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Issue #651: netto contante waarde in het basisjaar van de uitkoopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
+		parameter<Eur>  Uitkoopkosten_NCW_Per_NL := sum(Uitkoopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
+
+		attribute<Eur>  Sloopkosten_NCW   (AdminDomain) := = IsFirstAllocYear
+			? 'Sloopkosten_DezePeriode * Verdiscontering/Factor'
+			: 'Sloopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/UitkoopEnSloopkostenNieuweNatuur/Sloopkosten_NCW'
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_NieuweNatuur_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Issue #651: netto contante waarde in het basisjaar van de sloopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
+		parameter<Eur>  Sloopkosten_NCW_Per_NL := sum(Sloopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
 	}
 	
 	// Kosten van de sloop die volgt uit gealloceerde waterberging in het veen (#575). Zelfde opzet als UitkoopEnSloopkostenNieuweNatuur hierboven: dezelfde per-cel kostenkaarten uit de wonen-suitability, met een ander sloopmasker.
@@ -619,5 +673,38 @@ Template Zichtjaar_T
 		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_WaterbergingVeen_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
 		, StorageType = "gdalwrite.grid"
 		, Descr = "Sloopkosten (m2 per WP4 maal eenheidskost) van diezelfde woningen. Zelfde kostenkaart als bij nieuwe natuur (#549).";
+		
+		parameter<Eur>  Uitkoopkosten_Per_NL := sum(Uitkoopkosten), Descr = "Landelijk totaal, nominaal. Staat naast het attribuut om dezelfde reden als GesloopteWoningen_Per_NL.";
+		parameter<Eur>  Sloopkosten_Per_NL   := sum(Sloopkosten),   Descr = "Landelijk totaal, nominaal.";
+
+		// #651: uitkoop en sloop zijn eenmalige uitgaven op het moment dat de cel wordt leeggemaakt, terwijl de kaarten hierboven
+		// cumulatief zijn sinds het basisjaar. De NCW wordt daarom per periode opgebouwd: wat er in deze periode bijkwam krijgt de
+		// factor van dit zichtjaar, en dat komt bovenop de NCW van het vorige zichtjaar. Waterberging wordt gealloceerd, dus er
+		// komen in elk zichtjaar cellen bij en doet die opbouw er echt toe: een cel die in 2040 is leeggemaakt hoort de factor van
+		// 2040 te krijgen en niet die van 2120. Het zichtjaar aan het eind van de periode geldt als het jaar van de uitgave;
+		// binnen een periode is niet bekend wanneer de cel precies aan de beurt was.
+		attribute<Bool> IsNieuweSloopCel (AdminDomain) := = IsFirstAllocYear
+			? 'IsSloopCel'
+			: 'IsSloopCel && !PrevIndicatoren/UitkoopEnSloopkostenWaterbergingVeen/IsSloopCel'
+		, Descr = "Cel die in deze periode is leeggemaakt, dus nog niet in het vorige zichtjaar.";
+
+		attribute<Eur>  Uitkoopkosten_DezePeriode (AdminDomain) := IsNieuweSloopCel ? Uitkoopkosten : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
+		attribute<Eur>  Sloopkosten_DezePeriode   (AdminDomain) := IsNieuweSloopCel ? Sloopkosten   : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
+
+		attribute<Eur>  Uitkoopkosten_NCW (AdminDomain) := = IsFirstAllocYear
+			? 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor'
+			: 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/UitkoopEnSloopkostenWaterbergingVeen/Uitkoopkosten_NCW'
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_WaterbergingVeen_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Issue #651: netto contante waarde in het basisjaar van de uitkoopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
+		parameter<Eur>  Uitkoopkosten_NCW_Per_NL := sum(Uitkoopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
+
+		attribute<Eur>  Sloopkosten_NCW   (AdminDomain) := = IsFirstAllocYear
+			? 'Sloopkosten_DezePeriode * Verdiscontering/Factor'
+			: 'Sloopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/UitkoopEnSloopkostenWaterbergingVeen/Sloopkosten_NCW'
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_WaterbergingVeen_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Issue #651: netto contante waarde in het basisjaar van de sloopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
+		parameter<Eur>  Sloopkosten_NCW_Per_NL := sum(Sloopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
 	}
 }

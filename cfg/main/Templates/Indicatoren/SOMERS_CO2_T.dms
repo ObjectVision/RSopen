@@ -29,6 +29,9 @@ Template SOMERS_CO2_T
 	parameter<jaar>      Periode             := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
 	parameter<jaarlijks> Rentevoet           := ModelParameters/Landbouw/Rentevoet;// TO DO: check vooronderstelde waarde
 	
+	container Verdiscontering := Templates/Verdiscontering_T(Zichtjaar_name)
+	, Descr = "Netto contante waarde naar het basisjaar (#651). De emissiekosten zijn een jaarlijkse stroom over de periode sinds het vorige zichtjaar, dus hier telt Verdiscontering/PeriodeFactor: de som van de contantewaardefactoren over de jaren van die periode, elk met de eigen trap van de termijnstructuur.";
+	
 	unit<UInt32> Huidige_Percelen := Veenweide_percelen
 	{
 		parameter<Bool> UseActualDroogleggingDataInThisVariant := VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel] == 'shp';
@@ -119,8 +122,25 @@ Template SOMERS_CO2_T
 		
 		container Kapitalisatie := Templates/Landbouw/Kapitalisatie_T(null_b, Rentevoet, Periode);
 		
-		attribute<EUR> NPV (AdminDomain) := Jaarlijks * Kapitalisatie/Factor, StorageName = "='%LocalDataProjDir%/Indicatoren/SOMERS_CO2_Laagveen/Kosten/'+Casus_name +'/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Emissie_name+'_'+Prijs_name+'.tif'", StorageType = "gdalwrite.grid";
+		attribute<EUR> NPV (AdminDomain) := Jaarlijks * Kapitalisatie/Factor, StorageName = "='%LocalDataProjDir%/Indicatoren/SOMERS_CO2_Laagveen/Kosten/'+Casus_name +'/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Emissie_name+'_'+Prijs_name+'.tif'", StorageType = "gdalwrite.grid"
+		, Descr = "Contante waarde van de emissiekosten over deze periode, gerekend op de landbouwrentevoet en gewaardeerd op het BEGIN van de periode, dus niet op het basisjaar. Zo bedoeld: PostAllocAnalyses/PeilOptimalisatie zet deze post tegen de landbouw-NPV af en die staat op dezelfde voet en dezelfde peildatum. Voor rapportage naast de andere kosten-indicatoren is NCW_Cumulatief hieronder de juiste grootheid (#651).";
 		
 		parameter<EUR> NPV_StGebied := sum(NPV);
+		
+		// #651: dezelfde emissiekosten, maar dan als maatschappelijke post: op de MKBA-discontovoeten en contant gemaakt naar het
+		// basisjaar. Een jaarlijkse stroom, dus elk jaar van de periode krijgt zijn eigen factor via PeriodeFactor. Cumulatief
+		// optellen omdat de uitstoot van eerdere perioden niet verdwijnt; NPV hierboven telt alleen de lopende periode.
+		parameter<string> Pad := CO2/EmissieXPrijsK/name[id];
+		
+		attribute<EUR> NCW_DezePeriode (AdminDomain) := Jaarlijks * Verdiscontering/PeriodeFactor, Descr = "Contante waarde in het basisjaar van de emissiekosten over de periode sinds het vorige zichtjaar.";
+		
+		attribute<EUR> NCW_Cumulatief  (AdminDomain) := = IsStartYear || IsFirstAllocYear
+			? 'NCW_DezePeriode'
+			: 'NCW_DezePeriode + PrevIndicatoren/SOMERS_CO2_Laagveen/Kosten/'+Pad+'/NCW_Cumulatief'
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/SOMERS_CO2_Laagveen/Kosten/'+Casus_name +'/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Emissie_name+'_'+Prijs_name+'_NCW.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Contante waarde in het basisjaar van alle emissiekosten vanaf het basisjaar tot en met dit zichtjaar.";
+		
+		parameter<EUR> NCW_Cumulatief_StGebied := sum(NCW_Cumulatief), Descr = "Landelijk totaal.";
 	}
 }

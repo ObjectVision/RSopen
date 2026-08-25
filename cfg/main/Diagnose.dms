@@ -24,7 +24,7 @@ container Diagnose
 	parameter<String> Pad_V := '/VariantData/'+Variant+'/';
 	parameter<String> Pad_A := '/Allocatie/'+Casus+'/Zichtjaren/'+Jaar+'/';
 
-	unit<uint32> Checks : nrofrows = 30
+	unit<uint32> Checks : nrofrows = 32
 	{
 		//                        pad, aggregatie, item
 		//   pad: Z = onder het zichtjaar van de indicatoren, V = variantdata, A = allocatie
@@ -44,6 +44,7 @@ container Diagnose
 			,'mortaliteit', 'carbon_flow', 'somers_mediaan'
 			,'nietbouwen_landschap_cellen', 'nietbouwen_metsloop_woningen', 'exogeen_cellen'
 			,'groenopslag_max', 'groenopslag_min'
+			,'exogeen_gespaard_ha', 'exogeen_gespaard_woningen'
 		];
 
 		attribute<String> pad :
@@ -61,6 +62,7 @@ container Diagnose
 			,'Z','Z','Z'
 			,'V','V','V'
 			,'A','A'
+			,'V','V'
 		];
 
 		attribute<String> aggr :
@@ -78,6 +80,7 @@ container Diagnose
 			,'p','s','s'
 			,'b','p','p'
 			,'m','n'
+			,'p','p'
 		];
 
 		attribute<String> item :
@@ -95,6 +98,7 @@ container Diagnose
 			,'SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief_Totaal', 'CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar', 'SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA'
 			,'NietBouwen/Landschapstoekomstbeeld/Totaal', 'NietBouwen/Landschapstoekomstbeeld/WoningenOpSlotMaarNietOpgelegd', 'ExogeenOpleggen/CountCellenOplegging'
 			,'GroenNabijheid/Prijsopslag_perWP4/vrijstaand', 'GroenNabijheid/Prijsopslag_perWP4/vrijstaand'
+			,'ExogeenOpleggen/Opp_GespaardInBebouwdGebied', 'ExogeenOpleggen/Woningen_GespaardInBebouwdGebied'
 		];
 	}
 
@@ -465,6 +469,116 @@ container Diagnose
 
 		parameter<String> Samenvatting := =quote('iter;stand_banen;gealloceerd;afgewezen_deze_iter;afgewezen_cumulatief;gealloceerd_in_woonkern|')+' + '+AsList(Iters/expr, ' + ')
 		, StorageName = "='%LocalDataProjDir%/Diagnose/werken_convergentie.txt'", StorageType = "str";
+	}
+
+
+	// --- verblijfsrecreatie: staat de stand al boven de claim voordat er iets gealloceerd is? (#364) ---
+	container Verblijfsrecreatie_Stand
+	: Descr = "Zet de basisjaarstand verblijfsrecreatie naast de telling waar de claim op rust. stand_allelogies is de telling van voor #364, stand_incbs die erna, en trend_recentjaar is het aantal logies binnen de CBS-verblijfsrecreatiegebieden in het recentste BAG-jaar, oftewel het startpunt van de claim."
+	{
+		parameter<String> Logies := '/BaseData/StartState/PandFootprint/PerYear_AdminDomain/Y'+string(/ModelParameters/Model_StartYear)+'/pand_met_vbo/PerGebruiksdoel_corr/logies/';
+		parameter<String> Trend  := '/BaseData/StartState/Verblijfsrecreatie_Trends/DataPrep/ReadData_BAG/Y'+string(/ModelParameters/BAG_RecentYear)+'/PerRegio/Objecten';
+
+		parameter<String> Samenvatting := =('
+			  '+quote('stand_allelogies;')+'         + string(sum('+Logies+'count_Per_AdminDomain))
+			+ '+quote(';stand_incbs;')+'             + string(sum('+Logies+'count_Per_AdminDomain_inCBSVerblijfsrecreatie))
+			+ '+quote(';trend_recentjaar;')+'        + string(sum(value('+Trend+', float32)))
+			+ '+quote(';nieuwbouw_allelogies;')+'    + string(sum(value(/BaseData/StartState/BAG_nieuwbouw/Verblijfsrecreatie/Totaal_AlleLogies, float32)))
+			+ '+quote(';nieuwbouw_incbs;')+'         + string(sum(value(/BaseData/StartState/BAG_nieuwbouw/Verblijfsrecreatie/Totaal_inCBSVerblijfsrecreatie, float32)))
+		')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/verblijfsrecreatie_stand.txt'", StorageType = "str";
+
+		unit<uint32> Prov := /SourceData/RegioIndelingen/CBS/Last/Provincie;
+
+		attribute<Float32> stand_allelogies (Prov) := =('sum('+Logies+'count_Per_AdminDomain, Prov/Per_AdminDomain)');
+		attribute<Float32> stand_incbs      (Prov) := =('sum('+Logies+'count_Per_AdminDomain_inCBSVerblijfsrecreatie, Prov/Per_AdminDomain)');
+		attribute<Float32> trend_recentjaar (Prov) := =('value('+Trend+', float32)');
+		attribute<Float32> nieuwb_allelogies(Prov) := sum(value(/BaseData/StartState/BAG_nieuwbouw/Verblijfsrecreatie/Totaal_AlleLogies, float32), Prov/Per_CompactedAdminDomain);
+		attribute<Float32> nieuwb_incbs     (Prov) := sum(value(/BaseData/StartState/BAG_nieuwbouw/Verblijfsrecreatie/Totaal_inCBSVerblijfsrecreatie, float32), Prov/Per_CompactedAdminDomain);
+
+		attribute<String> Regel (Prov) := Prov/name + ';' + string(stand_allelogies) + ';' + string(stand_incbs) + ';' + string(trend_recentjaar)
+										+ ';' + string(nieuwb_allelogies) + ';' + string(nieuwb_incbs)
+										+ ';' + string((stand_allelogies + nieuwb_allelogies) / trend_recentjaar)
+										+ ';' + string((stand_incbs + nieuwb_incbs) / trend_recentjaar);
+
+		parameter<String> PerProvincie := 'provincie;stand_alle;stand_incbs;trend_recentjaar;nieuwb_alle;nieuwb_incbs;ratio_oud;ratio_nieuw|' + AsList(Regel, '|')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/verblijfsrecreatie_stand_prov.txt'", StorageType = "str";
+
+		parameter<String> TrendFingerprint := /BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Fingerprint
+		, StorageName = "='%LocalDataProjDir%/Diagnose/verblijfsrecreatie_fingerprint.txt'", StorageType = "str"
+		, Descr = "De verwachte fingerprint van het beta-bestand, om een elders gegenereerde mmd met een kloppend zijbestand herbruikbaar te maken.";
+		parameter<String> TrendBetasFile := /BaseData/StartState/Verblijfsrecreatie_Trends/Trends/BetasFile
+		, StorageName = "='%LocalDataProjDir%/Diagnose/verblijfsrecreatie_betasfile.txt'", StorageType = "str";
+
+		container Daken
+		: Descr = "Meet de dubbeltelling van logies in de dakensom van de waterberging-aanbodindicator. Die som telt Wonen plus Werken plus Verblijfsrecreatie, terwijl logies via de Jobs6-subsector Ov_consumentendiensten al in de werken-footprint zit. Sinds #364 telt de verblijfsrecreatie-term alleen nog logies binnen de CBS-verblijfsrecreatiegebieden, dus de overlap is de logies-footprint binnen dat gebied."
+		{
+			parameter<String> P := '/BaseData/StartState/PandFootprint/PerYear_AdminDomain/Y'+string(/ModelParameters/Model_StartYear)+'/pand_met_vbo/';
+
+			parameter<Float32> CelM2 := value(/Geography/AdminDomain/NrMeter2PerCell, float32);
+
+			attribute<Float32> FP_logies      (/Geography/AdminDomain) := =('MakeDefined(value('+P+'PerGebruiksdoel_corr/logies/Footprint_Per_AdminDomain, float32), 0f)');
+			attribute<Float32> FP_logies_cbs  (/Geography/AdminDomain) := =('MakeDefined(value('+P+'PerGebruiksdoel_corr/logies/Footprint_Per_AdminDomain_inCBSVerblijfsrecreatie, float32), 0f)');
+			attribute<Float32> FP_bijeenkomst (/Geography/AdminDomain) := =('MakeDefined(value('+P+'PerGebruiksdoel_corr/bijeenkomst/Footprint_Per_AdminDomain, float32), 0f)');
+			attribute<Float32> FP_sport       (/Geography/AdminDomain) := =('MakeDefined(value('+P+'PerGebruiksdoel_corr/sport/Footprint_Per_AdminDomain, float32), 0f)');
+			attribute<Float32> OvC            (/Geography/AdminDomain) := =('MakeDefined(value('+P+'Footprint_perJobs6_AdminDomain/Ov_consumentendiensten, float32), 0f)');
+
+			attribute<Float32> OvC_zonderLogies (/Geography/AdminDomain) := min_elem(FP_bijeenkomst + FP_sport, CelM2)
+			, Descr = "Dezelfde subsectorsom als Footprint_perJobs6_AdminDomain maar zonder de logies-term, met dezelfde afkapping op celoppervlak.";
+
+			attribute<Float32> Logies_inWerken (/Geography/AdminDomain) := OvC - OvC_zonderLogies
+			, Descr = "Wat logies feitelijk bijdraagt aan de werken-footprint, inclusief het effect van de afkapping op celoppervlak.";
+
+			attribute<Float32> Dubbel (/Geography/AdminDomain) := min_elem(Logies_inWerken, FP_logies_cbs)
+			, Descr = "Het deel van de dakensom dat twee keer meetelt: de logies-footprint die zowel in de werken-term als in de verblijfsrecreatie-term zit.";
+
+			attribute<Float32> Dak_wonen  (/Geography/AdminDomain) := MakeDefined(value(/BaseData/StartState/StateBasisjaar/State/Wonen/Footprint, float32), 0f);
+			attribute<Float32> Dak_werken (/Geography/AdminDomain) := MakeDefined(value(/BaseData/StartState/StateBasisjaar/State/PandFootprint/Totaal, float32), 0f);
+			attribute<Float32> Dak_vbr    (/Geography/AdminDomain) := MakeDefined(value(/BaseData/StartState/StateBasisjaar/State/Verblijfsrecreatie/Footprint, float32), 0f);
+			attribute<Float32> Dak_totaal (/Geography/AdminDomain) := Dak_wonen + Dak_werken + Dak_vbr;
+
+			parameter<String> Samenvatting :=
+				  'fp_logies_alle_m2;'      + string(sum(FP_logies))
+				+ ';fp_logies_incbs_m2;'    + string(sum(FP_logies_cbs))
+				+ ';logies_in_werken_m2;'   + string(sum(Logies_inWerken))
+				+ ';dubbel_m2;'             + string(sum(Dubbel))
+				+ ';dak_wonen_m2;'          + string(sum(Dak_wonen))
+				+ ';dak_werken_m2;'         + string(sum(Dak_werken))
+				+ ';dak_vbr_m2;'            + string(sum(Dak_vbr))
+				+ ';dak_totaal_m2;'         + string(sum(Dak_totaal))
+				+ ';dubbel_fractie_dak;'    + string(sum(Dubbel) / sum(Dak_totaal))
+				+ ';cellen_met_dubbel;'     + string(sum(uint32(Dubbel > 0f)))
+				+ ';cellen_met_vbr;'        + string(sum(uint32(Dak_vbr > 0f)))
+				+ ';dubbel_max_cel_m2;'     + string(max(Dubbel))
+			, StorageName = "='%LocalDataProjDir%/Diagnose/verblijfsrecreatie_daken.txt'", StorageType = "str";
+
+			unit<uint32> ProvD := /SourceData/RegioIndelingen/CBS/Last/Provincie;
+
+			attribute<String> Regel (ProvD) :=
+				ProvD/name + ';' + string(sum(Dubbel, ProvD/Per_AdminDomain))
+				+ ';' + string(sum(Dak_totaal, ProvD/Per_AdminDomain))
+				+ ';' + string(sum(Dubbel, ProvD/Per_AdminDomain) / sum(Dak_totaal, ProvD/Per_AdminDomain));
+
+			parameter<String> PerProvincie := 'provincie;dubbel_m2;dak_totaal_m2;fractie|' + AsList(Regel, '|')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/verblijfsrecreatie_daken_prov.txt'", StorageType = "str";
+		}
+
+		unit<uint32> ProvB := /SourceData/RegioIndelingen/CBS/Last/Provincie;
+		parameter<String> ClaimsPad := '/VariantData/BAU/Claims/WLO_hoog/Zichtjaren/';
+		container Dichtheden
+		: Descr = "Per provincie de gemiddelde en de marginale dichtheid en de claims voor 2030 en 2060, om de dichtheidsschakelaar te toetsen (leest de beta-mmd via het fingerprint-mechanisme, rekent de trendketen dus niet door)."
+		{
+			attribute<Float32> gemiddeld_2030 (ProvB) := =ClaimsPad+'Y2030/AllocRegios/Provincie/Verblijfsrecreatie/Object_perHa_gemiddeld[float32]';
+			attribute<Float32> marginaal_2030 (ProvB) := =ClaimsPad+'Y2030/AllocRegios/Provincie/Verblijfsrecreatie/Object_perHa_marginaal[float32]';
+			attribute<Float32> actief_2030    (ProvB) := =ClaimsPad+'Y2030/AllocRegios/Provincie/Verblijfsrecreatie/Object_perHa[float32]';
+			attribute<Float32> objecten_2030  (ProvB) := =ClaimsPad+'Y2030/AllocRegios/Provincie/Verblijfsrecreatie/Objecten[float32]';
+			attribute<Float32> objecten_2060  (ProvB) := =ClaimsPad+'Y2060/AllocRegios/Provincie/Verblijfsrecreatie/Objecten[float32]';
+			attribute<Float32> brutoopp_2060  (ProvB) := =ClaimsPad+'Y2060/AllocRegios/Provincie/Verblijfsrecreatie/BrutoOpp[float32]';
+
+			attribute<String> Regel (ProvB) := ProvB/name +';'+ string(gemiddeld_2030) +';'+ string(marginaal_2030) +';'+ string(actief_2030) +';'+ string(objecten_2030) +';'+ string(objecten_2060) +';'+ string(brutoopp_2060);
+			parameter<String> Uitdraai := 'provincie;dichtheid_gemiddeld_2030;dichtheid_marginaal_2030;dichtheid_actief_2030;claim_objecten_2030;claim_objecten_2060;claim_brutoopp_2060|' + AsList(Regel, '|')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/verblijfsrecreatie_dichtheden.txt'", StorageType = "str";
+		}
 	}
 
 }

@@ -165,7 +165,7 @@ container IBIS
 		attribute<Bool>	   Nog50Uitgeefbaar		:= div(NogUitgeefbaarHa, HA_NETTO) > 0.5; //True als nog meer dan fractie 0.5 [dus meer dan 50%] van de oppervlakte nog uitgeefbaar is, anders FALSE. We willen niet dat er gealloceerd wordt op plekken waar eigenlijk nog maar heel weinig ruimte is. 
 		attribute<Bool>    Uitgegeven 			:= !NogUitgeefbaar;
 			
-		attribute<Bool>    IsVol				:= lowercase(vol) == lowercase('ja'); //hoofdlettergevoelig
+		attribute<Bool>    IsVol				:= lowercase(vol) == lowercase('ja'); //case-insensitief via lowercase; null of leeg telt als niet vol
 		attribute<Bool>	   UitgegevenVol0_0		:= !Uitgegeven && !IsVol;
 		attribute<Bool>	   UitgegevenVol0_1 	:= !Uitgegeven && IsVol;
 		attribute<Bool>	   UitgegevenVol1_0		:= Uitgegeven && !IsVol;
@@ -199,7 +199,7 @@ container IBIS
 		attribute<Bool>      NogUitgeefbaar         := NogUitgeefbaarHa > 0[float64]; 
 		attribute<Bool>	     Nog50Uitgeefbaar       := div(NogUitgeefbaarHa, netto_oppervlakte) > 0.5; 
 		attribute<uint8>     Max_Milieucategorie    := uint8(maximale_milieucategorie);
-		attribute<Bool>      IsVol                  := lowercase(vol) == lowercase('ja'); //hoofdlettergevoelig
+		attribute<Bool>      IsVol                  := lowercase(vol) == lowercase('ja'); //case-insensitief via lowercase; null of leeg telt als niet vol
 		attribute<Classifications/Grondgebruik/IBIS> Type_rel                           := rlookup(lowercase(WLOC_TYPE), lowercase(Classifications/Grondgebruik/IBIS/code));
 		attribute<Classifications/Grondgebruik/IBIS> Type_Per_AdminDomain (AdminDomain) := Type_rel[poly2grid(geometry, AdminDomain)];
 		attribute<Classifications/Grondgebruik/IBIS> Type_Per_AllocDomain (AllocDomain) := Type_rel[poly2grid(geometry, AllocDomain)];
@@ -221,7 +221,7 @@ container IBIS
 		attribute<Bool>      NogUitgeefbaar         := NogUitgeefbaarHa > 0[float64]; 
 		attribute<Bool>	     Nog50Uitgeefbaar       := div(NogUitgeefbaarHa, netto_oppervlakte) > 0.5; 
 		attribute<uint8>     Max_Milieucategorie    := uint8(maximale_milieucategorie);
-		attribute<Bool>      IsVol                  := lowercase(vol) == lowercase('ja'); //hoofdlettergevoelig
+		attribute<Bool>      IsVol                  := lowercase(vol) == lowercase('ja'); //case-insensitief via lowercase; null of leeg telt als niet vol
 		attribute<Classifications/Grondgebruik/IBIS> Type_rel                           := rlookup(lowercase(WLOC_TYPE), lowercase(Classifications/Grondgebruik/IBIS/code));
 		attribute<Classifications/Grondgebruik/IBIS> Type_Per_AdminDomain (AdminDomain) := Type_rel[poly2grid(geometry, AdminDomain)];
 		attribute<Classifications/Grondgebruik/IBIS> Type_Per_AllocDomain (AllocDomain) := Type_rel[poly2grid(geometry, AllocDomain)];
@@ -283,9 +283,25 @@ container IBIS
 		attribute<.>         Per_AllocDomain (AllocDomain) := poly2grid(geometry, AllocDomain);
 		attribute<MilieuCat> MilieuCat_rel                  := rlookup(Max_Milieucategorie, MilieuCat/MaxMilieuCat);
 		attribute<Meter>     Buffer_Dist                    := MakeDefined(MilieuCat/Buffer_wonen[MilieuCat_rel], 0[Meter]);
-		attribute<rdc_meter> Buffer_wonen (poly)            := geos_buffer_multi_polygon(geometry, float64(Buffer_Dist), 4b);
-		
-		attribute<bool>      RestrictiefWonen (AdminDomain) := IsDefined(poly2grid(Buffer_wonen, AdminDomain));
+
+		//Alleen terreinen met een bufferafstand > 0 (milieucategorie 2 en hoger) blokkeren wonen. Voorheen kregen ook cat-1-terreinen, economische zones en terreinen zonder categorie via geos_buffer(0) hun eigen polygoon als buffer, waardoor wonen op elke IBIS-werklocatie restrictief was; dat was alleen als rem op hoge categorieen bedoeld.
+		unit<uint32> MetWoonbuffer := select_with_org_rel(Buffer_Dist > 0[Meter])
+		{
+			attribute<rdc_meter> geometrie    (poly) := geometry[org_rel]; //lexicaal indexeren: org_rel -> Buffer_Dist zoekt in de onderliggende Y-unit, waar de afgeleide attributen niet bestaan
+			attribute<Meter>     BufferAfstand      := Buffer_Dist[org_rel];
+			attribute<rdc_meter> Buffer_wonen (poly) := geos_buffer_multi_polygon(geometrie, float64(BufferAfstand), 4b);
+		}
+
+		attribute<bool>      RestrictiefWonen (AdminDomain) := IsDefined(poly2grid(MetWoonbuffer/Buffer_wonen, AdminDomain)), Descr = "Binnen de milieucat-buffer (inclusief het terrein zelf) van een werklocatie met categorie 2 of hoger; daar is wonen in de basisjaar-zeef restrictief.";
+
+		//Milieugevoelige niet-woonfuncties (diensten, detailhandel, verblijfsrecreatie) worden alleen rond zware terreinen (categorie 4 en hoger) geweerd, met dezelfde VNG-buffer. Voorheen mochten die functies wel direct naast bestaand categorie-6-terrein, terwijl ze rond nieuw gealloceerde nijverheid juist gebufferd werden.
+		unit<uint32> MetGevoeligBuffer := select_with_org_rel(MakeDefined(Max_Milieucategorie, 0b) >= 4b)
+		{
+			attribute<rdc_meter> geometrie    (poly) := geometry[org_rel];
+			attribute<Meter>     BufferAfstand      := Buffer_Dist[org_rel];
+			attribute<rdc_meter> Buffer_poly  (poly) := geos_buffer_multi_polygon(geometrie, float64(BufferAfstand), 4b);
+		}
+		attribute<bool>      RestrictiefGevoeligeWerkfuncties (AdminDomain) := IsDefined(poly2grid(MetGevoeligBuffer/Buffer_poly, AdminDomain)), Descr = "Binnen de milieucat-buffer van een werklocatie met categorie 4 of hoger; daar zijn milieugevoelige werkfuncties en verblijfsrecreatie in de basisjaar-zeef restrictief.";
 		attribute<float64>   Fractie_Uitgegeven             := Uitgegeven / netto_oppervlakte;
 		attribute<bool>      IsVol_obvFractie               := Fractie_Uitgegeven >= ModelParameters/Werken/BedrijfsterreinUitgegevenFractieAlsVolBeschouwen;
 		// attribute<bool>      IsVol                          := NOT(IsNietVol);
