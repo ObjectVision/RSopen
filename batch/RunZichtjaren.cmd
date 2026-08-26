@@ -22,7 +22,7 @@ REM indicatoren en de GUI kunnen er daarna gewoon mee verder.
 REM
 REM ================================================================================
 
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Generate_LastZichtjaar
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Impl/Generate_LastZichtjaar
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Basisjaar/Landgebruikskaart/Result_SA
