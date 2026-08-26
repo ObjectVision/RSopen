@@ -1,6 +1,6 @@
 ---
 name: geodms-valkuilen
-description: Stille fouten in GeoDMS-configuratie die geen foutmelding geven maar wel een verkeerd antwoord; naamafscherming en de kale name, poly2grid-volgorde bij geneste polygonen, PropValue op StorageName, ExplicitSuppliers op een container, null-semantiek en off-grid rasters. Lees dit voordat je DMS-code in RSopen schrijft of wijzigt.
+description: Stille fouten in GeoDMS-configuratie die geen foutmelding geven maar wel een verkeerd antwoord; naamafscherming en de kale name, poly2grid-volgorde bij geneste polygonen, PropValue op StorageName, ExplicitSuppliers op een container, null-semantiek, off-grid rasters en een geschiktheid die een spikkelkaart oplevert. Lees dit voordat je DMS-code in RSopen schrijft of wijzigt.
 ---
 
 # Stille fouten in GeoDMS-configuratie
@@ -54,6 +54,18 @@ GeoDMS leest een raster op georeferentie, niet positioneel, en rondt een niet-ge
 Het recept in RSopen is een `Bron`-container die het originele bestand leest en een `Maak`-container die het als tif op het modelraster wegschrijft, waarna de gewone laagnamen de tif read-only lezen. Toegepast op ABCD, bodemdaling en risicozonering. Bijvangst: 394 MB ASCII werd 3,6 MB tif en de inleestijd ging van 22,5 naar 0,5 s.
 
 Let op dat GeoDMS geen NODATA-tag schrijft. Binnen GeoDMS is de nullwaarde null, maar QGIS en Python tonen hem als gewone waarde. Zet die tag zelf als het bestand buiten GeoDMS gebruikt wordt.
+
+## Een geschiktheid per cel geeft een spikkelkaart
+
+Zet je in een allocatie een trekking per cel als geschiktheid, dan kloppen de arealen en is de kaart onbruikbaar. De allocator maximaliseert de som van de geschiktheid, dus hij pakt de losse toppen van het ruisoppervlak, en die liggen als losse cellen van 25 bij 25 meter door elkaar. Exitcode 0, de opgave gehaald, en toch fout.
+
+De ingreep is de geschiktheid over een schijf te middelen voordat de allocator hem ziet. Dan komen er aaneengesloten gebieden boven de zaaglijn uit in plaats van losse toppen. Toegepast bij waterberging (`Suitability_Zichtjaar_T/Totaal_Geclusterd`, straal 100 m) en bij de natuurallocatie van zand (`SourceData/Grondgebruik/Natuur/.../Zand`, straal 500 m).
+
+Wil je ruis houden zonder spikkels, trek hem dan op een grover raster en middel hem daarna: het gemiddelde van honderd trekkingen ligt zo dicht op een half dat er geen relief overblijft, terwijl het gemiddelde van een handvol vanzelf tussen 0 en 1 blijft zonder normaliseren of afkappen.
+
+Let bij `discrete_alloc_sp` op de taakverdeling tussen de termen. Een term die voor alle typen gelijk is bepaalt welke cellen meedoen, maar valt bij de keuze tussen typen tegen elkaar weg. Welk type een cel wordt hangt dus uitsluitend af van het verschil tussen de typen. Wil je dat de typen als vlekken naast elkaar liggen en niet door elkaar heen, dan moet juist die verschilterm ruimtelijk glad zijn.
+
+Meet het, want met het oog op een uitgezoomde kaart zie je het niet. Het getal dat het vangt is het aandeel buurcellen binnen 50 meter dat dezelfde bestemming krijgt, gemiddeld over de gealloceerde cellen, afgezet tegen wat een willekeurige trekking uit dezelfde zeef zou geven. Bij zand ging dat van 0,19 naar 0,80.
 
 ## Er is geen CalcCache meer
 
