@@ -163,6 +163,36 @@ Template NatuurAlloc_T
 		attribute<Ha> Areaal_Kandidaat (Regio_src) := sum(const(1f, Domein), Domein/Regio_rel) * AdminDomain/NrHaPerCell
 		, Descr = "Hoeveel ruimte een regio uberhaupt biedt na de zeef. Diagnose bij een tekort: ligt het aan de zeef of aan de opgave.";
 
+		attribute<Float32> IsGealloceerd_AD  (AdminDomain) := float32(IsDefined(INL_Beheertype_rel_AD));
+		attribute<Float32> Buurt_Natuur_AD    (AdminDomain) := potential(IsGealloceerd_AD,     /Geography/Distmatrices_25m/pot50m/Flat2) / /Geography/Distmatrices_25m/pot50m/oppervlakte;
+		attribute<Float32> Buurt_Kandidaat_AD (AdminDomain) := potential(float32(IsKandidaat), /Geography/Distmatrices_25m/pot50m/Flat2) / /Geography/Distmatrices_25m/pot50m/oppervlakte;
+
+		parameter<Float32> Vulgraad := sum(IsGealloceerd_AD) / max_elem(float32(#Domein), 1f), Descr = "Welk deel van de kandidaatcellen natuur wordt.";
+
+		parameter<Float32> Aaneengeslotenheid := sum(IsGealloceerd_AD * Buurt_Natuur_AD) / max_elem(sum(IsGealloceerd_AD), 1f)
+		, Descr = "Hoe aaneengesloten ligt de nieuwe natuur. Gemeten als het aandeel van de dertien cellen binnen 50 meter dat ook natuur wordt, gemiddeld over alle cellen die natuur worden. De cel zelf telt mee, dus de ondergrens is 1 op 13, ofwel 0,077.
+
+					Dit is het getal waarop het spikkelpatroon uit #652 afgerekend wordt. Leg het naast Aaneengeslotenheid_Aselect hieronder: die zegt wat er uit zou komen als dezelfde hoeveelheid cellen willekeurig over de zeef was gestrooid.";
+
+		container Buurt_PerType :=
+			for_each_nedv(
+				Type_src/name
+				, 'potential(float32(Type_rel == value(' + string(id(Type_src)) + ', Type)), /Geography/Distmatrices_25m/pot50m/Flat2) / /Geography/Distmatrices_25m/pot50m/oppervlakte'
+				, AdminDomain
+				, Float32
+			);
+
+		attribute<Float32> Buurt_EigenType_AD (AdminDomain) := ='add(' + AsItemList('Buurt_PerType/' + Type_src/name + ' * float32(Type_rel == value(' + string(id(Type_src)) + ', Type))') + ')'
+		, Descr = "Het aandeel van de dertien cellen binnen 50 meter dat hetzelfde type krijgt als de cel zelf. De typen worden hier per stuk geteld en daarna weer bij elkaar geraapt, want GeoDMS kent geen operator die per cel het juiste veld uitkiest.";
+
+		parameter<Float32> Aaneengeslotenheid_Type := sum(IsGealloceerd_AD * Buurt_EigenType_AD) / max_elem(sum(IsGealloceerd_AD), 1f)
+		, Descr = "Aaneengeslotenheid, maar dan alleen de buren van hetzelfde type. Het verschil met Aaneengeslotenheid zegt of de typen als vlekken naast elkaar liggen of door elkaar heen. Bij drie typen die volledig door elkaar liggen komt dit getal op ongeveer een derde van Aaneengeslotenheid uit, bij zuivere vlekken op bijna hetzelfde getal.";
+
+		parameter<Float32> Aaneengeslotenheid_Aselect :=
+			(1f + (/Geography/Distmatrices_25m/pot50m/oppervlakte * (sum(IsGealloceerd_AD * Buurt_Kandidaat_AD) / max_elem(sum(IsGealloceerd_AD), 1f)) - 1f) * Vulgraad)
+				/ /Geography/Distmatrices_25m/pot50m/oppervlakte
+		, Descr = "Wat Aaneengeslotenheid zou zijn bij een willekeurige trekking uit de zeef: de cel zelf plus de buurcellen die kandidaat zijn maal de vulgraad, gedeeld door de dertien cellen in de schijf. De vergelijking van beide getallen is de toets, niet de hoogte van een van de twee.";
+
 		attribute<Ha> Claim_Totaal (Regio_src) := ='add('+AsItemList('Claim_src/'+Type_src/name)+')', Descr = "Opgave over alle typen samen, per regio.";
 		attribute<Ha> Krapte       (Regio_src) := Claim_Totaal - Areaal_Kandidaat, Descr = "Positief betekent dat de opgave niet in de zeef past, ongeacht hoe de allocator kiest.";
 
