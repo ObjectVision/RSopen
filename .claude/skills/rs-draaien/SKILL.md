@@ -1,0 +1,83 @@
+---
+name: rs-draaien
+description: Het RSopen-model draaien en een wijziging in cfg/ toetsen met GeoDmsRun, van een goedkope check per item tot een volledige allocatierun. Gebruik dit voordat je een configwijziging als werkend meldt, bij vragen over rekentijden, en wanneer een run gericht ingekort moet worden.
+---
+
+# RSopen draaien en toetsen
+
+Vier trappen, van goedkoop naar duur. Klim niet hoger dan de vraag vereist. Een wijziging melden als werkend zonder minstens trap 1 is niet toegestaan.
+
+## Trap 1: laadt het (seconden)
+
+```powershell
+& "C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "C:\ProjDir\RSopen_NL2120\cfg\main.dms" "/pad/naar/item"
+```
+
+Of via het meegeleverde script, dat de nieuwste build kiest, de tijd meet en de foutregels filtert:
+
+```powershell
+.\.claude\skills\rs-draaien\scripts\run-item.ps1 -Item "/Indicatoren/WLO_hoog_BAU/Zichtjaren/Y2030/Stand/Aantal_Woningen_Totaal"
+```
+
+Draai dit uit PowerShell, niet uit de Bash-tool. Die zet `/L` en `/pad/naar/item` om naar Windows-paden en dan faalt de aanroep.
+
+Exitcodes: 0 is goed, 1 is een rekenfout of een gefaalde IntegrityCheck, 2 is een parse- of laadfout. Foutregels staan in het log met `[E]`.
+
+De grens van deze trap: exit 0 op een groot attribuut zonder IntegrityCheck bewijst alleen parse, naamresolutie en domeincheck, dus UpdateMetaInfo. Een keten over negen miljoen cellen die in 0,002 s klaar is, is niet gematerialiseerd. Kijk altijd naar de rekentijd voordat je conclusies trekt. TIFFOpen-fouten op ontkoppelde bestanden vuren wel al bij UpdateMetaInfo, want die lezen de header.
+
+## Trap 2: klopt het (seconden tot minuten)
+
+Een assertie is een `IntegrityCheck` op het onderliggende item, met de exitcode als testuitslag:
+
+```
+attribute<float32> Som (Domein) := add(...), IntegrityCheck = "all(abs(this - 1f) < 0.001f)";
+```
+
+`IntegrityCheck = "this"` op een parameter die zelf de check is geeft "Invalid Recursion in UpdateMetaInfo". Zet de check dus op de data, niet op de conclusie.
+
+IntegrityChecks van suppliers vuren ook als je een afhankelijk item opvraagt, dus een check dieper in de keten werkt als kanarie.
+
+Werkelijke waarden zien gaat via een tekstbestand:
+
+```
+parameter<String> Waarde := string(sum(...))
+, StorageName = "='%LocalDataProjDir%/Diagnose/mijn_check.txt'"
+, StorageType = "str";
+```
+
+Semantiek van een operator of een randgeval bewijs je het snelst in een losse minimale .dms in de scratchpad, met eigen unitdeclaraties. Neem daar altijd een bewust falende kanarie in op, zodat je weet dat exit 1 ook echt werkt.
+
+## Trap 3: de ketentriggers (minuten)
+
+`CommitChecks` in `cfg/main.dms` dwingt hele deelketens af via ExplicitSuppliers: `MaakBaseData1`, `MaakBaseData2`, `MaakVariantData1`, `MaakVariantData2`, `MaakAllocatieFirstZichtjaar`, plus de drie claimrealisatie-checks. Bedoeld om voor een commit te zien of het model nog loopt, niet voor productie.
+
+`Diagnose.dms` levert de inhoudelijke controlewaarden. Aansturing via de omgevingsvariabelen `DiagCasus` en `DiagJaar`. Zie de skill rs-toetsen voor wat je met die waarden doet.
+
+## Trap 4: allocatie draaien
+
+Voor het testen van het allocatiemechanisme hoeft de hele sectorlijst niet mee. Beperk `ModelParameters/SectorAllocRegio` in `cfg/main/ModelParameters.dms` tot de regels die je nodig hebt: commentarieer de rest in `Elements/Text` uit en zet `unit<UInt8> SectorAllocRegio := range(uint8, 0b, <aantal>b)` op het overgebleven aantal. Let op de komma's: de eerste actieve regel heeft geen voorloopkomma, de rest wel. Terugzetten niet vergeten.
+
+De uitkomst voor de overgebleven sector is identiek aan die in de volledige run, mits die sector niet van verdringing door de weggelaten sectoren afhangt.
+
+Gemeten rekentijden, zichtjaar 2030, WLO_hoog_NbSGenuanceerd, op deze machine:
+
+| Wat | Tijd |
+|---|---|
+| volledige lijst, 7 regels, sinds de cumulatieve vormtoets van #643 | 72 min |
+| alleen Waterberging op Waterbergingsregio | 6,3 min |
+| alleen Wonen op NVM | 8 min |
+| alleen Werken op NVM, 30 iteraties | 18 min |
+| Wonen op NVM plus Waterberging | 12,6 min |
+| Diagnose-set met 30 indicatorwaarden, los van de allocatie | 7,3 min |
+
+Een volledig zichtjaar koud herbouwd kost ongeveer 64 minuten: basisdata circa 100 s, variantdata circa 230 s, allocatie circa 3.850 s, indicatoren circa 1.030 s, diagnose circa 460 s.
+
+Twee valkuilen bij het inkorten. `Classifications/Modellering/StandVar_Prep` hangt af van `SectorAllocRegio/Uq_Sectors/HasWerkenSector`, dus zonder werken verdwijnen de banen-standvariabelen en breekt alles wat daarop leunt. En de bestandsnaam van de standtifs bevat `SS-<aantal xSubsectors>`, maar `Sector/xSubsector` telt alle gedefinieerde sectoren en niet alleen de actieve, dus die naam blijft `SS-11` en bestaande tifs blijven vindbaar.
+
+Voor indicatorcontroles is de allocatie vaak helemaal niet nodig: met `StandAllocatieOntkoppeld` op TRUE, de default, leest de indicatorenkant de stand uit de tifs.
+
+## Voor je begint
+
+Draai `git status` en kijk naar de mtime van de bestanden die je gaat wijzigen, vlak voordat je schrijft. In deze werkkopie draaien regelmatig meerdere sessies tegelijk, geen aparte worktrees. Commit alleen je eigen bestanden met een expliciete `git add`.
+
+In een worktree resolvet `%LocalDataProjDir%` naar `C:/LocalData/<naam van de map boven cfg>`, waar de ontkoppelde data van het hoofdproject niet staat. End-to-end-tests op dataniveau kunnen daar dus niet. Leg geen junction naar `C:/LocalData/RSopen_NL2120` zonder dat expliciet af te stemmen: dat geeft schrijfrisico in de echte ontkoppelde data.

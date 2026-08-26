@@ -26,6 +26,12 @@ De regel over gedachtenstreepjes geldt ook buiten issues, dus in commit messages
 
 Schrijf verwijzingen altijd met hekje, dus #634 en niet "issue 634". Dit geldt in issues en comments, maar vooral ook in commit messages: zonder hekje herkent GitHub de verwijzing niet en verschijnt de commit niet in de tijdlijn van het issue.
 
-Zet de verwijzing in de eerste regel van de body van de commit message, niet in de onderwerpregel. Die blijft een korte beschrijving van de wijziging zelf.
+Begin de onderwerpregel van een commit message met het issuenummer, gevolgd door een korte beschrijving op dezelfde regel:
+
+```
+#634 Nieuwe natuur afgeleid uit de landgebruikskaart
+```
+
+Visual Studio toont in de commitlijst alleen die eerste regel, dus daar moet de verwijzing staan en niet in de body. Hoort een commit bij geen enkel issue, dan begint de onderwerpregel gewoon met de beschrijving. Raakt hij meerdere issues, zet het belangrijkste nummer vooraan en de rest in de body.
 
 Sluitende woorden als "Fixes #634" sluiten het issue automatisch zodra de commit in main belandt. Gebruik die alleen wanneer het issue daarmee echt af is.
