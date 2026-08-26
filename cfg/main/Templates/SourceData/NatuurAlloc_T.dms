@@ -67,16 +67,44 @@ Template NatuurAlloc_T
 		, Descr = "Rest heeft geen beheertype, dus die cellen vallen vanzelf uit INL_Beheertype_rel_AD en daarmee uit de oplegging.";
 	}
 
-	attribute<Bool> MagOpleggen  (AdminDomain) := !/SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Is_BebouwdGebied
-	, Descr = "De toets uit #641: binnen bestaand bebouwd gebied legt het model geen natuur op. Die toets staat hier in de zeef en niet achteraf op het resultaat zoals bij een levering. Dat verschil is wezenlijk: knip je hem er achteraf uit, dan haal je de opgave stilzwijgend niet, terwijl hij hier de hectares elders binnen dezelfde regio laat landen.";
+	parameter<Bool> NatuurNietOpPanden := TRUE
+	, Descr = "Weert de allocatie natuur van cellen waar een pand staat? Staat aan, dus ja. Zie #661.
+
+				De zeven van zand eisen agrarisch LGN, en dat is geen bewijs dat een cel onbebouwd is: de woningstand
+				komt uit BAG-panden zonder LGN-toets, en het legen gebeurt per cel. Een cel die op 25 meter modaal
+				agrarisch is kan gewoon woningen bevatten. Zonder deze toets sloopte de zandallocatie in
+				NbSGenuanceerd 1.037 woningen op cellen waar het bouwregime NietBouwen is, dus waar de levering de
+				bebouwing juist wil sparen. Dat is in strijd met #630, dat zegt dat in de beekdalen de bestaande
+				bebouwing blijft staan en er alleen geen nieuwbouw meer bij komt.
+
+				Uitzetten geeft het gedrag van voor #661 terug. Doe dat alleen om te meten, en leg de uitkomst dan
+				naast Controle/Krapte: de toets maakt de zeef kleiner en kan een opgave die eerst paste alsnog te
+				krap maken. Controle/Areaal_Verlies_Pandentoets zegt om hoeveel hectare het per regio gaat.";
+
+	attribute<Bool> MagOpleggen  (AdminDomain) := /BaseData/Omgeving/Opleggingsmasker/MagOpleggen
+	, Descr = "Het gedeelde opleggingsmasker: buiten bestaand bebouwd gebied (#641) en niet over exogeen grondgebruik, dus geen natuur op hoofdwegen, spoor, vliegvelden en begraafplaatsen.
+
+				Hier stond tot #661 een eigen kopie die alleen op bestaand bebouwd gebied toetste, waardoor de
+				allocatie wel op infrastructuur kon landen terwijl de leveringen dat al niet meer konden. Nu leest
+				dit hetzelfde item als VariantData/ExogeenOpleggen en als het diagnoseharnas.
+
+				De toets staat hier in de zeef en niet achteraf op het resultaat zoals bij een levering. Dat verschil
+				is wezenlijk: knip je hem er achteraf uit, dan haal je de opgave stilzwijgend niet, terwijl hij hier
+				de hectares elders binnen dezelfde regio laat landen.";
+
+	attribute<Bool> HeeftPanden  (AdminDomain) := NatuurNietOpPanden && /BaseData/Omgeving/Opleggingsmasker/HeeftPanden
+	, Descr = "Staat er een BAG-pand in de cel? Dezelfde toets die de landbouwzeef al kent, met hetzelfde item als bron. Zie NatuurNietOpPanden hierboven voor het waarom en de schakelaar.";
 
 	attribute<Bool> IsToegestaan (AdminDomain) := ='OR('+AsItemList('IsDefined(Geschiktheid_src/'+Type_src/name+')')+')'
 	, Descr = "Is hier tenminste een van de typen toegestaan? Dat volgt uit de nullen in Geschiktheid_src.";
 
 	attribute<Bool> IsInRegio    (AdminDomain) := IsDefined(Regio_src/Per_AdminDomain);
 
-	attribute<Bool> IsKandidaat  (AdminDomain) := IsInRegio && IsToegestaan && MagOpleggen && /Geography/rdc_meter/IsStudyArea_AdminDomain
+	attribute<Bool> IsKandidaat  (AdminDomain) := IsInRegio && IsToegestaan && MagOpleggen && !HeeftPanden && /Geography/rdc_meter/IsStudyArea_AdminDomain
 	, Descr = "De cellen waarover de allocatie loopt.";
+
+	attribute<Bool> IsKandidaat_ZonderPandentoets (AdminDomain) := IsInRegio && IsToegestaan && MagOpleggen && /Geography/rdc_meter/IsStudyArea_AdminDomain
+	, Descr = "Dezelfde zeef zonder de pandentoets. Wordt niet gealloceerd; staat er alleen om in Controle te kunnen zeggen hoeveel ruimte de pandentoets kost.";
 
 	unit<UInt64> Domein := select_with_org_rel(IsKandidaat)
 	, Descr = "Alleen de kandidaatcellen, niet het hele compacted domain. De cellen daarbuiten kunnen per definitie niets krijgen, en dit scheelt bij zand ruwweg een orde van grootte in rekentijd en geheugen."
@@ -162,6 +190,15 @@ Template NatuurAlloc_T
 
 		attribute<Ha> Areaal_Kandidaat (Regio_src) := sum(const(1f, Domein), Domein/Regio_rel) * AdminDomain/NrHaPerCell
 		, Descr = "Hoeveel ruimte een regio uberhaupt biedt na de zeef. Diagnose bij een tekort: ligt het aan de zeef of aan de opgave.";
+
+		attribute<Ha> Areaal_Kandidaat_ZonderPanden (Regio_src) := sum(float32(IsKandidaat_ZonderPandentoets), Regio_src/Per_AdminDomain) * AdminDomain/NrHaPerCell
+		, Descr = "Wat Areaal_Kandidaat zou zijn zonder de pandentoets uit #661. Op dezelfde manier geteld als Areaal_Kandidaat, dus cellen tellen en daarna keer de celgrootte, zodat het verschil tussen de twee geen afrondingsruis oplevert.";
+
+		attribute<Ha> Areaal_Verlies_Pandentoets (Regio_src) := Areaal_Kandidaat_ZonderPanden - Areaal_Kandidaat
+		, Descr = "Hoeveel ruimte de pandentoets een regio kost. Leg dit naast Krapte hieronder: pas als het verlies de regio over de streep duwt gaat de opgave er werkelijk aan onderdoor. Nul zodra NatuurNietOpPanden uit staat.";
+
+		parameter<Ha> Verlies_Pandentoets_NL := sum(Areaal_Verlies_Pandentoets)
+		, Descr = "Hetzelfde landelijk. Dit is het getal dat bij het aanzetten van de pandentoets gerapporteerd moet worden, naast Tekort_NL.";
 
 		attribute<Float32> IsGealloceerd_AD  (AdminDomain) := float32(IsDefined(INL_Beheertype_rel_AD));
 		attribute<Float32> Buurt_Natuur_AD    (AdminDomain) := potential(IsGealloceerd_AD,     /Geography/Distmatrices_25m/pot50m/Flat2) / /Geography/Distmatrices_25m/pot50m/oppervlakte;
