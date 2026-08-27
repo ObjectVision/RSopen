@@ -17,6 +17,11 @@ Zoek zelf de actuele paden. Aanknopingspunten in de open configuratie:
 `Templates/CarbanStorageSequestration_T.dms`, `Templates/Landgebruikskaart`,
 `Classifications/Grondgebruik` en de indicatoren over natuur en groen.
 
+## Wiki
+
+Lees vooraf de pagina's die bij jouw vak horen:
+`Uitwerking-natuur`, `Carbon-Storage-and-Sequestration`, `Bereikbaarheid-groen`, `Mortaliteit-agv-groenveranderingen`, `Landgebruikskaart`, `Landgebruikskaart-NL2120`, `Vruchtbare-landbouwgrond`.
+
 ## Wat je toetst
 
 Beoordeel de ruimtelijke samenhang van toegewezen natuur. Losse cellen tussen bestaand gebruik zijn

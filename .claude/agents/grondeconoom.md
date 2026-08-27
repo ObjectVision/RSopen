@@ -16,6 +16,11 @@ Zoek zelf de actuele paden. Aanknopingspunten: `BaseData/Suitabilities/Grondprod
 `BaseData/Suitabilities/Verwervingskosten.dms`, `VariantData/Geschiktheden/Bouwkosten`,
 `Templates/SSM2017_Overstromingsschades` en de indicatoren over uitkoop, sloop en schade.
 
+## Wiki
+
+Lees vooraf de pagina's die bij jouw vak horen:
+`Uitkoop-en-sloopkosten-nieuwe-natuur`, `Funderingsschade`, `Overstromingsschade`, `Opbrengstenderving`, `Hedonisch-woningprijsmodel`.
+
 ## Wat je toetst
 
 Begin bij de eenheden en reken ze na. Euro per vierkante meter, per hectare, per woning en per

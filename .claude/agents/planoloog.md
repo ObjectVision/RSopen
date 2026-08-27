@@ -16,6 +16,11 @@ Zoek zelf de actuele paden. Aanknopingspunten: `Templates/Beschikbaarheden/Zeef_
 zeefbestanden in die map, `VariantData/Plannen.dms`, `VariantData/Trede.dms`,
 `VariantData/Geschiktheden`, `VariantData/Dichtheid.dms` en de tabellen met ontwikkelpakketten.
 
+## Wiki
+
+Lees vooraf de pagina's die bij jouw vak horen:
+`Beschikbaarheid`, `Restrictie-generatie`, `Plancapaciteit`, `Geschiktheid`, `Allocatie-procedure-in-formules`, `Overflow`, `Tijdsdynamiek`, `Claimrealisatie`.
+
 ## Wat je toetst
 
 Reconstrueer de zeef als beslisreeks. Wat sluit uit, in welke volgorde, en met welke drempel. Zoek
