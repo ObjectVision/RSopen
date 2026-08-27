@@ -1,0 +1,40 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De bouwperiodeterm van de hedonische prijs van de bestaande voorraad, per woningtype (WP4) per cel (#675).
+// De schatting kent zeven bouwperiodedummies plus een referentieklasse (bouwjaar vanaf 2002). Wie geen dummy
+// invult legt die referentieklasse op, en dat is de duurste klasse. Deze template vult de dummies wel in, met
+// het bouwjaar per woning uit de BAG.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Bouwperiode_T
+: Descr = "De bouwperiodeterm van de hedonische prijs van de bestaande voorraad van een woningtype, per cel (#675)."
+{
+	parameter</Classifications/Vastgoed/WP4> WP4_id;
+	//
+
+	parameter<String> WP4_name := /Classifications/Vastgoed/WP4/name[WP4_id];
+
+	unit<UInt8>  Bouwperiode := /Classifications/Vastgoed/Bouwperiode;
+	unit<UInt32> vbo_woon    := ='/SourceData/Vastgoed/BAG/PerJaar/Y'+string(/ModelParameters/BAG_RecentYear)+'/VBO/Per_Gebruiksdoel/woon/Select', Descr = "Dezelfde woon-vbo's als waaruit de lnsize-term van Woningwaarde_perWoningType_T zijn celgemiddelde haalt, zodat de bouwperiodeverdeling bij dezelfde voorraad hoort.";
+
+	attribute<Float32> Coef (Bouwperiode) := =
+		'union_data(Bouwperiode, '+asItemList('MakeDefined(/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4_name+'/Result/'+Bouwperiode/name+', 0f)')+')'
+	, Descr = "De geschatte coefficient per bouwperiode voor dit woningtype. De referentieklasse staat in de estimates-set op 0; de MakeDefined vangt een oudere set op waarin een klasse ontbreekt, die levert dan een bijdrage van 0 in plaats van een prijs van null.";
+
+	attribute<Bool>    Telt       (vbo_woon) := vbo_woon/WP4_rel == WP4_id && IsDefined(vbo_woon/Bouwjaar_trunc), Descr = "Woningen van dit type met een bekend bouwjaar. Een vbo zonder gerelateerd pand in de pandenset heeft geen bouwjaar en telt niet mee in het gemiddelde; hij krijgt daarmee impliciet het celgemiddelde van de woningen die wel een bouwjaar hebben.";
+	attribute<Float32> CoefPerVBO (vbo_woon) := Telt ? Coef[classify(vbo_woon/Bouwjaar_trunc, Bouwperiode/ClassBreaks)] : 0f;
+
+	attribute<Float32> Aantal     (AdminDomain) := sum(Float32(Telt), vbo_woon/AdminDomain_rel);
+	attribute<Float32> Som        (AdminDomain) := sum(CoefPerVBO,    vbo_woon/AdminDomain_rel);
+	attribute<Float32> Gemiddelde (AdminDomain) := Aantal > 0f ? Som / Aantal : 0f, Descr = "Het naar aantal woningen gewogen gemiddelde van de bouwperiodecoefficient in deze cel. Dat is de logische tegenhanger van de andere gemiddelde kenmerken in dezelfde formule: net als nrooms, d_maintgood en d_highrise gaat het gemiddelde de exponent in, zodat de prijs geldt voor de gemiddelde woning van dit type in deze cel. Cellen zonder voorraad van dit type krijgen 0, maar die vallen in de prijsformule toch al weg op de lnsize-guard.";
+
+	attribute<Float32> Term       (AdminDomain) := = /ModelParameters/Wonen/BouwperiodeInVoorraadprijs ? 'Gemiddelde' : 'const(0f, AdminDomain)', Descr = "De term die in de prijs van de bestaande voorraad wordt opgeteld. Op FALSE staat hier een 0 en waardeert het model de hele voorraad als bouwjaar vanaf 2002, het gedrag van voor #675.";
+}
