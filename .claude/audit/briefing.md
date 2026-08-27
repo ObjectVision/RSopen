@@ -68,6 +68,25 @@ Lokaal kun je daarnaast uitdraaien lezen, bijvoorbeeld csv-exports en GeoTIFF-be
 Je wijzigt de configuratie niet. Je leest, je meet en je rapporteert. Een reparatievoorstel
 mag je opschrijven, maar je voert hem niet uit.
 
+## Skills in deze repo
+
+Staat er een map `.claude/skills`, gebruik dan wat daarin staat en herhaal het niet. Waar een skill
+iets anders zegt dan deze briefing, gaat de skill voor, want die hoort bij de projectconfiguratie.
+
+`geodms-valkuilen` geeft de volledige lijst stille fouten in GeoDMS, ruimer dan de vier hierboven.
+Lees hem voordat je een oordeel velt over een rekenregel.
+
+`rs-toetsen` beschrijft hoe een uitkomst inhoudelijk wordt getoetst, in drie lagen: interne
+consistentie, orde van grootte tegen referentiewaarden, en ruimtelijke patronen. Houd die volgorde
+aan. Een patroon analyseren terwijl een randtotaal niet sluit is verspilde moeite.
+
+`rs-draaien` zegt wat een controle kost en hoe je hem zo goedkoop mogelijk houdt.
+
+`rs-fingerprints` beantwoordt de vraag of een weggeschreven bestand werkelijk opnieuw is gemaakt.
+Gebruik hem zodra je vermoedt dat een resultaat van vóór een wijziging stamt.
+
+`rs-issues` regelt tekst die op GitHub terechtkomt.
+
 ## De bewijsregel
 
 Elke bevinding heeft een vindplaats: een bestand met regelnummer, of een indicator met een
@@ -109,6 +128,12 @@ Wat je hebt getoetst en wat klopte. Dit is even belangrijk als de bevindingen.
 ## Niet kunnen nagaan
 Wat buiten bereik bleef en wat je ervoor nodig hebt.
 ```
+
+## Je plaatst zelf niets
+
+Je rapport is een concept. Je plaatst geen issue, geen comment en geen reactie op GitHub, ook niet
+als je bevinding hard is. Iemand anders leest hem en beslist wat ermee gebeurt. De repo is openbaar
+en elke comment bereikt direct alle betrokkenen bij PBL, Deltares en de VU.
 
 ## Schrijfregels
 
