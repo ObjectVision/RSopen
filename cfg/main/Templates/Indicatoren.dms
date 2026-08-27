@@ -263,7 +263,7 @@ Template Zichtjaar_T
 		parameter<Float32>   FractieGroenWerken                 := 1f - min_elem(VariantParameters/FractiesGroenInWerken/Default/Verhard * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f);
 		parameter<Float32>   FractieGroenVerblijfsrecreatie     := 1f - min_elem(VariantParameters/FractiesGroenInVerblijfsrecreatie/Default/Verhard * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f);
 		
-		unit<UInt32> Regio  := /SourceData/RegioIndelingen/Provincie;
+		unit<UInt32> Regio  := =/ModelParameters/Advanced/IndicatorRegio_path;
 		unit<uint8>  GroenK := /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen;
 		
 		unit<uint8> Indicator : NrOfRows = 3 
@@ -578,142 +578,76 @@ Template Zichtjaar_T
 	
 	#include<Woningwaarde.dms>
 	
-	container SloopVanBestaandeBebouwing
-	: Descr = "Welke cellen worden leeggemaakt, en hoeveel woningen en banen daarin stonden. Het masker komt uit VariantData/<variant>/Sloop, dezelfde bron als de allocatie gebruikt, zodat indicator en model per definitie niet uit elkaar kunnen lopen.
+	#include<SloopAlsGevolg.dms>
 
-				Dit dekt alleen de sloop die uit het beleid volgt. Sloop bij herontwikkeling loopt via de sloopleeftijd in de
-				zeef en zit hier niet in; sloop voor waterberging in het veen staat apart in UitkoopEnSloopkostenWaterbergingVeen (#636).
+	container Sloopmaskers
+	: Descr = "Waarom wordt een cel leeggemaakt? Drie oorzaken, als maskers die elkaar uitsluiten (#658). Hiervoor stond hier een enkele indicator die de eerste twee oorzaken op een hoop gooide en de derde helemaal miste.
 
-				Let op dat dit niet met het zichtjaar meebeweegt. Het leegmaken gebeurt in het eerste zichtjaar en daarna houdt
-				de zeef die cellen leeg, dus als cumulatieve sloop sinds het basisjaar klopt hetzelfde getal in elk zichtjaar.
-				Wordt de oplegging ooit zichtjaarafhankelijk, dan moet hier een toets bij."
+				De maskers komen uit dezelfde bronnen die de allocatie zelf gebruikt, zodat indicator en model per definitie niet uit elkaar kunnen lopen: VariantData/<variant>/Sloop voor de twee opgelegde routes, en de gealloceerde stand voor waterberging.
+
+				De volgorde waarin een cel wordt toegewezen volgt de volgorde waarin het model handelt. In het eerste zichtjaar leegt de oplegging de cel, langs route een (er komt nieuwe natuur of water) of route twee (het bouwregime zegt slopen). Pas daarna alloceert het model, en waterberging kan alleen nog landen op een cel die de oplegging heeft overgeslagen. Wat de oplegging al heeft leeggemaakt telt dus niet nog een keer mee bij waterberging.
+
+				Let op dat de zeef die volgorde maar half afdwingt. Zeef_T/IsRestrictief_DoorExogeenopleggen houdt alle sectoren weg van de opgelegde cellen, dus route een en waterberging overlappen sowieso niet. Het bouwregime sluit via Zeef_Basisjaar_T/OpSlotDoorLandschap alleen wonen en werken, dus waterberging kan wel op een cel landen die het bouwregime al had geleegd. Daar is de aftrek hieronder echt nodig."
 	{
-		attribute<bool>   WordtGesloopt (CompactedAdminDomain) := ='/VariantData/'+variant_name+'/Sloop/Totaal'
-		, Descr = "Wijkt de bestaande bebouwing hier? Een verwijzing naar de ene definitie in VariantData, niet een eigen som.";
-		attribute<woning> Wonen                                      (CompactedAdminDomain) := ='WordtGesloopt ? /Allocatie/'+casus_name+'/StartState_metBAGnieuwbouw/Wonen/totaal : 0[woning]'; //, StorageName = "=replace(StorageStr, '@V@', 'Wonen')", StorageType = "gdalwrite.grid";
-		attribute<job>    Werken                                     (CompactedAdminDomain) := ='WordtGesloopt ? /Allocatie/'+casus_name+'/StartState_metBAGnieuwbouw/Werken/totaal : 0[job]'; //, StorageName = "=replace(StorageStr, '@V@', 'Werken')", StorageType = "gdalwrite.grid";
-		// attribute<woning> Wonen                                      (CompactedAdminDomain) := ='WordtGesloopt ? /Allocatie/'+casus_name+'/StartState_metBAGnieuwbouw/Wonen/totaal : 0[woning]', StorageName = "=replace(StorageStr, '@V@', 'Wonen')", StorageType = "gdalwrite.grid";
-		// attribute<job>    Werken                                     (CompactedAdminDomain) := ='WordtGesloopt ? /Allocatie/'+casus_name+'/StartState_metBAGnieuwbouw/Werken/totaal : 0[job]', StorageName = "=replace(StorageStr, '@V@', 'Werken')", StorageType = "gdalwrite.grid";
-		
-		// parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/SloopVanBestaandeBebouwing_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
-	}
-	
-	// Kosten van de sloop die volgt uit exogeen opgelegde nieuwe natuur (#519). Beide indicatoren maskeren een bestaande per-cel kostenkaart (uit de wonen-suitability) met de cellen die door de oplegging leeggemaakt worden.
-	container UitkoopEnSloopkostenNieuweNatuur
-	: Descr = "Issues #520 (uitkoopkosten) en #549 (sloopkosten) van de woningen die gesloopt worden als gevolg van exogeen opgelegde nieuwe natuur (#519)."
-	{
-		attribute<Bool> IsSloopCel (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, SloopVanBestaandeBebouwing/WordtGesloopt), FALSE)
-		, Descr = "Cel die door het beleid wordt leeggemaakt; bestaande woningen worden daar gesloopt. Welke cellen dat zijn bepaalt VariantData/<variant>/Sloop, langs twee regels: waar het model een nieuw landgebruik oplegt, en waar het bouwregime Slopen is.";
+		attribute<Bool> DoorExogeneOplegging (AdminDomain) := ='MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, /VariantData/'+Variant_name+'/Sloop/DoorExogeneOplegging), FALSE)'
+		, Descr = "Route een: er wordt gesloopt waar het model een nieuw landgebruik oplegt, natuur of water. Zie de toelichting bij VariantData/<variant>/Sloop.";
 
-		attribute<Woning> GesloopteWoningen (AdminDomain) := IsSloopCel ? MakeDefined(StandBasisjaar/Aantal_Woningen_Totaal, 0[Woning]) : 0[Woning]
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/GesloopteWoningen_NieuweNatuur_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Issue #519: het aantal woningen uit het basisjaar dat in de leeggemaakte cellen stond, en dus wijkt voor de exogeen opgelegde nieuwe natuur. De kosten daarvan staan hieronder.";
-		parameter<Woning> GesloopteWoningen_Per_NL := sum(GesloopteWoningen), Descr = "Landelijk totaal. Staat naast het attribuut en niet erin, want een parameter binnen een attribuut met grid-opslag wordt meegeschreven en faalt.";
+		attribute<Bool> DoorBouwregime       (AdminDomain) := ='MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, /VariantData/'+Variant_name+'/Sloop/DoorBouwregime), FALSE)'
+		, Descr = "Route twee: er wordt gesloopt waar het bouwregime van het landschapstype Slopen is, ook waar geen natuur voor in de plaats komt. Dit zijn de sloopkaarten uit de leveringen veen, kust en rivieren. Buiten NbSGenuanceerd is dit masker leeg.";
 
-		attribute<Eur>  Uitkoopkosten     (AdminDomain) := IsSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal, 0[Eur]) : 0[Eur]
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_NieuweNatuur_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Issue #520: vastgoedwaarde (verwervingskosten) van de bestaande woningen in de leeggemaakte cellen.";
-		 
-		attribute<Eur>  Sloopkosten       (AdminDomain) := IsSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Sloopkosten/Totaal, 0[Eur]) : 0[Eur]
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_NieuweNatuur_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Issue #549: sloopkosten (m2 per WP4 maal eenheidskost) van de bestaande woningen in de leeggemaakte cellen.";
-		
-		parameter<Eur>  Uitkoopkosten_Per_NL := sum(Uitkoopkosten), Descr = "Landelijk totaal, nominaal. Staat naast het attribuut om dezelfde reden als GesloopteWoningen_Per_NL.";
-		parameter<Eur>  Sloopkosten_Per_NL   := sum(Sloopkosten),   Descr = "Landelijk totaal, nominaal.";
-		
-		// #651: uitkoop en sloop zijn eenmalige uitgaven op het moment dat de cel wordt leeggemaakt, terwijl de kaarten hierboven
-		// cumulatief zijn sinds het basisjaar. De NCW wordt daarom per periode opgebouwd: wat er in deze periode bijkwam krijgt de
-		// factor van dit zichtjaar, en dat komt bovenop de NCW van het vorige zichtjaar. De exogene oplegging treedt in het eerste
-		// zichtjaar in werking, dus in de praktijk valt hier alles in de eerste periode; de opbouw staat er zodat het ook klopt
-		// wanneer die oplegging later zichtjaarafhankelijk zou worden.
-		attribute<Bool> IsNieuweSloopCel (AdminDomain) := = IsFirstAllocYear
-			? 'IsSloopCel'
-			: 'IsSloopCel && !PrevIndicatoren/UitkoopEnSloopkostenNieuweNatuur/IsSloopCel'
-		, Descr = "Cel die in deze periode is leeggemaakt, dus nog niet in het vorige zichtjaar.";
+		attribute<Bool> WordtGesloopt        (AdminDomain) := DoorExogeneOplegging || DoorBouwregime
+		, Descr = "De hele opgelegde sloop, dus VariantData/<variant>/Sloop/Totaal op het AdminDomain. Dit is wat de allocatie in het eerste zichtjaar leegt.";
 
-		attribute<Eur>  Uitkoopkosten_DezePeriode (AdminDomain) := IsNieuweSloopCel ? Uitkoopkosten : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
-		attribute<Eur>  Sloopkosten_DezePeriode   (AdminDomain) := IsNieuweSloopCel ? Sloopkosten   : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
-
-		attribute<Eur>  Uitkoopkosten_NCW (AdminDomain) := = IsFirstAllocYear
-			? 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor'
-			: 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/UitkoopEnSloopkostenNieuweNatuur/Uitkoopkosten_NCW'
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_NieuweNatuur_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Issue #651: netto contante waarde in het basisjaar van de uitkoopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
-		parameter<Eur>  Uitkoopkosten_NCW_Per_NL := sum(Uitkoopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
-
-		attribute<Eur>  Sloopkosten_NCW   (AdminDomain) := = IsFirstAllocYear
-			? 'Sloopkosten_DezePeriode * Verdiscontering/Factor'
-			: 'Sloopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/UitkoopEnSloopkostenNieuweNatuur/Sloopkosten_NCW'
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_NieuweNatuur_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Issue #651: netto contante waarde in het basisjaar van de sloopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
-		parameter<Eur>  Sloopkosten_NCW_Per_NL := sum(Sloopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
-	}
-	
-	// Kosten van de sloop die volgt uit gealloceerde waterberging in het veen (#575). Zelfde opzet als UitkoopEnSloopkostenNieuweNatuur hierboven: dezelfde per-cel kostenkaarten uit de wonen-suitability, met een ander sloopmasker.
-	container UitkoopEnSloopkostenWaterbergingVeen
-	: Descr = "Issue #636: uitkoop- en sloopkosten van de bestaande woningen die moeten wijken voor waterberging in het veen. Waterberging wordt gealloceerd en niet exogeen opgelegd, dus het masker komt uit de allocatie (Stand/Sector_rel) en niet uit ExogeenOpleggen. Conform #568 tellen alleen kosten mee waar het ruimtegebruik verandert ten opzichte van het basisjaar: Stand/Sector_rel is alleen gevuld waar de allocatie sinds het basisjaar heeft toegeslagen, en de kostenkaarten staan op nul waar in het basisjaar geen woningen stonden."
-	{
-		attribute<Bool> IsVeenDeelgebied   (AdminDomain) := MakeDefined(!/SourceData/RegioIndelingen/Waterbergingsregio/IsRestRegio[/SourceData/RegioIndelingen/Waterbergingsregio/Per_AdminDomain], FALSE)
+		attribute<Bool> IsVeenDeelgebied     (AdminDomain) := MakeDefined(!/SourceData/RegioIndelingen/Waterbergingsregio/IsRestRegio[/SourceData/RegioIndelingen/Waterbergingsregio/Per_AdminDomain], FALSE)
 		, Descr = "Ligt de cel in een van de acht veen-deelgebieden waarvoor Deltares een waterbergingsopgave levert (#575)? Buiten die deelgebieden is de claim nul, dus dit vlaggetje hoort niets af te snijden; het staat er om de indicator te begrenzen tot waar hij over gaat.";
-		
-		attribute<Bool> IsWaterbergingsCel (AdminDomain) := MakeDefined(Stand/Sector_rel == /Classifications/Actor/Sector/V/Waterberging, FALSE)
+
+		attribute<Bool> IsWaterbergingsCel   (AdminDomain) := MakeDefined(Stand/Sector_rel == /Classifications/Actor/Sector/V/Waterberging, FALSE)
 		, Descr = "Cel die aan de sector Waterberging is toegewezen. Stand/Sector_rel houdt de toewijzing van eerdere perioden vast, dus dit is cumulatief ten opzichte van het basisjaar.";
-		
-		attribute<Bool> IsSloopCel         (AdminDomain) := IsWaterbergingsCel && IsVeenDeelgebied
-		, Descr = "Cel die voor waterberging in het veen wordt leeggemaakt; bestaande woningen worden daar gesloopt.";
-		
-		attribute<Woning> GesloopteWoningen (AdminDomain) := IsSloopCel ? MakeDefined(StandBasisjaar/Aantal_Woningen_Totaal, 0[Woning]) : 0[Woning]
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/GesloopteWoningen_WaterbergingVeen_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Het aantal woningen uit het basisjaar dat wijkt voor gealloceerde waterberging in het veen (#636, tegenhanger van #519).";
-		parameter<Woning> GesloopteWoningen_Per_NL := sum(GesloopteWoningen), Descr = "Landelijk totaal. Staat naast het attribuut en niet erin, want een parameter binnen een attribuut met grid-opslag wordt meegeschreven en faalt.";
 
-		attribute<Eur>  Uitkoopkosten      (AdminDomain) := IsSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal, 0[Eur]) : 0[Eur]
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_WaterbergingVeen_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Vastgoedwaarde (verwervingskosten) van de bestaande woningen in de cellen die voor waterberging worden leeggemaakt. Zelfde kostenkaart als bij nieuwe natuur (#520).";
-		
-		attribute<Eur>  Sloopkosten        (AdminDomain) := IsSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Sloopkosten/Totaal, 0[Eur]) : 0[Eur]
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_WaterbergingVeen_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Sloopkosten (m2 per WP4 maal eenheidskost) van diezelfde woningen. Zelfde kostenkaart als bij nieuwe natuur (#549).";
-		
-		parameter<Eur>  Uitkoopkosten_Per_NL := sum(Uitkoopkosten), Descr = "Landelijk totaal, nominaal. Staat naast het attribuut om dezelfde reden als GesloopteWoningen_Per_NL.";
-		parameter<Eur>  Sloopkosten_Per_NL   := sum(Sloopkosten),   Descr = "Landelijk totaal, nominaal.";
+		attribute<Bool> NieuweNatuur         (AdminDomain) := DoorExogeneOplegging
+		, Descr = "Oorzaak een: de cel wordt leeggemaakt omdat het model er nieuwe natuur of water oplegt (#519).";
 
-		// #651: uitkoop en sloop zijn eenmalige uitgaven op het moment dat de cel wordt leeggemaakt, terwijl de kaarten hierboven
-		// cumulatief zijn sinds het basisjaar. De NCW wordt daarom per periode opgebouwd: wat er in deze periode bijkwam krijgt de
-		// factor van dit zichtjaar, en dat komt bovenop de NCW van het vorige zichtjaar. Waterberging wordt gealloceerd, dus er
-		// komen in elk zichtjaar cellen bij en doet die opbouw er echt toe: een cel die in 2040 is leeggemaakt hoort de factor van
-		// 2040 te krijgen en niet die van 2120. Het zichtjaar aan het eind van de periode geldt als het jaar van de uitgave;
-		// binnen een periode is niet bekend wanneer de cel precies aan de beurt was.
-		attribute<Bool> IsNieuweSloopCel (AdminDomain) := = IsFirstAllocYear
-			? 'IsSloopCel'
-			: 'IsSloopCel && !PrevIndicatoren/UitkoopEnSloopkostenWaterbergingVeen/IsSloopCel'
-		, Descr = "Cel die in deze periode is leeggemaakt, dus nog niet in het vorige zichtjaar.";
+		attribute<Bool> OverigeBouwstenen    (AdminDomain) := DoorBouwregime && !DoorExogeneOplegging
+		, Descr = "Oorzaak twee: het bouwregime van het landschapstype zegt slopen en er komt geen oplegging op de cel. Dat is de sloop die uit de bouwstenenkaarten volgt zonder dat er natuur voor in de plaats komt; in NbSGenuanceerd vooral de agrarische ecotopen bij rivieren en het open water van de veenbouwstenen 9a en 9b zolang ExogeenWaterOpleggen uit staat. De aftrek van route een voorkomt dubbeltelling met oorzaak een.";
 
-		attribute<Eur>  Uitkoopkosten_DezePeriode (AdminDomain) := IsNieuweSloopCel ? Uitkoopkosten : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
-		attribute<Eur>  Sloopkosten_DezePeriode   (AdminDomain) := IsNieuweSloopCel ? Sloopkosten   : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
+		attribute<Bool> WaterbergingVeen     (AdminDomain) := IsWaterbergingsCel && IsVeenDeelgebied && !WordtGesloopt
+		, Descr = "Oorzaak drie: de cel wordt leeggemaakt voor gealloceerde waterberging in het veen (#575, #636). Anders dan de andere twee wordt waterberging niet opgelegd maar gealloceerd, dus het masker komt uit de stand. De aftrek van de hele opgelegde sloop voorkomt dat een cel die in het eerste zichtjaar al door de oplegging of het bouwregime is geleegd hier nog een keer wordt geteld.";
 
-		attribute<Eur>  Uitkoopkosten_NCW (AdminDomain) := = IsFirstAllocYear
-			? 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor'
-			: 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/UitkoopEnSloopkostenWaterbergingVeen/Uitkoopkosten_NCW'
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_WaterbergingVeen_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Issue #651: netto contante waarde in het basisjaar van de uitkoopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
-		parameter<Eur>  Uitkoopkosten_NCW_Per_NL := sum(Uitkoopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
+		attribute<UInt8> AantalOorzaken      (AdminDomain) := uint8(NieuweNatuur) + uint8(OverigeBouwstenen) + uint8(WaterbergingVeen)
+		, IntegrityCheck = "all(this <= 1b)"
+		, Descr = "Toets op de eis uit #658 dat de drie sloopindicatoren niet dubbel mogen tellen: geen enkele cel mag aan meer dan een oorzaak worden toegeschreven. Faalt de check, dan is er een route bijgekomen die de aftrekken hierboven niet kennen.";
 
-		attribute<Eur>  Sloopkosten_NCW   (AdminDomain) := = IsFirstAllocYear
-			? 'Sloopkosten_DezePeriode * Verdiscontering/Factor'
-			: 'Sloopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/UitkoopEnSloopkostenWaterbergingVeen/Sloopkosten_NCW'
-		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_WaterbergingVeen_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-		, StorageType = "gdalwrite.grid"
-		, Descr = "Issue #651: netto contante waarde in het basisjaar van de sloopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
-		parameter<Eur>  Sloopkosten_NCW_Per_NL := sum(Sloopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
+		parameter<ha> Opp_NieuweNatuur      := sum(float32(NieuweNatuur)      * AdminDomain/NrHaPerCell);
+		parameter<ha> Opp_OverigeBouwstenen := sum(float32(OverigeBouwstenen) * AdminDomain/NrHaPerCell);
+		parameter<ha> Opp_WaterbergingVeen  := sum(float32(WaterbergingVeen)  * AdminDomain/NrHaPerCell);
+	}
+
+	container SloopAlsGevolgVanNieuweNatuur      := SloopAlsGevolg_T('NieuweNatuur',      Sloopmaskers/NieuweNatuur)
+	, Descr = "Sloop als gevolg van exogeen opgelegde nieuwe natuur (#519, #520, #549). Heette tot #658 UitkoopEnSloopkostenNieuweNatuur en telde toen ook de sloop door het bouwregime mee; die zit nu in SloopAlsGevolgVanOverigeBouwstenen.";
+
+	container SloopAlsGevolgVanWaterbergingVeen  := SloopAlsGevolg_T('WaterbergingVeen',  Sloopmaskers/WaterbergingVeen)
+	, Descr = "Sloop als gevolg van gealloceerde waterberging in het veen (#575, #636). Heette tot #658 UitkoopEnSloopkostenWaterbergingVeen.";
+
+	container SloopAlsGevolgVanOverigeBouwstenen := SloopAlsGevolg_T('OverigeBouwstenen', Sloopmaskers/OverigeBouwstenen)
+	, Descr = "Sloop als gevolg van de sloopkaarten uit de landschapsleveringen, zonder dat er nieuwe natuur voor in de plaats komt (#658). Dit deel zat eerder ongemerkt in de natuurindicator.";
+
+	container SloopTotaal
+	: Descr = "De drie oorzaken bij elkaar. Mag zonder meer opgeteld worden omdat de maskers in Sloopmaskers elkaar uitsluiten; de IntegrityCheck op Sloopmaskers/AantalOorzaken bewaakt dat."
+	{
+		unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
+
+		attribute<Woning> GesloopteWoningen_Per_Regio (Regio) := SloopAlsGevolgVanNieuweNatuur/GesloopteWoningen_Per_Regio + SloopAlsGevolgVanWaterbergingVeen/GesloopteWoningen_Per_Regio + SloopAlsGevolgVanOverigeBouwstenen/GesloopteWoningen_Per_Regio;
+		attribute<Job>    GesloopteBanen_Per_Regio    (Regio) := SloopAlsGevolgVanNieuweNatuur/GesloopteBanen_Per_Regio    + SloopAlsGevolgVanWaterbergingVeen/GesloopteBanen_Per_Regio    + SloopAlsGevolgVanOverigeBouwstenen/GesloopteBanen_Per_Regio;
+		attribute<Eur>    Uitkoopkosten_Per_Regio     (Regio) := SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_Per_Regio     + SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_Per_Regio     + SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_Per_Regio;
+		attribute<Eur>    Sloopkosten_Per_Regio       (Regio) := SloopAlsGevolgVanNieuweNatuur/Sloopkosten_Per_Regio       + SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_Per_Regio       + SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_Per_Regio;
+		attribute<Eur>    Uitkoopkosten_NCW_Per_Regio (Regio) := SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_NCW_Per_Regio + SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_NCW_Per_Regio + SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_NCW_Per_Regio;
+		attribute<Eur>    Sloopkosten_NCW_Per_Regio   (Regio) := SloopAlsGevolgVanNieuweNatuur/Sloopkosten_NCW_Per_Regio   + SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_NCW_Per_Regio   + SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_NCW_Per_Regio;
+
+		parameter<Woning> GesloopteWoningen_Per_NL := SloopAlsGevolgVanNieuweNatuur/GesloopteWoningen_Per_NL + SloopAlsGevolgVanWaterbergingVeen/GesloopteWoningen_Per_NL + SloopAlsGevolgVanOverigeBouwstenen/GesloopteWoningen_Per_NL;
+		parameter<Job>    GesloopteBanen_Per_NL    := SloopAlsGevolgVanNieuweNatuur/GesloopteBanen_Per_NL    + SloopAlsGevolgVanWaterbergingVeen/GesloopteBanen_Per_NL    + SloopAlsGevolgVanOverigeBouwstenen/GesloopteBanen_Per_NL;
+		parameter<Eur>    Uitkoopkosten_Per_NL     := SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_Per_NL     + SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_Per_NL     + SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_Per_NL;
+		parameter<Eur>    Sloopkosten_Per_NL       := SloopAlsGevolgVanNieuweNatuur/Sloopkosten_Per_NL       + SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_Per_NL       + SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_Per_NL;
+		parameter<Eur>    Uitkoopkosten_NCW_Per_NL := SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_NCW_Per_NL + SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_NCW_Per_NL + SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_NCW_Per_NL;
+		parameter<Eur>    Sloopkosten_NCW_Per_NL   := SloopAlsGevolgVanNieuweNatuur/Sloopkosten_NCW_Per_NL   + SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_NCW_Per_NL   + SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_NCW_Per_NL;
 	}
 }
