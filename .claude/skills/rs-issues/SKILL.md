@@ -1,6 +1,6 @@
 ---
 name: rs-issues
-description: Tekst schrijven die op GitHub terechtkomt in de openbare RSopen-repo; issues, comments, PR-beschrijvingen en commit messages. Regelt de stijlconventies, het verwijzen met hekje en de afspraak dat een concept wordt aangeleverd in plaats van zelf geplaatst. Gebruik bij elk verzoek om een issue op te stellen, ergens op te reageren of een commit message te schrijven.
+description: Tekst schrijven die op GitHub terechtkomt in de openbare RSopen-repo; issues, comments, PR-beschrijvingen en commit messages. Regelt de stijlconventies, het verwijzen met hekje, de afspraak dat een concept wordt aangeleverd in plaats van zelf geplaatst, de lijst met openstaande punten onderaan, en wat er moet gebeuren voordat een issue dicht mag. Gebruik bij elk verzoek om een issue op te stellen, ergens op te reageren, een issue te sluiten of een commit message te schrijven.
 ---
 
 # Tekst voor GitHub in RSopen
@@ -46,8 +46,47 @@ Is de commit al gemaakt maar nog niet gepusht, dan is `git commit --amend` de fi
 
 In deze werkkopie draaien regelmatig meerdere sessies tegelijk, niet in aparte worktrees. Commit daarom alleen je eigen bestanden met een expliciete `git add`, nooit `git add -A` of `git commit -a`. Controleer `git status` vlak voor de commit, niet alleen aan het begin van het werk.
 
+Een expliciete `git add` is niet genoeg: een bestand waar jij aan hebt gezeten kan ondertussen ook door een andere sessie zijn aangepast. Loop daarom voor elk bestand dat je stageert de diff langs en stel vast dat elke regel van jou is. Zit er werk van iemand anders in hetzelfde bestand, stageer dan alleen je eigen hunks. Interactief `git add -p` kan hier niet, dus via een deelpatch:
+
+```
+git diff <bestand> > /tmp/vol.patch
+grep -n "^@@" /tmp/vol.patch          # welke hunk is van jou
+sed -n '1,4p;<start>,<eind>p' /tmp/vol.patch > /tmp/mijn.patch
+git apply --cached /tmp/mijn.patch
+git diff --cached <bestand>           # controleer dat er niets van een ander in zit
+```
+
+Controleer na de commit met `git status` dat het werk van de andere sessie nog als working copy overeind staat.
+
 Commit of push alleen wanneer daarom gevraagd is.
+
+## Een issue sluiten
+
+"Dit issue mag dicht" betekent drie handelingen, in deze volgorde:
+
+1. Plaats een afrondende comment: wat er is gedaan, met welke uitkomst, en wat er eventueel blijft liggen. Iemand die het issue later opzoekt moet zonder de code te openen begrijpen waarom het dicht kon.
+2. Commit de bijbehorende wijzigingen, met het issuenummer vooraan in de onderwerpregel.
+3. Sluit het issue.
+
+Blijkt bij het afronden dat het issue nog niet af is, sluit het dan niet. Zeg wat er nog open staat en laat de keuze bij de gebruiker.
 
 ## Een goed issue
 
 Noem het pad in de config waar het over gaat, met bestandsnaam en regelnummer als je die hebt. Noem het gemeten getal en waartegen je het afzet. Scheid de waarneming van de interpretatie: wat je gemeten hebt is een feit, waarom het zo is is een hypothese totdat het aangetoond is. Zeg expliciet wat je niet getoetst hebt.
+
+## Openstaande punten onderaan, in bullets
+
+Blijft er na een issue of een comment iets openstaan, dan sluit je af met een kopje met de openstaande acties en vragen, als bullets. Niet verspreid door de lopende tekst, want dan moet de lezer zelf gaan turven wat er nu eigenlijk moet gebeuren.
+
+Zet per bullet wie het kan oppakken, zodat de juiste mensen aangestuurd kunnen worden. Splits daarbij naar partij: een vraag die alleen Deltares, PBL of VU kan beantwoorden is iets anders dan een beslissing die bij Object Vision ligt of een stuk werk in de configuratie. Formuleer elke bullet zo dat hij met ja, nee of een getal te beantwoorden is; "hier moet nog naar gekeken worden" is geen actie.
+
+```
+## Openstaande punten
+
+- Deltares: welke restschadefactor geldt voor een opgehoogde woning onder de ontwerpdiepte?
+- Deltares: werkt die factor anders op inboedel dan op opstal?
+- Object Vision: schakelaar blijft op FALSE tot die factoren er zijn, akkoord?
+- Configuratie: het weggeboekte bedrag als tweede indicator publiceren.
+```
+
+Staat er niets open, laat het kopje dan weg. Een lege lijst suggereert dat er nog iets komt.
