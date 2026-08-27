@@ -15,9 +15,15 @@ vinden andere dingen dan vier keer dezelfde controle.
 | planoloog | zeef, plancapaciteit, bouwregime, ontwikkelpakketten, samenhang tussen zichtjaren |
 | grondeconoom | grondproductiekosten, verwerving, uitkoop en sloop, schade, eenheden en prijspeil |
 | beleidsspiegel | uitlegbaarheid en bruikbaarheid, gelezen vanuit VRO en vanuit een gemeente |
+| arbeidseconoom | banenclaims, subsectoren, vierkante meter per baan, verdunning, logistiek |
+| landbouweconoom | biedprijs en netto contante waarde, gewaskeuze, opbrengstderving, verzilting, melkvee, subsidies |
+| milieukundige | restricties en hardheid, vrijstelling binnen plannen, en welke milieueisen ontbreken |
+| claimanalist | claims en scenario's, regionale verdeling, overflow, claim tegenover allocatie |
 
 Ze delen `briefing.md` in deze map. Daarin staan het model, de eigenaardigheden van GeoDMS waar
-fouten zich verstoppen, de bewijsregel en de rapportvorm.
+fouten zich verstoppen, de bewijsregel en de rapportvorm. Elke rol krijgt daarnaast de pagina's
+uit de wiki die bij zijn vak horen, met de opdracht een verschil tussen wiki en configuratie als
+bevinding te melden.
 
 ## Aanroepen
 
