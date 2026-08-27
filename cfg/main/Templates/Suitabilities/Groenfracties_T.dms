@@ -12,6 +12,10 @@
 // die fracties voor een aangeleverde stand, zodat de indicator (stand aan het eind van het zichtjaar) en de
 // allocatie (stand aan het begin van het zichtjaar) dezelfde definitie gebruiken. Zie #481, #566 en #637.
 //
+// Teller en noemer worden allebei op de LGN-dekking gemeten (#702). Wat het model buiten die dekking neerlegt
+// telt dus niet mee, precies zoals in de schatting, en de fractie kan daardoor niet boven 1 uitkomen. Een
+// IntegrityCheck bewaakt dat.
+//
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 Template Groenfracties_T
@@ -69,11 +73,22 @@ Template Groenfracties_T
 		), Descr = "Water per cel bij de aangeleverde stand, met dezelfde volgorde als NatuurCel. Sinds #637 telt niet alleen de wateraanleg binnen een ontwikkelpakket mee, maar ook gealloceerde waterberging en exogeen opgelegd open water, via LU_ModelType/IsWater_hedonisch.";
 
 	// fracties: zelfde kernels en (statische) noemers als de basisjaar-meting
-	attribute<float32> NatuurCel_100m (rdc_100m)    := mean(NatuurCel, AdminDomain/rdc_100m_rel);
-	attribute<float32> Natuur_100m    (rdc_100m)    := potential(NatuurCel_100m, /Geography/Distmatrices_100m/pot2500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_2500m_100m;
-	attribute<float32> Natuur         (AdminDomain) := Natuur_100m[AdminDomain/rdc_100m_rel], Descr = "Aandeel natuur in de schijf 0-2500m bij de aangeleverde stand.";
 
-	attribute<float32> Water          (AdminDomain) := = 'potential(WaterCel, /Geography/Distmatrices_'+AD_short+'/pot500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_500m[AdminDomain/rdc_25m_rel]', Descr = "Aandeel water in de schijf 0-500m bij de aangeleverde stand.";
+	attribute<float32> IsGedekt (AdminDomain) := /SourceData/Grondgebruik/LGN/Groenfracties/IsGedekt[AdminDomain/rdc_25m_rel], Descr = "1 waar LGN dekking heeft, hetzelfde masker waaruit de noemers n_gedekt_500m en n_gedekt_2500m_100m zijn opgebouwd. Staat hier om teller en noemer op hetzelfde masker te houden, zie de maskering hieronder.";
+
+	// De teller wordt met hetzelfde masker gemeten als de noemer (#702). Zonder die maskering kan de teller de
+	// noemer passeren en komt de fractie boven 1 uit: de noemer is de statische LGN-dekking, maar de teller komt
+	// voor het zichtjaar uit de modelkaart, en die kent landgebruik op cellen waar LGN de klasse onbekend heeft.
+	// Waar de noemer dan ook nog op zijn ondergrens 0,0001 staat, en dat geldt voor 43 procent van het grid,
+	// levert een fractie van een cel natuur al een uitkomst in de honderden op. Voor het basisjaar is de
+	// maskering een no-op: LGN-natuur en LGN-water zijn per definitie deelverzamelingen van de LGN-dekking.
+	// Dit is hetzelfde patroon als de NDVI-schijven in Templates/Indicatoren_T/Basisjaar.dms en het buurtaandeel
+	// overig bebouwd in Templates/Allocatie/Zichtjaar_T.dms, die ook door de potentiaal van hun eigen masker delen.
+	attribute<float32> NatuurCel_100m (rdc_100m)    := mean(NatuurCel * IsGedekt, AdminDomain/rdc_100m_rel);
+	attribute<float32> Natuur_100m    (rdc_100m)    := potential(NatuurCel_100m, /Geography/Distmatrices_100m/pot2500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_2500m_100m, IntegrityCheck = "all(this <= 1.001f)";
+	attribute<float32> Natuur         (AdminDomain) := Natuur_100m[AdminDomain/rdc_100m_rel], Descr = "Aandeel natuur in de schijf 0-2500m bij de aangeleverde stand. De IntegrityCheck op Natuur_100m bewaakt dat dit een fractie blijft; valt die om, dan legt het model landgebruik buiten de LGN-dekking en moet de vraag uit #702 opnieuw langs Deltares.";
+
+	attribute<float32> Water          (AdminDomain) := = 'potential(WaterCel * IsGedekt, /Geography/Distmatrices_'+AD_short+'/pot500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_500m[AdminDomain/rdc_25m_rel]', IntegrityCheck = "all(this <= 1.001f)", Descr = "Aandeel water in de schijf 0-500m bij de aangeleverde stand.";
 
 	attribute<float32> dNatuur        (AdminDomain) := Natuur - Natuur_Basisjaar, Descr = "Verandering van de natuurfractie ten opzichte van het basisjaar.";
 	attribute<float32> dWater         (AdminDomain) := Water  - Water_Basisjaar,  Descr = "Verandering van de waterfractie ten opzichte van het basisjaar.";
