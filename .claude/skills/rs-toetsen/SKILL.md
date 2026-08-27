@@ -21,9 +21,11 @@ Zie de skill rs-draaien voor het daadwerkelijk doorrekenen.
 
 ```powershell
 $env:DiagCasus = "WLO_hoog_NbSGenuanceerd"
-$env:DiagJaar  = "Y2030"
+$env:DiagJaar  = "'Y2030'"
 & "C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe" "/L$env:TEMP\diag.log" "C:\ProjDir\RSopen_NL2120\cfg\main.dms" "/Diagnose/GenerateAll"
 ```
+
+Let op de aanhalingstekens rond het zichtjaar. `Diagnose/Jaar` is een `=`-expressie, dus de waarde van `DiagJaar` komt in een expressiecontext terecht en moet daar een stringliteral zijn. Zonder de binnenste aanhalingstekens faalt de run met "Unknown identifier 'Y2030'". `DiagCasus` heeft ze niet nodig, want dat is een gewone stringparameter.
 
 De tabel `Checks` bepaalt wat er gemeten wordt: per regel een naam, een pad (Z is het zichtjaar van de indicatoren, V is variantdata, A is allocatie), een aggregatie (p parameter, s som over het grid, b aantal cellen waar waar, c aantal gevulde cellen, l lijst per regio, m maximum, n minimum) en het item. Een check toevoegen is een regel in vier lijsten, meer niet.
 

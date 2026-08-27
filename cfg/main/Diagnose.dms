@@ -943,4 +943,77 @@ container Diagnose
 		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_zeef.txt'", StorageType = "str";
 	}
 
+
+	container OverstromingsschadeBouwwijze
+	: Descr = "Tijdelijk, hoort bij #681. Legt de twee toetsen voor schadevrije nieuwbouw naast elkaar en telt de overstromingsschade op zonder de resultaat-tifs te schrijven: alles hieronder leest de storage-loze Totaal-items uit Resultaat en niet de Result_-items. Draai twee keer, met ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket op FALSE en op TRUE; de schakelaarstand staat in de bestandsnaam."
+	{
+		parameter<String> P_R := Pad_Z + 'Overstromingsschade/Resultaat/';
+		parameter<String> P_G := Pad_Z + 'Overstromingsschade/Grondgebruik/Zichtjaar/';
+
+		unit<uint32> WoningRij: nrofrows = 8
+		, Descr = "De acht schadecategorieen die aan de nulzetting hangen: opstal en inboedel maal vier woningtypen."
+		{
+			attribute<String> name:
+			[
+				 'Woningen_Opstal_eengezinsWoningen',   'Woningen_Opstal_meergezins_bg'
+				,'Woningen_Opstal_meergezins_1e',       'Woningen_Opstal_meergezins_hoog'
+				,'Woningen_Inboedel_eengezinsWoningen', 'Woningen_Inboedel_meergezins_bg'
+				,'Woningen_Inboedel_meergezins_1e',     'Woningen_Inboedel_meergezins_hoog'
+			];
+		}
+
+		attribute<Float64> Tot_HB (/Geography/AdminDomain) := ='float64('+P_R+'Hoofdwatersysteem_Binnendijks/Totaal)';
+		attribute<Float64> Tot_HU (/Geography/AdminDomain) := ='float64('+P_R+'Hoofdwatersysteem_Buitendijks/Totaal)';
+		attribute<Float64> Tot_RB (/Geography/AdminDomain) := ='float64('+P_R+'Regionaalwatersysteem_Binnendijks/Totaal)';
+
+		attribute<Float64> Won_HB (/Geography/AdminDomain) := ='add('+asItemList('float64('+P_R+'Hoofdwatersysteem_Binnendijks/'+WoningRij/name+'/Totaal)')+')';
+		attribute<Float64> Won_HU (/Geography/AdminDomain) := ='add('+asItemList('float64('+P_R+'Hoofdwatersysteem_Buitendijks/'+WoningRij/name+'/Totaal)')+')';
+		attribute<Float64> Won_RB (/Geography/AdminDomain) := ='add('+asItemList('float64('+P_R+'Regionaalwatersysteem_Binnendijks/'+WoningRij/name+'/Totaal)')+')';
+		attribute<Float64> Won_Tot (/Geography/AdminDomain) := MakeDefined(Won_HB, 0d) + MakeDefined(Won_HU, 0d) + MakeDefined(Won_RB, 0d)
+		, Descr = "De drie watersystemen hebben elk hun eigen dieptekaart, dus waar de ene een bedrag geeft is de andere null. Zonder MakeDefined maakt de optelling er null van en valt de hele cel uit de sommen hieronder.";
+
+		attribute<Bool>    Nieuw  (/Geography/AdminDomain) := ='IsDefined('+Pad_Z+'Stand/OP_rel) && !'+P_G+'IsBAGnieuwbouwWonen'
+		, Descr = "Cellen waar een ontwikkelpakket staat en die geen BAG-nieuwbouw zijn, dus precies de cellen waarop de nulzetting kan aangrijpen.";
+
+		attribute<Bool>    Eis    (/Geography/AdminDomain) := ='MakeDefined(recollect_by_cond(/Geography/AdminDomain/IsCompactedDomain, '+Pad_V+'BouwwijzeEis/Overstromingsbestendig), FALSE)'
+		, Descr = "De toets op FALSE: eist de gevaarzone hier bouwen met maatregelen?";
+
+		attribute<Bool>    Pakket (/Geography/AdminDomain) := ='MakeDefined(/Classifications/Modellering/BouwwijzeK/SchadevrijeDiepte['+P_G+'Bouwwijze_rel] >= /BaseData/Omgeving/Overstromingsdiepte, FALSE)'
+		, Descr = "De toets op TRUE: houdt de bouwwijze van het gealloceerde pakket de waterdiepte ter plaatse buiten de woning?";
+
+		attribute<Float64> Won    (/Geography/AdminDomain) := ='MakeDefined(float64('+Pad_Z+'Stand/Aantal_Woningen_Totaal), 0d)';
+
+		attribute<Float32> C_kaart (/Geography/AdminDomain) := float32(/SourceData/Water/Waterdiepte_C_RegionaalBeschermd);
+		attribute<Bool>    C_Onzin (/Geography/AdminDomain) := MakeDefined(C_kaart > float32(/SourceData/Water/MaxPlausibeleOverstromingsdiepte), FALSE)
+		, Descr = "De regionale schade leest in Parameters.dms de ruwe C-kaart en niet SourceData/Water/Dieptekaart, waar de onzinwaarden sinds #665 uit gefilterd zijn. Dit is die groep.";
+
+		parameter<String> tabel :=
+			  'grootheid;waarde'
+			+ '|schakelaar;'                          + string(/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket)
+			+ '|totaal_hoofd_binnendijks_eur;'        + string(sum(Tot_HB))
+			+ '|totaal_hoofd_buitendijks_eur;'        + string(sum(Tot_HU))
+			+ '|totaal_regionaal_binnendijks_eur;'    + string(sum(Tot_RB))
+			+ '|woningdeel_hoofd_binnendijks_eur;'    + string(sum(Won_HB))
+			+ '|woningdeel_hoofd_buitendijks_eur;'    + string(sum(Won_HU))
+			+ '|woningdeel_regionaal_binnendijks_eur;'+ string(sum(Won_RB))
+			+ '|woningschade_nieuwbouw_eur;'          + string(sum(Won_Tot * float64(Nieuw)))
+			+ '|woningschade_eis_en_pakket_eur;'      + string(sum(Won_Tot * float64(Nieuw && Eis && Pakket)))
+			+ '|woningschade_eis_niet_pakket_eur;'    + string(sum(Won_Tot * float64(Nieuw && Eis && !Pakket)))
+			+ '|woningschade_pakket_niet_eis_eur;'    + string(sum(Won_Tot * float64(Nieuw && !Eis && Pakket)))
+			+ '|woningschade_geen_van_beide_eur;'     + string(sum(Won_Tot * float64(Nieuw && !Eis && !Pakket)))
+			+ '|cellen_nieuwbouw;'                    + string(sum(float64(Nieuw)))
+			+ '|cellen_eis;'                          + string(sum(float64(Nieuw && Eis)))
+			+ '|cellen_pakket;'                       + string(sum(float64(Nieuw && Pakket)))
+			+ '|cellen_eis_niet_pakket;'              + string(sum(float64(Nieuw && Eis && !Pakket)))
+			+ '|cellen_pakket_niet_eis;'              + string(sum(float64(Nieuw && !Eis && Pakket)))
+			+ '|woningen_nieuwbouw;'                  + string(sum(Won * float64(Nieuw)))
+			+ '|woningen_eis;'                        + string(sum(Won * float64(Nieuw && Eis)))
+			+ '|woningen_pakket;'                     + string(sum(Won * float64(Nieuw && Pakket)))
+			+ '|woningen_eis_niet_pakket;'            + string(sum(Won * float64(Nieuw && Eis && !Pakket)))
+			+ '|woningen_pakket_niet_eis;'            + string(sum(Won * float64(Nieuw && !Eis && Pakket)))
+			+ '|ckaart_cellen_boven_100m;'            + string(sum(float64(C_Onzin)))
+			+ '|ckaart_max_meter;'                    + string(max(C_kaart))
+			+ '|ckaart_schade_regionaal_eur;'         + string(sum(MakeDefined(Tot_RB, 0d) * float64(C_Onzin)))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_schade_bouwwijze_'+string(/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket)+'.txt'", StorageType = "str";
+	}
 }
