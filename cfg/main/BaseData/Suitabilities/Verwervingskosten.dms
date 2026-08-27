@@ -53,23 +53,91 @@ container Verwervingskosten
 	}
 	
 	container Niet_Woningen
+	: Descr = "De verwervingskosten van het bestaande niet-woonvastgoed per cel: het niet-woon vloeroppervlak maal een verwervingsprijs per vierkante meter. Anders dan bij woningen is er voor niet-woningen geen hedonisch prijsmodel; de prijs komt uit de WOZ-brondata, met een landelijk kental als terugval. Zie #674 voor waar dit vandaan komt."
 	{
-		parameter<Eur_m2>  prijs                             := ModelParameters/Wonen/Verwervingskosten/NietWoningen, Descr = "De prijs per m2 voor niet-woningen, in Eur per m2";
-		attribute<eur>     WOZ_Totaal_2017     (AdminDomain) := SourceData/Vastgoed/WOZ/Y2017/Niet_Woningen/Per_AdminDomain, Descr = "De WOZ waarde voor niet-woningen per admin domain, in Eur";
-		attribute<m2_pand> oppervlakte      (pand_startjaar) := pand_startjaar/Oppervlaktes/vbo_opp_niet_woon, Descr = "De oppervlakte van niet-woon vbo's per pand, in m2";
-		attribute<UInt32>  per_rdc_10m             (rdc_10m) := poly2grid(pand_startjaar/geometry, rdc_10m), Descr = "Koppel elk pand aan de rdc_10m grid";
-		attribute<Float32> count_10m_per_pand      (rdc_10m) := (pcount(per_rdc_10m)[per_rdc_10m])[float32], Descr = "Tel per pand hoeveel 10m cellen er in liggen, en koppel dat terug aan elke 10m cel";
-		attribute<meter2>  opp_uitgesmeerd_op_grid (rdc_10m) := oppervlakte[per_rdc_10m] / count_10m_per_pand * 1[PandUnit], Descr = "Smeer de oppervlakte van het pand uit over de 10m cellen die erin liggen";
-		attribute<meter2>  opp_per_grid        (AdminDomain) := sum(opp_uitgesmeerd_op_grid, rdc_10m/AdminDomain_rel)[meter2], Descr = "Sommeer de uitgesmeerde oppervlaktes per admin domain";
-		attribute<Eur>     kental_Totaal       (AdminDomain) := opp_per_grid * prijs, Descr = "Bereken de kental waarde per admin domain, in Eur";
-		attribute<Eur>     Per_AdminDomain     (AdminDomain) := max_elem(WOZ_Totaal_2017, kental_Totaal), Descr = "Neem de hoogste van de WOZ waarde of de kental waarde, per admin domain";
-		
-		attribute<Eur>     Calc             (AdminDomain) := Per_AdminDomain;
+		parameter<Eur_m2>  kental                            := ModelParameters/Wonen/Verwervingskosten/NietWoningen, Descr = "Het landelijke kental voor de verwervingsprijs per vierkante meter niet-woonvloeroppervlak, op het prijspeil van Model_StartYear.";
+
+		attribute<Eur_m2>  WOZ_Woningen_per_m2 (AdminDomain) := SourceData/Vastgoed/WOZ/Y2017/Gegeven_BBG, Descr = "De WOZ-waarde per vierkante meter vloeroppervlak van WONINGEN, uit de CBS-brondata met peildatum 1 januari 2016, per buurt teruggevallen op wijk en gemeente. De bodemgebruiksklasse van de cel kiest welke reeks geldt, maar die klasse zegt waar een woning staat en niet wat voor object het is: de brondata telt landelijk 7,84 miljoen objecten, gelijk aan de woningvoorraad, en de reeks voor bedrijfsterreinen beweegt mee met de woningprijs ter plaatse. Vandaar de omrekening hieronder. Twee scheefheden in de bron die hier niet zijn rechtgezet: de prijs is per buurt mean plus sd, een bovenschatting waarvan ik de onderbouwing niet heb teruggevonden, en van de vier klassen krijgt woongebied geen groeifactor terwijl de andere drie via Groeifactor_CommercieelVastgoed naar 2023 zijn gebracht, met indices voor commercieel vastgoed. Het jaartal 2017 staat hard in het pad: er is maar een WOZ-jaar in de brondata.";
+
+		container Samenstelling
+		: Descr = "Hoeveel van het niet-woonvloeroppervlak in een cel hal is, nodig om een distributiehal anders te beprijzen dan een winkel (#674). Dezelfde toedelingsmatrix en dezelfde unieke telling als opp_per_grid, maar uitgesplitst naar gebruiksdoel en per gebruiksdoel gewogen met het aandeel dat fysiek een hal is."
+		{
+			attribute<meter2>  Hal       (AdminDomain) := 0.557f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/industrie[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.662f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/Logistiek[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.488f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/utiliteit_combi[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.155f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/Kantoor[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.350f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/winkel[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.206f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/bijeenkomst[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.166f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/Gezondheidszorg[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.306f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/onderwijs[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.290f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/overige_gebruiks[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.454f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/sport[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.043f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/logies[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ 0.075f * sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/cel[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+			, Descr = "Het hal-oppervlak in de cel, als gewogen som over de gebruiksdoelen. De gewichten zijn gemeten op de BAG, jaarset Y2023: per gebruiksdoel het aandeel van het vloeroppervlak in verblijfsobjecten die groter zijn dan 1.000 m2 en waarvan het vloeroppervlak onder anderhalf maal de voetafdruk van hun pand blijft, dus groot en in feite eenlaags. Landelijk voldoet 224 van de 550 miljoen m2 niet-woonoppervlak aan die twee eisen.
+						Het gebruiksdoel alleen is een slechte hal-indicator: nam ik industrie, logistiek en utiliteit-combi als de hal-set, dan was 54 procent daarvan fysiek een hal en zat 24 procent van alle hallen erbuiten. Industriefunctie is voor bijna de helft kleine bedrijfsruimte van gemiddeld 1.021 m2, terwijl 45 procent van de sporthallen en 35 procent van de winkelmeters, denk aan bouwmarkten en meubelboulevards, wel degelijk hal is. Vandaar een aandeel per klasse in plaats van een lijstje klassen.
+						De twee drempels, 1.000 m2 en anderhalf maal de voetafdruk, zijn een keuze en geen bron. Ze scheiden groot-en-eenlaags van klein-of-gestapeld, en dat is wat de waarde per vierkante meter drukt.";
+			attribute<meter2>  Utiliteit (AdminDomain) := sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/industrie[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/Logistiek[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/utiliteit_combi[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/Kantoor[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/winkel[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/bijeenkomst[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/Gezondheidszorg[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/onderwijs[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/overige_gebruiks[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/sport[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/logies[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/cel[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+			, Descr = "Alle utiliteitsklassen samen. Wijkt af van opp_per_grid: die telt verblijfsobjecten in panden zonder woonfunctie, deze telt utiliteits-vbo's ook in gemengde panden. Alleen de verhouding tussen Hal en Utiliteit wordt gebruikt, dus dat verschil valt weg.";
+			attribute<meter2>  Voor1994  (AdminDomain) := sum((pand_startjaar/Bouwjaar_trunc < ModelParameters/Wonen/Sloopkosten/AsbestBouwjaarGrens
+																? pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/niet_woon
+																: 0[meter2])[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
+			, Descr = "Het niet-woon vloeroppervlak in de cel dat in een pand van voor het asbestverbod staat. Voedt de asbesttoeslag in de sloopkosten (#701). Landelijk is 53,1 procent van het niet-woonvloeroppervlak van voor 1994; 4,7 miljoen m2 heeft geen bouwjaar en telt hier niet mee, wat de toeslag eerder te laag dan te hoog maakt.";
+
+			attribute<Float32> Fractie_Hal (AdminDomain) := Utiliteit > 0[meter2]
+													? Hal / Utiliteit
+													: ModelParameters/Wonen/Verwervingskosten/NietWoningen_FractieHal_Default, Descr = "Het aandeel hal in het utiliteitsvloeroppervlak van de cel.";
+		}
+
+		attribute<Float32> WOZVerhouding       (AdminDomain) := Samenstelling/Fractie_Hal * ModelParameters/Wonen/Verwervingskosten/NietWoningen_WOZVerhouding_Hal
+															+ (1f - Samenstelling/Fractie_Hal) * ModelParameters/Wonen/Verwervingskosten/NietWoningen_WOZVerhouding_Overig
+		, Descr = "De verhouding tussen de niet-woonprijs en de woningprijs in deze cel, gewogen naar de samenstelling van het vloeroppervlak. Loopt van de hal-verhouding in een cel met alleen hallen tot de overige verhouding in een cel zonder hallen. Zie de Descr van ModelParameters/Wonen/Verwervingskosten voor waarom dit naar samenstelling gaat en niet met een enkel kental.";
+
+		attribute<Eur_m2>  WOZ_per_m2          (AdminDomain) := WOZ_Woningen_per_m2 * WOZVerhouding, Descr = "De WOZ-waarde per vierkante meter voor niet-woningen: de woningprijs ter plaatse maal de naar samenstelling gewogen verhouding. Locatie en type zitten er dus allebei in, en ze zijn gescheiden: de verhoudingen zijn zo geijkt dat een cel met alleen hallen landelijk op circa 600 euro per m2 uitkomt en een cel zonder hallen op circa 1.400, ongeacht wat de woningprijs ter plaatse doet.";
+
+		attribute<Eur_m2>  prijs_per_m2        (AdminDomain) := MakeDefined(WOZ_per_m2, kental), Descr = "De verwervingsprijs per vierkante meter. Het kental is de terugval voor de circa 34.000 cellen met niet-woonvastgoed waar de brondata geen WOZ-waarde geeft, 2,4 procent van de cellen met vastgoed.";
+
+		attribute<meter2>  opp_per_grid        (AdminDomain) := pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel/niet_woon_AdminDomain, Descr = "Het niet-woon vloeroppervlak per cel, via de toedelingsmatrix die een pand over zijn cellen verdeelt, en met elk verblijfsobject precies een keer geteld. Ditzelfde oppervlak gaat in Sloopkosten/Totaal_niet_woningen, zodat hetzelfde gebouw voor verwerven en voor slopen op dezelfde maat staat. Tot #674 liep deze kant via pand/Oppervlaktes/vbo_opp_niet_woon: dat telt een verblijfsobject bij elk gerelateerd pand mee en tilt bovendien elk pand met enig niet-woonoppervlak op naar zijn volle footprint, waardoor een winkel op de begane grond het hele pand tot niet-woon maakte. Landelijk gaf die route 441 miljoen m2 tegen 180 miljoen m2 hier.";
+
+		attribute<Eur>     Per_AdminDomain     (AdminDomain) := MakeDefined(opp_per_grid, 0[meter2]) * prijs_per_m2, Descr = "De verwervingskosten van het niet-woonvastgoed per cel. Een cel zonder niet-woonvastgoed komt op nul uit en niet op undefined: undefined zou via het exploitatiesaldo de hele cel uit de allocatie halen.";
+
+		attribute<Eur>     Calc             (AdminDomain) := Per_AdminDomain
+		, IntegrityCheck = "= /ModelParameters/StudyArea == 'Nederland' ? 'sum(float64(this)) > 250e9 && sum(float64(this)) < 900e9' : 'TRUE'"
+		, Descr = "De grens bewaakt de koppeling tussen de prijs per m2 en het oppervlak waarmee die wordt vermenigvuldigd. Landelijk staat dit totaal op 595 miljard, de orde van de WOZ-waarde van het Nederlandse niet-woonvastgoed, bij 546 miljoen m2 niet-woonvloeroppervlak. De grenzen van 250 en 900 miljard zijn zo gekozen dat een herijking van de prijsniveaus binnen redelijke marges er niet tegenaan loopt, maar een factor drie in het oppervlak of een verdubbeling van de prijs wel. Die twee horen samen te bewegen: een wijziging bovenstrooms die het vloeroppervlak verzet, verzet dit totaal evenredig zonder dat er hier iets verandert. Dat is precies wat met #700 gebeurde, waar de bovengrenzen op de vbo-oppervlakte alleen nog voor woonfuncties gingen gelden en het niet-woonoppervlak van 180 naar 550 miljoen m2 sprong; deze check ving dat op en de prijs is toen herijkt. Vuurt hij weer, herijk dan NietWoningen_2017 en NietWoningen_WOZVerhouding en verruim de grens niet om hem stil te krijgen. Zie #674 en #700.";
 		attribute<Eur>     Write            (AdminDomain) := Calc, StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/Verwervingskosten_Niet_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))", StorageType = "gdalwrite.grid", Descr = "Check om ervoor te zorgen dat niet de hele kaart undefined of zero is. Is dit wel zo, ga dan terug tracen naar waar het probleem zit.";
 		attribute<Eur>     Read_UNCHECKED   (AdminDomain) : StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/Verwervingskosten_Niet_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", StorageReadOnly = "True", Descr = "This tif file could potentially contain only zeros or undefined values. To check for this eventuality, the container following this one checks for this.", StorageType = "tif";
 		attribute<Eur>     Read             (AdminDomain) := Read_UNCHECKED, IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))";
 		attribute<Eur>     Totaal           (AdminDomain) := = ModelParameters/BaseDataOntkoppeld ? 'Read' : 'Write';
 	}
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
 	
 	attribute<Eur> Totaal (AdminDomain) := Woningen/Totaal + Niet_Woningen/Totaal, Descr = "De totale verwervingskosten, woningen plus niet-woningen";
 }
