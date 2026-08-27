@@ -18,6 +18,21 @@ container Zichtjaar
 	// cellen fors. Voor die cellen valt het grondgebruik daarom terug op de BAG-waarneming (basisjaar).
 	attribute<Bool> IsBAGnieuwbouwWonen (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), FALSE), Descr = "BAG-nieuwbouw wonen-cel, onafhankelijk van OP_rel (issue #550: BAG-cellen hebben nu een gematchte OP_rel, dus IsDefined(OP_rel) volstaat niet meer).";
 
+	// #505/#665: waarop toetst de schade of een nieuwbouwwoning schadevrij is, op de eis van de plek of op de
+	// bouwwijze van het pakket dat er staat? De schakelaar staat in /ModelParameters/Advanced.
+	attribute</Classifications/Modellering/BouwwijzeK> Bouwwijze_rel (AdminDomain) := ='OP/Bouwwijze['+Zichtjaar_name+'/Stand/OP_rel]'
+	, Descr = "De bouwwijze van het ontwikkelpakket dat in deze cel gealloceerd is, null waar geen pakket staat. OP_rel staat in de stand al op AdminDomain, dus hier is geen recollect_by_cond nodig, anders dan bij BouwwijzeEis dat op CompactedAdminDomain staat. Staat bewust buiten de schakelaar, zodat de twee toetsen naast elkaar te bekijken zijn; met de schakelaar uit wordt hij nooit opgevraagd en dus nooit gerekend.";
+
+	attribute<Bool> IsOverstromingsbestendig (AdminDomain) := =
+		/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket
+			? 'MakeDefined(/Classifications/Modellering/BouwwijzeK/SchadevrijeDiepte[Bouwwijze_rel] >= /BaseData/Omgeving/Overstromingsdiepte, FALSE)'
+			: 'recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)'
+	, Descr = "Blijft de nieuwbouw in deze cel buiten de overstromingsschade? Op de default leest dit de eis van de plek, precies zoals het tot #665 op acht plaatsen hieronder letterlijk stond. Met SchadeToetstBouwwijzeVanPakket op TRUE leest het de bouwwijze van het gealloceerde pakket, getoetst tegen dezelfde dieptekaart als de zeef.
+
+				Drie punten waarop de eis en de bouwwijze uiteenlopen, en dus drie plekken waar dit getal verandert zodra de schakelaar omgaat. Ten eerste stellen gevaarzone 0 en 1 geen eis, terwijl de NbS-pakketten die daar kunnen landen wel bouwwijze 1 tot en met 4 dragen; die woningen tellen nu voluit mee en de schade daalt. Ten tweede laat de zeef in zone 2 tot en met 5 een pakket zonder maatregel toe zolang de diepte onder 0,2 meter blijft; die woningen tellen nu niet mee en de schade stijgt licht. Ten derde zet SourceData/Water.dms de dieptekaart boven tien meter op null, waar de zeef niets wegzeeft omdat null > x FALSE geeft, terwijl de eis er TRUE is en de cel dus op nul schade gaat; dat is de scherpste van de drie, want het betreft de diepste bebouwing van het land.
+
+				De toets is scenario-blind: BaseData/Omgeving/Overstromingsdiepte is het elementgewijze maximum van de drie LIWO-kaarten, terwijl de schade per categorie met haar eigen kaart rekent. Dat is de conservatieve richting en het spoort met de zeef, die op dezelfde maximumkaart zeeft, maar het is een keuze.";
+
 	container Bedrijven //verdeling fucnties binnen subsector obv huidige verdeling  //relatie m2 per Footprint gemiddeld berekenen per gebied (/BaseData/PandFootprint_baan/PerYear/Y2022/PerRegio)
 	{
 		attribute<meter2> bijeenkomst (AdminDomain) := =
@@ -83,7 +98,7 @@ container Zichtjaar
 			attribute<verblijfsobject> Aantal_Woningen (AdminDomain) := =
 					'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen
 						? (OP/WP2_rel == WP2/V/Eengezins)['+Zichtjaar_name+'/Stand/OP_rel]
-							? recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)
+							? IsOverstromingsbestendig
 								? 0[verblijfsobject]
 								: OP/Dichtheid['+Zichtjaar_name+'/Stand/OP_rel] * AdminDomain/NrHaPerCell / 1[Woning] * 1[verblijfsobject]
 							: 0[verblijfsobject]
@@ -92,7 +107,7 @@ container Zichtjaar
 			attribute<meter2> Vloeroppervlak (AdminDomain) := =
 				'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen
 					? (OP/WP2_rel == WP2/V/Eengezins)['+Zichtjaar_name+'/Stand/OP_rel]
-						? recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)
+						? IsOverstromingsbestendig
 							? 0[meter2]
 							: OP/Woonoppervlakte['+Zichtjaar_name+'/Stand/OP_rel] * AdminDomain/NrHaPerCell' //issue #609: schaal met het celoppervlak (NrHaPerCell), niet met de vaste 1 ha uit Ontwikkelpakketten/Terreinoppervlakte (gaf 16x te veel op het 25m-grid)
 						': 0f
@@ -104,7 +119,7 @@ container Zichtjaar
 			attribute<verblijfsobject> Aantal_Woningen (AdminDomain) := =
 				'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen
 					? (OP/WP2_rel == WP2/V/Meergezins)['+Zichtjaar_name+'/Stand/OP_rel]
-					? recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)
+					? IsOverstromingsbestendig
 							? 0[verblijfsobject]
 							: (OP/Dichtheid['+Zichtjaar_name+'/Stand/OP_rel] / OP/Bouwlagen['+Zichtjaar_name+'/Stand/OP_rel])' //dichtheid / bouwlagen = aantal panden, dus aantal bg verdiepingen.
 								'* AdminDomain/NrHaPerCell / 1[Woning] * 1[verblijfsobject]
@@ -114,7 +129,7 @@ container Zichtjaar
 			attribute<meter2> Vloeroppervlak (AdminDomain) := =
 				'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen
 					? (OP/WP2_rel == WP2/V/Meergezins)['+Zichtjaar_name+'/Stand/OP_rel]
-						? recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)
+						? IsOverstromingsbestendig
 							? 0[meter2]
 							: OP/Woonoppervlakte['+Zichtjaar_name+'/Stand/OP_rel] * AdminDomain/NrHaPerCell'
 								' / OP/Bouwlagen['+Zichtjaar_name+'/Stand/OP_rel]' //issue #609: alleen het bg-aandeel van de woonoppervlakte (1/bouwlagen), analoog aan Aantal_Woningen
@@ -127,7 +142,7 @@ container Zichtjaar
 			attribute<verblijfsobject> Aantal_Woningen (AdminDomain) := =
 				'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen
 					? (OP/WP2_rel == WP2/V/Meergezins)['+Zichtjaar_name+'/Stand/OP_rel]
-						? recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)
+						? IsOverstromingsbestendig
 							? 0[verblijfsobject]
 							: round(OP/Bouwlagen['+Zichtjaar_name+'/Stand/OP_rel]) > 1i
 								? (OP/Dichtheid['+Zichtjaar_name+'/Stand/OP_rel] / OP/Bouwlagen['+Zichtjaar_name+'/Stand/OP_rel])' //dichtheid / bouwlagen = aantal panden, dus aantal 1e verdiepingen.
@@ -139,7 +154,7 @@ container Zichtjaar
 			attribute<meter2> Vloeroppervlak (AdminDomain) := =
 				'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen
 					? (OP/WP2_rel == WP2/V/Meergezins)['+Zichtjaar_name+'/Stand/OP_rel]
-						? recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)
+						? IsOverstromingsbestendig
 							? 0[meter2]
 							: round(OP/Bouwlagen['+Zichtjaar_name+'/Stand/OP_rel]) > 1i
 								? OP/Woonoppervlakte['+Zichtjaar_name+'/Stand/OP_rel] * AdminDomain/NrHaPerCell'
@@ -154,7 +169,7 @@ container Zichtjaar
 			attribute<verblijfsobject> Aantal_Woningen (AdminDomain) := =
 				'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen
 					? (OP/WP2_rel == WP2/V/Meergezins)['+Zichtjaar_name+'/Stand/OP_rel]
-						? recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)
+						? IsOverstromingsbestendig
 							? 0[verblijfsobject]
 							: round(OP/Bouwlagen['+Zichtjaar_name+'/Stand/OP_rel]) > 2i
 								? (OP/Dichtheid['+Zichtjaar_name+'/Stand/OP_rel] / OP/Bouwlagen['+Zichtjaar_name+'/Stand/OP_rel])' //dichtheid / bouwlagen = aantal panden, dus aantal 1e verdiepingen.
@@ -167,7 +182,7 @@ container Zichtjaar
 			attribute<meter2> Vloeroppervlak (AdminDomain) := =
 				'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen
 					? (OP/WP2_rel == WP2/V/Meergezins)['+Zichtjaar_name+'/Stand/OP_rel]
-						? recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)
+						? IsOverstromingsbestendig
 							? 0[meter2]
 							: round(OP/Bouwlagen['+Zichtjaar_name+'/Stand/OP_rel]) > 2i
 								? OP/Woonoppervlakte['+Zichtjaar_name+'/Stand/OP_rel] * AdminDomain/NrHaPerCell'
