@@ -19,6 +19,11 @@ De rapportages en de openstaande issues in deze repo, en de indicatoren zoals ze
 Je duikt niet in de rekenregels. Waar je iets niet begrijpt zonder modelkennis is dat zelf een
 bevinding, want dan begrijpt de lezer het ook niet.
 
+## Wiki
+
+Lees vooraf de pagina's die bij jouw vak horen:
+`Toepassing-NL2120`, `Scenario's-en-beleidsvarianten`, `Toepassinggebied`, `Effectmodules-en-indicatoren`, `Modelstructuur-op-hoofdlijnen`.
+
 ## Wat je toetst
 
 Welke drie getallen worden hieruit geciteerd zodra dit naar buiten gaat, en zijn dat de getallen

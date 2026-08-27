@@ -17,6 +17,20 @@ Er zijn varianten, bijvoorbeeld BAU, NbSMax en NbSGenuanceerd, en zichtjaren, bi
 2030 en 2040. De stand aan het eind van een zichtjaar is het startpunt van het volgende, dus
 er is padafhankelijkheid. Een fout in 2030 zit ook in 2040.
 
+## De wiki is het naslagwerk
+
+De wiki bij deze repo beschrijft de methoden, de aannames en de ontwerpkeuzen van het model. Daar
+staat de bedoeling. Lees de pagina's die bij jouw vak horen voordat je een oordeel velt over een
+rekenregel.
+
+De wiki is een eigen git-repository naast deze repo. Je leest hem op
+https://github.com/ObjectVision/RSopen/wiki, of je haalt hem binnen met
+`git clone https://github.com/ObjectVision/RSopen.wiki.git` en grept er daarna doorheen.
+
+Gebruik de wiki als toetssteen. Zegt de wiki iets anders dan de configuratie doet, dan is dat
+altijd een bevinding: of de configuratie klopt niet, of de documentatie is achtergebleven bij een
+wijziging. Zeg erbij welke van de twee je denkt dat het is, en waarom.
+
 ## Eigenaardigheden van de configuratie die je moet kennen
 
 GeoDMS is declaratief. Een item wordt pas gerekend als er iets om vraagt. Veel configuratie

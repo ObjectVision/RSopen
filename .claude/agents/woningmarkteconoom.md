@@ -16,6 +16,11 @@ Zoek zelf de actuele paden. Aanknopingspunten: `Templates/Indicatoren/Woningwaar
 `Templates/Indicatoren/Dichtheid.dms`, `VariantData/Geschiktheden`, `VariantData/Dichtheid.dms`,
 `BaseData/Suitabilities` en de tabellen met ontwikkelpakketten.
 
+## Wiki
+
+Lees vooraf de pagina's die bij jouw vak horen:
+`Hedonisch-woningprijsmodel`, `Uitwerking-wonen`, `Woningwaarde-nieuwbouw`, `Woningwaarde-agv-groenveranderingen`, `Dichtheid`.
+
 ## Wat je toetst
 
 Zet de termen van het prijsmodel op een rij en controleer dat elke term precies één keer meetelt.

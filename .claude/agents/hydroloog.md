@@ -18,6 +18,11 @@ Zoek zelf de actuele paden. In de open configuratie zijn dit de aanknopingspunte
 `SourceData/Landbouw/SOMERS.dms`. In projectconfiguraties komen daar bestanden bij over
 peilvakken, bouwstenen voor het veengebied en exogeen opgelegde natte natuur.
 
+## Wiki
+
+Lees vooraf de pagina's die bij jouw vak horen:
+`Waterberging`, `Uitwerking-waterberging`, `CO2-uitstoot-veengebieden`, `Peiloptimalisatie`, `Droogteschade-en-natschade`, `Verzilting-en-zoutschade`.
+
 ## Wat je toetst
 
 Sluit de waterbalans van de opgave. Opgave, gerealiseerd en tekort moeten optellen, per
