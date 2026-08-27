@@ -78,15 +78,18 @@ Noem het pad in de config waar het over gaat, met bestandsnaam en regelnummer al
 
 Blijft er na een issue of een comment iets openstaan, dan sluit je af met een kopje met de openstaande acties en vragen, als bullets. Niet verspreid door de lopende tekst, want dan moet de lezer zelf gaan turven wat er nu eigenlijk moet gebeuren.
 
-Zet per bullet wie het kan oppakken, zodat de juiste mensen aangestuurd kunnen worden. Splits daarbij naar partij: een vraag die alleen Deltares, PBL of VU kan beantwoorden is iets anders dan een beslissing die bij Object Vision ligt of een stuk werk in de configuratie. Formuleer elke bullet zo dat hij met ja, nee of een getal te beantwoorden is; "hier moet nog naar gekeken worden" is geen actie.
+Groepeer naar de partij die aan zet is, met die partij in het kopje en de bullets eronder zonder voorvoegsel. Zijn alle vragen voor dezelfde partij, dan is het één kopje. Formuleer elke bullet zo dat hij met ja, nee of een getal te beantwoorden is; "hier moet nog naar gekeken worden" is geen actie.
 
 ```
-## Openstaande punten
+## Openstaande vragen Deltares
 
-- Deltares: welke restschadefactor geldt voor een opgehoogde woning onder de ontwerpdiepte?
-- Deltares: werkt die factor anders op inboedel dan op opstal?
-- Object Vision: schakelaar blijft op FALSE tot die factoren er zijn, akkoord?
-- Configuratie: het weggeboekte bedrag als tweede indicator publiceren.
+- welke restschadefactor geldt voor een opgehoogde woning onder de ontwerpdiepte?
+- werkt die factor anders op inboedel dan op opstal?
+- kent SSM2017 al functienummers voor aangepaste bebouwing?
 ```
+
+Voeg zelf geen @-vermelding en geen persoonsnaam toe, ook niet om iemand te attenderen: het kopje noemt de organisatie, en wie er precies wordt aangesproken bepaalt de gebruiker bij het plaatsen.
+
+In NL2120 is Deltares de tegenpartij. PBL zit niet in dit project, dus adresseer daar niets aan tenzij de gebruiker dat zelf zegt.
 
 Staat er niets open, laat het kopje dan weg. Een lege lijst suggereert dat er nog iets komt.
