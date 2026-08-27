@@ -814,6 +814,19 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 				container meta := meta_src_template(., pand_status);
 			}
 			
+			parameter<String> PHN_jaar := string(ModelParameters/Model_StartYear)
+			, Descr = "Welke jaargang van de AHN-pandenset de hoogte levert voor de bovengrens op niet-woon vbo-oppervlakte. De volledige BAG is jaargangloos, dus hier valt een keuze te maken; het modeljaar ligt het meest voor de hand. De levering bestaat vanaf 2020.";
+
+			unit<UInt32> PHN
+			:	StorageName     = "='%RSo_DataDir%/Vastgoed/PHN_'+PHN_jaar+'0101.fss'"
+			,	StorageReadOnly = "True"
+			,	Descr           = "Pand Hoogte Nederland, dezelfde levering die PerJaar/<jaar>/pand_hoogte leest. Hier apart gedeclareerd omdat die in de jaarcontainer staat en de volledige BAG daar niet bij kan zonder kringverwijzing."
+			{
+				attribute<String> identificatie;
+				attribute<uint64> pand_bag_nr := uint64(identificatie);
+				attribute<UInt16> hoogte;
+			}
+
 			unit<UInt32> src := Import
 			{
 				attribute<rdc_meter>                    geometry_org (poly)          := Import/geometry;
@@ -825,6 +838,8 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 				attribute<yr>                           Bouwjaar                     := Import/Bouwjaar[yr];
 				attribute<yr>                           Bouwjaar_trunc               := =replace(Bouwjaar_truncation_Expr, '@YYYY@', max_Bouwjaar);
 				attribute<m2PandFootprint>              Footprint                    := area(geometry, meter2_f64)[m2PandFootprint];
+				attribute<cm>                           pand_hoogte_cm               := rjoin(pand_bag_nr, PHN/pand_bag_nr, float32(PHN/hoogte)[cm])
+				, Descr = "Hoogte van het pand uit de AHN-pandenset. Heet bewust niet pand_hoogte: dat is elders in dit bestand de naam van de leveringsunit zelf.";
 				
 				// attribute<Bool>                         IsZwareIndustrie             := impl/IsZwareIndustrie;
 				attribute<Bool>                         LigtInCBSVerblijfsrecreatie  := IsDefined(point_in_polygon(centroid_or_mid(geometry), /SourceData/Grondgebruik/BBG/Dominant/IsVerblijfsRecreatieSub/union_jaren/split_union_buffer/geometry));
@@ -947,7 +962,18 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 				attribute<int32>                      oppervlakte_trunc_TooBigWoon2   := Bovengrens_geldt && oppervlakte_trunc_TooBigWoon1 > ModelParameters/Wonen/VBO_opp_truncation_upper
 																						? ModelParameters/Wonen/VBO_opp_truncation_upper
 																						: oppervlakte_trunc_TooBigWoon1;
-				attribute<m2_Vbo>                     oppervlakte_trunc              := oppervlakte_trunc_TooBigWoon2[m2_Vbo];
+				attribute<cm>                         pand_hoogte_cm                  := rjoin(vbo_bag_nr, gerelateerdPand/vbo_bag_nr, gerelateerdPand/pand_hoogte_cm);
+				attribute<int32>                      Bouwlagen_uit_hoogte            := max_elem(int32(pand_hoogte_cm / ModelParameters/VBO_opp_LaaghoogteNietWoon), 1i)
+				, Descr = "Hoeveel bouwlagen er in de pandhoogte passen, minimaal een. Null waar het pand geen hoogte heeft.";
+				attribute<int32>                      Ruimte_in_pand                  := int32((pand_footprint / 1[m2Pandfootprint]) * float32(Bouwlagen_uit_hoogte) * ModelParameters/VBO_opp_TolerantieNietWoon)
+				, Descr = "Wat er fysiek in het pand past, maal de tolerantie: de bovengrens voor niet-woon sinds #700 nadat de woningmaat daar terecht af ging.";
+				attribute<int32>                      oppervlakte_trunc_TooBigNietWoon := !Bovengrens_geldt
+																						&& IsDefined(Ruimte_in_pand)
+																						&& oppervlakte_trunc_TooBigWoon2 > Ruimte_in_pand
+																						? Ruimte_in_pand
+																						: oppervlakte_trunc_TooBigWoon2
+				, Descr = "Klemmen en niet weggooien, anders dan de oude bovengrens op vijf keer de voetafdruk deed. Panden zonder hoogte blijven ongemoeid.";
+				attribute<m2_Vbo>                     oppervlakte_trunc              := oppervlakte_trunc_TooBigNietWoon[m2_Vbo];
 
 
 
@@ -973,6 +999,8 @@ container BAG : using = "Classifications/Vastgoed;Classifications"
 					attribute<uint64>           pand_bag_nr          := uint64(lookup(import/gerelateerdPand/uq_rel, import/gerelateerdPand/pand_id));
 					attribute<yr>               pand_Bouwjaar_trunc  := rjoin(pand_bag_nr, panden/src/pand_bag_nr, panden/src/Bouwjaar_trunc);
 					attribute<m2Pandfootprint>  pand_footprint       := rjoin(pand_bag_nr, panden/src/pand_bag_nr, panden/src/Footprint);
+					attribute<cm>               pand_hoogte_cm       := rjoin(pand_bag_nr, panden/src/pand_bag_nr, panden/src/pand_hoogte_cm)
+					, Descr = "Hoogte van het pand uit de AHN-pandenset, langs dezelfde weg als pand_footprint hierboven. Heet bewust niet pand_hoogte: die naam is hier de unit met de PHN-levering zelf, en die zou hij dan afschermen.";
 				}
 				
 				unit<UInt32> Impl := .
