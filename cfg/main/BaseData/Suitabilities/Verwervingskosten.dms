@@ -46,10 +46,38 @@ container Verwervingskosten
 				) * 1[Woning]', Descr = "Koppel de woningwaarde per woningtype aan de vbo's en zet om naar Eur per vbo";
 		
 		attribute<Eur> Calc   (AdminDomain) := sum(PerVBO, vbo_startjaar/AdminDomain_rel), Descr = "Bereken de totale woningwaarde per admin domain";
-		attribute<Eur> Write  (AdminDomain) := Calc, StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/Verwervingskosten_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))", StorageType = "gdalwrite.grid", Descr = "If this IntegrityCheck fails, go back and investigate why the calc is already failing. Do not continue without fixing this! All following results will be invalid!";
-		attribute<Eur> Read_UNCHECKED   (AdminDomain) : StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/Verwervingskosten_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", StorageReadOnly = "True", Descr = "This tif file could potentially contain only zeros or undefined values. To check for this eventuality, the container following this one checks for this.", StorageType = "tif";
+
+		parameter<String> TifFile := '%LocalDataProjDir%/BaseData/Vastgoed/Verwervingskosten_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft. PropValue van een StorageName levert de expressietekst en niet de uitkomst, en daar kan ExistingFile niets mee.";
+
+		parameter<String> Fingerprint :=
+			  'start_year='              + string(ModelParameters/Model_StartYear)
+			+ ';bag_recent_year='        + string(ModelParameters/BAG_RecentYear)
+			+ ';bag_date='               + ModelParameters/BAG_file_date
+			+ ';nvm_date='               + ModelParameters/NVM_filedate
+			+ ';nvm_coeff_year='         + ModelParameters/NVM_coeff_Year
+			+ ';constr_period_in_price=' + string(ModelParameters/Wonen/BouwperiodeInVoorraadprijs)
+			+ ';constr_period_count='    + string(#Classifications/Vastgoed/Bouwperiode)
+			+ ';constr_period_breaks='   + asList(string(Classifications/Vastgoed/Bouwperiode/ClassBreaks), ',')
+			+ ';wp4_classes='            + asList(Classifications/Vastgoed/WP4/name, ',')
+			+ ';trunc_upper_woononly='   + string(ModelParameters/VBO_opp_truncation_BovengrenzenAlleenWoon)
+			+ ';trunc_upper='            + string(ModelParameters/Wonen/VBO_opp_truncation_upper)
+			+ ';trunc_lower='            + string(ModelParameters/Wonen/VBO_opp_truncation_lower)
+			+ ';admin_grid='             + ModelParameters/Advanced/AdminDomain_ref
+			+ ';grid_size='              + string(AdminDomain/gridsize)
+			+ ';study_area='             + ModelParameters/StudyArea
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. start_year is de vbo-set waarover gesommeerd wordt en wijkt af van bag_recent_year: die laatste bepaalt, samen met bag_date, de voorraadkenmerken (oppervlakte, bouwjaar, aantallen) waarop de hedonische prijs per cel rust. nvm_date kiest de coefficienten en de regiokarakteristieken, nvm_coeff_year de jaardummy die het prijspeil zet. De bouwperiodeklassen van #675 staan als breaks-reeks in de fingerprint, want een verschoven klassengrens verandert de bestandsnaam niet. De drie truncatieparameters (#700) bepalen de oppervlaktegrondslag van de celkenmerken in de prijs. admin_grid vangt dat 25m tegenover 100m een ander bestand onder dezelfde naam oplevert.";
+
+		container Decoupling := Templates/DecoupledFile_T(TifFile, Fingerprint);
+
+		attribute<Eur> Write  (AdminDomain) := Calc, StorageName = "=TifFile", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling/Write_Fingerprint", Descr = "If this IntegrityCheck fails, go back and investigate why the calc is already failing. Do not continue without fixing this! All following results will be invalid! Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Eur> Read_UNCHECKED   (AdminDomain) : StorageName = "=TifFile", StorageReadOnly = "True", Descr = "This tif file could potentially contain only zeros or undefined values. To check for this eventuality, the container following this one checks for this.", StorageType = "tif";
 		attribute<Eur> Read             (AdminDomain) := Read_UNCHECKED, IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))", Descr = "If this IntegrityCheck fails, go back and investigate why the calc/write is already failing. Do not continue without fixing this! All following results will be invalid!";
-		attribute<Eur> Totaal (AdminDomain) := = ModelParameters/BaseDataOntkoppeld ? 'Read' : 'Write';
+		attribute<Eur> Totaal (AdminDomain) :=
+			=	!ModelParameters/BaseDataOntkoppeld ? 'Calc'
+			:	Decoupling/MayReuse                 ? 'Read'
+			:	                                      'Write'
+		, Descr = "Wat de rest van het model gebruikt, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand. Ontkoppeld met een geldige fingerprint leest de tif. Ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Tot 2026-08-28 las de ontkoppelde stand altijd, ook een verouderde tif; vraag Decoupling/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
 	}
 	
 	container Niet_Woningen
@@ -115,10 +143,43 @@ container Verwervingskosten
 		attribute<Eur>     Calc             (AdminDomain) := Per_AdminDomain
 		, IntegrityCheck = "= /ModelParameters/StudyArea == 'Nederland' ? 'sum(float64(this)) > 250e9 && sum(float64(this)) < 900e9' : 'TRUE'"
 		, Descr = "De grens bewaakt de koppeling tussen de prijs per m2 en het oppervlak waarmee die wordt vermenigvuldigd. Landelijk staat dit totaal op 595 miljard, de orde van de WOZ-waarde van het Nederlandse niet-woonvastgoed, bij 546 miljoen m2 niet-woonvloeroppervlak. De grenzen van 250 en 900 miljard zijn zo gekozen dat een herijking van de prijsniveaus binnen redelijke marges er niet tegenaan loopt, maar een factor drie in het oppervlak of een verdubbeling van de prijs wel. Die twee horen samen te bewegen: een wijziging bovenstrooms die het vloeroppervlak verzet, verzet dit totaal evenredig zonder dat er hier iets verandert. Dat is precies wat met #700 gebeurde, waar de bovengrenzen op de vbo-oppervlakte alleen nog voor woonfuncties gingen gelden en het niet-woonoppervlak van 180 naar 550 miljoen m2 sprong; deze check ving dat op en de prijs is toen herijkt. Vuurt hij weer, herijk dan NietWoningen_2017 en NietWoningen_WOZVerhouding en verruim de grens niet om hem stil te krijgen. Zie #674 en #700.";
-		attribute<Eur>     Write            (AdminDomain) := Calc, StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/Verwervingskosten_Niet_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))", StorageType = "gdalwrite.grid", Descr = "Check om ervoor te zorgen dat niet de hele kaart undefined of zero is. Is dit wel zo, ga dan terug tracen naar waar het probleem zit.";
-		attribute<Eur>     Read_UNCHECKED   (AdminDomain) : StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/Verwervingskosten_Niet_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", StorageReadOnly = "True", Descr = "This tif file could potentially contain only zeros or undefined values. To check for this eventuality, the container following this one checks for this.", StorageType = "tif";
+
+		parameter<String> TifFile := '%LocalDataProjDir%/BaseData/Vastgoed/Verwervingskosten_Niet_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft. PropValue van een StorageName levert de expressietekst en niet de uitkomst, en daar kan ExistingFile niets mee.";
+
+		parameter<String> Fingerprint :=
+			  'woz_year=2017'
+			+ ';growth_office='          + string(ModelParameters/Werken/Groeifactor_CommercieelVastgoed/Kantoor)
+			+ ';growth_industry='        + string(ModelParameters/Werken/Groeifactor_CommercieelVastgoed/industrie)
+			+ ';growth_retail='          + string(ModelParameters/Werken/Groeifactor_CommercieelVastgoed/winkel)
+			+ ';woz_ratio_hall='         + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_WOZVerhouding_Hal)
+			+ ';woz_ratio_other='        + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_WOZVerhouding_Overig)
+			+ ';hall_fraction_default='  + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_FractieHal_Default)
+			+ ';unit_price_2017='        + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_2017)
+			+ ';unit_price_start_year='  + string(kental)
+			+ ';start_year='             + string(ModelParameters/Model_StartYear)
+			+ ';bag_recent_year='        + string(ModelParameters/BAG_RecentYear)
+			+ ';bag_date='               + ModelParameters/BAG_file_date
+			+ ';trunc_upper_woononly='   + string(ModelParameters/VBO_opp_truncation_BovengrenzenAlleenWoon)
+			+ ';trunc_upper='            + string(ModelParameters/Wonen/VBO_opp_truncation_upper)
+			+ ';trunc_lower='            + string(ModelParameters/Wonen/VBO_opp_truncation_lower)
+			+ ';storey_height_nonres_cm='+ string(ModelParameters/VBO_opp_LaaghoogteNietWoon)
+			+ ';tolerance_nonres='       + string(ModelParameters/VBO_opp_TolerantieNietWoon)
+			+ ';admin_grid='             + ModelParameters/Advanced/AdminDomain_ref
+			+ ';grid_size='              + string(AdminDomain/gridsize)
+			+ ';study_area='             + ModelParameters/StudyArea
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. woz_year staat als vaste waarde in de fingerprint omdat het jaartal hard in het pad van de WOZ-brondata zit; verandert dat pad, pas dan ook deze sleutel aan. De drie groeifactoren indexeren de WOZ-reeksen buiten woongebied. unit_price_start_year is het kental op het prijspeil van start_year en vangt daarmee ook een gewijzigde bouwkostenindex; unit_price_2017 staat er los naast zodat het verslag compleet blijft. De truncatieparameters (#700, #702) en de twee niet-woonparameters voor laaghoogte en tolerantie bepalen de oppervlaktegrondslag onder opp_per_grid en onder de halfractie. LET OP, dit deel is een benadering: de halfractie komt uit Samenstelling en hangt aan de BAG-pandset en de hoogteregel van #700, een keten die in geen parameterlijst zit. bag_date, bag_recent_year, start_year en de truncatieparameters staan hier als benadering daarvan: een nieuwe BAG-levering of een andere truncatie verandert de fingerprint, maar een wijziging in de hal-gewichten of de toedelingsmatrix zelf niet. admin_grid vangt dat 25m tegenover 100m een ander bestand onder dezelfde naam oplevert.";
+
+		container Decoupling := Templates/DecoupledFile_T(TifFile, Fingerprint);
+
+		attribute<Eur>     Write            (AdminDomain) := Calc, StorageName = "=TifFile", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling/Write_Fingerprint", Descr = "Check om ervoor te zorgen dat niet de hele kaart undefined of zero is. Is dit wel zo, ga dan terug tracen naar waar het probleem zit. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Eur>     Read_UNCHECKED   (AdminDomain) : StorageName = "=TifFile", StorageReadOnly = "True", Descr = "This tif file could potentially contain only zeros or undefined values. To check for this eventuality, the container following this one checks for this.", StorageType = "tif";
 		attribute<Eur>     Read             (AdminDomain) := Read_UNCHECKED, IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))";
-		attribute<Eur>     Totaal           (AdminDomain) := = ModelParameters/BaseDataOntkoppeld ? 'Read' : 'Write';
+		attribute<Eur>     Totaal           (AdminDomain) :=
+			=	!ModelParameters/BaseDataOntkoppeld ? 'Calc'
+			:	Decoupling/MayReuse                 ? 'Read'
+			:	                                      'Write'
+		, Descr = "Wat de rest van het model gebruikt, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand. Ontkoppeld met een geldige fingerprint leest de tif. Ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Tot 2026-08-28 las de ontkoppelde stand altijd, ook een verouderde tif: op 2026-08-28 stond hier een niet-woningenkant van 00:00 naast een woningenkant van 27-08 14:41 zonder #675, en niets meldde die scheefstand. Vraag Decoupling/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
 	}
 	
 
