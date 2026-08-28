@@ -1,0 +1,337 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #667, verwijderen zodra de getallen in het issue staan.
+//
+// Meet de overschrijding die ontstaat doordat het model geen banen of woningen sloopt: waar de claim van
+// een regio onder de stand voor allocatie ligt, wordt max_elem(RestClaim, 0f) het allocatiedoel en blijft
+// het overschot staan. Rekent de allocatie niet mee, want claim en stand voor allocatie liggen al vast
+// voordat de eerste cel gealloceerd wordt; de zaaglijn kan het overschot alleen nog vergroten.
+//
+// Het zichtjaar volgt /Diagnose/Jaar, dus zonder DiagJaar het eerste zichtjaar van de allocatie. Sinds
+// #658 is dat Model_FirstZichtjaar en niet meer 2030, en juist dat is de vraag: hoeveel blijft er van de
+// overschrijding over nu de eerste allocatiestap tegen de claim van 2040 afzet in plaats van die van 2030.
+//
+// De stand voor allocatie is niet de kale basisjaarstand. Voor werken deelt Zichtjaar_T hem eerst door
+// (1 + Groeifactor * halve periodelengte), dus de verdunning van de werkdichtheid werkt hier in mee. Die
+// verdunning is met 2040 als eerste stap groter dan met 2030, wat de overschrijding extra drukt.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose667
+: Descr = "Tijdelijk meetharnas voor #667."
+{
+	parameter<String> Pad := /Diagnose/Pad_A + 'StateVoorAllocatie/RestClaims/'
+	, Descr = "De plek waar de allocatie zelf de claim en de stand voor allocatie per NVM-regio naast elkaar zet, zie Templates/Allocatie/Zichtjaar_T.";
+
+	unit<UInt8> SS_Werken := /Classifications/Actor/Jobs6
+	, Descr = "De zes werksubsectoren. Per subsector een regel, want de allocatie vergelijkt claim en stand per subsector en niet op het sectortotaal."
+	{
+		attribute<String> ss_name := /Classifications/Actor/Jobs6/name;
+		attribute<String> C       := /Diagnose667/Pad + 'Werken/Claim/' + ss_name;
+		attribute<String> S       := /Diagnose667/Pad + 'Werken/Stand/' + ss_name;
+
+		attribute<String> expr_stand := quote('stand;'+ss_name+';') + ' + AsList(string(' + S + '), ' + quote(';') + ') + ' + quote('|');
+		attribute<String> expr_claim := quote('claim;'+ss_name+';') + ' + AsList(string(' + C + '), ' + quote(';') + ') + ' + quote('|');
+
+		attribute<String> expr_sam :=
+			  quote(ss_name+';')
+			+ ' + string(sum(' + C + '))'                                     + ' + ' + quote(';')
+			+ ' + string(sum(' + S + '))'                                     + ' + ' + quote(';')
+			+ ' + string(sum(max_elem(' + S + ' - ' + C + ', 0f)))'           + ' + ' + quote(';')
+			+ ' + string(sum(max_elem(' + C + ' - ' + S + ', 0f)))'           + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + S + ' > ' + C + ')))'                + ' + ' + quote(';')
+			+ ' + string(sum(float32(IsDefined(' + C + '))))'
+			+ ' + ' + quote('|');
+	}
+
+	unit<UInt8> SS_Wonen := /Classifications/Vastgoed/WP2xVSSH
+	, Descr = "De vier woonsubsectoren, zelfde meting als bij werken."
+	{
+		attribute<String> ss_name := /Classifications/Vastgoed/WP2xVSSH/name;
+		attribute<String> C       := /Diagnose667/Pad + 'Wonen/Claim/' + ss_name;
+		attribute<String> S       := /Diagnose667/Pad + 'Wonen/Stand/' + ss_name;
+
+		attribute<String> expr_stand := quote('stand;'+ss_name+';') + ' + AsList(string(' + S + '), ' + quote(';') + ') + ' + quote('|');
+		attribute<String> expr_claim := quote('claim;'+ss_name+';') + ' + AsList(string(' + C + '), ' + quote(';') + ') + ' + quote('|');
+
+		attribute<String> expr_sam :=
+			  quote(ss_name+';')
+			+ ' + string(sum(' + C + '))'                                     + ' + ' + quote(';')
+			+ ' + string(sum(' + S + '))'                                     + ' + ' + quote(';')
+			+ ' + string(sum(max_elem(' + S + ' - ' + C + ', 0f)))'           + ' + ' + quote(';')
+			+ ' + string(sum(max_elem(' + C + ' - ' + S + ', 0f)))'           + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + S + ' > ' + C + ')))'                + ' + ' + quote(';')
+			+ ' + string(sum(float32(IsDefined(' + C + '))))'
+			+ ' + ' + quote('|');
+	}
+
+	parameter<String> samenvatting := =
+		  quote('subsector;claim_nl;stand_nl;overschot_pernvm;tekort_pernvm;n_regios_stand_boven_claim;n_regios|')
+		+ ' + ' + AsList(SS_Werken/expr_sam, ' + ')
+		+ ' + ' + AsList(SS_Wonen/expr_sam, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_overschot.txt'", StorageType = "str"
+	, Descr = "Per subsector de landelijke claim en stand, het overschot en het tekort opgeteld over de NVM-regio's, en in hoeveel regio's de stand boven de claim ligt. Het overschot per NVM is de echte maat: op landelijk niveau vallen een overschot in de ene regio en een tekort in de andere tegen elkaar weg, terwijl de allocatie per regio werkt en het overschot daar niet kan wegnemen.";
+
+	parameter<String> banen_pernvm := =
+		  quote('regio;') + ' + AsList(/SourceData/RegioIndelingen/NVM/name, ' + quote(';') + ')'
+		+ ' + ' + quote('|')
+		+ ' + ' + AsList(SS_Werken/expr_stand, ' + ')
+		+ ' + ' + AsList(SS_Werken/expr_claim, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_banen_pernvm.txt'", StorageType = "str"
+	, Descr = "Stand en claim per NVM-regio per subsector, zodat dezelfde stand buiten GeoDMS tegen de claimbestanden van de andere TIGRIS-jaren gelegd kan worden.";
+
+	parameter<String> wonen_pernvm := =
+		  quote('regio;') + ' + AsList(/SourceData/RegioIndelingen/NVM/name, ' + quote(';') + ')'
+		+ ' + ' + quote('|')
+		+ ' + ' + AsList(SS_Wonen/expr_stand, ' + ')
+		+ ' + ' + AsList(SS_Wonen/expr_claim, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_wonen_pernvm.txt'", StorageType = "str"
+	, Descr = "Zelfde uitdraai als banen_pernvm maar voor wonen. De woningstand wordt niet verdund, dus hij is in beide opzetten dezelfde; het aandeel van elke VSSH-klasse binnen een WP2-klasse volgt uit de claim van dit zichtjaar en is jaaronafhankelijk, zodat de claim van een ander TIGRIS-jaar buiten GeoDMS te reconstrueren is.";
+
+	unit<UInt8> SS_Herkomst := /Classifications/Actor/Jobs6
+	, Descr = "Waar de stand voor allocatie vandaan komt: de LISA-stand in het basisjaar, de BAG-nieuwbouw die daar in het eerste zichtjaar bovenop komt, en wat er na de verdunning van de werkdichtheid en de sloop overblijft."
+	{
+		attribute<String> ss_name := /Classifications/Actor/Jobs6/name;
+		attribute<String> expr_lisa := quote('lisa;'+ss_name+';') + ' + AsList(string(sum(/BaseData/StartState/StateBasisjaar/Read/Werken/' + ss_name + ', /SourceData/RegioIndelingen/NVM/Per_AdminDomain)), ' + quote(';') + ') + ' + quote('|');
+
+		attribute<String> expr :=
+			  quote(ss_name+';')
+			+ ' + string(sum(/BaseData/StartState/StateBasisjaar/Read/Werken/' + ss_name + '))' + ' + ' + quote(';')
+			+ ' + string(sum(/BaseData/StartState/BAG_nieuwbouw/Werken/' + ss_name + '))'       + ' + ' + quote(';')
+			+ ' + string(sum(' + /Diagnose667/Pad + 'Werken/Stand/' + ss_name + '))'
+			+ ' + ' + quote('|');
+	}
+
+	parameter<String> basisjaar_pernvm := =
+		  quote('regio;') + ' + AsList(/SourceData/RegioIndelingen/NVM/name, ' + quote(';') + ')'
+		+ ' + ' + quote('|')
+		+ ' + ' + AsList(SS_Herkomst/expr_lisa, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_basisjaar_pernvm.txt'", StorageType = "str"
+	, Descr = "De kale LISA-stand van het basisjaar per NVM-regio, zonder BAG-nieuwbouw, zonder verdunning en zonder sloop. Hiermee is te scheiden welk deel van het overschot uit de LISA-stand zelf komt en welk deel uit de BAG-nieuwbouw die er in het eerste zichtjaar bovenop komt.";
+
+	parameter<String> herkomst := =
+		  quote('subsector;basisjaar_lisa;bag_nieuwbouw;stand_voor_allocatie|')
+		+ ' + ' + AsList(SS_Herkomst/expr, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_herkomst.txt'", StorageType = "str"
+	, Descr = "De opbouw van de stand waar de restclaim tegen afzet. De laatste kolom is niet de som van de eerste twee: Zichtjaar_T deelt werken nog door (1 + Groeifactor * halve periodelengte) en zet de gesloopte cellen op nul.";
+
+	unit<UInt8> SS_BAG := /Classifications/Actor/Jobs6
+	, Descr = "Wat BAG-nieuwbouw per werksubsector aan de startsituatie toevoegt: netto pandvoetafdruk, de banen die daaruit volgen, en de impliciete voetafdruk per baan."
+	{
+		attribute<String> ss_name := /Classifications/Actor/Jobs6/name;
+		attribute<String> FP      := '/BaseData/StartState/BAG_nieuwbouw/Pandfootprint/' + ss_name;
+		attribute<String> BN      := '/BaseData/StartState/BAG_nieuwbouw/Werken/' + ss_name;
+		attribute<String> DICHT   := '/BaseData/Densities/PandFootprint_baan/RESULT/' + ss_name;
+		attribute<String> VOOR    := '/BaseData/StartState/PandFootprint/PerYear_AdminDomain/Y' + string(/ModelParameters/Model_StartYear) + '/pand_met_vbo/Footprint_perJobs6_AdminDomain/' + ss_name
+		, Descr = "Bewust de levende keten en niet StateBasisjaar/Read: de ontkoppelde tifs dragen nog de toewijzing van voor de wijziging, dus daarmee zou de voorraad oud en de nieuwbouw nieuw zijn.";
+		attribute<String> LISA    := '/BaseData/StartState/StateBasisjaar/Read/Werken/' + ss_name;
+
+		attribute<String> expr :=
+			  quote(ss_name+';')
+			+ ' + string(sum(float32(' + FP + ')))'                                          + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + BN + ')))'                                          + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + FP + ')) / sum(float32(' + BN + ')))'               + ' + ' + quote(';')
+			+ ' + string(mean(float32(' + DICHT + ')))'                                      + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + VOOR + ')))'                                        + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + FP + ')) / sum(float32(' + VOOR + ')))'             + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + BN + ')) / sum(float32(' + LISA + ')))'
+			+ ' + ' + quote('|');
+	}
+
+	parameter<String> bagnieuwbouw := =
+		  quote('subsector;netto_footprint_m2;banen;m2_per_baan_impliciet;m2_per_baan_gemiddelde_dichtheid;footprint_basisjaar_m2;nieuwbouw_aandeel_voorraad;banen_aandeel_lisa|')
+		+ ' + ' + AsList(SS_BAG/expr, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_bagnieuwbouw.txt'", StorageType = "str"
+	, Descr = "De impliciete voetafdruk per baan is de netto toevoeging gedeeld door de banen die eruit komen. Wijkt die sterk af van de gemiddelde dichtheid, dan zit er sloop met een andere dichtheid in de netto som of grijpt de afkapping op celoppervlak aan.";
+
+	unit<UInt8> Doel := /Classifications/Vastgoed/vbo_gebruiksdoel_plus
+	, Descr = "De netto toevoeging per BAG-gebruiksdoel, uitgesplitst naar de vijf termen waaruit BAG-nieuwbouw is opgebouwd. Nodig omdat de klasse utiliteit_combi, een verblijfsobject met meer dan een niet-woonfunctie, in Classifications/Vastgoed/BAG voluit aan Nijverheid wordt toegekend."
+	{
+		attribute<String> d_name := /Classifications/Vastgoed/vbo_gebruiksdoel_plus/name;
+		attribute<String> P      := '/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/' + d_name + '/';
+
+		attribute<String> expr :=
+			  quote(d_name+';')
+			+ ' + string(sum(float32(' + P + 'NieuwVBO_TussenModelenRecentJaar_PerDoel' + '/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain' + ')))'  + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + P + 'NieuwVBO_NaRecentJaarWelActief_PerDoel'   + '/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain' + ')))'  + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + P + 'NieuwVBO_NaRecentJaar_PerDoel'            + '/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain' + ')))'  + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + P + 'WegVBO_TussenModelenRecentJaar_PerDoel'   + '/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain' + ')))'  + ' + ' + quote(';')
+			+ ' + string(sum(float32(' + P + 'WegVBO_NaRecentJaar_PerDoel'              + '/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain' + ')))'
+			+ ' + ' + quote('|');
+	}
+
+	unit<UInt8> Doel_Voorraad := /Classifications/Vastgoed/vbo_gebruiksdoel_plus
+	, Descr = "Dezelfde gebruiksdoelen, maar de voetafdruk in de voorraad van het basisjaar, zodat het aandeel van elk doel in de nieuwbouw naast zijn aandeel in de bestaande voorraad te leggen is."
+	{
+		attribute<String> d_name := /Classifications/Vastgoed/vbo_gebruiksdoel_plus/name;
+		attribute<String> expr :=
+			  quote(d_name+';')
+			+ ' + string(sum(float32(/BaseData/StartState/PandFootprint/PerYear_AdminDomain/Y' + string(/ModelParameters/Model_StartYear) + '/pand_met_vbo/PerGebruiksdoel_corr/' + d_name + '/Footprint_Per_AdminDomain)))'
+			+ ' + ' + quote('|');
+	}
+
+	parameter<String> voorraad_perdoel := =
+		  quote('gebruiksdoel;footprint_basisjaar_m2|')
+		+ ' + ' + AsList(Doel_Voorraad/expr, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_voorraad_perdoel.txt'", StorageType = "str";
+
+	parameter<String> bagnieuwbouw_perdoel := =
+		  quote('gebruiksdoel;nieuw_tussen;nieuw_na_welactief;nieuw_na;weg_tussen;weg_na|')
+		+ ' + ' + AsList(Doel/expr, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_bagnieuwbouw_perdoel.txt'", StorageType = "str";
+
+	parameter<String> bagnieuwbouw_wonen :=
+		  'woningen;'          + string(sum(float32(/BaseData/StartState/BAG_nieuwbouw/Wonen/Totaal)))
+		+ '|woningen_basisjaar;' + string(sum(float32(/BaseData/StartState/StateBasisjaar/Read/Wonen/Aantal_Woningen_Totaal)))
+		+ '|footprint_wonen_m2;' + string(sum(float32(/BaseData/StartState/BAG_nieuwbouw/Wonen/Footprint)))
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_bagnieuwbouw_wonen.txt'", StorageType = "str"
+	, Descr = "IJkpunt voor de plausibiliteit van BAG-nieuwbouw als geheel: het aantal woningen dat het tussen het basisjaar en de recente BAG aan de startsituatie toevoegt. De werkelijke woningproductie is bekend, dus hier is te zien of het mechanisme als geheel te veel meetelt of alleen bij de werksubsectoren.";
+
+	parameter<String> refs :=
+		  'sleutel;' + /ModelParameters/UtiliteitCombi/Verdeelsleutel
+		+ '|aandelen;' + AsList(/Classifications/Actor/Jobs6/name + '=' + string(/Classifications/Actor/Jobs6/UtiliteitCombi_Aandeel), ';')
+		+ '|som;' + string(sum(/Classifications/Actor/Jobs6/UtiliteitCombi_Aandeel))
+		+ '|ref;'      + AsList(/Classifications/Actor/Jobs6/vbo_gebruiksdoel_ref, ' || ')
+		+ '|sloopref;' + AsList(/Classifications/Actor/Jobs6/vbo_gebruiksdoel_ref_bagnieuwbouwsloop, ' || ')
+		+ '|plusref;'  + AsList(/Classifications/Actor/Jobs6/vbo_gebruiksdoel_plus_ref, ' || ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_refs_'+/ModelParameters/UtiliteitCombi/Verdeelsleutel+'.txt'", StorageType = "str"
+	, Descr = "De drie ref-strings zoals ze na de #667-wijziging uit Classifications/Actor/Jobs6 komen, met de gekozen sleutel en de aandelen erbij. Op AllesNaarNijverheid horen ze letterlijk gelijk te zijn aan de strings van voor de wijziging.";
+
+	container ClaimAnker
+	: Descr = "Meet wat het ankeren van de banenclaim op de waargenomen trend zou doen, zonder ModelParameters/ClaimBasisjaar/Anker te verzetten. Rekent de factor hier zelf uit, zodat een lopende run van een andere sessie geen andere claim te zien krijgt."
+	{
+		parameter<String> Pad := '/VariantData/' + /Diagnose/Variant + '/Claims/WLO_hoog/Zichtjaren/' + /Diagnose/Jaar + '/AllocRegios/NL/';
+
+		unit<UInt8> SS := /Classifications/Actor/Jobs6
+		{
+			attribute<String> ss_name := /Classifications/Actor/Jobs6/name;
+			attribute<String> expr :=
+				  quote(ss_name+';')
+				+ ' + string(sum(float32(' + /Diagnose667/ClaimAnker/Pad + 'Read_Werken_Basisjaar_CSV/' + ss_name + ')))'   + ' + ' + quote(';')
+				+ ' + string(float32(/ModelParameters/ClaimBasisjaar/TrendLISA/' + ss_name + '))'                            + ' + ' + quote(';')
+				+ ' + string(float32(/ModelParameters/ClaimBasisjaar/TrendLISA/' + ss_name + ') / sum(float32(' + /Diagnose667/ClaimAnker/Pad + 'Read_Werken_Basisjaar_CSV/' + ss_name + ')))' + ' + ' + quote(';')
+				+ ' + string(sum(float32(' + /Diagnose667/ClaimAnker/Pad + 'Werken/' + ss_name + ')))'                       + ' + ' + quote(';')
+				+ ' + string(sum(float32(' + /Diagnose667/ClaimAnker/Pad + 'Werken/' + ss_name + ')) * float32(/ModelParameters/ClaimBasisjaar/TrendLISA/' + ss_name + ') / sum(float32(' + /Diagnose667/ClaimAnker/Pad + 'Read_Werken_Basisjaar_CSV/' + ss_name + ')))'
+				+ ' + ' + quote('|');
+		}
+
+		parameter<String> tabel := =
+			  quote('subsector;txl_basisjaar;trend_basisjaar;ankerfactor;claim_nu;claim_geankerd|')
+			+ ' + ' + AsList(SS/expr, ' + ')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_claimanker.txt'", StorageType = "str"
+		, Descr = "Per werksubsector: wat TIGRIS voor het claimbasisjaar geeft, wat de waargenomen trend in datzelfde jaar zegt, de verhouding daartussen, en de claim van dit zichtjaar voor en na ankering.";
+	}
+
+	parameter<String> wonen_pertermijn :=
+		  'term;woningen'
+		+ '|NieuwVBO_TussenModelenRecentJaar;' + string(sum(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/eengezins + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/meergezins))
+		+ '|NieuwVBO_NaRecentJaarWelActief;' + string(sum(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/count_Per_CompactedAdminDomain_WP2/eengezins + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/count_Per_CompactedAdminDomain_WP2/meergezins))
+		+ '|NieuwVBO_NaRecentJaar;' + string(sum(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/eengezins + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/meergezins))
+		+ '|NieuwVBO_InBestaandPand;' + string(sum(/BaseData/StartState/BAG_nieuwbouw/NieuwVBO_InBestaandPand/count_Per_CompactedAdminDomain_WP2/eengezins + /BaseData/StartState/BAG_nieuwbouw/NieuwVBO_InBestaandPand/count_Per_CompactedAdminDomain_WP2/meergezins))
+		+ '|WegVBO_TussenModelenRecentJaar;' + string(sum(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/eengezins_VrijeSector + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/eengezins_SocialeHuur + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/meergezins_VrijeSector + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/meergezins_SocialeHuur))
+		+ '|WegVBO_NaRecentJaar;' + string(sum(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/eengezins_VrijeSector + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/eengezins_SocialeHuur + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/meergezins_VrijeSector + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/meergezins_SocialeHuur))
+	, StorageName = "='%LocalDataProjDir%/Diagnose/667_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_wonen_pertermijn.txt'", StorageType = "str"
+	, Descr = "Het aantal woningen per term waaruit BAG-nieuwbouw is opgebouwd. De eerste drie tellen op, de laatste twee gaan eraf.";
+
+	container D703
+	: Descr = "Kwantificeert de drie open punten uit #703: splitsingen in verbouwpanden, verblijfsobjecten zonder gerelateerd pand, en het uitsmeerverlies aan de rand van het studiegebied."
+	{
+		unit<uint32> WA := /BaseData/StartState/BAG_nieuwbouw/NieuwVBO_NaRecentJaarWelActief
+		, Descr = "De pijplijnselectie: elk verblijfsobject met de status gevormd binnen de ouderdomsgrens. De pandfiltering gebeurt pas via gerelateerdPand_rel, dus hier is te tellen wat er bij die stap afvalt."
+		{
+			attribute<Bool>   HeeftBouwpand := IsDefined(gerelateerdPand_rel), Descr = "Pand in aanbouw of vergund; alleen deze tellen mee in de nieuwbouw.";
+			attribute<Bool>   HeeftEnigPand := IsDefined(rlookup(vbo_bag_nr, /BaseData/StartState/BAG_nieuwbouw/BAG_RecentsteJaar/vbo_alle_statussen/gerelateerdPand/vbo_bag_nr))
+			, Descr = "Pand met een op de peildatum geldig voorkomen, welke status dan ook. Wel enig pand maar geen bouwpand is de splitsings- en verbouwgroep.";
+			attribute<uint64> EerstePand_nr := /SourceData/Vastgoed/BAG/VolledigeBAG/VBOs/src/gerelateerdPand/pand_bag_nr[rlookup(vbo_bag_nr, /SourceData/Vastgoed/BAG/VolledigeBAG/VBOs/src/gerelateerdPand/vbo_bag_nr)]
+			, Descr = "Het pandnummer uit de volledige relatietabel, zonder datumfilter, voor de gevallen zonder geldig pandvoorkomen.";
+			attribute<Bool>   PandAlleenToekomst := !HeeftEnigPand && IsDefined(rlookup(EerstePand_nr, /BaseData/StartState/BAG_nieuwbouw/BAG_RecentsteJaar/pand_alle_statussen_toekomst/pand_bag_nr))
+			, Descr = "Het pand bestaat wel in de BAG maar zijn voorkomen gaat pas na de peildatum in: de vbo is eerder geadministreerd dan het pand.";
+			attribute<Bool>   GeenEnkelPand := !HeeftEnigPand && !IsDefined(rlookup(EerstePand_nr, /SourceData/Vastgoed/BAG/VolledigeBAG/VBOs/src/gerelateerdPand/pand_bag_nr)) || !IsDefined(EerstePand_nr)
+			, Descr = "Geen enkele pandrelatie in de volledige BAG.";
+			attribute<Bool>   IsWoon := gebruiksdoelen/woon;
+		}
+
+		parameter<String> splitsingen :=
+			  'groep;aantal;waarvan_woon;opp_m2'
+			+ '|gevormd_totaal;'      + string(sum(uint32(IsDefined(id(WA)))))                    + ';' + string(sum(uint32(WA/IsWoon)))                     + ';' + string(sum(float32(WA/oppervlakte_trunc)))
+			+ '|met_bouwpand;'        + string(sum(uint32(WA/HeeftBouwpand)))                     + ';' + string(sum(uint32(WA/HeeftBouwpand && WA/IsWoon))) + ';' + string(sum(WA/HeeftBouwpand ? float32(WA/oppervlakte_trunc) : 0f))
+			+ '|splitsing_verbouw;'   + string(sum(uint32(!WA/HeeftBouwpand && WA/HeeftEnigPand)))+ ';' + string(sum(uint32(!WA/HeeftBouwpand && WA/HeeftEnigPand && WA/IsWoon))) + ';' + string(sum(!WA/HeeftBouwpand && WA/HeeftEnigPand ? float32(WA/oppervlakte_trunc) : 0f))
+			+ '|pand_alleen_toekomst;'+ string(sum(uint32(WA/PandAlleenToekomst)))                + ';' + string(sum(uint32(WA/PandAlleenToekomst && WA/IsWoon))) + ';' + string(sum(WA/PandAlleenToekomst ? float32(WA/oppervlakte_trunc) : 0f))
+			+ '|geen_enkel_pand;'     + string(sum(uint32(WA/GeenEnkelPand)))                     + ';' + string(sum(uint32(WA/GeenEnkelPand && WA/IsWoon)))  + ';' + string(sum(WA/GeenEnkelPand ? float32(WA/oppervlakte_trunc) : 0f))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/703_'+/Diagnose/Casus+'_splitsingen.txt'", StorageType = "str"
+		, Descr = "Wat er bij de pandfiltering van de pijplijnroute afvalt, uitgesplitst naar oorzaak.";
+
+		parameter<String> uitsmeerverlies :=
+			  'set;m2_subset;m2_op_grid'
+			+ '|woon_tussen;'  + string(sum(float32(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/Footprint)))
+			+ ';'              + string(sum(float32(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain)))
+			+ '|industrie_tussen;' + string(sum(float32(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/industrie/NieuwVBO_TussenModelenRecentJaar_PerDoel/Footprint)))
+			+ ';'              + string(sum(float32(/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/industrie/NieuwVBO_TussenModelenRecentJaar_PerDoel/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain)))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/703_'+/Diagnose/Casus+'_uitsmeerverlies.txt'", StorageType = "str"
+		, Descr = "De voetafdruk in de subset naast wat er na de uitsmering op het grid landt. Het verschil is het gewicht dat aan de rand van het studiegebied of door ontbrekende koppelingen verloren gaat.";
+
+		unit<uint32> PandNieuw := /BaseData/StartState/BAG_nieuwbouw/BAG_RecentsteJaar_pand_voorraad
+		, Descr = "De pandvoorraad van het recentste jaar; hierbinnen zijn de panden met een bouwjaar vanaf het modeljaar de gerealiseerde nieuwbouw, en juist daar is de LISA-typering wel beschikbaar als waarheid om de pijplijnheuristiek tegen te toetsen."
+		{
+			attribute<Bool> IsNieuw  := uint16(Bouwjaar) >= uint16(/ModelParameters/Model_StartYear);
+			attribute<Bool> Waarheid := IsLogistiekFunctie, Descr = "Statische set plus LISA-aanvulling; de heuristiektak vuurt hier niet, want voorraadpanden hebben niet de status in aanbouw.";
+			attribute<Bool> H        := Footprint >= /ModelParameters/Advanced/LogistiekePijplijn_MinFootprint
+										&& (!IsDefined(pand_hoogte_cm) || float32(pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm)
+										&& OpIBIS
+			, Descr = "Dezelfde condities als de pijplijnheuristiek, zonder de statuseis, toegepast op gerealiseerde panden.";
+			attribute<Bool> OpIBIS   := ='IsDefined(point_in_polygon(centroid_or_mid(geometry), /SourceData/Grondgebruik/IBIS/Y'+/ModelParameters/IBIS_Year+'/geometry))';
+		}
+
+		parameter<String> heuristiek_toets :=
+			  'groep;aantal;footprint_m2'
+			+ '|nieuw_totaal;'      + string(sum(uint32(PandNieuw/IsNieuw)))                                    + ';' + string(sum(PandNieuw/IsNieuw ? float32(PandNieuw/Footprint) : 0f))
+			+ '|lisa_logistiek;'    + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid)))              + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f))
+			+ '|heuristiek;'        + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/H)))                     + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/H ? float32(PandNieuw/Footprint) : 0f))
+			+ '|beide;'             + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/H && PandNieuw/Waarheid)))+ ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/H && PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f))
+			+ '|alleen_heuristiek;' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/H && !PandNieuw/Waarheid)))+ ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/H && !PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f))
+			+ '|alleen_lisa;'       + string(sum(uint32(PandNieuw/IsNieuw && !PandNieuw/H && PandNieuw/Waarheid)))+ ';' + string(sum(PandNieuw/IsNieuw && !PandNieuw/H && PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/703_'+/Diagnose/Casus+'_heuristiek_toets.txt'", StorageType = "str"
+		, Descr = "Verwarringsmatrix van de pijplijnheuristiek tegen de LISA-typering, op de gerealiseerde nieuwbouw vanaf het modeljaar. alleen_heuristiek zijn de fout-positieven, alleen_lisa de gemiste logistiek.";
+
+		parameter<String> heuristiek_condities :=
+			  'conditie;aantal_binnen_lisa_logistiek'
+			+ '|totaal;'          + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid)))
+			+ '|footprint_ok;'    + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && PandNieuw/Footprint >= /ModelParameters/Advanced/LogistiekePijplijn_MinFootprint)))
+			+ '|hoogte_ok;'       + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm))))
+			+ '|op_ibis;'         + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && PandNieuw/OpIBIS)))
+			+ '|fp_en_ibis;'      + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && PandNieuw/OpIBIS && PandNieuw/Footprint >= /ModelParameters/Advanced/LogistiekePijplijn_MinFootprint)))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/703_'+/Diagnose/Casus+'_heuristiek_condities.txt'", StorageType = "str"
+		, Descr = "Welke van de drie condities de gemiste logistiek wegfiltert.";
+
+		parameter<String> drempelkalibratie :=
+			  'drempel;n_geselecteerd;m2_goed;m2_fout;n_gemist'
+			+ '|drempel_2500;' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 2500f))) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 2500f && PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 2500f && !PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && !(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 2500f))))
+			+ '|drempel_5000;' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 5000f))) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 5000f && PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 5000f && !PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && !(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 5000f))))
+			+ '|drempel_10000;' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 10000f))) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 10000f && PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 10000f && !PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && !(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 10000f))))
+			+ '|drempel_15000;' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 15000f))) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 15000f && PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 15000f && !PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && !(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 15000f))))
+			+ '|drempel_20000;' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 20000f))) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 20000f && PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 20000f && !PandNieuw/Waarheid ? float32(PandNieuw/Footprint) : 0f)) + ';' + string(sum(uint32(PandNieuw/IsNieuw && PandNieuw/Waarheid && !(PandNieuw/IsNieuw && PandNieuw/OpIBIS && (!IsDefined(PandNieuw/pand_hoogte_cm) || float32(PandNieuw/pand_hoogte_cm) <= /ModelParameters/Advanced/LogistiekePijplijn_MaxHoogte_cm) && float32(PandNieuw/Footprint) >= 20000f))))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/703_'+/Diagnose/Casus+'_drempelkalibratie.txt'", StorageType = "str"
+		, Descr = "Precisie en dekking van de pijplijnheuristiek per voetafdrukdrempel, getoetst op de gerealiseerde nieuwbouw met de LISA-typering als waarheid.";
+	}
+
+	container AandeelToets
+	: Descr = "Toetst op vbo-niveau of de gewogen kolom op de terugvalstand exact hetzelfde oplevert als de booleaanse kolom die er stond. Zonder pandrelatie ertussen, zodat een verschil aan de weging zelf ligt en niet aan de aggregatie."
+	{
+		parameter<String> V := '/SourceData/Vastgoed/BAG/PerJaar/Y' + string(/ModelParameters/Model_StartYear) + '/vbo/';
+
+		unit<UInt8> Doel := /Classifications/Vastgoed/vbo_gebruiksdoel_plus
+		{
+			attribute<String> d := /Classifications/Vastgoed/vbo_gebruiksdoel_plus/name;
+			attribute<String> expr :=
+				  quote(d+';')
+				+ ' + string(sum(float64(' + /Diagnose667/AandeelToets/V + 'Impl/gebruiksdoelen_cbs/' + d + ' ? ' + /Diagnose667/AandeelToets/V + 'oppervlakte_trunc : 0[/Units/m2_Vbo])))' + ' + ' + quote(';')
+				+ ' + string(sum(float64(' + /Diagnose667/AandeelToets/V + 'Impl/aandeel_cbs/' + d + ') * float64(' + /Diagnose667/AandeelToets/V + 'oppervlakte_trunc)))'
+				+ ' + ' + quote('|');
+		}
+
+		parameter<String> tabel := =
+			  quote('gebruiksdoel;booleaans;gewogen|')
+			+ ' + ' + AsList(Doel/expr, ' + ')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/667_aandeeltoets_'+/ModelParameters/UtiliteitCombi/Verdeelsleutel+'.txt'", StorageType = "str";
+	}
+}
