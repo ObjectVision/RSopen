@@ -403,7 +403,7 @@ Template Zichtjaar_T
 		}
 		
 		container FootprintEindejaars
-		: Descr = "Einde-jaars afleiding van de footprints, ter vervanging van de keten door alle iteratielagen heen. De iteratie-updates (Allocatie_T/Impl/Update_PandFootprint_Expr en Update_WoonFootprint_Expr) worden tijdens de allocatie zelf nooit opgevraagd; pas bij het wegschrijven van de stand werd die keten van circa 135 lagen alsnog over het hele domein uitgerekend, goed voor het leeuwendeel van de schrijfstaart. Omdat een cel binnen een zichtjaar hoogstens een keer gealloceerd wordt (zodra SubSector_rel gevuld is, is de cel in alle latere iteraties, blokken en sequenties onbeschikbaar), is de eindfootprint direct af te leiden: niet dit jaar gealloceerd geeft de beginstand van het zichtjaar (inclusief de sloopleging in het eerste zichtjaar), wel gealloceerd geeft voor werken de footprint-per-baan van dit zichtjaar maal de eindstand van de winnende subsector (nul voor de andere subsectoren, precies de verdringing), en voor wonen de gebouwvoetafdruk van het gealloceerde ontwikkelpakket. De equivalentie is per constructie cel voor cel gelijk aan de iteratieketen; de container Bewijs hieronder toetst dat eenmalig, en pas na een exact-nul-uitkomst wordt CalcStand_Compacted op deze afleiding gezet."
+		: Descr = "Einde-jaars afleiding van de footprints, ter vervanging van de keten door alle iteratielagen heen. De iteratie-updates (Allocatie_T/Impl/Update_PandFootprint_Expr en Update_WoonFootprint_Expr) worden tijdens de allocatie zelf nooit opgevraagd; pas bij het wegschrijven van de stand werd die keten van circa 135 lagen alsnog over het hele domein uitgerekend, goed voor het leeuwendeel van de schrijfstaart. Omdat een cel binnen een zichtjaar hoogstens een keer gealloceerd wordt (zodra SubSector_rel gevuld is, is de cel in alle latere iteraties, blokken en sequenties onbeschikbaar), is de eindfootprint direct af te leiden: niet dit jaar gealloceerd geeft de beginstand van het zichtjaar (inclusief de sloopleging in het eerste zichtjaar), wel gealloceerd geeft voor werken de footprint-per-baan van dit zichtjaar maal de eindstand van de winnende subsector (nul voor de andere subsectoren, precies de verdringing), en voor wonen de gebouwvoetafdruk van het gealloceerde ontwikkelpakket. De equivalentie met de iteratieketen is op 2026-08-28 getoetst en bleek er niet te zijn, op twee punten die allebei zijn uitgezocht en die in de Descr van Bewijs en van Bewijs/Voorwerk staan. Op de werkenkant is de afleiding de juiste van de twee en wist de iteratieketen voetafdrukken die zouden moeten blijven staan; op de woonkant pakt de afleiding op enkele tientallen cellen een ouder ontwikkelpakket dan de keten deed. CalcStand_Compacted staat daarom nog op de iteratieketen, en de omzetting wacht op de reparatie van die nullekkage."
 		{
 			attribute<Bool> GealloceerdDitZichtjaar (CompactedAdminDomain) := IsDefined(Sequences/LastSequence/StateNaAllocatie/SubSector_rel) && !IsDefined(StateVoorAllocatie/SubSector_rel)
 			, Descr = "Cellen waar de allocatie van dit zichtjaar heeft toegeslagen: aan het eind gevuld, aan het begin nog niet. Op alle andere cellen dragen de footprints de beginstand door.";
@@ -423,12 +423,121 @@ Template Zichtjaar_T
 				attribute<m2PandFootprint> Footprint (CompactedAdminDomain) := GealloceerdDitZichtjaar
 					? MakeDefined(ThisVariantClassifications/Vastgoed/OP_buurt/Terreinoppervlakte/Uitgeefbaar/GebouwVoetafdruk[Sequences/LastSequence/StateNaAllocatie/OP_rel] /  1[Terreinoppervlak] * AdminDomain/NrHaPerCell /  1[ha] * 1[m2PandFootprint], 0[m2PandFootprint])
 					: StateVoorAllocatie/Wonen/Footprint
-				, Descr = "Zelfde term als Update_WoonFootprint_Expr op de eindstand: op een dit zichtjaar gealloceerde cel is OP_rel het pakket van dit zichtjaar (first-wins raakt alleen cellen uit eerdere zichtjaren, en die zitten in de andere tak), en op een niet-wonen-allocatie is OP_rel daar null en valt de voetafdruk op nul, precies de verdringing.";
+				, Descr = "Zelfde term als Update_WoonFootprint_Expr op de eindstand: op een dit zichtjaar gealloceerde cel is OP_rel het pakket van dit zichtjaar, en op een niet-wonen-allocatie is OP_rel daar null en valt de voetafdruk op nul, precies de verdringing.
+
+						Let op de uitzondering die de toets van 2026-08-28 blootlegde. OP_rel is in Iter_T eerste-wint, MakeDefined(StateVoorAllocatie/OP_rel, Allocatie/per_OP), en er zijn cellen die aan het begin van het zichtjaar wel een pakket dragen maar nog geen subsector: in Y2040 van WLO_hoog_BAU zijn dat er 59. Daar staat GealloceerdDitZichtjaar op TRUE zodra de allocatie toeslaat, terwijl OP_rel het oude pakket houdt. Deze term rekent dan met het oude pakket en de iteratieketen met het nieuwe. Dat is precies het waardeverschil van 12,499992 m2 uit de toets, en het is meteen een inconsistentie in de weggeschreven stand zelf: OP_rel en de woonvoetafdruk wijzen daar naar verschillende pakketten.";
 			}
 
 			container Bewijs
 			: Descr = "Eenmalige equivalentietoets van de einde-jaars afleiding tegen de iteratieketen: per werksubsector en voor wonen het maximale absolute verschil. Vraag Schrijf op; de vergelijking dwingt beide ketens af binnen een proces. Zolang deze toets niet exact nul heeft opgeleverd, blijft CalcStand_Compacted op de iteratieketen staan."
 			{
+				container Voorwerk
+				: Descr = "Telt de vermoede nullbronnen zonder dat de allocatie hoeft te draaien, zodat de dure toets hierboven niet nodig is om de werkenkant te verklaren.
+
+						De aanleiding. In Update_PandFootprint_Expr staat de dichtheidsopzoeking in een term die altijd wordt uitgerekend, ook op cellen waar de subsector niet wint, want float32(FALSE) maal een null geeft in GeoDMS geen nul maar een null, en die propageert daarna door de optelling en door alle volgende iteratielagen. In de afleiding hierboven staat diezelfde opzoeking in de TRUE-tak van een ternaire operator, en die tak wordt op een niet-gealloceerde cel niet meegenomen. Waar de dichtheidsopzoeking null is, geeft de iteratieketen dus null en de afleiding een waarde. Wist_waarde telt precies de cellen waar dat een bestaande footprint wegvaagt."
+				{
+					parameter<uint64> n_cel                := #CompactedAdminDomain;
+					parameter<uint32> n_zonder_allocdomein := sum(uint32(!IsDefined(CompactedAdminDomain/CompactedAllocDomain_rel))), Descr = "Cellen van het compacted admin domain die in geen enkele allocatieregio liggen; daar geeft de opzoeking per definitie null.";
+
+					container Dichtheid_null :=
+						for_each_nedv(
+							Jobs6/name
+							, replace('sum(uint32(!IsDefined(ThisVariantData/Density/Per_CompactedAllocDomain/@Y@/src/Werken/PandFootprint_perJob/Subsectoren/@SS@[CompactedAdminDomain/CompactedAllocDomain_rel])))'
+								, '@Y@', Context/ThisZichtjaar_name
+								, '@SS@', Jobs6/name)
+							, void
+							, uint32
+						), Descr = "Cellen waar de dichtheidsopzoeking uit de tweede term van Update_PandFootprint_Expr null oplevert.";
+
+					container Dichtheid_null_binnen :=
+						for_each_nedv(
+							Jobs6/name
+							, replace('sum(uint32(IsDefined(CompactedAdminDomain/CompactedAllocDomain_rel) && !IsDefined(ThisVariantData/Density/Per_CompactedAllocDomain/@Y@/src/Werken/PandFootprint_perJob/Subsectoren/@SS@[CompactedAdminDomain/CompactedAllocDomain_rel])))'
+								, '@Y@', Context/ThisZichtjaar_name
+								, '@SS@', Jobs6/name)
+							, void
+							, uint32
+						), Descr = "Hetzelfde, maar alleen op cellen die wel in een allocatieregio liggen; dat scheidt een gat in de dichtheidstabel van een cel buiten het allocatiedomein.";
+
+					container Beginstand_null :=
+						for_each_nedv(
+							Jobs6/name
+							, 'sum(uint32(!IsDefined(StateVoorAllocatie/PandFootprint/'+Jobs6/name+')))'
+							, void
+							, uint32
+						), Descr = "Cellen waar de ingelezen beginstand van de footprint zelf al null is; die null draagt de afleiding net zo goed als de iteratieketen.";
+
+					container Wist_waarde :=
+						for_each_nedv(
+							Jobs6/name
+							, replace('sum(uint32(!IsDefined(ThisVariantData/Density/Per_CompactedAllocDomain/@Y@/src/Werken/PandFootprint_perJob/Subsectoren/@SS@[CompactedAdminDomain/CompactedAllocDomain_rel]) && StateVoorAllocatie/PandFootprint/@SS@ > 0[m2PandFootprint]))'
+								, '@Y@', Context/ThisZichtjaar_name
+								, '@SS@', Jobs6/name)
+							, void
+							, uint32
+						), Descr = "De kern van de zaak: cellen waar de dichtheidsopzoeking null is terwijl er wel een footprint staat. Op die cellen zet de iteratieketen de footprint op null en houdt de afleiding hem staan.";
+
+					container Max_gewist :=
+						for_each_nedv(
+							Jobs6/name
+							, replace('max(!IsDefined(ThisVariantData/Density/Per_CompactedAllocDomain/@Y@/src/Werken/PandFootprint_perJob/Subsectoren/@SS@[CompactedAdminDomain/CompactedAllocDomain_rel]) ? MakeDefined(StateVoorAllocatie/PandFootprint/@SS@, 0[m2PandFootprint]) : 0[m2PandFootprint])'
+								, '@Y@', Context/ThisZichtjaar_name
+								, '@SS@', Jobs6/name)
+							, void
+							, m2PandFootprint
+						), Descr = "De grootste footprint die op zo'n cel verloren gaat. Als de toets hierboven klopt, moet dit getal de 16 tot 604 m2 uit de sentineluitkomsten dekken.";
+
+					parameter<uint32>          n_woonfootprint_null := sum(uint32(!IsDefined(StateVoorAllocatie/Wonen/Footprint)));
+					parameter<m2PandFootprint> max_woonfootprint    := max(StateVoorAllocatie/Wonen/Footprint);
+
+					parameter<uint32> n_op_zonder_subsector := sum(uint32(IsDefined(StateVoorAllocatie/OP_rel) && !IsDefined(StateVoorAllocatie/SubSector_rel)))
+					, Descr = "Cellen die aan het begin van het zichtjaar wel een ontwikkelpakket dragen maar geen subsector. Daar draait GealloceerdDitZichtjaar op TRUE zodra de allocatie toeslaat, terwijl OP_rel in Iter_T eerste-wint is (MakeDefined(StateVoorAllocatie/OP_rel, Allocatie/per_OP)) en dus het OUDE pakket houdt. De afleiding rekent dan met het oude pakket en de iteratieketen met het nieuwe; dat is de kandidaat-verklaring voor het waardeverschil bij wonen.";
+					parameter<uint32> n_subsector_zonder_op := sum(uint32(!IsDefined(StateVoorAllocatie/OP_rel) && IsDefined(StateVoorAllocatie/SubSector_rel)));
+					parameter<uint32> n_op_gevuld          := sum(uint32(IsDefined(StateVoorAllocatie/OP_rel)));
+					parameter<uint32> n_subsector_gevuld   := sum(uint32(IsDefined(StateVoorAllocatie/SubSector_rel)));
+
+					parameter<Float32> nrha_min := min(AdminDomain/NrHaPerCell / 1[ha]);
+					parameter<Float32> nrha_max := max(AdminDomain/NrHaPerCell / 1[ha]);
+
+					attribute<Float32> GVA_oud (CompactedAdminDomain) := IsDefined(StateVoorAllocatie/OP_rel) && !IsDefined(StateVoorAllocatie/SubSector_rel)
+						? ThisVariantClassifications/Vastgoed/OP_buurt/Terreinoppervlakte/Uitgeefbaar/GebouwVoetafdruk[StateVoorAllocatie/OP_rel] / 1[Terreinoppervlak]
+						: null_f
+					, Descr = "De gebouwvoetafdruk van het oude pakket op de cellen die wel een pakket dragen maar geen subsector; elders null zodat de aggregaties hem overslaan.";
+					parameter<Float32> GVA_oud_min   := min(GVA_oud);
+					parameter<Float32> GVA_oud_max   := max(GVA_oud);
+					parameter<uint32>  GVA_oud_n2000 := sum(uint32(GVA_oud == 2000f));
+					parameter<uint32>  GVA_oud_n1800 := sum(uint32(GVA_oud > 1799f && GVA_oud < 1801f));
+
+					parameter<String> GVA_waarden := AsList(string(ThisVariantClassifications/Vastgoed/OP_buurt/Terreinoppervlakte/Uitgeefbaar/GebouwVoetafdruk / 1[Terreinoppervlak]), ',')
+					, Descr = "Alle gebouwvoetafdrukken van de ontwikkelpakketten. Als twee pakketten precies 12,5 uit elkaar liggen (maal NrHaPerCell), is het waardeverschil bij wonen een pakketverwisseling en geen afrondingskwestie.";
+
+					parameter<String> Schrijf := =
+						  '''n_cel='' + string(n_cel)'
+						+ ' + '';n_zonder_allocdomein='' + string(n_zonder_allocdomein)'
+						+ ' + '';subsectoren='' + ' + asList(quote(Jobs6/name), ' + '';'' + ')
+						+ ' + '';dichtheid_null='' + '        + asList('string(Dichtheid_null/'+Jobs6/name+')', ' + '';'' + ')
+						+ ' + '';dichtheid_null_binnen='' + ' + asList('string(Dichtheid_null_binnen/'+Jobs6/name+')', ' + '';'' + ')
+						+ ' + '';beginstand_null='' + '      + asList('string(Beginstand_null/'+Jobs6/name+')', ' + '';'' + ')
+						+ ' + '';wist_waarde='' + '          + asList('string(Wist_waarde/'+Jobs6/name+')', ' + '';'' + ')
+						+ ' + '';max_gewist='' + '           + asList('string(Max_gewist/'+Jobs6/name+')', ' + '';'' + ')
+						+ ' + '';wonen_beginstand_null='' + string(n_woonfootprint_null)'
+						+ ' + '';wonen_max_beginstand='' + string(max_woonfootprint)'
+						+ ' + '';op_zonder_subsector='' + string(n_op_zonder_subsector)'
+						+ ' + '';subsector_zonder_op='' + string(n_subsector_zonder_op)'
+						+ ' + '';op_gevuld='' + string(n_op_gevuld)'
+						+ ' + '';subsector_gevuld='' + string(n_subsector_gevuld)'
+						+ ' + '';nrha='' + string(nrha_min) + ''-'' + string(nrha_max)'
+						+ ' + '';gva_oud_min='' + string(GVA_oud_min) + '';gva_oud_max='' + string(GVA_oud_max) + '';n2000='' + string(GVA_oud_n2000) + '';n1800='' + string(GVA_oud_n1800)'
+						+ ' + '';gva='' + GVA_waarden'
+					, StorageName = "='%LocalDataProjDir%/Diagnose/FootprintEindejaars_Voorwerk_'+Casus_name+'_'+Context/ThisZichtjaar_name+'.txt'"
+					, StorageType = "str"
+					, Descr = "Uitkomst op 2026-08-28, casus WLO_hoog_BAU zichtjaar Y2040, volledige sectorlijst, in 165 seconden zonder allocatie. Deze meting verklaart alle zeven getallen van de gefaalde equivalentietoets hieronder.
+
+							Werken. Van de 56.146.816 cellen liggen er nul buiten het allocatiedomein, maar op 67.024 cellen is de dichtheidsopzoeking toch null, voor alle zes subsectoren dezelfde 67.024. Dat is geen toeval en geen datagat: BaseData/PandFootprint_baan/Smoothed zet Potential_Banen en Potential_m2PandFootprint expliciet op (0f/0f) waar SourceData/RegioIndelingen/CBS/Last/Buurt/Per_AllocDomain niet gedefinieerd is, dus buiten de buurtkaart. De ingelezen beginstand is daar wel overal gedefinieerd (beginstand_null is nul), en op 106, 7, 61, 369, 84 en 4 van die cellen staat ook echt een voetafdruk. De iteratieketen zet die op null en de afleiding houdt hem staan. De grootste zo verloren voetafdruk is per subsector 604,367 / 573,6274 / 248,41556 / 602,4139 / 353,66043 / 17,083588 m2, en dat is exact 999999 minder dan de zes sentineluitkomsten van de toets, tot op de float32-resolutie van 0,0625 rond een miljoen. Daarmee staat vast welke kant de null draagt: de iteratieketen, niet de afleiding.
+
+							Wonen. De cel is 0,0625 ha, dus 25 bij 25 meter, overal gelijk. Er zijn 59 cellen die aan het begin van het zichtjaar wel een ontwikkelpakket dragen maar geen subsector; daarvan hebben er 23 een pakket met gebouwvoetafdruk 2000 en 7 een pakket met 1800,0001. Op zo'n cel slaat GealloceerdDitZichtjaar aan zodra de allocatie toeslaat, terwijl Iter_T/StateNaAllocatie0/OP_rel eerste-wint is en dus het oude pakket houdt: de afleiding rekent met het oude pakket en de iteratieketen met het nieuwe. Het verschil tussen die twee pakketten is (2000 - 1800,0001) maal 0,0625 is 12,4999924 m2, en de toets meldde 12,499992. Ook dat getal is dus verklaard, en het is een pakketverwisseling en geen afronding.";
+				}
+
 				container PerSubsector :=
 					for_each_nedv(
 						Jobs6/name
@@ -442,7 +551,11 @@ Template Zichtjaar_T
 				, StorageType = "str"
 				, Descr = "Zeven getallen, allemaal exact nul als de afleiding klopt: het maximale absolute verschil per werksubsector en voor wonen.
 
-						Getoetst op 2026-08-28, casus WLO_hoog_BAU zichtjaar Y2040, sectorlijst ingekort tot NVM_Wonen plus NVM_Werken, schakelaarstand TrendLISARegio en Omvang: NIET equivalent. De zes werksubsectoren tonen elk cellen waar de ene keten null geeft en de andere een waarde (uitkomsten rond 1.000.000 plus de celwaarde, het patroon van de sentinel -999999), en wonen heeft een echt waardeverschil van maximaal 12,5 m2. De omzetting van CalcStand_Compacted is daarom niet doorgevoerd; eerst uitzoeken welke kant de nulls draagt en waarom, en waar de 12,5 m2 bij wonen vandaan komt.";
+						Getoetst op 2026-08-28, casus WLO_hoog_BAU zichtjaar Y2040, sectorlijst ingekort tot NVM_Wonen plus NVM_Werken, schakelaarstand TrendLISARegio en Omvang: NIET equivalent. Uitkomst 1000603,4 ; 1000572,6 ; 1000247,44 ; 1000601,44 ; 1000352,7 ; 1000016,06 ; 12,499992.
+
+						Diezelfde dag zijn alle zeven getallen verklaard met de container Voorwerk hierboven, die de oorzaken los meet en daar geen allocatie voor nodig heeft. De zes werkgetallen zijn het sentinelpatroon 999999 plus de grootste voetafdruk die de iteratieketen wegvaagt op cellen waar de dichtheidsopzoeking null is; die null komt de keten binnen via float32(FALSE) maal null, wat in GeoDMS null geeft en niet nul, terwijl de afleiding diezelfde opzoeking in de niet-gekozen tak van een ternaire operator heeft staan. De 12,499992 bij wonen is het verschil tussen twee ontwikkelpakketten, doordat OP_rel eerste-wint is en de afleiding daardoor het oude pakket pakt waar de keten het nieuwe gebruikte. De getallen en de aantallen staan in de Descr van Voorwerk/Schrijf.
+
+						De omzetting van CalcStand_Compacted is niet doorgevoerd, en dat blijft zo tot er een besluit ligt. Het gaat namelijk niet om een fout in de afleiding: op de werkenkant is de afleiding juist en wist de iteratieketen bestaande voetafdrukken. Wie de afleiding aanzet, repareert dus stilzwijgend ook die wegvaging, en dat verandert de uitkomsten. De schone volgorde is eerst de nullekkage in Update_PandFootprint_Expr repareren als losse ingreep met een eigen meting, en pas daarna de omzetting doen tegen een keten die dan wel equivalent is.";
 			}
 		}
 
