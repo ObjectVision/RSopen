@@ -31,7 +31,7 @@ container Werken : using = "SourceData/Actoren/Banen;Classifications/Grondgebrui
 	{
 		parameter<String> Sectorname;
 		
-		attribute<Float32> raw (AdminDomain):= = 'MakeDefined(
+		attribute<Float32> Calc_raw (AdminDomain):= = 'MakeDefined(
 			ReadCoefficients/'+Sectorname+'/Result/Constant
 			+ log(Diversen/Per_AdminDomain/DistTo_CargoAir / 1[km])                    * ReadCoefficients/'+Sectorname+'/Result/lndistto_cargoair_km 
 			+ log(Diversen/Per_AdminDomain/DistTo_Highway_acces_exit_2018 / 1[km])     * ReadCoefficients/'+Sectorname+'/Result/lndist_highway_km_2018 
@@ -49,6 +49,40 @@ container Werken : using = "SourceData/Actoren/Banen;Classifications/Grondgebrui
 			+ Diversen/Per_AdminDomain/Avg_shr_LUType_neigh_1000r_otherbuiltup         * ReadCoefficients/'+Sectorname+'/Result/avgshr_LU12_ngh_1000r_otherbu
 			,-1e9f
 		)', Descr = "Nutsfunctie per cel. Cellen met ontbrekende data krijgen -1e9, zodat exp(raw) daar 0 is en de cel kans 0 krijgt; met de oude vulling 0f kreeg nodata exp(0)=1, een substantiele middenkans (#599).";
+		
+		parameter<String> FileName_raw := '%LocalDataProjDir%/BaseData/Suitabilities/Werken_raw_'+Sectorname+'_coeff'+/ModelParameters/Werken_coeff_date+'_bag'+string(/ModelParameters/BAG_RecentYear)+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft. PropValue van een StorageName levert de expressietekst en niet de uitkomst, en daar kan ExistingFile niets mee.";
+		
+		parameter<String> Fingerprint_raw :=
+			  'sector='                 + Sectorname
+			+ ';coeff_date='            + /ModelParameters/Werken_coeff_date
+			+ ';bag_recent_year='       + string(/ModelParameters/BAG_RecentYear)
+			+ ';bag_date='              + /ModelParameters/BAG_file_date
+			+ ';bbg_year='              + /ModelParameters/BBG_Year
+			+ ';uai=dynamic_R5000m_AbsWeight'
+			+ ';tt_100k_year=2024'
+			+ ';dist_highway_year=2018'
+			+ ';dist_seaport_year=2019'
+			+ ';dist_train_year=2019'
+			+ ';dist_urban_contour_year=2000'
+			+ ';dist_cargoair_file=DistCargoAir.tif'
+			+ ';land_price_year=2007'
+			+ ';nodata_fill=-1e9'
+			+ ';admin_grid='            + /ModelParameters/Advanced/AdminDomain_ref
+			+ ';grid_size='             + string(AdminDomain/gridsize)
+			+ ';study_area='            + /ModelParameters/StudyArea
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. coeff_date kiest de csv logitcoeff_mlogit_devType, sector kiest daaruit de rijen. bag_recent_year en bag_date voeden de dynamische UAI, die per BAG-jaarset winkels, bijeenkomst plus logies en monumentale panden telt (uai.dms). bbg_year kiest de landgebruiksaandelen en het buurtaandeel overig bebouwd. De sleutels met een vast jaartal zijn de vintages die hard in de paden van de regressor-tifs zitten (Impl.dms en Reistijden.dms): tt_100k_year staat op 2024 omdat tt_100kinhab_min uit de 2024-reistijdenkaart komt, en de cargoair-tif heeft geen vintage in de naam en staat daarom als bestandsnaam. uai benoemt de constructie van de dynamische UAI (potentiaal 5000 m, AbsWeight-verval); een wijziging in uai.dms verandert geen enkele parameter, werk dan deze sleutel met de hand bij. nodata_fill is de vulwaarde voor cellen met ontbrekende data (#599). study_area bepaalt de celselectie en via het maximum ook de normalisatie van de UAI. admin_grid en grid_size vangen dat een andere resolutie een ander bestand onder dezelfde naam oplevert.";
+		
+		container Decoupling_raw := /Templates/DecoupledFile_T(FileName_raw, Fingerprint_raw);
+		
+		attribute<Float32> Make_raw (AdminDomain) := Calc_raw, StorageName = "=FileName_raw", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_raw/Write_Fingerprint", Descr = "Schrijft de statische raw-geschiktheid van deze sector als tif weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan een container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Float32> Read_raw (AdminDomain) : StorageName = "=FileName_raw", StorageType = "gdal.grid", StorageReadOnly = "TRUE", Descr = "Leest de weggeschreven raw-kaart terug. Waardetype en domein staan expliciet en zijn gelijk aan Calc_raw.";
+		
+		attribute<Float32> raw (AdminDomain) :=
+			=	!/ModelParameters/BaseDataOntkoppeld ? 'Calc_raw'
+			:	Decoupling_raw/MayReuse              ? 'Read_raw'
+			:	                                       'Make_raw'
+		, Descr = "Wat de rest van het model gebruikt, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand. Ontkoppeld met een geldige fingerprint leest de tif. Ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. De lezers elders (noemer, exponentiated, raw_ordinaal en de dynamische werken-geschiktheid in Zichtjaar_T) verwijzen naar dit item en hoeven dus niet aangepast te worden. Vraag Decoupling_raw/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
 		
 		attribute<Float32> noemer        (AdminDomain):= ='1f + '+asList('exp(ProbabilityMap_perSector/'+TXLJobs6/name+'/raw)',' + '), Descr = "Berekening van de noemer voor de geschiktheid op basis van de raw scores van alle sectoren.";
 		attribute<Float32> exponentiated (AdminDomain):= exp(raw) / noemer, Descr = "Berekening van de exponentiated score voor geschiktheid op basis van de raw score en de noemer.";
