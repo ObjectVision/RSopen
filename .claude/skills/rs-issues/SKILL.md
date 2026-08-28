@@ -7,11 +7,13 @@ description: Tekst schrijven die op GitHub terechtkomt in de openbare RSopen-rep
 
 De repo ObjectVision/RSopen is openbaar en elke comment mailt direct alle betrokkenen bij Deltares, PBL en VU. Dat is niet terug te draaien. Daarom gelden hier strengere regels dan voor gewone documentatie.
 
-## Niet zelf plaatsen
+## Wat je zelf plaatst en wat niet
 
-Plaats nooit zelf een issue of comment op GitHub. Lever de tekst aan als concept in een bestand, dan wordt hij zelf geplaatst na lezing.
+Vraagt de gebruiker om een issue, dan schrijf je het en plaats je het ook, met `gh issue create`. Meld daarna het nummer. Een concept in een bestand aanleveren is dan niet wat er gevraagd is.
 
-Instemming met een plan is geen instemming met publiceren. Ook een eerder akkoord op "de vragen terugleggen" is dat niet. Vraag apart om toestemming, of lever gewoon het concept. Alleen op een expliciet verzoek in de trant van "plaats de issues zelf maar" mag je direct plaatsen.
+Voor al het andere op GitHub geldt het omgekeerde: een comment op een bestaand issue, het sluiten van een issue en een PR-beschrijving lever je eerst als concept aan, in de ik-vorm, en pas na akkoord plaats je hem.
+
+Instemming met een plan is geen instemming met publiceren. Ook een eerder akkoord op "de vragen terugleggen" is dat niet. Dat blijft gelden voor comments; het geldt niet voor een expliciete opdracht een issue te maken.
 
 Schrijf het concept in de ik-vorm, namens de gebruiker. Niet in de wij-vorm en niet namens Object Vision als collectief. Geen verwijzing naar Claude of co-authorship, ook niet in commit messages.
 
@@ -57,6 +59,8 @@ git diff --cached <bestand>           # controleer dat er niets van een ander in
 ```
 
 Controleer na de commit met `git status` dat het werk van de andere sessie nog als working copy overeind staat.
+
+Let op de blinde vlek bij untracked bestanden: `git diff` geeft daar niets, en een lege diff leest als schoon terwijl het hele bestand meegaat bij `git add`. In een gedeeld diagnosebestand kan dan werk van een andere sessie in je commit belanden; dat is op 2026-08-28 gebeurd met de container D703 in Diagnose667.dms. Bekijk voor een nieuw bestand dus altijd de volledige inhoud, of `git diff --cached` na het stagen, voordat je commit.
 
 Commit of push alleen wanneer daarom gevraagd is.
 
