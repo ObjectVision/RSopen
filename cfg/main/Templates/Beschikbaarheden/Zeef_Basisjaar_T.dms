@@ -37,6 +37,7 @@ Template Zeef_Basisjaar_T
 	parameter<Bool>    NietBouwenInZeerMooiLandschap                    := = iif(lowercase(Sector_name) == lowercase('Wonen') || lowercase(Sector_name) == lowercase('Werken') || lowercase(Sector_name) == lowercase('Verblijfsrecreatie'), 'VariantK/NietBouwenInZeerMooiLandschap'+Sector_name+'[Variant_rel]', 'FALSE');
 	parameter<Bool>    NietBouwenInMooiLandschap                        := VariantK/NietBouwenInMooiLandschap[Variant_rel];
 	parameter<Bool>    RestrictiesOokGeldigBinnenHardePlancapaciteit    := VariantK/RestrictiesOokGeldigBinnenHardePlancapaciteit[Variant_rel];
+	parameter<Bool>    ZeerHardOokGeldigBinnenHardePlancapaciteit       := VariantK/ZeerHardOokGeldigBinnenHardePlancapaciteit[Variant_rel];
 	parameter<Bool>    NietBouwenInNatura2000Buffer                     := VariantK/NietBouwenInNatura2000Buffer[Variant_rel];
 	parameter<Bool>    IsHardePlannenGeldigInZeef                       := VariantK/HardePlannenGeldigInZeef[Variant_rel];
 	parameter<Bool>    IsZachtePlannenGeldigInZeef                      := VariantK/ZachtePlannenGeldigInZeef[Variant_rel];
@@ -46,6 +47,12 @@ Template Zeef_Basisjaar_T
 	parameter<String> Subsector_name := VariantXSectorxSubsector/Subsector_name[id];
 	
 	parameter<Bool>   IsWerkenMaarGeenNijverheidEnLogistiek := lowercase(Sector_name) == lowercase('Werken') && !(lowercase(Subsector_name) == lowercase('Nijverheid') || lowercase(Subsector_name) == lowercase('Logistiek'));
+
+	parameter<Bool>   SplitsZeerHardAf := ZeerHardOokGeldigBinnenHardePlancapaciteit
+											&& lowercase(Sector_name) != lowercase('Wind')
+											&& lowercase(Sector_name) != lowercase('Landbouw')
+	, Descr = "Wordt de zeerharde restrictielaag apart behandeld van de overige hardheden (#686)? Zo ja, dan gaat de zeerharde laag via IsWettelijkVerbod naar de groep die overal geldt, en houdt de rest zijn vrijstelling binnen harde plancapaciteit.
+				Wind valt erbuiten omdat de hele restrictietoets daar aan een eigen uitzondering hangt, namelijk dat er nog geen turbine staat, en die uitzondering hoort dan ook voor de zeerharde laag te gelden. Landbouw valt erbuiten omdat die sector helemaal geen restrictiekaarten heeft. Voor beide is er ook geen plancapaciteit, dus de vrijstelling waar dit over gaat speelt daar sowieso niet.";
 	
 	attribute<Bool>   IsBeschikbaar         (CompactedAdminDomain) := !IsRestrictief;
 	attribute<Bool>   IsBeschikbaar_AdminDomain      (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, IsBeschikbaar, FALSE);
@@ -55,7 +62,7 @@ Template Zeef_Basisjaar_T
 	attribute<Bool> IsRestrictief_Overal (CompactedAdminDomain) :=
 		OR(
 			Impl/IsEvidentBenutBinnenPlancapaciteit,
-			Impl/IsRestrictiefBinnenHardePlancapaciteit,
+			Impl/IsWettelijkVerbod,
 			Impl/TeGevaarlijk,
 			Impl/OpSlotDoorLandschap,
 			Impl/ReserverenVoorRivierAfvoer,
@@ -79,7 +86,7 @@ Template Zeef_Basisjaar_T
 			Impl/IsRestrictiefBuitenHardePlancapaciteit,
 			Impl/IsMilieuCatBedrijvigheidNabij
 		)
-		&& !Impl/HeeftHardePlannenDezeSector, Descr = "Deze restricties gelden overal, behalve binnen harde plancapaciteit";
+		&& !Impl/IsBeschermdDoorHardPlan, Descr = "Deze restricties gelden overal, behalve binnen harde plancapaciteit. Wat hier niet meer in zit is de zeerharde restrictielaag zodra VariantK/ZeerHardOokGeldigBinnenHardePlancapaciteit aanstaat; die gaat dan via IsWettelijkVerbod naar IsRestrictief_Overal (#686).";
 	
 	// Zowel harde als zachte plancapaciteit wordt uitgezonderd
 	attribute<Bool> IsRestrictief_BuitenPlancapaciteit (CompactedAdminDomain):=
@@ -153,9 +160,13 @@ Template Zeef_Basisjaar_T
 		attribute<Bool> HeeftHardePlannenDezeSector               (CompactedAdminDomain) := =IsLandbouw ? 'const(FALSE, CompactedAdminDomain)' : 'IsHardePlannenGeldigInZeef && ThisVariant/Plannen/Per_CompactedAdminDomain/Hard/Result/'+Sector_name+'/'+Subsector_name, Descr = "Heeft de locatie harde plannen voor deze sector";
 		attribute<Bool> HeeftZachtePlannenDezeSector              (CompactedAdminDomain) := =IsLandbouw ? 'const(FALSE, CompactedAdminDomain)' : 'IsZachtePlannenGeldigInZeef && ThisVariant/Plannen/Per_CompactedAdminDomain/Zacht/Result/'+Sector_name+'/'+Subsector_name, Descr = "Heeft de locatie zachte plannen voor deze sector";
 		attribute<Bool> HeeftPlannenDezeSector                    (CompactedAdminDomain) := HeeftHardePlannenDezeSector || HeeftZachtePlannenDezeSector, Descr = "Heeft de locatie harde of zachte plannen voor deze sector";
-		
+
+		attribute<Bool> IsBeschermdDoorHardPlan                   (CompactedAdminDomain) := HeeftHardePlannenDezeSector && !RestrictiesOokGeldigBinnenHardePlancapaciteit, Descr = "Vrijwaart een hard plan deze locatie van de restricties die alleen buiten harde plancapaciteit gelden?
+																								Dit is de plek waar RestrictiesOokGeldigBinnenHardePlancapaciteit werkt. Sinds #686 heft die schakelaar de vrijstelling voor de hele groep op, dus ook voor de landschaps-, bodem- en eigendomstoetsen die in dezelfde OR-groep zitten. Daarvoor lichtte hij alleen de restrictiekaarten eruit en bleven de overige termen van diezelfde groep binnen een hard plan gewoon vrijgesteld, terwijl de wikipagina Beschikbaarheid hem beschreef als de schakelaar die de bescherming in het algemeen opheft. Hij staat in alle varianten op FALSE, dus de uitkomst verandert hier niet van.";
+
 		attribute<Bool> TeHoogEnergielabel                        (CompactedAdminDomain) := src/Energielabel < GeenSloopvanafELabel, Descr = "Is het energielabel van de locatie te hoog om gesloopt te mogen worden";
-		attribute<Bool> IsRestrictiefBinnenHardePlancapaciteit    (CompactedAdminDomain) := IsRestrictiefBuitenHardePlancapaciteit && RestrictiesOokGeldigBinnenHardePlancapaciteit, Descr = "Zijn de restricties die buiten harde plancapaciteit gelden ook geldig binnen harde plancapaciteit";
+		attribute<Bool> IsWettelijkVerbod                         (CompactedAdminDomain) := src/IsZeerHardeRestrictie, Descr = "De zeerharde restrictielaag, als die apart van de overige hardheden wordt behandeld (#686). Zit in IsRestrictief_Overal en geldt dus ook binnen harde plancapaciteit: een wettelijk verbod is niet iets wat een gemeentelijk plan opzij kan zetten.
+																								Leeg zolang VariantK/ZeerHardOokGeldigBinnenHardePlancapaciteit uitstaat, en dan zit de zeerharde laag net als voorheen in IsRestrictiefBuitenHardePlancapaciteit hieronder. De twee samen dekken altijd precies de restrictiecombinatie van de variant; er valt niets tussenuit en niets telt dubbel.";
 		attribute<Bool> IsRestrictiefBuitenHardePlancapaciteit    (CompactedAdminDomain) := = '(src/IsRestrictiefBuitenHardePlancapaciteit'+
 			iif(
 				lowercase(Sector_name) == lowercase('Wind')
@@ -198,7 +209,8 @@ Template Zeef_Basisjaar_T
 		attribute<Classifications/Grondgebruik/CBSKlasse> GrondgebruikBasisjaar (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, StartState/Grondgebruik/Per_AdminDomain/gg_cbs), Descr = "CBS grondgebruik in het basisjaar";
 		attribute<Vastgoed/Energielabel>                  Energielabel          (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Vastgoed/Energielabels/Modus), Descr = "Energielabel van de panden in het AdminDomain (modus)";
 		
-		attribute<Bool>    IsRestrictiefBuitenHardePlancapaciteit     (CompactedAdminDomain) := =Impl/IsLandbouw ? 'const(FALSE, CompactedAdminDomain)' : 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariant/Restricties/'+Sector_name+'/Result)', Descr = "Zijn er restricties die buiten harde plancapaciteit gelden voor deze sector";
+		attribute<Bool>    IsRestrictiefBuitenHardePlancapaciteit     (CompactedAdminDomain) := =Impl/IsLandbouw ? 'const(FALSE, CompactedAdminDomain)' : 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariant/Restricties/'+Sector_name+'/'+(SplitsZeerHardAf ? 'Result_ExclZeerHard' : 'Result')+')', Descr = "Zijn er restricties die buiten harde plancapaciteit gelden voor deze sector. Zodra de zeerharde laag apart wordt behandeld (#686) leest dit item Result_ExclZeerHard en gaat de zeerharde laag via IsZeerHardeRestrictie hieronder een eigen weg.";
+		attribute<Bool>    IsZeerHardeRestrictie                      (CompactedAdminDomain) := =SplitsZeerHardAf ? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariant/Restricties/'+Sector_name+'/ZeerHard)' : 'const(FALSE, CompactedAdminDomain)', Descr = "De zeerharde restrictielaag van deze sector, alleen gevuld wanneer die apart van de overige hardheden wordt behandeld. Zie SplitsZeerHardAf voor waarom wind en landbouw hierbuiten vallen.";
 	}
 }
 

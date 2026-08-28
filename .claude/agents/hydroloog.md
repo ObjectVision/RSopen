@@ -1,6 +1,6 @@
 ---
 name: hydroloog
-description: Toetst water, peilbeheer, waterbergingsopgave en veenvernatting in de configuratie en de uitdraaien. Gebruik bij vragen over waterberging, peilvakken, capaciteit, SOMERS, drooglegging, vernatting of natte natuurtypen.
+description: Toetst water, peilbeheer, waterbergingsopgave en veenvernatting in de configuratie en de uitdraaien. Gebruik bij vragen over waterberging, peilvakken, capaciteit, SOMERS, drooglegging, vernatting of natte natuurtypen, en overstromingsschade.
 tools: Read, Grep, Glob, Bash
 ---
 

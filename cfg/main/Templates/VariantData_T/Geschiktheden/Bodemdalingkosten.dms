@@ -14,13 +14,13 @@
 container Bodemdalingkosten
 : Descr = "De meerkosten van bouwen op een bodemdalingsgevoelige ondergrond, per ontwikkelpakket en per cel.
 
-			Vervangt de dummy AndersBouwen in de grondproductiekosten, die tot #505 het hele bodemeffect droeg: een landsdekkende expert-judgementkaart uit 2019 met een coefficient van 0,798 op BouwWoonrijp en 0,388 op PlanProces, dus een factor 2,22 respectievelijk 1,47 waar de dummy 1 is. Zet ModelParameters/Wonen/Bodemdalingkosten_InSaldo aan en de dummy gaat uit, anders wordt de bodem twee keer beprijsd.
+			Vervangt de dummy AndersBouwen in de grondproductiekosten, die tot #505 het hele bodemeffect droeg: een landsdekkende expert-judgementkaart uit 2019 met een coefficient van 0,798 op BouwWoonrijp en 0,388 op PlanProces, dus een factor 2,22 respectievelijk 1,47 waar de dummy 1 is. De variantkolom VariantK/BodemdalingkostenInSaldo schakelt beide tegelijk: aan betekent deze post erin en de dummy eruit. Met allebei aan wordt de bodem twee keer beprijsd.
 
 			Bron van de kengetallen: bijlage E van het landelijk afwegingskader bodemdalingbestendige nieuwbouw, 11211556-001-BGS-0001, 23 maart 2026, Deltares en Sweco in opdracht van IenW. Bron van de hoeveelheden: de vier kaarten in SourceData/Bodem/Bodemdalingbestendig, door Deltares geleverd op 27 augustus 2026.
 
 			Waarom niet hun kostenkaarten: het rapport levert de kosten per inrichtingsalternatief als kaart, maar die kaarten liggen vast op een vaste verhouding tussen bebouwing, tuinen, straten, parken en water. In RSopen kiest de virtuele ontwikkelaar zelf een dichtheid en daarmee een andere verdeling, dus die verhouding is hier een uitkomst en geen invoer. Daarom rekenen we de kengetallen zelf door op de grondgebruikfracties van het ontwikkelpakket. Bijkomend voordeel: hun kaarten laten bestaand stedelijk gebied bewust open, 8.065 km2 waarvan 1.771 km2 woonterrein, en RSopen bouwt daar wel.
 
-			De formules staan in Templates/Suitabilities/Bodemdalingkosten_T en de invoer in BaseData/Suitabilities/Wonen/Bodemdalingkosten; hier staat alleen de vertaling van de OP-tabel naar de acht inrichtingselementen van bijlage E, en de aanroep per pakket.
+			De formules staan in Templates/Suitabilities/Bodemdalingkosten_T en de invoer in BaseData/Suitabilities/Wonen/Bodemdalingkosten (die kant is wel variantonafhankelijk); hier staat alleen de vertaling van de OP-tabel naar de acht inrichtingselementen van bijlage E, en de aanroep per pakket.
 
 			Zie de aannamelijst in #505 voor alles wat hier is ingevuld waar het rapport zwijgt."
 {
@@ -73,8 +73,8 @@ container Bodemdalingkosten
 		container Uit := for_each_nedv(OP/name, 'const(0[Eur], CompactedAdminDomain)', CompactedAdminDomain, Eur);
 	}
 
-	container perOP := = /ModelParameters/Wonen/Bodemdalingkosten_InSaldo ? 'Impl/Actief' : 'Impl/Uit'
-	,	Descr = "De post die in het exploitatiesaldo landt, in euro per cel. Met de schakelaar uit staat hier overal nul en verandert het saldo niet.";
+	container perOP := = VariantParameters/VariantK/BodemdalingkostenInSaldo[Variant_rel] ? 'Impl/Actief' : 'Impl/Uit'
+	,	Descr = "De post die in het exploitatiesaldo landt, in euro per cel. In een variant met BodemdalingkostenInSaldo op FALSE staat hier overal nul, en draagt de dummy AndersBouwen in de grondproductiekosten het bodemeffect zoals voor #505.";
 
 	container Controle
 	: Descr = "Rekent de kosten door voor een representatief ontwikkelpakket en schrijft de kengetallen naar een tekstbestand. Alleen voor diagnose; niets in de keten hangt eraan."
@@ -82,12 +82,14 @@ container Bodemdalingkosten
 		parameter<String> OP_ref := 'LaagStedelijkEGVS', Descr = "Een gewoon grondgebonden pakket in de middenklasse van de dichtheidsreeks.";
 
 		container K := = 'Kosten_perOP/' + OP_ref;
+		attribute<Eur> InSaldo (CompactedAdminDomain) := = 'perOP/' + OP_ref, Descr = "De post zoals hij na de variantschakelaar in het saldo terechtkomt. De som eronder is geen gerealiseerd bedrag maar een potentieel: hij telt alle cellen van het compacted domain alsof dit ene pakket overal zou landen. Alleen bedoeld om te zien of de schakelaar doet wat hij moet doen. Het gerealiseerde bedrag staat in de indicator KostenWoningbouw.";
 		unit<UInt8> Alt := /Classifications/Modellering/InrichtingsalternatiefK;
 
 		attribute<Bool> BBG (AdminDomain) := /SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Is_BebouwdGebied;
 
 		parameter<String> Waarden :=
-			  'Ontwikkelpakket ' + OP_ref + ', medianen binnen bebouwd gebied, euro per hectare\n'
+			  'Variant ' + Variant_name + ', BodemdalingkostenInSaldo = ' + string(VariantParameters/VariantK/BodemdalingkostenInSaldo[Variant_rel]) + '\n'
+			+ 'Ontwikkelpakket ' + OP_ref + ', medianen binnen bebouwd gebied, euro per hectare\n'
 			+ '\n'
 			+ 'aanlegkosten per alternatief\n'
 			+ '  A integraal ophogen    ' + string(rth_element(K/Alternatief/A_IntegraalOphogen     / float32(BBG), 0.5f)) + '\n'
@@ -106,11 +108,13 @@ container Bodemdalingkosten
 			+ '  p95    ' + string(rth_element(K/Meerkosten / float32(BBG), 0.95f)) + '\n'
 			+ '  max    ' + string(max(K/Meerkosten / float32(BBG))) + '\n'
 			+ '\n'
+			+ 'som over alle cellen als dit pakket overal zou landen, miljoen euro ' + string(sum(InSaldo) / 1e6[Eur]) + '
+'
 			+ 'beheer en onderhoud 100 jaar NCW, mediaan binnen BBG ' + string(rth_element(K/Onderhoud/Totaal / float32(BBG), 0.5f)) + '\n'
 			+ '\n'
 			+ 'de dummy AndersBouwen die deze post vervangt\n'
-			+ '  gemiddelde waarde       ' + string(mean(/BaseData/Suitabilities/Wonen/Grondproductiekosten/ReadData/LocatieVariabelen/AndersBouwen)) + ' (0 = uit)\n'
-			+ '  grondproductiekosten mediaan binnen BBG ' + string(rth_element(/BaseData/Suitabilities/Wonen/Grondproductiekosten/Results/Totaal/Nominaal_high / float32(BBG), 0.5f)) + '\n'
+			+ '  gemiddelde waarde       ' + string(mean(Grondproductiekosten/ReadData/LocatieVariabelen/AndersBouwen)) + ' (0 = uit)\n'
+			+ '  grondproductiekosten mediaan binnen BBG ' + string(rth_element(Grondproductiekosten/Results/Totaal/Nominaal_high / float32(BBG), 0.5f)) + '\n'
 			+ '\n'
 			+ 'gekozen alternatief, aantal cellen binnen BBG\n'
 			+ '  A ' + string(sum(uint32(BBG && K/Keuze == Alt/V/A_IntegraalOphogen)))     + '\n'
@@ -119,7 +123,7 @@ container Bodemdalingkosten
 			+ '  D ' + string(sum(uint32(BBG && K/Keuze == Alt/V/D_LichtOphoogmateriaal))) + '\n'
 			+ '  E ' + string(sum(uint32(BBG && K/Keuze == Alt/V/E_AllesFunderen)))        + '\n'
 			+ '  F ' + string(sum(uint32(BBG && K/Keuze == Alt/V/F_DrijvendBouwen)))       + '\n'
-		,	StorageName = "='%LocalDataProjDir%/Diagnose/Bodemdalingkosten.txt'"
+		,	StorageName = "='%LocalDataProjDir%/Diagnose/Bodemdalingkosten_'+Variant_name+'.txt'"
 		,	StorageType = "str";
 	}
 }
