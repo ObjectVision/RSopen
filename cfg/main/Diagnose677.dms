@@ -1,0 +1,196 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #677, verwijderen zodra de getallen in het issue staan en de keuze over de schakelaars is gemaakt.
+//
+// Meet wat het groen en het water van de ontwikkelpakketten doen in de hedonische groenwaardering, dus wat de twee
+// schakelaars ModelParameters/Wonen/OPGroenAlsNatuur_ref en /OPWaterAlsWater_ref aan- en uitzetten. Het harnas rekent
+// naast de modeluitkomst een tegenfeitelijke uitkomst uit, met dezelfde bron en dezelfde noemers, zodat het verschil
+// zuiver de OP-inrichting is en niet ook nog een andere stand.
+//
+//   model         : wat de configuratie nu doet. Sinds #677 is dat groen uit ('Geen') en water aan ('Alle').
+//   metOPgroen    : het gedrag van 2026-08-20 tot #677, dus het groen van de NbS-pakketten telt als natuur.
+//   zonderOPwater : het water van de pakketten telt niet mee, de tegenhanger van de nieuwe waterschakelaar.
+//
+// Leest de stand uit de indicatorkant, dus met StandAllocatieOntkoppeld op TRUE komt de stand van schijf en hoeft de
+// allocatie niet te draaien. Aansturing via DiagCasus en DiagJaar, net als het harnas in Diagnose.dms.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose677
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #677: de bijdrage van de OP-inrichting aan de hedonische natuur- en waterfracties."
+{
+	parameter<String> Casus    := /Diagnose/Casus;
+	parameter<String> Jaar     := /Diagnose/Jaar;
+	parameter<String> Variant  := /Diagnose/Variant;
+	parameter<String> AD_short := /ModelParameters/Advanced/AdminDomain_ref;
+	parameter<ha>     Cel      := AdminDomain/NrHaPerCell;
+
+	container G  := ='/Indicatoren/'+Casus+'/Zichtjaren/'+Jaar+'/WaardeNabijheidGroen', Descr = "De indicatorcontainer van dit zichtjaar; daar staat de stand aan het eind van het zichtjaar al klaar.";
+	container F  := ='/Indicatoren/'+Casus+'/Zichtjaren/'+Jaar+'/WaardeNabijheidGroen/Fracties', Descr = "De modeluitkomst uit het gedeelde sjabloon Groenfracties_T.";
+	container Br := ='/Indicatoren/'+Casus+'/Zichtjaren/'+Jaar+'/WaardeNabijheidGroen/Bron_Zichtjaar', Descr = "Dezelfde bron als het sjabloon leest: IsOPCel, OP_rel en LU_Mutatie.";
+
+	unit<UInt8>  OP       := ='/CaseClassifications/'+Variant+'/Vastgoed/OP';
+	container    OP_Buurt := ='/CaseClassifications/'+Variant+'/Vastgoed/OP_Buurt';
+	unit<UInt8>  WP4      := /Classifications/Vastgoed/WP4;
+	unit<UInt32> VBO      := /BaseData/Suitabilities/Wonen/Verwervingskosten/vbo_startjaar;
+
+	// --- de tegenfeitelijke OP-fracties, los van de schakelaars zodat het harnas blijft meten wat die uitzetten ---
+
+	attribute<float32> fr_natuur_OP_NbS  (OP) := OP/IsNbSOP ? OP_Buurt/Terreinoppervlakte/Totaal/Groen[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32] : 0f, Descr = "Het groen van de NbS-pakketten als fractie van de buurt; precies wat fr_natuur_OP was toen OPGroenAlsNatuur_ref nog op NbS stond.";
+	attribute<float32> fr_natuur_OP_Alle (OP) := OP_Buurt/Terreinoppervlakte/Totaal/Groen[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32], Descr = "Idem maar voor elk pakket, dus de stand die bij Alle zou horen. Alleen om de bandbreedte te tonen.";
+	attribute<float32> fr_natuur_OP_NbSOpenb (OP) := OP/IsNbSOP ? OP_Buurt/Terreinoppervlakte/Openbaar/Groen[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32] : 0f, Descr = "Alleen het openbare groen van de NbS-pakketten, dus zonder de tuinen. De stand 'NbS_Openbaar' van de schakelaar.";
+	attribute<float32> fr_water_OP_NbS    (OP) := OP/IsNbSOP ? OP_Buurt/Terreinoppervlakte/Totaal/Water[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32] : 0f, Descr = "Alleen het water van de NbS-pakketten, dus zonder de vaste 0,40-invulling van de gewone pakketten. De stand 'NbS' van OPWaterAlsWater_ref.";
+	attribute<float32> fr_water_OP_Alle  (OP) := OP_Buurt/Terreinoppervlakte/Totaal/Water[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32], Descr = "Het water van elk pakket als fractie van de buurt, wat het model nu gebruikt.";
+
+	// --- celwaarden: dezelfde switch en dezelfde volgorde als Groenfracties_T, alleen de OP-tak verschilt ---
+
+	attribute<float32> NatuurCel_metOPgroen (AdminDomain) := switch(
+			case(Br/IsOPCel, (1f - F/WaterBehoudCel) * fr_natuur_OP_NbS[Br/OP_rel])
+			, case(F/IsLandbouwMutatie, max_elem(F/NatuurCel_Basisjaar, F/NatuurCel_Mutatie))
+			, case(IsDefined(Br/LU_Mutatie), F/NatuurCel_Mutatie)
+			, F/NatuurCel_Basisjaar
+		), Descr = "Natuur per cel zoals het model die tot #677 zag, dus met het groen van de NbS-pakketten.";
+
+	attribute<float32> NatuurCel_zonderOPgroen (AdminDomain) := switch(
+			case(Br/IsOPCel, 0f)
+			, case(F/IsLandbouwMutatie, max_elem(F/NatuurCel_Basisjaar, F/NatuurCel_Mutatie))
+			, case(IsDefined(Br/LU_Mutatie), F/NatuurCel_Mutatie)
+			, F/NatuurCel_Basisjaar
+		), Descr = "Natuur per cel als het pakketgroen helemaal niet meetelt, de stand 'Geen'. Een cel met een ontwikkelpakket heeft dan nul natuur.";
+
+	attribute<float32> NatuurCel_metOPgroenOpenb (AdminDomain) := switch(
+			case(Br/IsOPCel, (1f - F/WaterBehoudCel) * fr_natuur_OP_NbSOpenb[Br/OP_rel])
+			, case(F/IsLandbouwMutatie, max_elem(F/NatuurCel_Basisjaar, F/NatuurCel_Mutatie))
+			, case(IsDefined(Br/LU_Mutatie), F/NatuurCel_Mutatie)
+			, F/NatuurCel_Basisjaar
+		), Descr = "Natuur per cel bij de tussenstand: alleen het openbare groen van de NbS-pakketten telt mee.";
+
+	attribute<float32> WaterCel_alleenNbSwater (AdminDomain) := switch(
+			case(Br/IsOPCel, F/WaterBehoudCel + (1f - F/WaterBehoudCel) * fr_water_OP_NbS[Br/OP_rel])
+			, case(F/IsLandbouwMutatie, max_elem(F/WaterCel_Basisjaar, F/WaterCel_Mutatie))
+			, case(IsDefined(Br/LU_Mutatie), F/WaterCel_Mutatie)
+			, F/WaterCel_Basisjaar
+		), Descr = "Water per cel als alleen de ontworpen waterfracties van de NbS-pakketten meetellen.";
+
+	attribute<float32> WaterCel_zonderOPwater (AdminDomain) := switch(
+			case(Br/IsOPCel, F/WaterBehoudCel)
+			, case(F/IsLandbouwMutatie, max_elem(F/WaterCel_Basisjaar, F/WaterCel_Mutatie))
+			, case(IsDefined(Br/LU_Mutatie), F/WaterCel_Mutatie)
+			, F/WaterCel_Basisjaar
+		), Descr = "Water per cel als de waterinrichting van de pakketten niet zou meetellen. Alleen het water dat een drijvend pakket laat staan blijft over, en dat is nul zolang DrijvendBehoudtWaterFractie op 0f staat.";
+
+	// --- schijven: zelfde kernels en zelfde noemers als de modelkant ---
+
+	attribute<float32> NatuurCel_metOPgroen_100m (rdc_100m)    := mean(NatuurCel_metOPgroen, AdminDomain/rdc_100m_rel);
+	attribute<float32> Natuur_metOPgroen_100m    (rdc_100m)    := potential(NatuurCel_metOPgroen_100m, /Geography/Distmatrices_100m/pot2500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_2500m_100m;
+	attribute<float32> Natuur_metOPgroen         (AdminDomain) := Natuur_metOPgroen_100m[AdminDomain/rdc_100m_rel];
+	attribute<float32> dNatuur_metOPgroen        (AdminDomain) := Natuur_metOPgroen - F/Natuur_Basisjaar;
+
+	attribute<float32> NatuurCel_zonderOPgroen_100m (rdc_100m)    := mean(NatuurCel_zonderOPgroen, AdminDomain/rdc_100m_rel);
+	attribute<float32> Natuur_zonderOPgroen_100m    (rdc_100m)    := potential(NatuurCel_zonderOPgroen_100m, /Geography/Distmatrices_100m/pot2500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_2500m_100m;
+	attribute<float32> Natuur_zonderOPgroen         (AdminDomain) := Natuur_zonderOPgroen_100m[AdminDomain/rdc_100m_rel];
+
+	attribute<float32> NatuurCel_metOPgroenOpenb_100m (rdc_100m)    := mean(NatuurCel_metOPgroenOpenb, AdminDomain/rdc_100m_rel);
+	attribute<float32> Natuur_metOPgroenOpenb_100m    (rdc_100m)    := potential(NatuurCel_metOPgroenOpenb_100m, /Geography/Distmatrices_100m/pot2500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_2500m_100m;
+	attribute<float32> Natuur_metOPgroenOpenb         (AdminDomain) := Natuur_metOPgroenOpenb_100m[AdminDomain/rdc_100m_rel];
+
+	attribute<float32> Water_zonderOPwater  (AdminDomain) := = 'potential(WaterCel_zonderOPwater, /Geography/Distmatrices_'+AD_short+'/pot500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_500m[AdminDomain/rdc_25m_rel]';
+	attribute<float32> Water_alleenNbSwater  (AdminDomain) := = 'potential(WaterCel_alleenNbSwater, /Geography/Distmatrices_'+AD_short+'/pot500m/Flat2) / /SourceData/Grondgebruik/LGN/Groenfracties/n_gedekt_500m[AdminDomain/rdc_25m_rel]';
+	attribute<float32> dWater_zonderOPwater (AdminDomain) := Water_zonderOPwater - F/Water_Basisjaar;
+
+	// --- euros op de bestaande voorraad: zelfde P_rest en zelfde basisjaarterm, alleen de zichtjaarterm verschilt ---
+
+	attribute<float32> GroenTerm_metOPgroen    (VBO) := G/Bestaand/b_nat_vbo * Natuur_metOPgroen[VBO/AdminDomain_rel] + G/Bestaand/b_wat_vbo * F/Water[VBO/AdminDomain_rel];
+	attribute<float32> GroenTerm_zonderOPgroen (VBO) := G/Bestaand/b_nat_vbo * Natuur_zonderOPgroen[VBO/AdminDomain_rel] + G/Bestaand/b_wat_vbo * F/Water[VBO/AdminDomain_rel];
+	attribute<float32> GroenTerm_metOPgroenOpenb (VBO) := G/Bestaand/b_nat_vbo * Natuur_metOPgroenOpenb[VBO/AdminDomain_rel] + G/Bestaand/b_wat_vbo * F/Water[VBO/AdminDomain_rel];
+	attribute<float32> GroenTerm_alleenNbSwater (VBO) := G/Bestaand/b_nat_vbo * F/Natuur[VBO/AdminDomain_rel] + G/Bestaand/b_wat_vbo * Water_alleenNbSwater[VBO/AdminDomain_rel];
+	attribute<float32> GroenTerm_zonderOPwater (VBO) := G/Bestaand/b_nat_vbo * F/Natuur[VBO/AdminDomain_rel]          + G/Bestaand/b_wat_vbo * Water_zonderOPwater[VBO/AdminDomain_rel];
+
+	attribute<Eur_Woning> dW_metOPgroen    (VBO) := G/Bestaand/P_rest * (exp(GroenTerm_metOPgroen)    - exp(G/Bestaand/GroenTerm_Basisjaar));
+	attribute<Eur_Woning> dW_zonderOPgroen (VBO) := G/Bestaand/P_rest * (exp(GroenTerm_zonderOPgroen) - exp(G/Bestaand/GroenTerm_Basisjaar));
+	attribute<Eur_Woning> dW_metOPgroenOpenb (VBO) := G/Bestaand/P_rest * (exp(GroenTerm_metOPgroenOpenb) - exp(G/Bestaand/GroenTerm_Basisjaar));
+	attribute<Eur_Woning> dW_alleenNbSwater (VBO) := G/Bestaand/P_rest * (exp(GroenTerm_alleenNbSwater) - exp(G/Bestaand/GroenTerm_Basisjaar));
+	attribute<Eur_Woning> dW_zonderOPwater (VBO) := G/Bestaand/P_rest * (exp(GroenTerm_zonderOPwater) - exp(G/Bestaand/GroenTerm_Basisjaar));
+
+	// --- prijsopslag per woningtype, model naast tegenfeitelijk ---
+
+	container Opslag_metOPgroen :=
+		for_each_nedv(
+			WP4/name
+			, 'MakeDefined(exp(F/b_natuur[WP4/V/'+WP4/name+'] * dNatuur_metOPgroen + F/b_water[WP4/V/'+WP4/name+'] * F/dWater) - 1f, 0f)'
+			, AdminDomain
+			, float32
+		);
+
+	attribute<float32> opslag_max_model      (WP4) := = 'union_data(WP4, '+asItemList('max(F/Prijsopslag_perWP4/'+WP4/name+')')+')';
+	attribute<float32> opslag_min_model      (WP4) := = 'union_data(WP4, '+asItemList('min(F/Prijsopslag_perWP4/'+WP4/name+')')+')';
+	attribute<float32> opslag_max_metOPgroen (WP4) := = 'union_data(WP4, '+asItemList('max(Opslag_metOPgroen/'+WP4/name+')')+')';
+	attribute<float32> opslag_min_metOPgroen (WP4) := = 'union_data(WP4, '+asItemList('min(Opslag_metOPgroen/'+WP4/name+')')+')';
+
+	// --- uitdraaien ---
+
+	parameter<String> pakketten :=
+		  'maat;waarde'
+		+ '|op_aantal;'             + string(sum(float32(const(TRUE, OP))))
+		+ '|op_nbs_aantal;'         + string(sum(float32(OP/IsNbSOP)))
+		+ '|fr_natuur_OP_NbS_max;'  + string(max(fr_natuur_OP_NbS))
+		+ '|fr_natuur_OP_Alle_max;' + string(max(fr_natuur_OP_Alle))
+		+ '|fr_natuur_OP_Alle_min;' + string(min(fr_natuur_OP_Alle))
+		+ '|fr_natuur_OP_NbSOpenb_max;' + string(max(fr_natuur_OP_NbSOpenb))
+		+ '|fr_natuur_OP_NbS_som;'      + string(sum(fr_natuur_OP_NbS))
+		+ '|fr_natuur_OP_NbSOpenb_som;' + string(sum(fr_natuur_OP_NbSOpenb))
+		+ '|fr_water_OP_Alle_max;'  + string(max(fr_water_OP_Alle))
+	, StorageName = "='%LocalDataProjDir%/Diagnose/groen677_pakketten_'+Variant+'.txt'", StorageType = "str"
+	, Descr = "De inrichtingsfracties van de pakkettabel zelf, zonder stand. Los van casus en zichtjaar, maar wel per variant, want de pakkettabel hangt aan de variant.";
+
+	parameter<String> cellen :=
+		  'maat;waarde'
+		+ '|opcellen;'                  + string(sum(float32(Br/IsOPCel)))
+		+ '|natuurcel_basisjaar_ha;'    + string(sum(F/NatuurCel_Basisjaar * Cel))
+		+ '|natuurcel_model_ha;'        + string(sum(F/NatuurCel * Cel))
+		+ '|natuurcel_metOPgroen_ha;'   + string(sum(NatuurCel_metOPgroen * Cel))
+		+ '|natuurcel_metOPgroenOpenb_ha;' + string(sum(NatuurCel_metOPgroenOpenb * Cel))
+		+ '|natuurcel_zonderOPgroen_ha;'  + string(sum(NatuurCel_zonderOPgroen * Cel))
+		+ '|watercel_basisjaar_ha;'     + string(sum(F/WaterCel_Basisjaar * Cel))
+		+ '|watercel_model_ha;'         + string(sum(F/WaterCel * Cel))
+		+ '|watercel_zonderOPwater_ha;' + string(sum(WaterCel_zonderOPwater * Cel))
+		+ '|watercel_alleenNbSwater_ha;' + string(sum(WaterCel_alleenNbSwater * Cel))
+	, StorageName = "='%LocalDataProjDir%/Diagnose/groen677_cellen_'+Casus+'_'+Jaar+'.txt'", StorageType = "str"
+	, Descr = "Celwaarden, dus voor de schijfberekening. Het verschil natuurcel_metOPgroen_ha min natuurcel_model_ha is precies het areaal dat #677 uit de natuurdefinitie haalt; watercel_model_ha min watercel_zonderOPwater_ha is wat de waterschakelaar zou schelen.";
+
+	parameter<String> schijven :=
+		  'maat;waarde'
+		+ '|dnatuur_som_model;'        + string(sum(F/dNatuur))
+		+ '|dnatuur_som_metOPgroen;'   + string(sum(dNatuur_metOPgroen))
+		+ '|dnatuur_max_model;'        + string(max(F/dNatuur))
+		+ '|dnatuur_max_metOPgroen;'   + string(max(dNatuur_metOPgroen))
+		+ '|dwater_som_model;'         + string(sum(F/dWater))
+		+ '|dwater_som_zonderOPwater;' + string(sum(dWater_zonderOPwater))
+		+ '|dwater_max_model;'         + string(max(F/dWater))
+		+ '|dwater_max_zonderOPwater;' + string(max(dWater_zonderOPwater))
+	, StorageName = "='%LocalDataProjDir%/Diagnose/groen677_schijven_'+Casus+'_'+Jaar+'.txt'", StorageType = "str"
+	, Descr = "De fracties na de schijfberekening, gesommeerd en als maximum. De som over alle cellen is geen hectare maar een optelling van fracties; hij dient alleen om de twee lezingen tegen elkaar te zetten.";
+
+	parameter<String> euros :=
+		  'maat;waarde'
+		+ '|vbo_aantal;'                 + string(sum(float32(const(TRUE, VBO))))
+		+ '|eur_bestaand_model;'         + string(sum(value(G/Bestaand/dWaarde_perVBO, float32)))
+		+ '|eur_bestaand_metOPgroen;'    + string(sum(value(dW_metOPgroen, float32)))
+		+ '|eur_bestaand_metOPgroenOpenb;' + string(sum(value(dW_metOPgroenOpenb, float32)))
+		+ '|eur_bestaand_zonderOPgroen;'   + string(sum(value(dW_zonderOPgroen, float32)))
+		+ '|eur_bestaand_alleenNbSwater;' + string(sum(value(dW_alleenNbSwater, float32)))
+		+ '|eur_bestaand_zonderOPwater;' + string(sum(value(dW_zonderOPwater, float32)))
+	, StorageName = "='%LocalDataProjDir%/Diagnose/groen677_euros_'+Casus+'_'+Jaar+'.txt'", StorageType = "str"
+	, Descr = "De waardeverandering van de bestaande woningvoorraad door veranderde natuur- en waternabijheid, in drie lezingen. Het verschil metOPgroen min model is het bedrag dat het model tot #677 aan het groen van de eigen nieuwbouwwijken toeschreef.";
+
+	parameter<String> opslag :=
+		  'wp4;max_model;min_model;max_metOPgroen;min_metOPgroen|'
+		+ AsList(WP4/name + ';' + string(opslag_max_model) + ';' + string(opslag_min_model) + ';' + string(opslag_max_metOPgroen) + ';' + string(opslag_min_metOPgroen), '|')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/groen677_opslag_'+Casus+'_'+Jaar+'.txt'", StorageType = "str"
+	, Descr = "De relatieve prijsverandering per woningtype, model naast tegenfeitelijk. Dit is de eindstand van het zichtjaar; de allocatie gebruikt dezelfde grootheid op de beginstand.";
+
+	parameter<String> Alles := 'Klaar'
+	, ExplicitSuppliers = "pakketten;cellen;schijven;euros;opslag"
+	, Descr = "Trekt de vijf uitdraaien in een run, zodat de zware schijfberekeningen maar een keer hoeven. ExplicitSuppliers op een parameter en niet op de container, want op een container lift die eigenschap niet mee.";
+}

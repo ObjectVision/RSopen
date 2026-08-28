@@ -969,6 +969,9 @@ container Diagnose
 		attribute<Float64> Won_HB (/Geography/AdminDomain) := ='add('+asItemList('float64('+P_R+'Hoofdwatersysteem_Binnendijks/'+WoningRij/name+'/Totaal)')+')';
 		attribute<Float64> Won_HU (/Geography/AdminDomain) := ='add('+asItemList('float64('+P_R+'Hoofdwatersysteem_Buitendijks/'+WoningRij/name+'/Totaal)')+')';
 		attribute<Float64> Won_RB (/Geography/AdminDomain) := ='add('+asItemList('float64('+P_R+'Regionaalwatersysteem_Binnendijks/'+WoningRij/name+'/Totaal)')+')';
+		attribute<Float64> NietWoon_Tot (/Geography/AdminDomain) := MakeDefined(Tot_HB, 0d) + MakeDefined(Tot_HU, 0d) + MakeDefined(Tot_RB, 0d) - Won_Tot
+		, Descr = "Alles wat geen woning is: bedrijven, infrastructuur en de categorie stedelijk gebied. Dit deel kent geen enkele korting voor maatregelen, want bouwwijze bestaat alleen voor wonen. Zie #681.";
+
 		attribute<Float64> Won_Tot (/Geography/AdminDomain) := MakeDefined(Won_HB, 0d) + MakeDefined(Won_HU, 0d) + MakeDefined(Won_RB, 0d)
 		, Descr = "De drie watersystemen hebben elk hun eigen dieptekaart, dus waar de ene een bedrag geeft is de andere null. Zonder MakeDefined maakt de optelling er null van en valt de hele cel uit de sommen hieronder.";
 
@@ -1011,9 +1014,108 @@ container Diagnose
 			+ '|woningen_pakket;'                     + string(sum(Won * float64(Nieuw && Pakket)))
 			+ '|woningen_eis_niet_pakket;'            + string(sum(Won * float64(Nieuw && Eis && !Pakket)))
 			+ '|woningen_pakket_niet_eis;'            + string(sum(Won * float64(Nieuw && !Eis && Pakket)))
+			+ '|nietwoon_schade_totaal_eur;'          + string(sum(NietWoon_Tot))
+			+ '|nietwoon_schade_in_eiszone_eur;'      + string(sum(NietWoon_Tot * float64(Eis)))
+			+ '|nietwoon_schade_in_eiszone_nieuw_eur;'+ string(sum(NietWoon_Tot * float64(Eis && Nieuw)))
+			+ '|woningschade_totaal_eur;'             + string(sum(Won_Tot))
 			+ '|ckaart_cellen_boven_100m;'            + string(sum(float64(C_Onzin)))
 			+ '|ckaart_max_meter;'                    + string(max(C_kaart))
 			+ '|ckaart_schade_regionaal_eur;'         + string(sum(MakeDefined(Tot_RB, 0d) * float64(C_Onzin)))
 		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_schade_bouwwijze_'+string(/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket)+'.txt'", StorageType = "str";
+	}
+
+	container VboOppervlakte700
+	: Descr = "Tijdelijk, hoort bij #700 en #681. Twee vragen: haalt het niet-woon vastgoed na het loslaten van de bovengrenzen een plausibele maat, en blijft er een staart van onwaarschijnlijke oppervlaktes over nu er helemaal geen bovengrens meer op staat. De oude regel wordt hier naast de nieuwe uitgerekend, zonder de schakelaar te verzetten."
+	{
+		parameter<String> P := '/BaseData/Densities/PandFootprint_baan/PerRegio/';
+
+		unit<uint32> Sub: nrofrows = 6
+		{
+			attribute<String>  name: ['Nijverheid','Logistiek','Detailhandel','Ov_consumentendiensten','Zak_dienstverlening','Overheid_kw_diensten'];
+			attribute<Float64> Opp       := ='union_data(., '+AsList('sum(float64('+P+'Opp_perRegio/'+name+'))', ', ')+')';
+			attribute<Float64> Footprint := ='union_data(., '+AsList('sum(float64('+P+'m2PandFootprint_perRegio/'+name+'))', ', ')+')';
+			attribute<Float64> Bouwlagen := Opp / Footprint;
+			attribute<String>  regel     := name + ';' + string(Opp / 1000000d) + ';' + string(Footprint / 1000000d) + ';' + string(Bouwlagen);
+		}
+
+		attribute<Bool>    Vrd     (/BaseData/BAG_ModelJaar/vbo) := /BaseData/BAG_ModelJaar/vbo/IsVoorraad;
+		attribute<Bool>    Woon    (/BaseData/BAG_ModelJaar/vbo) := /BaseData/BAG_ModelJaar/vbo/impl/gebruiksdoelen/woon;
+		attribute<Bool>    NietWoon(/BaseData/BAG_ModelJaar/vbo) := Vrd && !Woon;
+		attribute<Float64> Nu      (/BaseData/BAG_ModelJaar/vbo) := MakeDefined(float64(/BaseData/BAG_ModelJaar/vbo/oppervlakte_trunc), 0d);
+		attribute<Float64> Klein   (/BaseData/BAG_ModelJaar/vbo) := MakeDefined(float64(/BaseData/BAG_ModelJaar/vbo/oppervlakte_trunc_TooSmall), 0d)
+		, Descr = "De waarde net voor de twee bovengrenzen, dus wat de oude regel als invoer had.";
+		attribute<Float64> Oud     (/BaseData/BAG_ModelJaar/vbo) := Klein > float64(/BaseData/BAG_ModelJaar/vbo/pand_footprint) * 5d ? 0d : min_elem(Klein, 500d)
+		, Descr = "De oude regel nagebouwd: boven vijf keer de pandvoetafdruk viel het vbo helemaal weg, en anders werd het op 500 m2 geklemd.";
+
+		parameter<String> tabel :=
+			  'grootheid;vbo_opp_mln_m2;footprint_mln_m2;bouwlagen'
+			+ '|' + AsList(Sub/regel, '|')
+			+ '|som_zes_subsectoren;'      + string(sum(Sub/Opp) / 1000000d) + ';' + string(sum(Sub/Footprint) / 1000000d) + ';' + string(sum(Sub/Opp) / sum(Sub/Footprint))
+			+ '|vbo_nietwoon_nu;'          + string(sum(Nu  * float64(NietWoon)) / 1000000d) + ';;'
+			+ '|vbo_nietwoon_oude_regel;'  + string(sum(Oud * float64(NietWoon)) / 1000000d) + ';;'
+			+ '|vbo_woon_nu;'              + string(sum(Nu  * float64(Vrd && Woon)) / 1000000d) + ';;'
+			+ '|max_nietwoon_m2;'          + string(max(Nu * float64(NietWoon))) + ';;'
+			+ '|n_nietwoon_boven_50k;'     + string(sum(float64(NietWoon && Nu > 50000d))) + ';;'
+			+ '|opp_nietwoon_boven_50k;'   + string(sum(Nu * float64(NietWoon && Nu > 50000d)) / 1000000d) + ';;'
+			+ '|n_nietwoon_boven_200k;'    + string(sum(float64(NietWoon && Nu > 200000d))) + ';;'
+			+ '|opp_nietwoon_boven_200k;'  + string(sum(Nu * float64(NietWoon && Nu > 200000d)) / 1000000d) + ';;'
+		, StorageName = "='%LocalDataProjDir%/Diagnose/vbo_oppervlakte_700.txt'", StorageType = "str";
+
+		container Verdacht
+		: Descr = "Hoort bij #700. Waar zit de onwaarschijnlijke massa in de niet-woon vbo-oppervlaktes, nu er geen bovengrens meer op staat? Twee sporen: de verdeling van de ruwe BAG-oppervlakte, en een toets van het pand tegen de hoogte uit de AHN-pandenset."
+		{
+			attribute<Float64> Ruw   (/BaseData/BAG_ModelJaar/vbo) := MakeDefined(float64(/BaseData/BAG_ModelJaar/vbo/oppervlakte), -1d)
+			, Descr = "De oppervlakte zoals de BAG hem levert, dus voor de sentinelnulling en voor de grenzen. -1 waar hij ontbreekt.";
+			attribute<Bool>    NW    (/BaseData/BAG_ModelJaar/vbo) := ../NietWoon;
+
+			parameter<String> histogram :=
+				  'bucket;aantal;opp_mln_m2'
+				+ '|ontbreekt;'      + string(sum(float64(NW && Ruw <  0d)))    + ';0'
+				+ '|nul;'            + string(sum(float64(NW && Ruw == 0d)))    + ';0'
+				+ '|1_tot_10;'       + string(sum(float64(NW && Ruw >= 1d      && Ruw < 10d)))      + ';' + string(sum(Ruw * float64(NW && Ruw >= 1d      && Ruw < 10d))      / 1000000d)
+				+ '|10_tot_50;'      + string(sum(float64(NW && Ruw >= 10d     && Ruw < 50d)))      + ';' + string(sum(Ruw * float64(NW && Ruw >= 10d     && Ruw < 50d))      / 1000000d)
+				+ '|50_tot_100;'     + string(sum(float64(NW && Ruw >= 50d     && Ruw < 100d)))     + ';' + string(sum(Ruw * float64(NW && Ruw >= 50d     && Ruw < 100d))     / 1000000d)
+				+ '|100_tot_500;'    + string(sum(float64(NW && Ruw >= 100d    && Ruw < 500d)))     + ';' + string(sum(Ruw * float64(NW && Ruw >= 100d    && Ruw < 500d))     / 1000000d)
+				+ '|500_tot_1k;'     + string(sum(float64(NW && Ruw >= 500d    && Ruw < 1000d)))    + ';' + string(sum(Ruw * float64(NW && Ruw >= 500d    && Ruw < 1000d))    / 1000000d)
+				+ '|1k_tot_5k;'      + string(sum(float64(NW && Ruw >= 1000d   && Ruw < 5000d)))    + ';' + string(sum(Ruw * float64(NW && Ruw >= 1000d   && Ruw < 5000d))    / 1000000d)
+				+ '|5k_tot_10k;'     + string(sum(float64(NW && Ruw >= 5000d   && Ruw < 10000d)))   + ';' + string(sum(Ruw * float64(NW && Ruw >= 5000d   && Ruw < 10000d))   / 1000000d)
+				+ '|10k_tot_50k;'    + string(sum(float64(NW && Ruw >= 10000d  && Ruw < 50000d)))   + ';' + string(sum(Ruw * float64(NW && Ruw >= 10000d  && Ruw < 50000d))   / 1000000d)
+				+ '|50k_tot_100k;'   + string(sum(float64(NW && Ruw >= 50000d  && Ruw < 100000d)))  + ';' + string(sum(Ruw * float64(NW && Ruw >= 50000d  && Ruw < 100000d))  / 1000000d)
+				+ '|100k_tot_500k;'  + string(sum(float64(NW && Ruw >= 100000d && Ruw < 500000d)))  + ';' + string(sum(Ruw * float64(NW && Ruw >= 100000d && Ruw < 500000d))  / 1000000d)
+				+ '|vanaf_500k;'     + string(sum(float64(NW && Ruw >= 500000d)))                   + ';' + string(sum(Ruw * float64(NW && Ruw >= 500000d))                   / 1000000d)
+				+ '|ronde_999;'      + string(sum(float64(NW && Ruw == 999d)))     + ';0'
+				+ '|ronde_1000;'     + string(sum(float64(NW && Ruw == 1000d)))    + ';0'
+				+ '|ronde_9999;'     + string(sum(float64(NW && Ruw == 9999d)))    + ';0'
+				+ '|ronde_10000;'    + string(sum(float64(NW && Ruw == 10000d)))   + ';0'
+				+ '|ronde_99999;'    + string(sum(float64(NW && Ruw == 99999d)))   + ';0'
+				+ '|ronde_100000;'   + string(sum(float64(NW && Ruw == 100000d)))  + ';0'
+				+ '|ronde_999999;'   + string(sum(float64(NW && Ruw == 999999d)))  + ';0'
+				+ '|ronde_1000000;'  + string(sum(float64(NW && Ruw == 1000000d))) + ';0'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/vbo_histogram_700.txt'", StorageType = "str";
+
+			attribute<Float64> Hoogte  (/BaseData/BAG_ModelJaar/pand) := float64(/BaseData/BAG_ModelJaar/pand/pand_hoogte / 1[/Units/cm])
+			, Descr = "Pandhoogte in cm uit de AHN-pandenset.";
+			attribute<Float64> Voet    (/BaseData/BAG_ModelJaar/pand) := float64(/BaseData/BAG_ModelJaar/pand/Footprint / 1[/Units/m2PandFootprint]);
+			attribute<Float64> NWopp   (/BaseData/BAG_ModelJaar/pand) := MakeDefined(float64(/BaseData/BAG_ModelJaar/pand/Oppervlaktes/vbo_opp_niet_woon / 1[/Units/m2_pand]), 0d);
+			attribute<Float64> Lagen   (/BaseData/BAG_ModelJaar/pand) := max_elem(float64(int32(Hoogte / 300d)), 1d)
+			, Descr = "Hoeveel bouwlagen past er in die hoogte, bij drie meter per laag en minimaal een.";
+			attribute<Float64> Ruimte  (/BaseData/BAG_ModelJaar/pand) := Voet * Lagen
+			, Descr = "Het vloeroppervlak dat fysiek in het pand past volgens voetafdruk maal bouwlagen.";
+			attribute<Bool>    Meet    (/BaseData/BAG_ModelJaar/pand) := NWopp > 0d && IsDefined(Hoogte) && Hoogte > 0d;
+			attribute<Bool>    TeVeel  (/BaseData/BAG_ModelJaar/pand) := Meet && NWopp > Ruimte;
+
+			parameter<String> hoogtetoets :=
+				  'grootheid;waarde'
+				+ '|panden_met_nietwoon;'          + string(sum(float64(NWopp > 0d)))
+				+ '|daarvan_met_hoogte;'           + string(sum(float64(Meet)))
+				+ '|hoogte_gemiddeld_cm;'          + string(sum(Hoogte * float64(Meet)) / sum(float64(Meet)))
+				+ '|hoogte_max_cm;'                + string(max(Hoogte))
+				+ '|panden_boven_capaciteit;'      + string(sum(float64(TeVeel)))
+				+ '|nietwoon_opp_gemeten_mln;'     + string(sum(NWopp * float64(Meet)) / 1000000d)
+				+ '|nietwoon_opp_overschot_mln;'   + string(sum(max_elem(NWopp - Ruimte, 0d) * float64(Meet)) / 1000000d)
+				+ '|nietwoon_opp_na_klem_mln;'     + string(sum(min_elem(NWopp, Ruimte) * float64(Meet)) / 1000000d)
+				+ '|overschot_boven_2x_ruimte_mln;'+ string(sum(max_elem(NWopp - 2d * Ruimte, 0d) * float64(Meet)) / 1000000d)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/vbo_hoogtetoets_700.txt'", StorageType = "str";
+		}
 	}
 }

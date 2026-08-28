@@ -70,7 +70,7 @@ Template Zichtjaar_T
 			attribute<job> Zak_dienstverlening (CompactedAdminDomain) :=
 				= first(lowercase(Time/Zichtjaar/name)) == lowercase(name) && ModelParameters/werken/Thuiswerk_verdikking_ook_op_bestaandekantoren
 					? 'MakeDefined(1f / ((1f / Werken0/Zak_dienstverlening) * (1f + VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+'])), 0[job])'
-					: 'Werken0/Zak_dienstverlening', Descr = "Eenmalig ophoging van het aantal kantoorbanen per cel. Het idee erachter is dat je door verdikking meer mensen/banen in een kantoorgebouw kwijt kunt en je minder nieuwe kantoren hoeft te bouwen. Hierdoor krijg je wellicht al overrealisatie voordat de allocatie begint. Maar je hoeft dus geen nieuwe kantoorruimte te creeren.";
+					: 'Werken0/Zak_dienstverlening', Descr = "Eenmalige ophoging van het aantal kantoorbanen per bestaande cel, zonder dat de pandvoetafdruk van diezelfde cellen meeverandert. Staat sinds #668 uit via ModelParameters/Werken/Thuiswerk_verdikking_ook_op_bestaandekantoren: het aantal banen is exogeen en is de claimvariabele, dus bureaudeling hoort de ruimtevraag van dezelfde banen te verlagen en niet het aantal banen te verhogen. De ophoging ging rechtstreeks van de restclaim af en gaf overrealisatie voordat de allocatie begon. De bedoelde werking loopt langs de dichtheid, zie de kantoor-override in Templates/Densities/DichtheidZichtjaar_T (#590).";
 		}
 
 		container PandFootprint :=
@@ -402,7 +402,49 @@ Template Zichtjaar_T
 			}
 		}
 		
-		container CalcStand_Compacted := 
+		container FootprintEindejaars
+		: Descr = "Einde-jaars afleiding van de footprints, ter vervanging van de keten door alle iteratielagen heen. De iteratie-updates (Allocatie_T/Impl/Update_PandFootprint_Expr en Update_WoonFootprint_Expr) worden tijdens de allocatie zelf nooit opgevraagd; pas bij het wegschrijven van de stand werd die keten van circa 135 lagen alsnog over het hele domein uitgerekend, goed voor het leeuwendeel van de schrijfstaart. Omdat een cel binnen een zichtjaar hoogstens een keer gealloceerd wordt (zodra SubSector_rel gevuld is, is de cel in alle latere iteraties, blokken en sequenties onbeschikbaar), is de eindfootprint direct af te leiden: niet dit jaar gealloceerd geeft de beginstand van het zichtjaar (inclusief de sloopleging in het eerste zichtjaar), wel gealloceerd geeft voor werken de footprint-per-baan van dit zichtjaar maal de eindstand van de winnende subsector (nul voor de andere subsectoren, precies de verdringing), en voor wonen de gebouwvoetafdruk van het gealloceerde ontwikkelpakket. De equivalentie is per constructie cel voor cel gelijk aan de iteratieketen; de container Bewijs hieronder toetst dat eenmalig, en pas na een exact-nul-uitkomst wordt CalcStand_Compacted op deze afleiding gezet."
+		{
+			attribute<Bool> GealloceerdDitZichtjaar (CompactedAdminDomain) := IsDefined(Sequences/LastSequence/StateNaAllocatie/SubSector_rel) && !IsDefined(StateVoorAllocatie/SubSector_rel)
+			, Descr = "Cellen waar de allocatie van dit zichtjaar heeft toegeslagen: aan het eind gevuld, aan het begin nog niet. Op alle andere cellen dragen de footprints de beginstand door.";
+
+			container PandFootprint :=
+				for_each_nedv(
+					Jobs6/name
+					, replace('GealloceerdDitZichtjaar ? ThisVariantData/Density/Per_CompactedAllocDomain/@Y@/src/Werken/PandFootprint_perJob/Subsectoren/@SS@[CompactedAdminDomain/CompactedAllocDomain_rel] * Sequences/LastSequence/StateNaAllocatie/Werken/@SS@ : StateVoorAllocatie/PandFootprint/@SS@'
+						, '@Y@', Context/ThisZichtjaar_name
+						, '@SS@', Jobs6/name)
+					, CompactedAdminDomain
+					, m2PandFootprint
+				), Descr = "Zelfde termen als Update_PandFootprint_Expr, maar dan een keer op de eindstand: de eindstand banen van de winnende subsector is exact wat de allocatie er in de winnende iteratie neerzette, en nul waar een andere subsector of sector won.";
+
+			container Wonen
+			{
+				attribute<m2PandFootprint> Footprint (CompactedAdminDomain) := GealloceerdDitZichtjaar
+					? MakeDefined(ThisVariantClassifications/Vastgoed/OP_buurt/Terreinoppervlakte/Uitgeefbaar/GebouwVoetafdruk[Sequences/LastSequence/StateNaAllocatie/OP_rel] /  1[Terreinoppervlak] * AdminDomain/NrHaPerCell /  1[ha] * 1[m2PandFootprint], 0[m2PandFootprint])
+					: StateVoorAllocatie/Wonen/Footprint
+				, Descr = "Zelfde term als Update_WoonFootprint_Expr op de eindstand: op een dit zichtjaar gealloceerde cel is OP_rel het pakket van dit zichtjaar (first-wins raakt alleen cellen uit eerdere zichtjaren, en die zitten in de andere tak), en op een niet-wonen-allocatie is OP_rel daar null en valt de voetafdruk op nul, precies de verdringing.";
+			}
+
+			container Bewijs
+			: Descr = "Eenmalige equivalentietoets van de einde-jaars afleiding tegen de iteratieketen: per werksubsector en voor wonen het maximale absolute verschil. Vraag Schrijf op; de vergelijking dwingt beide ketens af binnen een proces. Zolang deze toets niet exact nul heeft opgeleverd, blijft CalcStand_Compacted op de iteratieketen staan."
+			{
+				container PerSubsector :=
+					for_each_nedv(
+						Jobs6/name
+						, 'max(abs(MakeDefined(PandFootprint/'+Jobs6/name+', -999999f[m2PandFootprint]) - MakeDefined(Sequences/LastSequence/StateNaAllocatie/PandFootprint/'+Jobs6/name+', -999999f[m2PandFootprint])))'
+						, void
+						, m2PandFootprint
+					);
+				parameter<m2PandFootprint> MaxVerschil_Wonen := max(abs(MakeDefined(Wonen/Footprint, -999999f[m2PandFootprint]) - MakeDefined(Sequences/LastSequence/StateNaAllocatie/Wonen/Footprint, -999999f[m2PandFootprint])));
+				parameter<String> Schrijf := = asList('string(PerSubsector/'+Jobs6/name+')', ' + '';'' + ') + ' + '';'' + string(MaxVerschil_Wonen)'
+				, StorageName = "='%LocalDataProjDir%/Diagnose/FootprintEindejaars_Bewijs_'+Casus_name+'_'+Context/ThisZichtjaar_name+'.txt'"
+				, StorageType = "str"
+				, Descr = "Zeven getallen, allemaal exact nul als de afleiding klopt: het maximale absolute verschil per werksubsector en voor wonen.";
+			}
+		}
+
+		container CalcStand_Compacted :=
 			for_each_nedvn(
 				StandVar/path
 				, 'Sequences/LastSequence/StateNaAllocatie/'+StandVar/path

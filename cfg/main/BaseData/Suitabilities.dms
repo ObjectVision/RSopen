@@ -35,6 +35,7 @@ container Suitabilities
 		#include<UAI.dms>
 		#include<PrijsIndex.dms>
 		#include<Grondproductiekosten.dms>
+		#include<Bodemdalingkosten.dms>
 		#include<Verwervingskosten.dms>
 		
 		container Sloopkosten := 
@@ -45,8 +46,89 @@ container Suitabilities
 				, eur
 			), Descr = "Haal de woning oppervlak per woningtype op"
 		{
-			attribute<eur> Totaal               (AdminDomain) := ='add('+AsItemList(Classifications/Vastgoed/WP4/name)+')';
-			attribute<eur> Totaal_niet_woningen (AdminDomain) := ='SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/Model_StartYear)+'/pand/Oppervlaktes/VBOopp_perGebruiksdoel/niet_woon_AdminDomain * /ModelParameters/Wonen/Sloopkosten/Kantoor';
+			attribute<eur> Calc_Totaal               (AdminDomain) := ='add('+AsItemList(Classifications/Vastgoed/WP4/name)+')', Descr = "De sloopkosten van de bestaande woningen per cel: per woningtype het woonoppervlak maal het kental, gesommeerd over de vier typen. Zelfde expressie als het oude Totaal; het kanonieke item Totaal hieronder is nu de schakel van de ontkoppeling.";
+			attribute<eur> Calc_Totaal_niet_woningen (AdminDomain) :=
+					  Verwervingskosten/Niet_Woningen/Samenstelling/Fractie_Hal          * Verwervingskosten/Niet_Woningen/opp_per_grid * /ModelParameters/Wonen/Sloopkosten/Hal
+					+ (1f - Verwervingskosten/Niet_Woningen/Samenstelling/Fractie_Hal) * Verwervingskosten/Niet_Woningen/opp_per_grid * /ModelParameters/Wonen/Sloopkosten/OverigeUtiliteit
+					+ MakeDefined(Verwervingskosten/Niet_Woningen/Samenstelling/Voor1994, 0[meter2]) * /ModelParameters/Wonen/Sloopkosten/Asbest
+			, Descr = "De sloopkosten van het bestaande niet-woonvastgoed per cel, opgebouwd uit drie componenten (#701): het hal-deel van het vloeroppervlak maal het halkental, de rest maal het kental voor overige utiliteit, plus een asbesttoeslag over het oppervlak in panden van voor 1994. Tot #701 stond hier het kantoorkental van bouwkostenkompas maal al het niet-woonoppervlak, dus een distributiehal, een school en een ziekenhuis tegen hetzelfde tarief en zonder asbest. De onderbouwing van de drie kentallen staat bij ModelParameters/Wonen/Sloopkosten. Het oppervlak en de hal-fractie komen uit Verwervingskosten/Niet_Woningen, zodat verwerven en slopen van hetzelfde gebouw op dezelfde maat en dezelfde samenstelling staan.";
+
+			parameter<String> FileName_Totaal := '%LocalDataProjDir%/BaseData/Vastgoed/Sloopkosten_Woningen_Y'+string(ModelParameters/Model_StartYear)+'_'+/ModelParameters/StudyArea+'.tif'
+			, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft. PropValue van een StorageName levert de expressietekst en niet de uitkomst, en daar kan ExistingFile niets mee.";
+			parameter<String> FileName_Totaal_niet_woningen := '%LocalDataProjDir%/BaseData/Vastgoed/Sloopkosten_Niet_Woningen_Y'+string(ModelParameters/Model_StartYear)+'_'+/ModelParameters/StudyArea+'.tif'
+			, Descr = "Zie FileName_Totaal.";
+
+			parameter<String> Fingerprint_Totaal :=
+				  'start_year='                    + string(ModelParameters/Model_StartYear)
+				+ ';bag_date='                     + ModelParameters/BAG_file_date
+				+ ';wp4_classes='                  + asList(Classifications/Vastgoed/WP4/name, ',')
+				+ ';demolition_rate_rowhouse='     + string(/ModelParameters/Wonen/Sloopkosten/rijtjeswoning)
+				+ ';demolition_rate_semidetached=' + string(/ModelParameters/Wonen/Sloopkosten/twee_onder_1_kap)
+				+ ';demolition_rate_detached='     + string(/ModelParameters/Wonen/Sloopkosten/vrijstaand)
+				+ ';demolition_rate_apartment='    + string(/ModelParameters/Wonen/Sloopkosten/appartement)
+				+ ';trunc_upper_woononly='         + string(ModelParameters/VBO_opp_truncation_BovengrenzenAlleenWoon)
+				+ ';trunc_upper='                  + string(ModelParameters/Wonen/VBO_opp_truncation_upper)
+				+ ';trunc_lower='                  + string(ModelParameters/Wonen/VBO_opp_truncation_lower)
+				+ ';wp5_decoupled='                + string(ModelParameters/BAG_WP5_rel_Ontkoppeld)
+				+ ';pand_inflate_size='            + string(ModelParameters/Wonen/BAG_woonpand_Typering/inflate_size)
+				+ ';admin_grid='                   + ModelParameters/Advanced/AdminDomain_ref
+				+ ';grid_size='                    + string(AdminDomain/gridsize)
+				+ ';study_area='                   + ModelParameters/StudyArea
+			, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. De vier kentallen staan er als afgeleide waarden in, dus inclusief de bouwkostenindex naar het prijspeil van start_year; een gewijzigd basiskental of een gewijzigde index verandert de sleutel vanzelf. wp4_classes vangt een gewijzigde woningtypologie, want de som loopt over die klassen. wp5_decoupled en pand_inflate_size bepalen de woonpandtypering die het oppervlak over de vier typen verdeelt; het ontkoppelde WP5-bestand zelf is positioneel en heeft geen eigen fingerprint, dus ververs dat bestand samen met elke nieuwe BAG-levering (bag_date). De drie truncatieparameters (#700) bepalen de oppervlaktegrondslag. admin_grid vangt dat 25m tegenover 100m een ander bestand onder dezelfde naam oplevert.";
+
+			parameter<String> Fingerprint_Totaal_niet_woningen :=
+				  'start_year='                    + string(ModelParameters/Model_StartYear)
+				+ ';bag_date='                     + ModelParameters/BAG_file_date
+				+ ';bag_recent_year='              + string(ModelParameters/BAG_RecentYear)
+				+ ';lisa_start_year='              + string(ModelParameters/LISA_StartYear)
+				+ ';bag_logistics_dynamic='        + string(ModelParameters/Advanced/BAG_LogistiekDynamisch)
+				+ ';logistics_pipeline_heuristic=' + string(ModelParameters/Advanced/LogistiekePijplijnHeuristiek)
+				+ ';demolition_rate_hall='         + string(/ModelParameters/Wonen/Sloopkosten/Hal)
+				+ ';demolition_rate_other_utility='+ string(/ModelParameters/Wonen/Sloopkosten/OverigeUtiliteit)
+				+ ';demolition_rate_asbestos='     + string(/ModelParameters/Wonen/Sloopkosten/Asbest)
+				+ ';asbestos_year_threshold='      + string(/ModelParameters/Wonen/Sloopkosten/AsbestBouwjaarGrens)
+				+ ';hall_fraction_default='        + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_FractieHal_Default)
+				+ ';trunc_upper_woononly='         + string(ModelParameters/VBO_opp_truncation_BovengrenzenAlleenWoon)
+				+ ';trunc_upper='                  + string(ModelParameters/Wonen/VBO_opp_truncation_upper)
+				+ ';trunc_lower='                  + string(ModelParameters/Wonen/VBO_opp_truncation_lower)
+				+ ';storey_height_nonres_cm='      + string(ModelParameters/VBO_opp_LaaghoogteNietWoon)
+				+ ';tolerance_nonres='             + string(ModelParameters/VBO_opp_TolerantieNietWoon)
+				+ ';admin_grid='                   + ModelParameters/Advanced/AdminDomain_ref
+				+ ';grid_size='                    + string(AdminDomain/gridsize)
+				+ ';study_area='                   + ModelParameters/StudyArea
+			, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. De drie kentallen en de asbestgrens (#701) staan er als afgeleide waarden in, inclusief de bouwkostenindex. Het oppervlak en de hal-fractie komen uit Verwervingskosten/Niet_Woningen/Samenstelling; bag_date, start_year, de truncatieparameters en de twee niet-woonparameters voor laaghoogte en tolerantie (#700) staan hier als benadering van die keten, net als bij de fingerprint van Verwervingskosten/Niet_Woningen: een nieuwe BAG-levering of een andere truncatie verandert de fingerprint, maar een wijziging in de hardgecodeerde hal-gewichten of de toedelingsmatrix zelf niet. bag_logistics_dynamic en logistics_pipeline_heuristic sturen de logistiek-typering die in de hal-gewichten meeweegt; bag_recent_year en lisa_start_year vangen de bestandsnaam van de logistiek-aanvulling, al staat het versienummer v1 daar hard in het pad. admin_grid vangt dat 25m tegenover 100m een ander bestand onder dezelfde naam oplevert.";
+
+			container Decoupling_Totaal               := Templates/DecoupledFile_T(FileName_Totaal, Fingerprint_Totaal);
+			container Decoupling_Totaal_niet_woningen := Templates/DecoupledFile_T(FileName_Totaal_niet_woningen, Fingerprint_Totaal_niet_woningen);
+
+			attribute<eur> Make_Totaal (AdminDomain) := Calc_Totaal
+			, StorageName       = "=FileName_Totaal"
+			, StorageType       = "gdalwrite.grid"
+			, IntegrityCheck    = "not(all(IsNull(this))) && not(all(IsZero(this)))"
+			, ExplicitSuppliers = "Decoupling_Totaal/Write_Fingerprint"
+			, Descr = "Rekent en schrijft de tif. Faalt de IntegrityCheck, ga dan terug naar waarom de berekening al faalt en ga niet verder zonder dat te herstellen. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+			attribute<eur> Make_Totaal_niet_woningen (AdminDomain) := Calc_Totaal_niet_woningen
+			, StorageName       = "=FileName_Totaal_niet_woningen"
+			, StorageType       = "gdalwrite.grid"
+			, IntegrityCheck    = "not(all(IsNull(this))) && not(all(IsZero(this)))"
+			, ExplicitSuppliers = "Decoupling_Totaal_niet_woningen/Write_Fingerprint"
+			, Descr = "Zie Make_Totaal.";
+
+			attribute<eur> Read_Totaal (AdminDomain) : StorageName = "=FileName_Totaal", StorageType = "gdal.grid", StorageReadOnly = "TRUE"
+			, Descr = "Leest de eerder weggeschreven tif terug. Waardetype en domein staan expliciet gelijk aan Calc_Totaal.";
+			attribute<eur> Read_Totaal_niet_woningen (AdminDomain) : StorageName = "=FileName_Totaal_niet_woningen", StorageType = "gdal.grid", StorageReadOnly = "TRUE"
+			, Descr = "Leest de eerder weggeschreven tif terug. Waardetype en domein staan expliciet gelijk aan Calc_Totaal_niet_woningen.";
+
+			attribute<eur> Totaal (AdminDomain) :=
+				=	!ModelParameters/BaseDataOntkoppeld ? 'Calc_Totaal'
+				:	Decoupling_Totaal/MayReuse          ? 'Read_Totaal'
+				:	                                      'Make_Totaal'
+			, Descr = "Wat de rest van het model gebruikt, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand. Ontkoppeld met een geldige fingerprint leest de tif. Ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Vraag Decoupling_Totaal/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+			attribute<eur> Totaal_niet_woningen (AdminDomain) :=
+				=	!ModelParameters/BaseDataOntkoppeld      ? 'Calc_Totaal_niet_woningen'
+				:	Decoupling_Totaal_niet_woningen/MayReuse ? 'Read_Totaal_niet_woningen'
+				:	                                           'Make_Totaal_niet_woningen'
+			, Descr = "Zie Totaal. Samen met de ontkoppelde verwervingskosten staan nu beide posten van het exploitatiesaldo op hetzelfde mechanisme, zodat een gemengde vintage tussen slopen en verwerven door de fingerprints wordt gesignaleerd.";
 		} 
 	} 
 	
@@ -149,14 +231,161 @@ container Suitabilities
 		attribute<float32> Kwel       (AdminDomain) := SourceData/Water/kwel_1996_2003_average > 0f ? SourceData/Water/kwel_1996_2003_average : null_f, Descr = "Kwel in mm/d (positieve waarden uit de kwel-wegzijgingskaart). Hoe meer kwel, hoe geschikter voor waterberging.";
 		attribute<float32> Wegzijging (AdminDomain) := SourceData/Water/kwel_1996_2003_average < 0f ? SourceData/Water/kwel_1996_2003_average : null_f, Descr = "Wegzijging in mm/d (negatieve waarden uit de kwel-wegzijgingskaart). Hoe sterker de wegzijging, hoe ongeschikter: het water 'verdwijnt' naar de ondergrond.";
 
-		attribute<float32> Depth_Norm        (AdminDomain) := IsMeer ? 0f : Diepte / rth_element(Diepte, 0.95f), Descr = "Diepte genormaliseerd naar ~0..1 via het 95e percentiel. Bestaande meren uitgesloten.";
-		attribute<float32> InvUAI_Norm       (AdminDomain) := IsMeer ? 0f : Inv_UAI, Descr = "Inverse UAI als 0..1 criterium. Bestaande meren uitgesloten.";
-		attribute<float32> IsMeer_Nabij_Norm (AdminDomain) := IsMeer ? 0f : IsMeer_Nabij / max(IsMeer_Nabij), Descr = "Meer-nabijheid geschaald naar 0..1. Bestaande meren zelf uitgesloten: nabijheid geldt alleen rond het water, niet erop.";
-		attribute<float32> IsVeen_Nabij_Norm (AdminDomain) := IsVeen || IsMeer ? 0f : IsVeen_Nabij / max(IsVeen_Nabij), Descr = "Veen-nabijheid geschaald naar 0..1. Veen zelf en bestaande meren uitgesloten: nabijheid geldt alleen naast het veen, niet erop.";
+		parameter<String> FingerprintDeel_IsMeer := 'bbg_year=2022;lake_classes=Spaarbekken,Recreatief_binnenwater,Binnenwater_voor_delfstofwinning,Vloei_en_slibveld,Overig_binnenwater'
+		, Descr = "Gedeeld stuk van de fingerprints hieronder: de invoeren achter het meermasker IsMeer. Het jaartal 2022 en de vijf klassen staan hard in de expressie van IsMeer; verandert die selectie, pas dan ook deze parameter aan.";
+		parameter<String> FingerprintDeel_Domein := 'study_area=' + /ModelParameters/StudyArea + ';admin_grid=' + /ModelParameters/Advanced/AdminDomain_ref + ';grid_size=' + string(AdminDomain/gridsize)
+		, Descr = "Gedeeld staartstuk van de fingerprints hieronder: het domein waarop de normen staan. admin_grid en grid_size vangen dat een andere resolutie een ander bestand onder dezelfde naam zou opleveren.";
 
-		attribute<Bool>    IsDiepGenoeg      (AdminDomain) := MakeDefined(Diepte, 0[meter]) >= /ModelParameters/Waterberging/Minimum_Waterschijf, Descr = "Is de waterschijf minimaal ModelParameters/Waterberging/Minimum_Waterschijf? Zo niet, dan geschiktheid 0; geen dieptedata telt als 0 meter.";
+		attribute<float32> Calc_Depth_Norm (AdminDomain) := IsMeer ? 0f : Diepte / rth_element(Diepte, 0.95f), Descr = "Diepte genormaliseerd naar ~0..1 via het 95e percentiel. Bestaande meren uitgesloten.";
+		parameter<String> FileName_Depth_Norm := '%LocalDataProjDir%/BaseData/Suitabilities/Waterberging/Depth_Norm_LIWO20260129_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft. PropValue van een StorageName levert de expressietekst en niet de uitkomst.";
+		parameter<String> Fingerprint_Depth_Norm :=
+			  'depth_source=liwo_20260129'
+			+ ';max_plausible_depth=' + string(/SourceData/Water/MaxPlausibeleOverstromingsdiepte)
+			+ ';max_water_layer='     + string(/ModelParameters/Waterberging/Maximum_Waterschijf)
+			+ ';depth_quantile=0.95'
+			+ ';' + FingerprintDeel_IsMeer
+			+ ';' + FingerprintDeel_Domein
+		, Descr = "Alle bepalende invoeren, ook wat al in de bestandsnaam zit. depth_source is de ontvangstdatum van de drie LIWO-dieptekaarten; komt er een nieuwe levering, pas dan deze sleutel en de bestandsnaam aan. max_plausible_depth filtert de onzinwaarden in SourceData/Water/Dieptekaart, max_water_layer begrenst de bergbare schijf in Diepte, en depth_quantile is het kwantiel dat hard in de expressie van Calc_Depth_Norm staat.";
+		container Decoupling_Depth_Norm := Templates/DecoupledFile_T(FileName_Depth_Norm, Fingerprint_Depth_Norm);
+		attribute<float32> Make_Depth_Norm (AdminDomain) := Calc_Depth_Norm, StorageName = "=FileName_Depth_Norm", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_Depth_Norm/Write_Fingerprint"
+		, Descr = "Schrijft de norm eenmalig weg als tif. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<float32> Read_Depth_Norm (AdminDomain) : StorageName = "=FileName_Depth_Norm", StorageType = "gdal.grid", StorageReadOnly = "TRUE"
+		, Descr = "Leest de weggeschreven tif terug, met hetzelfde waardetype en domein als Calc_Depth_Norm.";
+		attribute<float32> Depth_Norm (AdminDomain) :=
+			= !/ModelParameters/BaseDataOntkoppeld ? 'Calc_Depth_Norm'
+			: Decoupling_Depth_Norm/MayReuse       ? 'Read_Depth_Norm'
+			:                                        'Make_Depth_Norm'
+		, Descr = "Diepte genormaliseerd naar 0..1, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand, ontkoppeld met een geldige fingerprint leest de tif, ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Vraag Decoupling_Depth_Norm/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
 
-		attribute<float32> Kwel_Norm       (AdminDomain) := IsMeer ? 0f : min_elem(MakeDefined(Kwel, 0f), /ModelParameters/Waterberging/Kwel_AfkapBoven) / /ModelParameters/Waterberging/Kwel_AfkapBoven, Descr = "Kwel afgekapt op Kwel_AfkapBoven en lineair geschaald naar 0..1; geen data telt als 0 mm/d. Verhoogt de geschiktheid. Bestaande meren uitgesloten.";
-		attribute<float32> Wegzijging_Norm (AdminDomain) := IsMeer ? 0f : max_elem(MakeDefined(Wegzijging, 0f), /ModelParameters/Waterberging/Wegzijging_AfkapOnder) / /ModelParameters/Waterberging/Wegzijging_AfkapOnder, Descr = "Wegzijging afgekapt op Wegzijging_AfkapOnder en lineair geschaald naar 0..1 (1 = sterke wegzijging); geen data telt als 0 mm/d. Wordt als negatieve term van de geschiktheid afgetrokken. Bestaande meren uitgesloten.";
+		attribute<float32> Calc_InvUAI_Norm (AdminDomain) := IsMeer ? 0f : Inv_UAI, Descr = "Inverse UAI als 0..1 criterium. Bestaande meren uitgesloten.";
+		parameter<String> FileName_InvUAI_Norm := '%LocalDataProjDir%/BaseData/Suitabilities/Waterberging/InvUAI_Norm_BAG'+string(/ModelParameters/BAG_RecentYear)+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_InvUAI_Norm :=
+			  'bag_year='  + string(/ModelParameters/BAG_RecentYear)
+			+ ';bag_date=' + /ModelParameters/BAG_file_date
+			+ ';uai_potential=5000m'
+			+ ';uai_decay=AbsWeight'
+			+ ';' + FingerprintDeel_IsMeer
+			+ ';' + FingerprintDeel_Domein
+		, Descr = "Alle bepalende invoeren, ook wat al in de bestandsnaam zit. De UAI komt uit BaseData/Suitabilities/Wonen/UrbanAttractivityIndex en telt winkels, bijeenkomst- en logiesobjecten en monumentale panden uit de BAG van bag_year; uai_potential en uai_decay staan hard in UAI.dms. LET OP, dit is deels een benadering: de UAI hangt ook aan de gemeente-indeling en aan de monumentenkoppeling in de BAG-keten, en die hebben geen eigen parameter. bag_year en bag_date staan hier als benadering daarvan.";
+		container Decoupling_InvUAI_Norm := Templates/DecoupledFile_T(FileName_InvUAI_Norm, Fingerprint_InvUAI_Norm);
+		attribute<float32> Make_InvUAI_Norm (AdminDomain) := Calc_InvUAI_Norm, StorageName = "=FileName_InvUAI_Norm", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_InvUAI_Norm/Write_Fingerprint"
+		, Descr = "Schrijft de norm eenmalig weg als tif. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<float32> Read_InvUAI_Norm (AdminDomain) : StorageName = "=FileName_InvUAI_Norm", StorageType = "gdal.grid", StorageReadOnly = "TRUE"
+		, Descr = "Leest de weggeschreven tif terug, met hetzelfde waardetype en domein als Calc_InvUAI_Norm.";
+		attribute<float32> InvUAI_Norm (AdminDomain) :=
+			= !/ModelParameters/BaseDataOntkoppeld ? 'Calc_InvUAI_Norm'
+			: Decoupling_InvUAI_Norm/MayReuse      ? 'Read_InvUAI_Norm'
+			:                                        'Make_InvUAI_Norm'
+		, Descr = "Inverse UAI als 0..1 criterium, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand, ontkoppeld met een geldige fingerprint leest de tif, ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Vraag Decoupling_InvUAI_Norm/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+		attribute<float32> Calc_IsMeer_Nabij_Norm (AdminDomain) := IsMeer ? 0f : IsMeer_Nabij / max(IsMeer_Nabij), Descr = "Meer-nabijheid geschaald naar 0..1. Bestaande meren zelf uitgesloten: nabijheid geldt alleen rond het water, niet erop.";
+		parameter<String> FileName_IsMeer_Nabij_Norm := '%LocalDataProjDir%/BaseData/Suitabilities/Waterberging/IsMeer_Nabij_Norm_BBG2022_'+/ModelParameters/Waterberging/MeerNabijPotentiaal+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_IsMeer_Nabij_Norm :=
+			  'lake_radius=' + /ModelParameters/Waterberging/MeerNabijPotentiaal
+			+ ';decay=rev_dist_scaled'
+			+ ';' + FingerprintDeel_IsMeer
+			+ ';' + FingerprintDeel_Domein
+		, Descr = "Alle bepalende invoeren, ook wat al in de bestandsnaam zit. lake_radius is de reikwijdte van het afstandsverval, decay het veld uit de distmatrix dat hard in de expressie van IsMeer_Nabij staat. Het maximum waarmee geschaald wordt volgt uit dezelfde invoeren en heeft geen eigen sleutel nodig.";
+		container Decoupling_IsMeer_Nabij_Norm := Templates/DecoupledFile_T(FileName_IsMeer_Nabij_Norm, Fingerprint_IsMeer_Nabij_Norm);
+		attribute<float32> Make_IsMeer_Nabij_Norm (AdminDomain) := Calc_IsMeer_Nabij_Norm, StorageName = "=FileName_IsMeer_Nabij_Norm", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_IsMeer_Nabij_Norm/Write_Fingerprint"
+		, Descr = "Schrijft de norm eenmalig weg als tif. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<float32> Read_IsMeer_Nabij_Norm (AdminDomain) : StorageName = "=FileName_IsMeer_Nabij_Norm", StorageType = "gdal.grid", StorageReadOnly = "TRUE"
+		, Descr = "Leest de weggeschreven tif terug, met hetzelfde waardetype en domein als Calc_IsMeer_Nabij_Norm.";
+		attribute<float32> IsMeer_Nabij_Norm (AdminDomain) :=
+			= !/ModelParameters/BaseDataOntkoppeld  ? 'Calc_IsMeer_Nabij_Norm'
+			: Decoupling_IsMeer_Nabij_Norm/MayReuse ? 'Read_IsMeer_Nabij_Norm'
+			:                                         'Make_IsMeer_Nabij_Norm'
+		, Descr = "Meer-nabijheid geschaald naar 0..1, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand, ontkoppeld met een geldige fingerprint leest de tif, ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Vraag Decoupling_IsMeer_Nabij_Norm/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+		attribute<float32> Calc_IsVeen_Nabij_Norm (AdminDomain) := IsVeen || IsMeer ? 0f : IsVeen_Nabij / max(IsVeen_Nabij), Descr = "Veen-nabijheid geschaald naar 0..1. Veen zelf en bestaande meren uitgesloten: nabijheid geldt alleen naast het veen, niet erop.";
+		parameter<String> FileName_IsVeen_Nabij_Norm := '%LocalDataProjDir%/BaseData/Suitabilities/Waterberging/IsVeen_Nabij_Norm_BOFEK2020_'+/ModelParameters/Waterberging/VeenNabijPotentiaal+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_IsVeen_Nabij_Norm :=
+			  'bofek=2020'
+			+ ';peat_rule=EK_div_100_eq_10'
+			+ ';peat_radius=' + /ModelParameters/Waterberging/VeenNabijPotentiaal
+			+ ';decay=rev_dist_scaled'
+			+ ';' + FingerprintDeel_IsMeer
+			+ ';' + FingerprintDeel_Domein
+		, Descr = "Alle bepalende invoeren, ook wat al in de bestandsnaam zit. bofek is de vintage van BOFEK_2020.shp, peat_rule de veenregel uit Classifications/Grondgebruik/Bodem (EK gedeeld door 100 is 10), peat_radius de reikwijdte van het afstandsverval en decay het veld uit de distmatrix dat hard in de expressie van IsVeen_Nabij staat.";
+		container Decoupling_IsVeen_Nabij_Norm := Templates/DecoupledFile_T(FileName_IsVeen_Nabij_Norm, Fingerprint_IsVeen_Nabij_Norm);
+		attribute<float32> Make_IsVeen_Nabij_Norm (AdminDomain) := Calc_IsVeen_Nabij_Norm, StorageName = "=FileName_IsVeen_Nabij_Norm", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_IsVeen_Nabij_Norm/Write_Fingerprint"
+		, Descr = "Schrijft de norm eenmalig weg als tif. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<float32> Read_IsVeen_Nabij_Norm (AdminDomain) : StorageName = "=FileName_IsVeen_Nabij_Norm", StorageType = "gdal.grid", StorageReadOnly = "TRUE"
+		, Descr = "Leest de weggeschreven tif terug, met hetzelfde waardetype en domein als Calc_IsVeen_Nabij_Norm.";
+		attribute<float32> IsVeen_Nabij_Norm (AdminDomain) :=
+			= !/ModelParameters/BaseDataOntkoppeld  ? 'Calc_IsVeen_Nabij_Norm'
+			: Decoupling_IsVeen_Nabij_Norm/MayReuse ? 'Read_IsVeen_Nabij_Norm'
+			:                                         'Make_IsVeen_Nabij_Norm'
+		, Descr = "Veen-nabijheid geschaald naar 0..1, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand, ontkoppeld met een geldige fingerprint leest de tif, ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Vraag Decoupling_IsVeen_Nabij_Norm/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+
+		attribute<Bool> Calc_IsDiepGenoeg (AdminDomain) := MakeDefined(Diepte, 0[meter]) >= /ModelParameters/Waterberging/Minimum_Waterschijf, Descr = "Is de waterschijf minimaal ModelParameters/Waterberging/Minimum_Waterschijf? Zo niet, dan geschiktheid 0; geen dieptedata telt als 0 meter.";
+		parameter<String> FileName_IsDiepGenoeg := '%LocalDataProjDir%/BaseData/Suitabilities/Waterberging/IsDiepGenoeg_LIWO20260129_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_IsDiepGenoeg :=
+			  'depth_source=liwo_20260129'
+			+ ';max_plausible_depth=' + string(/SourceData/Water/MaxPlausibeleOverstromingsdiepte)
+			+ ';max_water_layer='     + string(/ModelParameters/Waterberging/Maximum_Waterschijf)
+			+ ';min_water_layer='     + string(/ModelParameters/Waterberging/Minimum_Waterschijf)
+			+ ';' + FingerprintDeel_Domein
+		, Descr = "Alle bepalende invoeren, ook wat al in de bestandsnaam zit. Anders dan de normen hierboven gebruikt dit item het meermasker niet, dus het IsMeer-deel ontbreekt bewust. max_water_layer bepaalt welke cellen in Diepte null worden en telt daardoor mee, min_water_layer is de toetsgrens zelf.";
+		container Decoupling_IsDiepGenoeg := Templates/DecoupledFile_T(FileName_IsDiepGenoeg, Fingerprint_IsDiepGenoeg);
+		attribute<Bool> Make_IsDiepGenoeg (AdminDomain) := Calc_IsDiepGenoeg, StorageName = "=FileName_IsDiepGenoeg", StorageType = "tif", ExplicitSuppliers = "Decoupling_IsDiepGenoeg/Write_Fingerprint"
+		, Descr = "Schrijft de toets eenmalig weg als tif, met StorageType tif conform het bool-idioom van de Make_Per_AdminDomain-items in bgt.dms. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Bool> Read_IsDiepGenoeg (AdminDomain) : StorageName = "=FileName_IsDiepGenoeg", StorageType = "tif", StorageReadOnly = "TRUE"
+		, Descr = "Leest de weggeschreven tif terug, met hetzelfde waardetype en domein als Calc_IsDiepGenoeg.";
+		attribute<Bool> IsDiepGenoeg (AdminDomain) :=
+			= !/ModelParameters/BaseDataOntkoppeld ? 'Calc_IsDiepGenoeg'
+			: Decoupling_IsDiepGenoeg/MayReuse     ? 'Read_IsDiepGenoeg'
+			:                                        'Make_IsDiepGenoeg'
+		, Descr = "Is de waterschijf minimaal ModelParameters/Waterberging/Minimum_Waterschijf, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand, ontkoppeld met een geldige fingerprint leest de tif, ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Gelezen door de zeef (Zeef_T), de geschiktheid (Suitability_Zichtjaar_T) en de diagnose. Vraag Decoupling_IsDiepGenoeg/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+
+		attribute<float32> Calc_Kwel_Norm (AdminDomain) := IsMeer ? 0f : min_elem(MakeDefined(Kwel, 0f), /ModelParameters/Waterberging/Kwel_AfkapBoven) / /ModelParameters/Waterberging/Kwel_AfkapBoven, Descr = "Kwel afgekapt op Kwel_AfkapBoven en lineair geschaald naar 0..1; geen data telt als 0 mm/d. Verhoogt de geschiktheid. Bestaande meren uitgesloten.";
+		parameter<String> FileName_Kwel_Norm := '%LocalDataProjDir%/BaseData/Suitabilities/Waterberging/Kwel_Norm_Kwel20260521_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_Kwel_Norm :=
+			  'seepage_date=20260521'
+			+ ';seepage_period=1996_2003'
+			+ ';seepage_cap_upper=' + string(/ModelParameters/Waterberging/Kwel_AfkapBoven)
+			+ ';' + FingerprintDeel_IsMeer
+			+ ';' + FingerprintDeel_Domein
+		, Descr = "Alle bepalende invoeren, ook wat al in de bestandsnaam zit. seepage_date is de ontvangstdatum van de kwel-wegzijgingskaart van Deltares, seepage_period de meetperiode uit de bestandsnaam van die bron. Komt de definitieve kaart, pas dan deze sleutels en de bestandsnaam aan.";
+		container Decoupling_Kwel_Norm := Templates/DecoupledFile_T(FileName_Kwel_Norm, Fingerprint_Kwel_Norm);
+		attribute<float32> Make_Kwel_Norm (AdminDomain) := Calc_Kwel_Norm, StorageName = "=FileName_Kwel_Norm", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_Kwel_Norm/Write_Fingerprint"
+		, Descr = "Schrijft de norm eenmalig weg als tif. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<float32> Read_Kwel_Norm (AdminDomain) : StorageName = "=FileName_Kwel_Norm", StorageType = "gdal.grid", StorageReadOnly = "TRUE"
+		, Descr = "Leest de weggeschreven tif terug, met hetzelfde waardetype en domein als Calc_Kwel_Norm.";
+		attribute<float32> Kwel_Norm (AdminDomain) :=
+			= !/ModelParameters/BaseDataOntkoppeld ? 'Calc_Kwel_Norm'
+			: Decoupling_Kwel_Norm/MayReuse        ? 'Read_Kwel_Norm'
+			:                                        'Make_Kwel_Norm'
+		, Descr = "Kwel geschaald naar 0..1, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand, ontkoppeld met een geldige fingerprint leest de tif, ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Vraag Decoupling_Kwel_Norm/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+		attribute<float32> Calc_Wegzijging_Norm (AdminDomain) := IsMeer ? 0f : max_elem(MakeDefined(Wegzijging, 0f), /ModelParameters/Waterberging/Wegzijging_AfkapOnder) / /ModelParameters/Waterberging/Wegzijging_AfkapOnder, Descr = "Wegzijging afgekapt op Wegzijging_AfkapOnder en lineair geschaald naar 0..1 (1 = sterke wegzijging); geen data telt als 0 mm/d. Wordt als negatieve term van de geschiktheid afgetrokken. Bestaande meren uitgesloten.";
+		parameter<String> FileName_Wegzijging_Norm := '%LocalDataProjDir%/BaseData/Suitabilities/Waterberging/Wegzijging_Norm_Kwel20260521_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_Wegzijging_Norm :=
+			  'seepage_date=20260521'
+			+ ';seepage_period=1996_2003'
+			+ ';seepage_cap_lower=' + string(/ModelParameters/Waterberging/Wegzijging_AfkapOnder)
+			+ ';' + FingerprintDeel_IsMeer
+			+ ';' + FingerprintDeel_Domein
+		, Descr = "Alle bepalende invoeren, ook wat al in de bestandsnaam zit. seepage_date is de ontvangstdatum van de kwel-wegzijgingskaart van Deltares, seepage_period de meetperiode uit de bestandsnaam van die bron. Komt de definitieve kaart, pas dan deze sleutels en de bestandsnaam aan.";
+		container Decoupling_Wegzijging_Norm := Templates/DecoupledFile_T(FileName_Wegzijging_Norm, Fingerprint_Wegzijging_Norm);
+		attribute<float32> Make_Wegzijging_Norm (AdminDomain) := Calc_Wegzijging_Norm, StorageName = "=FileName_Wegzijging_Norm", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_Wegzijging_Norm/Write_Fingerprint"
+		, Descr = "Schrijft de norm eenmalig weg als tif. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan de container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<float32> Read_Wegzijging_Norm (AdminDomain) : StorageName = "=FileName_Wegzijging_Norm", StorageType = "gdal.grid", StorageReadOnly = "TRUE"
+		, Descr = "Leest de weggeschreven tif terug, met hetzelfde waardetype en domein als Calc_Wegzijging_Norm.";
+		attribute<float32> Wegzijging_Norm (AdminDomain) :=
+			= !/ModelParameters/BaseDataOntkoppeld ? 'Calc_Wegzijging_Norm'
+			: Decoupling_Wegzijging_Norm/MayReuse  ? 'Read_Wegzijging_Norm'
+			:                                        'Make_Wegzijging_Norm'
+		, Descr = "Wegzijging geschaald naar 0..1, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand, ontkoppeld met een geldige fingerprint leest de tif, ontkoppeld zonder geldige fingerprint rekent en schrijft in een keer, inclusief het zijbestand. Vraag Decoupling_Wegzijging_Norm/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
 	}
 }

@@ -145,6 +145,23 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		attribute <bool> BBGSamengesteld_Unie (AdminDomain) := BBG/Per_AdminDomain || /SourceData/Diversen/Per_AdminDomain/begrenzing_bebouwd_gebied || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsWoonlocatie || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsWerklocatie || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsZeehaven
 		, Descr = "De oude definitie, bewaard om beide naast elkaar te kunnen meten. Niet in gebruik.";
 
+		container KantoorDominantie
+		: Descr = "Waar is zakelijke dienstverlening in het basisjaar de dominante werksubsector? Bron voor de verdikkingsingrepen van #668: de potentieelvloer in de dichtheid, de voorrangstrede en de zeefvrijstellingen gelden alleen op deze cellen. Bewust op de basisjaarstand verankerd, net als de rest van de potentieel- en zeefketen, zodat er geen kringverwijzing met de allocatie ontstaat."
+		{
+			attribute<Float32> KantoorBanen (AllocDomain) := sum(/BaseData/StartState/StateBasisjaar/State/Werken/Zak_dienstverlening[float32], AdminDomain/AllocDomain_rel), Descr = "Kantoorbanen in het basisjaar per 100m-cel.";
+			attribute<Float32> WerkBanen    (AllocDomain) := sum(
+				  /BaseData/StartState/StateBasisjaar/State/Werken/Nijverheid[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Logistiek[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Detailhandel[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Ov_consumentendiensten[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Zak_dienstverlening[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Overheid_kw_diensten[float32]
+				, AdminDomain/AllocDomain_rel), Descr = "Alle werkbanen in het basisjaar per 100m-cel.";
+			attribute<Float32> KantoorAandeel    (AllocDomain) := MakeDefined(KantoorBanen / WerkBanen, 0f), Descr = "Aandeel van kantoor in de werkbanen van de cel; 0 waar geen werk is.";
+			attribute<Bool>    IsKantoorDominant (AllocDomain) := KantoorBanen > 0f && KantoorAandeel >= /ModelParameters/Werken/KantoorDominantieDrempel, Descr = "Cel waar kantoor de werkstand domineert. Op deze cellen is toewijzing aan kantoor verdikking van de bestaande voorraad en geen nieuwbouw.";
+			attribute<Float32> WerkBanenWaarKantoorDominant (AllocDomain) := IsKantoorDominant ? WerkBanen : 0f, Descr = "De werkstand op de dominante cellen, als grondslag voor de potentieelvloer; elders 0, zodat een max_elem daar niets doet.";
+		}
+
 		container Opleggingsmasker
 		: Descr = "Waar mag het model een ander grondgebruik neerzetten dan er nu ligt? Een masker over het AdminDomain, gedeeld door iedereen die die vraag stelt. Zie #661.
 
@@ -310,8 +327,36 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		}
 		
 		attribute<Bool> N2K1000mBuffer0                   (AdminDomain) := ='potential(float32(SourceData/Omgevingsrecht/EU/Natura2000/Result_AdminDomain), /Geography/Distmatrices_'+AdminDomain_ref_short+'/pot1000m/Flat2) > 0f && !SourceData/Omgevingsrecht/EU/Natura2000/Result_AdminDomain', Descr = "1km buffer rond Natura2000 gebieden";
-		attribute<Bool> GrootWater1500mBuffer             (AllocDomain) := ='potential(float32(StartState/Grondgebruik/Per_AllocDomain/IsGrootWater), /Geography/Distmatrices_'+AllocDomain_ref_short+'/pot1500m/Flat2) > 0f', Descr = "1.5km buffer rond groot water (meren en grote rivieren)";
-		attribute<Bool> N2K1000mBuffer                    (AdminDomain) := N2K1000mBuffer0 && !GrootWater1500mBuffer[AdminDomain/AllocDomain_rel], Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water";
+
+		parameter<String> FileName_GrootWater1500mBuffer := '%LocalDataProjDir%/BaseData/Omgeving/GrootWater1500mBuffer_BBG'+/ModelParameters/BBG_Year+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_GrootWater1500mBuffer :=
+			  'bbg_year='          + /ModelParameters/BBG_Year
+			+ ';buffer_m=1500'
+			+ ';grootwater_flags=' + asList(string(/Classifications/Grondgebruik/CBSKlasse/IsGrootWater), ',')
+			+ ';alloc_grid='       + /ModelParameters/Advanced/AllocDomain_ref
+			+ ';study_area='       + /ModelParameters/StudyArea
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. bbg_year kiest de landgebruikskaart waar IsGrootWater uit komt, en kiest via de CBSKlasse-alias ook de klassenlijst. buffer_m staat als vaste waarde, want de potential kiest zijn kernel via het itempad en niet via een parameter. grootwater_flags is de klassenvlag IsGrootWater per CBS-klasse: een gewijzigde vlag verandert de uitkomst zonder de bestandsnaam te raken. alloc_grid vangt dat 25m tegenover 100m een ander bestand onder dezelfde naam oplevert.";
+		container Decoupling_GrootWater1500mBuffer := /Templates/DecoupledFile_T(FileName_GrootWater1500mBuffer, Fingerprint_GrootWater1500mBuffer);
+		attribute<Bool> Calc_GrootWater1500mBuffer        (AllocDomain) := ='potential(float32(StartState/Grondgebruik/Per_AllocDomain/IsGrootWater), /Geography/Distmatrices_'+AllocDomain_ref_short+'/pot1500m/Flat2) > 0f', Descr = "1.5km buffer rond groot water (meren en grote rivieren)";
+		attribute<Bool> Make_GrootWater1500mBuffer        (AllocDomain) := Calc_GrootWater1500mBuffer, StorageName = "=FileName_GrootWater1500mBuffer", StorageType = "tif", ExplicitSuppliers = "Decoupling_GrootWater1500mBuffer/Write_Fingerprint", Descr = "Schrijft de buffer eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan een container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Bool> Read_GrootWater1500mBuffer        (AllocDomain) : StorageName = "=FileName_GrootWater1500mBuffer", StorageType = "tif", StorageReadOnly = "TRUE";
+		attribute<Bool> GrootWater1500mBuffer             (AllocDomain) := = Decoupling_GrootWater1500mBuffer/MayReuse ? 'Read_GrootWater1500mBuffer' : 'Make_GrootWater1500mBuffer', Descr = "1.5km buffer rond groot water (meren en grote rivieren), ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_GrootWater1500mBuffer/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+		parameter<String> FileName_N2K1000mBuffer := '%LocalDataProjDir%/BaseData/Omgeving/N2K1000mBuffer_N2K20241119_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_N2K1000mBuffer :=
+			  'n2k_date=20241119'
+			+ ';buffer_m=1000'
+			+ ';admin_grid='  + /ModelParameters/Advanced/AdminDomain_ref
+			+ ';study_area='  + /ModelParameters/StudyArea
+			+ ';grootwater=[' + Fingerprint_GrootWater1500mBuffer + ']'
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. n2k_date staat als vaste waarde omdat de datum hard in het pad van SourceData/Omgevingsrecht/EU/Natura2000_2024 zit; komt daar een nieuwe levering, pas dan ook deze sleutel aan. buffer_m staat als vaste waarde, want de potential kiest zijn kernel via het itempad. De buffer sluit groot water uit, dus de volledige fingerprint van GrootWater1500mBuffer telt hier genest mee.";
+		container Decoupling_N2K1000mBuffer := /Templates/DecoupledFile_T(FileName_N2K1000mBuffer, Fingerprint_N2K1000mBuffer);
+		attribute<Bool> Calc_N2K1000mBuffer               (AdminDomain) := N2K1000mBuffer0 && !GrootWater1500mBuffer[AdminDomain/AllocDomain_rel], Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water";
+		attribute<Bool> Make_N2K1000mBuffer               (AdminDomain) := Calc_N2K1000mBuffer, StorageName = "=FileName_N2K1000mBuffer", StorageType = "tif", ExplicitSuppliers = "Decoupling_N2K1000mBuffer/Write_Fingerprint", Descr = "Schrijft de buffer eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan een container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Bool> Read_N2K1000mBuffer               (AdminDomain) : StorageName = "=FileName_N2K1000mBuffer", StorageType = "tif", StorageReadOnly = "TRUE";
+		attribute<Bool> N2K1000mBuffer                    (AdminDomain) := = Decoupling_N2K1000mBuffer/MayReuse ? 'Read_N2K1000mBuffer' : 'Make_N2K1000mBuffer', Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water, ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_N2K1000mBuffer/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
 		// attribute<Bool> Nationale_parken_van_wereldklasse (AllocDomain) := SourceData/Landschap/Nationale_parken_van_wereldklasse/IsNationaalParkWereldklasse, Descr = "Nationale parken van wereldklasse";
 		// attribute<Bool> VanGoghNationaalPark              (AllocDomain) := SourceData/Landschap/VanGoghNationaalPark/IsVanGoghNationaalPark, Descr = "Van Gogh Nationaal Park";
 		// attribute<Bool> Pampus                            (AllocDomain) := SourceData/Plancapaciteit/Wonen/NieuweNieuweKaart/Fijn/IsPampus/Per_AllocDomain, Descr = "Pampus";
