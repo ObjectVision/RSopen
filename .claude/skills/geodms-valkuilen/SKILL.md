@@ -47,6 +47,19 @@ Een wijziging in een SqlString kan de volgorde stil veranderen: een window funct
 
 Dat is handig zolang je het weet en een valkuil zodra je aanneemt dat een null zich door een vergelijking heen plant.
 
+Bij rekenen geldt precies het omgekeerde, en dat is de duurdere helft. Een float-null is een NaN en propageert door elke bewerking, ook door een vermenigvuldiging met nul. `float32(FALSE) * null` is dus null en geen nul, en `null + 5` is null. Een vlag voor een factor zetten schakelt die factor niet uit:
+
+```
+float32(!IsNuGealloceerd) * StateVoor
++ float32(Allocatie == DezeSubsector) * Dichtheid * Resultaat   // Dichtheid null maakt de hele som null
+```
+
+Deze term is de kern van een keten die niets meer teruggeeft dan nulls, terwijl er in de configuratie geen enkele fout zichtbaar is. Wie dezelfde formule als ternaire operator schrijft, heeft het probleem niet: de niet-gekozen tak wordt niet meegenomen, dus daar komt de null nooit binnen. Datzelfde verschil maakt dat twee schrijfwijzen die er equivalent uitzien verschillende antwoorden geven.
+
+Denk hierbij aan de plekken waar de configuratie zelf bewust een null neerzet, zoals `... ? ... : (0f/0f)` op cellen buiten een regiokaart. Zo'n null hoort bij "onbekend hier", maar hij lekt de allocatie in op cellen waar de betreffende term er helemaal niet toe doet. Wikkel de factor in `MakeDefined(..., 0)` of zet hem in een tak, en toets het met een telling van `!IsDefined(...)` over het domein voordat je conclusies trekt.
+
+Beide helften bewijs je in seconden met een losse .dms in de scratchpad; zie de skill rs-draaien, trap 2.
+
 ## Rasters die niet op het modelraster liggen
 
 GeoDMS leest een raster op georeferentie, niet positioneel, en rondt een niet-gehele celoffset af naar de dichtstbijzijnde cel. Dat gaat goed zolang alle lagen dezelfde afronding krijgen, maar het levert een GridStorageManager-waarschuwing op en het is niet zichtbaar in de uitkomst.
