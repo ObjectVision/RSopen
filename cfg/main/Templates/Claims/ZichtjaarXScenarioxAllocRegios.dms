@@ -84,7 +84,8 @@ Template Zichtjaar_T
 			attribute<Woning> Totaal                 (RegioUnit) := ='add('+asList(WP2xVSSH/name,',')+')';
 		}
 		
-		container Werken := Read_werken_CSV;
+		container Werken := = lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS') ? 'Read_werken_CSV' : 'Werken_Geankerd'
+		, Descr = "De banenclaim per regio. Welke van de twee geldt staat in ModelParameters/ClaimBasisjaar/Anker; op de terugvalstand is dit letterlijk Read_werken_CSV en verandert er niets ten opzichte van voor #667.";
 		
 		container Verblijfsrecreatie 
 		{
@@ -374,6 +375,42 @@ Template Zichtjaar_T
 				, RegioUnit
 				, job
 			), StorageName = "=File_csv_name+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE"
+		{
+			attribute<job> Totaal   (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
+		}
+
+		// #667: de claim kan op de waargenomen trend van het basisjaar worden geankerd in plaats van op het
+		// TIGRIS-niveau. Zie ModelParameters/ClaimBasisjaar voor de onderbouwing en de gemeten uitwerking.
+		parameter<String> File_csv_basisjaar := ClaimDir +'/'+Scenario_name+'/'+/VariantParameters/VariantK/ClaimVariantName[Variant_rel]+'/Y'+string(/ModelParameters/Model_StartYear)+'/NL'
+		, Descr = "De landelijke TIGRIS-claim van het claimbasisjaar. Bewust NL en niet AllocRegio_name: de ankerfactor is landelijk per subsector, zodat het ruimtelijke patroon van TIGRIS ongemoeid blijft en de claims op de vier allocatieniveaus onderling consistent blijven. Een factor per regio zou dat laatste breken, want een verhouding is niet optelbaar.";
+
+		unit<UInt32> NL_Basisjaar := /SourceData/RegioIndelingen/NL;
+
+		container Read_Werken_Basisjaar_CSV :=
+		for_each_ndv(
+				Jobs6/name
+				, NL_Basisjaar
+				, job
+			), StorageName = "=File_csv_basisjaar+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE"
+		, Descr = "Deze map bestaat sinds Classifications/Time/TigrisJaar het claimbasisjaar meeneemt en de aggregatie over Time/ClaimJaar loopt. Zonder die twee is dit bestand er niet en faalt het lezen hard, wat de bedoeling is: stil terugvallen op het TIGRIS-niveau zou de schakelaar betekenisloos maken.";
+
+		container Ankerfactor :=
+			for_each_nedv(
+				Jobs6/name
+				, lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
+					? 'const(1f, void)'
+					: 'float32(/ModelParameters/ClaimBasisjaar/TrendLISA/'+Jobs6/name+') / float32(sum(Read_Werken_Basisjaar_CSV/'+Jobs6/name+'))'
+				, void
+				, float32
+			), Descr = "Per werksubsector de verhouding tussen de waargenomen trendwaarde in het basisjaar en wat TIGRIS voor datzelfde jaar geeft. Op de terugvalstand exact 1, dus dan is de claim letterlijk de oude.";
+
+		container Werken_Geankerd :=
+			for_each_nedv(
+				Jobs6/name
+				, 'Read_Werken_CSV/'+Jobs6/name+' * Ankerfactor/'+Jobs6/name
+				, RegioUnit
+				, job
+			)
 		{
 			attribute<job> Totaal   (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
 		}
