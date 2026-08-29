@@ -25,10 +25,21 @@ REM ============================================================================
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Impl/Generate_LastZichtjaar
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Basisjaar/Landgebruikskaart/Result_SA
-REM if %ErrorLevel% NEQ 0 goto ErrorEnd
+REM De indicatoren draaien in een eigen proces met StandAllocatieOntkoppeld op TRUE, zodat ze de stand uit de
+REM zojuist geschreven tifs lezen. Zonder die schakelaar zou dit tweede proces de hele allocatie opnieuw
+REM uitrekenen, want GeoDMS bewaart niets tussen processen. De aanroep stond hier tot #714 uitgecommentarieerd
+REM en wees bovendien naar /Indicatoren/Export, een pad dat niet bestaat: het casusniveau ontbrak en de
+REM container Export hangt onder Zichtjaren.
+REM
+REM Generate_Indicatoren schrijft precies een zichtjaar, standaard het laatste. Wie ook de tussenliggende
+REM zichtjaren wil wegschrijven zet de omgevingsvariabele ExportZichtjaar en roept dit per jaar aan; dat doet
+REM batch\RunIndicatoren.ps1, dat over varianten en zichtjaren heen loopt.
+set StandAllocatieOntkoppeld=TRUE
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Zichtjaren/Export/Generate_Indicatoren
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+set StandAllocatieOntkoppeld=FALSE
 
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Export/Generate_Indicatoren
+REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Basisjaar/Landgebruikskaart/Result_SA
 REM if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 exit /b
