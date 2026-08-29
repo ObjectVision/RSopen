@@ -1,0 +1,52 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Hoeveel verzorgende werkgelegenheid hoort er bij een woning? Waargenomen in het basisjaar, als grondslag voor
+// de verzorgende banen die een woonontwikkelpakket meebrengt (#710).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container VerzorgendBijWonen
+: Descr = "De waargenomen verhouding tussen verzorgende werkgelegenheid en woningen in bestaand woongebied, in banen per woning, gemeten op de basisjaarstand.
+
+			Aanleiding is #710: detailhandel, overige consumentendiensten en overheid en kwartaire diensten bedienen de bevolking en horen in en bij de wijk, maar in de celexclusieve allocatie concurreren zij als zelfstandige sector om grond en belanden zij op kaal buitengebied. Een woonwijk zonder supermarkt en zonder school is geen woonwijk. Deze verhouding maakt het mogelijk om een woonontwikkelpakket een beetje verzorgende werkgelegenheid te laten meebrengen, in plaats van die banen elders apart te moeten alloceren.
+
+			Bewust waargenomen en niet als expertgetal ingevoerd: de verhouding volgt uit dezelfde basisjaarstand die de allocatie ook als vertrekpunt neemt, dus hij is per definitie consistent met het model. Wie hem wil bijstellen doet dat met ModelParameters/Werken/VerzorgendInWoonOP_Factor en niet door hier een getal te zetten.
+
+			De noemer is het aantal woningen op cellen die in het basisjaar woongebied zijn volgens de CBS-indeling, de teller de banen van de betreffende subsector op diezelfde cellen. Werkgelegenheid op bedrijventerreinen en in centrumgebieden telt dus niet mee: dit gaat expliciet over de voorzieningen die in de woonwijk zelf zitten, en het is daarmee een ondergrens voor de totale verzorgende werkgelegenheid per woning.
+
+			Gemeten op de basisjaarstand van 2023, 28 augustus 2026: 6.966.258 woningen op woongebiedcellen, met daarop 180.036 banen detailhandel, 502.250 overige consumentendiensten en 804.207 overheid en kwartaire diensten. Dat is 0,0258, 0,0721 en 0,1154 baan per woning, samen 0,213. Ter vergelijking staat er op diezelfde cellen 291.522 nijverheid, 232.399 logistiek en 676.459 zakelijke dienstverlening; die tellen niet mee.
+
+			De verhouding wordt gedragen door veel kleine cellen en niet door een handvol grote instellingen, wat van belang is bij overheid en kwartaire diensten: die categorie mengt scholen, kinderopvang en huisartsen met ziekenhuizen en ministeries, en alleen de eerste groep schaalt mee met woningen. Gemeten aandeel van de banen op cellen met meer dan honderd banen: detailhandel 0,2 procent op 4 cellen, overige consumentendiensten 0,5 procent op 14 cellen, overheid en kwartaire diensten 5,0 procent op 224 cellen. Ook bij overheid staat dus 95 procent op gewone wijkcellen; die 224 cellen eruit halen brengt de verhouding van 0,1154 naar 0,1096."
+{
+	attribute<Bool>   IsWoongebied (AdminDomain) := /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsWoonlocatie, Descr = "Woongebied volgens de CBS-bodemgebruiksindeling in het basisjaar.";
+	attribute<Woning> Woningen     (AdminDomain) := = 'add('+asItemList('/BaseData/StartState/StateBasisjaar/State/Wonen/'+/Classifications/Vastgoed/WP2xVSSH/name)+')', Descr = "Woningvoorraad in het basisjaar, opgeteld over de WP2xVSSH-klassen.";
+
+	parameter<Float32> Woningen_InWoongebied := sum(Woningen[float32] * float32(IsWoongebied))
+	, Descr = "Noemer: alle woningen die in het basisjaar op een woongebiedcel staan. Let op de schrijfwijze: x[float32] strijkt de metriek weg, float32(x) houdt hem vast. Teller en noemer moeten hier allebei dimensieloos zijn, anders draagt de verhouding Job per Woning mee en botst de vermenigvuldiging in Allocatie_T/Impl/VerzorgendInOP_Kern met de doeleenheid."
+	, IntegrityCheck = "this > 0f"; //zonder woningen in woongebied is de verhouding zinloos en zou hij stil op null of oneindig uitkomen
+
+	container Banen_InWoongebied :=
+		for_each_nedv(
+			/Classifications/Actor/Jobs6/name
+			, 'sum((/BaseData/StartState/StateBasisjaar/State/Werken/'+/Classifications/Actor/Jobs6/name+')[float32] * float32(IsWoongebied))'
+			, void
+			, Float32
+		), Descr = "Teller per subsector: de banen van die subsector op woongebiedcellen in het basisjaar. Staat er voor alle zes de subsectoren zodat de reeks ook als diagnose leesbaar is; alleen de verzorgende drie worden gebruikt.";
+
+	container Banen_perWoning :=
+		for_each_nedv(
+			/Classifications/Actor/Jobs6/name
+			, /Classifications/Actor/Jobs6/IsVerzorgend
+				? 'Banen_InWoongebied/'+/Classifications/Actor/Jobs6/name+' / Woningen_InWoongebied * /ModelParameters/Werken/VerzorgendInWoonOP_Factor'
+				: '0f'
+			, void
+			, Float32
+		), Descr = "De verhouding zelf, in banen per woning, inclusief de bijstelfactor. Nul voor de niet-verzorgende subsectoren: nijverheid, logistiek en zakelijke dienstverlening horen niet vanzelf bij een woonwijk en worden dus ook niet door een woonontwikkelpakket meegebracht.";
+}

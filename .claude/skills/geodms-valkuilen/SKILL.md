@@ -60,6 +60,16 @@ Denk hierbij aan de plekken waar de configuratie zelf bewust een null neerzet, z
 
 Beide helften bewijs je in seconden met een losse .dms in de scratchpad; zie de skill rs-draaien, trap 2.
 
+## `float32(x)` houdt de metriek vast, `x[float32]` strijkt hem weg
+
+De twee schrijfwijzen zien er inwisselbaar uit en zijn dat niet. `float32(x)` verandert alleen het waardetype en laat de eenheid staan, `x[float32]` gooit de eenheid weg. Een verhouding die je met `float32()` bouwt draagt dus de eenheden van teller en noemer mee, ook als de declaratie iets anders zegt: de metriek volgt uit de expressie en niet uit het opgegeven waardetype.
+
+Meestal merk je dat pas ver stroomafwaarts, waar de vermenigvuldiging met de doeleenheid botst: "Values mismatch between Base Units of first argument (Job per W) and Base Units of cast target (Job)". De melding wijst naar de plek van de botsing en niet naar de deling die de eenheid meebracht, en die twee kunnen in verschillende bestanden staan.
+
+Gevaarlijker is het geval waarin de eenheden toevallig tegen elkaar wegvallen: dan is er geen melding en klopt het getal alsnog niet. Kies dus bewust. Wil je een dimensieloze verhouding, gebruik `[float32]` op teller en noemer. Wil je dat de eenheden meerekenen, cast dan niet en laat GeoDMS de eenheidsalgebra doen: `Woning_ha` maal `Job/Woning` maal `ha` levert vanzelf `Job`.
+
+Aanleiding 2026-08-28: `Banen_InWoongebied / Woningen_InWoongebied` in `BaseData/VerzorgendBijWonen.dms` was met `float32()` gebouwd en droeg daardoor `Job/Woning` mee, terwijl de declaratie `Float32` zei. De botsing kwam pas boven in `max_elem` in de allocatie, vier minuten rekenen verderop.
+
 ## Rasters die niet op het modelraster liggen
 
 GeoDMS leest een raster op georeferentie, niet positioneel, en rondt een niet-gehele celoffset af naar de dichtstbijzijnde cel. Dat gaat goed zolang alle lagen dezelfde afronding krijgen, maar het levert een GridStorageManager-waarschuwing op en het is niet zichtbaar in de uitkomst.
