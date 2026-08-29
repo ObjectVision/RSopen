@@ -71,6 +71,16 @@ parameter<String> Waarde := string(sum(...))
 , StorageType = "str";
 ```
 
+Een waarde eenmalig aflezen kan ook zonder tekstbestand, met de actie `@statistics` als los argument voor het itempad:
+
+```powershell
+& $Exe "/L$log" $Cfg '@statistics' '/Classifications/Time/Zichtjaar/YearRange_rel'
+```
+
+Let op de vorm. `@statistics` is een eigen argument. Plak je het achter het itempad, dan zoekt GeoDMS een item dat zo heet en krijg je "not found" met exit 1, wat leest als een configuratiefout terwijl het een aanroepfout is. `Run2120.ps1` haalt op deze manier de zichtjaren uit de configuratie in plaats van ze in het script te herhalen.
+
+Verder rekent GeoDmsRun alleen door wat naar een storage gaat. Vraag je een item op met een `StorageName`, dan schrijft hij dat bestand ook echt weg; op 2026-08-28 belandden zo twee verificatie-items als losse tifs in een opleveringsmap. Wil je alleen toetsen, kies dan een item zonder storage, of een IntegrityCheck.
+
 Semantiek van een operator of een randgeval bewijs je het snelst in een losse minimale .dms in de scratchpad, met eigen unitdeclaraties. Neem daar altijd een bewust falende kanarie in op, zodat je weet dat exit 1 ook echt werkt.
 
 ## Trap 3: de ketentriggers (minuten)
