@@ -77,10 +77,33 @@ Template CarbonStorageSequestration_T
 			// afgeleid uit de veendikte. Alleen de reserve vangt de oxidatie op; pas als hij leeg is bijt de afschrijving in de
 			// voorraad zelf. De twee kengetallen staan in ModelParameters/Advanced en zijn met de bron die Deltares in #657 aanwees
 			// onderbouwd: 0,103 ton organische stof per m3 maal een koolstoffractie van 0,5, samen 515 ton C per hectare per meter.
+			// De omvang van de reserve is op aanwijzing van Deltares begrensd, ook in #657: op de bodemkaart, want GeoTOP telt ook
+			// begraven veen mee dat niet oxideert, en op de GLG, want oxidatie treedt alleen boven de grondwaterstand op. Zie de
+			// twee schakelaars Koolstof_VeenreserveOpBodemkaart en Koolstof_VeenreserveBegrenzenOpGLG, die los van elkaar staan.
 			container Veenreserve
 			{
 				attribute<meter>  Dikte             (AdminDomain) := MakeDefined(/SourceData/Landbouw/Peat_thickness[AdminDomain/rdc_25m_rel], 0[meter]), Descr = "Dikte van het veenpakket uit GeoTOP, nul waar de bron niets geeft. Flevoland ontbreekt in de bron; zie de Descr bij SourceData/Landbouw/Peat_thickness.";
-				attribute<meter>  OnderToplaag      (AdminDomain) := max_elem(Dikte - 0.30[meter], 0[meter]), Descr = "Het deel van het veenpakket onder de bovenste 30 cm. De bovenste 30 cm zit al in de voorraad uit de bodemkoolstofkaart en mag hier niet nog eens meetellen.";
+
+				attribute<bool>    IsVeenbodem      (AdminDomain) := MakeDefined(/SourceData/Bodem/BOFEK/IsVeenOfMoerig_grid, FALSE), Descr = "Veengrond of moerige grond volgens BOFEK2020. Buiten deze bodems staat geen reserve, ook waar GeoTOP wel veen ziet: dat is het begraven veen dat niet oxideert. Zie de schakelaar Koolstof_VeenreserveOpBodemkaart.";
+				attribute<float32> GLG_Bron         (AdminDomain) := /SourceData/Water/Grondwaterstanden/Referentie/GLG_2017_TR29_11[AdminDomain/rdc_25m_rel], Descr = "Gemiddeld laagste grondwaterstand in het basisjaar, in meters onder maaiveld en positief naar beneden. Zelfde bron en zelfde tekenafspraak als SourceData/Landbouw/WWL, waar gxg_sign en gxg_scale die afspraak vastleggen.";
+				attribute<bool>    HeeftGLG         (AdminDomain) := IsDefined(GLG_Bron);
+				attribute<float32> GLG_m            (AdminDomain) := MakeDefined(GLG_Bron, 1000f), Descr = "Dezelfde stand, met een onbereikbaar diepe waarde waar de kaart niets geeft. Zonder GLG dus geen begrenzing, en dat is de ruime kant. Hoeveel veenbodem dat betreft staat in Areaal_ZonderGLG.";
+
+				attribute<meter>  Ondergrens        (AdminDomain) := = /ModelParameters/Advanced/Koolstof_VeenreserveBegrenzenOpGLG
+																			? 'min_elem(Dikte, GLG_m * 1[meter])'
+																			: 'Dikte'
+				, Descr = "Tot hoe diep de reserve reikt: de veendikte, en met de begrenzing aan ook niet dieper dan de GLG. Wat onder de grondwaterstand ligt oxideert niet zolang het peil niet daalt.";
+
+				attribute<meter>  OnderToplaag      (AdminDomain) := = /ModelParameters/Advanced/Koolstof_VeenreserveOpBodemkaart
+																			? 'IsVeenbodem ? max_elem(Ondergrens - 0.30[meter], 0[meter]) : 0[meter]'
+																			: 'max_elem(Ondergrens - 0.30[meter], 0[meter])'
+				, Descr = "De laag waar de reserve in zit: onder de bovenste 30 cm, want die zit al in de voorraad uit de bodemkoolstofkaart, en boven Ondergrens. Nul buiten de veen- en moerige gronden zolang Koolstof_VeenreserveOpBodemkaart aanstaat.
+
+							Een ternair en geen vermenigvuldiging met een vlag: bij rekenen propageert een null door een factor nul heen, en dan zou een cel zonder veendikte de hele som null maken.";
+
+				parameter<Ha>     Areaal_Veenbodem  := sum(IsVeenbodem ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: hoeveel hectare veengrond en moerige grond BOFEK2020 in het studiegebied aanwijst.";
+				parameter<Ha>     Areaal_MetReserve := sum(OnderToplaag > 0[meter] ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: waar de reserve werkelijk gevuld is, dus veenbodem met meer dan 30 cm veen boven de GLG.";
+				parameter<Ha>     Areaal_ZonderGLG  := sum(IsVeenbodem && !HeeftGLG ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: veenbodem waar de GLG-kaart niets geeft en de begrenzing op de grondwaterstand dus niet werkt. Loopt dit op, dan is de reserve daar de volle kolom.";
 				attribute<float32> Dikte_getal      (AdminDomain) := OnderToplaag / 1[meter], Descr = "Dezelfde dikte zonder eenheid, zodat de omrekening naar ton C per hectare met de twee dimensieloze kengetallen kan.";
 				attribute<ton_ha> Result_ha         (AdminDomain) := = /ModelParameters/Advanced/Koolstof_VeenreserveGebruiken
 																			? '(Dikte_getal * 10000f * /ModelParameters/Advanced/Koolstof_VeenOrganischeStofdichtheid * /ModelParameters/Advanced/Koolstof_VeenKoolstoffractie)[ton_ha]'
