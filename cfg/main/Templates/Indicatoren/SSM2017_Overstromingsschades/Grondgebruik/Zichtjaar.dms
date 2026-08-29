@@ -18,20 +18,32 @@ container Zichtjaar
 	// cellen fors. Voor die cellen valt het grondgebruik daarom terug op de BAG-waarneming (basisjaar).
 	attribute<Bool> IsBAGnieuwbouwWonen (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), FALSE), Descr = "BAG-nieuwbouw wonen-cel, onafhankelijk van OP_rel (issue #550: BAG-cellen hebben nu een gematchte OP_rel, dus IsDefined(OP_rel) volstaat niet meer).";
 
-	// #505/#665: waarop toetst de schade of een nieuwbouwwoning schadevrij is, op de eis van de plek of op de
-	// bouwwijze van het pakket dat er staat? De schakelaar staat in /ModelParameters/Advanced.
+	// #505/#665/#681: wat doet een maatregel met de schade aan een nieuwbouwwoning? Sinds #681 is dat een verschuiving
+	// langs de diepte-as en niet langer een drempel; de schakelaar staat in /ModelParameters/Advanced.
 	attribute</Classifications/Modellering/BouwwijzeK> Bouwwijze_rel (AdminDomain) := ='OP/Bouwwijze['+Zichtjaar_name+'/Stand/OP_rel]'
 	, Descr = "De bouwwijze van het ontwikkelpakket dat in deze cel gealloceerd is, null waar geen pakket staat. OP_rel staat in de stand al op AdminDomain, dus hier is geen recollect_by_cond nodig, anders dan bij BouwwijzeEis dat op CompactedAdminDomain staat. Staat bewust buiten de schakelaar, zodat de twee toetsen naast elkaar te bekijken zijn; met de schakelaar uit wordt hij nooit opgevraagd en dus nooit gerekend.";
 
+	attribute<meter> SchadevrijeDiepte_Nieuwbouw (AdminDomain) := =
+		/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket
+			? 'IsDefined('+Zichtjaar_name+'/Stand/OP_rel) && !IsBAGnieuwbouwWonen ? MakeDefined(/Classifications/Modellering/BouwwijzeK/SchadevrijeDiepte[Bouwwijze_rel], 0[meter]) : 0[meter]'
+			: 'const(0[meter], AdminDomain)'
+	, Descr = "Hoeveel water houdt de bouwwijze van het gealloceerde pakket in deze cel buiten de woning? Nul waar geen nieuwbouw staat en nul waar het pakket geen maatregel draagt, zodat dit item overal een geldige verschuiving is en nergens een null in de dieptekaart introduceert.
+
+				Dit is de verschuiving die Parameters/<watersysteem>/Diepte_Nieuwbouw van de waterdiepte aftrekt voordat de schadefunctie wordt afgelezen, en daarmee de hele werking van de maatregel in deze indicator. Onder de ontwerpdiepte levert dat schade nul op, precies zoals de drempel hieronder dat deed; erboven levert het de schade bij de restdiepte in plaats van de volle schade. Zie #681.
+
+				BAG-nieuwbouwcellen staan er expliciet buiten: die vallen voor het grondgebruik terug op de waarneming uit het basisjaar (#550, #609), dus daar hoort geen maatregel van een ontwikkelpakket overheen.
+
+				Alleen wonen. De niet-woonschade en de categorie Overig/Stedelijkgebied lezen de ongeschoven diepte, want bouwwijze bestaat in het model alleen voor wonen. Die asymmetrie is bekend en staat in #681.";
+
 	attribute<Bool> IsOverstromingsbestendig (AdminDomain) := =
 		/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket
-			? 'MakeDefined(/Classifications/Modellering/BouwwijzeK/SchadevrijeDiepte[Bouwwijze_rel] >= /BaseData/Omgeving/Overstromingsdiepte, FALSE)'
+			? 'const(FALSE, AdminDomain)'
 			: 'recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/BouwwijzeEis/Overstromingsbestendig, FALSE)'
-	, Descr = "Blijft de nieuwbouw in deze cel buiten de overstromingsschade? Op de default leest dit de eis van de plek, precies zoals het tot #665 op acht plaatsen hieronder letterlijk stond. Met SchadeToetstBouwwijzeVanPakket op TRUE leest het de bouwwijze van het gealloceerde pakket, getoetst tegen dezelfde dieptekaart als de zeef.
+	, Descr = "De oude drempel: blijft de nieuwbouw in deze cel volledig buiten de overstromingsschade? Op FALSE leest dit de eis van de plek, precies zoals het tot #665 op acht plaatsen hieronder letterlijk stond. Op TRUE staat hij overal uit, want daar doet SchadevrijeDiepte_Nieuwbouw hierboven het werk en wordt de schade verschoven in plaats van weggeboekt.
 
-				Drie punten waarop de eis en de bouwwijze uiteenlopen, en dus drie plekken waar dit getal verandert zodra de schakelaar omgaat. Ten eerste stellen gevaarzone 0 en 1 geen eis, terwijl de NbS-pakketten die daar kunnen landen wel bouwwijze 1 tot en met 4 dragen; die woningen tellen nu voluit mee en de schade daalt. Ten tweede laat de zeef in zone 2 tot en met 5 een pakket zonder maatregel toe zolang de diepte onder 0,2 meter blijft; die woningen tellen nu niet mee en de schade stijgt licht. Ten derde staat de dieptekaart op null waar SourceData/Water.dms de onzinwaarden uit de C-kaart wegfiltert, boven honderd meter: de vergelijking met de bouwwijze geeft daar null en dus FALSE, terwijl de eis er gewoon uit de gevaarzone komt, dus die cellen tellen op TRUE wel mee en op FALSE niet. Het gaat om 381 cellen. Tot #665 lag die grens op tien meter en betrof dit punt ook de diepste bebouwing van het land; die klem is met #665 verplaatst naar ModelParameters/Waterberging/Maximum_Waterschijf, waar hij thuishoort.
+				Waarom de eis van de plek de verkeerde toets was. Hij is een voldoende maar geen noodzakelijke voorwaarde, ook al dwingt de zeef hem af in Zeef_Wonen_perOP_T/Impl/BouwwijzeNietOverstromingsbestendig. Gevaarzone 0 en 1 stellen geen eis terwijl de NbS-pakketten daar wel met bouwwijze 1 tot en met 4 landen, en omgekeerd laat de zeef in zone 2 tot en met 5 een pakket zonder maatregel toe zolang de diepte onder 0,2 meter blijft. Gemeten in NbSGenuanceerd 2040 ging het om 31.663 cellen met 73.659 woningen in de eerste groep en 2.015 cellen met 5.214 woningen in de tweede. Zie #681.
 
-				De toets is scenario-blind: BaseData/Omgeving/Overstromingsdiepte is het elementgewijze maximum van de drie LIWO-kaarten, terwijl de schade per categorie met haar eigen kaart rekent. Dat is de conservatieve richting en het spoort met de zeef, die op dezelfde maximumkaart zeeft, maar het is een keuze.";
+				De toets is scenario-blind: BaseData/Omgeving/Overstromingsdiepte is het elementgewijze maximum van de drie LIWO-kaarten, terwijl de schade per categorie met haar eigen kaart rekent. Dat gold voor de oude bouwwijzetoets op deze plek; de verschuiving hierboven heeft dat bezwaar niet, want die trekt de ontwerpdiepte af van dezelfde kaart waarmee de categorie rekent.";
 
 	container Bedrijven //verdeling fucnties binnen subsector obv huidige verdeling  //relatie m2 per Footprint gemiddeld berekenen per gebied (/BaseData/PandFootprint_baan/PerYear/Y2022/PerRegio)
 	{
