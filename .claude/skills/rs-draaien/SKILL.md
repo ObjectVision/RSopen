@@ -116,6 +116,19 @@ Twee valkuilen bij het inkorten. `Classifications/Modellering/StandVar_Prep` han
 
 Voor indicatorcontroles is de allocatie vaak helemaal niet nodig: met `StandAllocatieOntkoppeld` op TRUE, de default, leest de indicatorenkant de stand uit de tifs.
 
+## Tag de codestand bij een productierun
+
+Een productierun beslaat uren en loopt vaak op meerdere machines tegelijk, terwijl de branch ondertussen doorloopt. Zonder tag is achteraf niet meer vast te stellen welke code een uitdraai heeft gemaakt. Zet daarom bij de start een annotated tag op de commit die draait, met de conventie `oplevering_<project>_<datum>`:
+
+```bash
+git tag -a oplevering_NL2120_20260829 <commit> -m "..."
+git push origin oplevering_NL2120_20260829
+```
+
+Zet in de boodschap wat later niet meer te reconstrueren is: welke varianten op welke machines, de zichtjaren, de engine, en de afwijkingen van de standaardopzet. Let op een detail dat anders twijfel zaait: de getagde commit hoeft niet de laatste te zijn die `cfg/` raakte. Een commit die alleen `.claude/` of `batch/` wijzigt verandert de berekening niet, maar schrijf dat expliciet in de tag, anders moet de lezer dat zelf uitzoeken.
+
+Wat je niet in de tag zet is wat je niet hebt gecontroleerd. Draaien er meerdere machines, dan is `git rev-parse HEAD` op elke machine het bewijs; zonder dat bewijs hoort er een voorbehoud in de boodschap.
+
 ## Voor je begint
 
 Draai `git status` en kijk naar de mtime van de bestanden die je gaat wijzigen, vlak voordat je schrijft. In deze werkkopie draaien regelmatig meerdere sessies tegelijk, geen aparte worktrees. Commit alleen je eigen bestanden met een expliciete `git add`.
