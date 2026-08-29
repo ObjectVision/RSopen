@@ -21,8 +21,10 @@ param(
 
     [string]$Config = "C:\ProjDir\RSopen_NL2120\cfg\main.dms",
 
-    # Bijvoorbeeld "20.17.0.m". Leeg = nieuwste geinstalleerde .m-build.
-    [string]$Version = "",
+    # De vaste versie voor dit project. Zet hem alleen om als je bewust op een andere
+    # engine wilt toetsen; "laatst" pakt de hoogste geinstalleerde .m-build en dat
+    # verschuift zodra iemand een nieuwe installeert.
+    [string]$Version = "20.17.0.m",
 
     [string]$LogDir = "$env:TEMP\rsopen-check",
 
@@ -37,7 +39,7 @@ $ErrorActionPreference = "Stop"
 
 $ovRoot = "C:\Program Files\ObjectVision"
 
-if ($Version) {
+if ($Version -and $Version -ne "laatst") {
     $exe = Join-Path $ovRoot "GeoDms$Version\GeoDmsRun.exe"
     if (-not (Test-Path $exe)) { throw "GeoDmsRun niet gevonden: $exe" }
 } else {

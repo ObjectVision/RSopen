@@ -13,7 +13,7 @@ Vier trappen, van goedkoop naar duur. Klim niet hoger dan de vraag vereist. Een 
 & "C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "C:\ProjDir\RSopen_NL2120\cfg\main.dms" "/pad/naar/item"
 ```
 
-Of via het meegeleverde script, dat de nieuwste build kiest, de tijd meet en de foutregels filtert:
+Of via het meegeleverde script, dat de projectversie kiest, de tijd meet en de foutregels filtert:
 
 ```powershell
 .\.claude\skills\rs-draaien\scripts\run-item.ps1 -Item "/Indicatoren/WLO_hoog_BAU/Zichtjaren/Y2030/Stand/Aantal_Woningen_Totaal"
@@ -24,6 +24,12 @@ Draai dit uit PowerShell, niet uit de Bash-tool. Die zet `/L` en `/pad/naar/item
 Exitcodes: 0 is goed, 1 is een rekenfout of een gefaalde IntegrityCheck, 2 is een parse- of laadfout. Foutregels staan in het log met `[E]`.
 
 Maar exit 0 is niet genoeg om een stap goed te keuren. Een ontbrekend bronbestand kan met exit 0 aflopen terwijl de fout alleen in het log staat. Gemeten op 2026-08-27 met een claim-CSV die niet bestond: `[E] GDAL Error: cannot open dataset ... No such file or directory`, exitcode 0, en de gevraagde statistiek kwam leeg terug. Toets in een batch dus altijd het log op `[E]` naast de exitcode, anders draait een lange run door op invoer die er niet is.
+
+## Welke GeoDMS
+
+Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.17.0.m`. Niet op de build uit Visual Studio in `C:\dev\GeoDms_2026\bin\Release\x64`. Die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie. Op 2026-08-29 meldde Object Vision bovendien dat die build op dat moment niet stabiel was.
+
+De versie staat op vier plekken: `geodmsversion` in `batch/RunAll.cmd`, de default van `-Version` in `run-item.ps1`, en `-Exe` in `Run2120.ps1` en `RunIndicatoren.ps1`. Controleer ze alle vier voordat je een lange run start, want een run die halverwege van engine wisselt is niet meer te toetsen.
 
 ## Nooit op procesnaam opruimen
 
