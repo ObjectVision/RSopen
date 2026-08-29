@@ -1,0 +1,97 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Sjabloon voor een sloopindicator per oorzaak (#658). Wordt vanuit Templates/Indicatoren.dms driemaal
+// geinstantieerd, met de drie elkaar uitsluitende maskers uit container Sloopmaskers. Staat binnen Zichtjaar_T,
+// zodat StandBasisjaar, PrevIndicatoren, Verdiscontering, Casus_name en Zichtjaar_name gewoon oplossen.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template SloopAlsGevolg_T
+: Descr = "Wat er in de leeggemaakte cellen van een oorzaak stond, en wat het kost om ze leeg te maken. Alle drie de instanties hebben dezelfde inhoud, alleen het masker verschilt, zodat de getallen per oorzaak zonder meer bij elkaar opgeteld mogen worden.
+
+			Woningen en banen komen uit de stand van het basisjaar, net als de twee kostenkaarten: dat zijn dezelfde cellen en dezelfde peildatum, dus optellen en delen blijft kloppen. De BAG-nieuwbouw van het eerste decennium (#550) zit er dus niet in. Die valt bijna volledig binnen bestaand bebouwd gebied, en daar legt het model sinds #641 niets op, dus het verschil met de startstand is klein; wil je het meten, zet dan StartState_metBAGnieuwbouw naast StandBasisjaar op hetzelfde masker.
+
+			De kosten zijn de wonen-kostenkaarten. Banen worden geteld maar niet beprijsd: voor bedrijfsvastgoed is er geen verwervings- of sloopkostenkaart."
+{
+	//
+	parameter<String> Oorzaak_name;
+	attribute<Bool>   IsSloopCel (AdminDomain);
+	//
+
+	unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
+
+	parameter<String> Pad        := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/';
+	parameter<String> Staart     := '_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+	parameter<String> Staart_Eur := '_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif';
+
+	attribute<Woning> GesloopteWoningen (AdminDomain) := IsSloopCel ? MakeDefined(StandBasisjaar/Aantal_Woningen_Totaal, 0[Woning]) : 0[Woning]
+	, StorageName = "=Pad+'GesloopteWoningen_'+Oorzaak_name+Staart"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Het aantal woningen uit het basisjaar dat in de leeggemaakte cellen stond, en dus wijkt voor deze oorzaak.";
+
+	attribute<Job>    GesloopteBanen    (AdminDomain) := IsSloopCel ? MakeDefined(StandBasisjaar/Aantal_Banen_Totaal, 0[Job]) : 0[Job]
+	, StorageName = "=Pad+'GesloopteBanen_'+Oorzaak_name+Staart"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Idem voor de banen (#658). De allocatie leegt in het eerste zichtjaar niet alleen wonen maar ook werken, verblijfsrecreatie, wind en zon; alleen wonen en werken worden hier geteld.";
+
+	attribute<Eur>    Uitkoopkosten     (AdminDomain) := IsSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal, 0[Eur]) : 0[Eur]
+	, StorageName = "=Pad+'Uitkoopkosten_'+Oorzaak_name+Staart_Eur"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Issue #520: vastgoedwaarde (verwervingskosten) van de bestaande woningen in de leeggemaakte cellen, in prijzen van het basisjaar.";
+
+	attribute<Eur>    Sloopkosten       (AdminDomain) := IsSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Sloopkosten/Totaal, 0[Eur]) : 0[Eur]
+	, StorageName = "=Pad+'Sloopkosten_'+Oorzaak_name+Staart_Eur"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Issue #549: sloopkosten (m2 per WP4 maal eenheidskost) van diezelfde woningen, in prijzen van het basisjaar.";
+
+	// #651: uitkoop en sloop zijn eenmalige uitgaven op het moment dat de cel wordt leeggemaakt, terwijl de kaarten hierboven
+	// cumulatief zijn sinds het basisjaar. De NCW wordt daarom per periode opgebouwd: wat er in deze periode bijkwam krijgt de
+	// factor van dit zichtjaar, en dat komt bovenop de NCW van het vorige zichtjaar. Bij nieuwe natuur en de overige bouwstenen
+	// treedt de oplegging in het eerste zichtjaar in werking en valt in de praktijk alles in de eerste periode; bij waterberging
+	// komen er in elk zichtjaar cellen bij en doet die opbouw er echt toe. Het zichtjaar aan het eind van de periode geldt als
+	// het jaar van de uitgave; binnen een periode is niet bekend wanneer de cel precies aan de beurt was.
+	attribute<Bool>   IsNieuweSloopCel  (AdminDomain) := = IsFirstAllocYear
+		? 'IsSloopCel'
+		: 'IsSloopCel && !PrevIndicatoren/SloopAlsGevolgVan'+Oorzaak_name+'/IsSloopCel'
+	, Descr = "Cel die in deze periode is leeggemaakt, dus nog niet in het vorige zichtjaar.";
+
+	attribute<Eur>    Uitkoopkosten_DezePeriode (AdminDomain) := IsNieuweSloopCel ? Uitkoopkosten : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
+	attribute<Eur>    Sloopkosten_DezePeriode   (AdminDomain) := IsNieuweSloopCel ? Sloopkosten   : 0[Eur], Descr = "Uitgave in deze periode, dus zonder de eerdere perioden.";
+
+	attribute<Eur>    Uitkoopkosten_NCW (AdminDomain) := = IsFirstAllocYear
+		? 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor'
+		: 'Uitkoopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/SloopAlsGevolgVan'+Oorzaak_name+'/Uitkoopkosten_NCW'
+	, StorageName = "=Pad+'Uitkoopkosten_'+Oorzaak_name+'_NCW'+Staart_Eur"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Issue #651: netto contante waarde in het basisjaar van de uitkoopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
+
+	attribute<Eur>    Sloopkosten_NCW   (AdminDomain) := = IsFirstAllocYear
+		? 'Sloopkosten_DezePeriode * Verdiscontering/Factor'
+		: 'Sloopkosten_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/SloopAlsGevolgVan'+Oorzaak_name+'/Sloopkosten_NCW'
+	, StorageName = "=Pad+'Sloopkosten_'+Oorzaak_name+'_NCW'+Staart_Eur"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Issue #651: netto contante waarde in het basisjaar van de sloopkosten, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
+
+	// Aggregaties. De regio-indeling komt uit ModelParameters/Advanced en staat in de productierun op NL (#658); de
+	// _Per_NL-parameters staan daar los van en zijn altijd het landelijk totaal.
+	attribute<Woning> GesloopteWoningen_Per_Regio (Regio) := sum(GesloopteWoningen, Regio/Per_AdminDomain);
+	attribute<Job>    GesloopteBanen_Per_Regio    (Regio) := sum(GesloopteBanen,    Regio/Per_AdminDomain);
+	attribute<Eur>    Uitkoopkosten_Per_Regio     (Regio) := sum(Uitkoopkosten,     Regio/Per_AdminDomain);
+	attribute<Eur>    Sloopkosten_Per_Regio       (Regio) := sum(Sloopkosten,       Regio/Per_AdminDomain);
+	attribute<Eur>    Uitkoopkosten_NCW_Per_Regio (Regio) := sum(Uitkoopkosten_NCW, Regio/Per_AdminDomain);
+	attribute<Eur>    Sloopkosten_NCW_Per_Regio   (Regio) := sum(Sloopkosten_NCW,   Regio/Per_AdminDomain);
+
+	parameter<Woning> GesloopteWoningen_Per_NL := sum(GesloopteWoningen), Descr = "Landelijk totaal. Staat naast het attribuut en niet erin, want een parameter binnen een attribuut met grid-opslag wordt meegeschreven en faalt.";
+	parameter<Job>    GesloopteBanen_Per_NL    := sum(GesloopteBanen),    Descr = "Landelijk totaal.";
+	parameter<Eur>    Uitkoopkosten_Per_NL     := sum(Uitkoopkosten),     Descr = "Landelijk totaal, nominaal ofwel in prijzen van het basisjaar.";
+	parameter<Eur>    Sloopkosten_Per_NL       := sum(Sloopkosten),       Descr = "Landelijk totaal, nominaal.";
+	parameter<Eur>    Uitkoopkosten_NCW_Per_NL := sum(Uitkoopkosten_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
+	parameter<Eur>    Sloopkosten_NCW_Per_NL   := sum(Sloopkosten_NCW),   Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
+}

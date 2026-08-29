@@ -26,10 +26,11 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		#include<Eigendom.dms>
 		#include<Verdeling_VSSH.dms>
 		#include<AlternatieveLISA.dms>
+		#include<VerzorgendBijWonen.dms> //banen per woning in bestaand woongebied, grondslag voor het verzorgend werken in een woon-OP (#710)
 		
 		#include<VerblijfsrecreatieTrends.dms> //trends berekening tbv claims
 		
-		// container Landgebruikskaart := Templates/Landgebruikskaart/Make_Landgebruikskaart_Basisjaar_T('Basisjaar', StateBasisjaar/State, BaseData/StartState/Grondgebruik/Per_AdminDomain/gg_basis);
+		// container Landgebruikskaart := Templates/Indicatoren/Landgebruikskaart/Make_Landgebruikskaart_Basisjaar_T('Basisjaar', StateBasisjaar/State, BaseData/StartState/Grondgebruik/Per_AdminDomain/gg_basis);
 		
 		attribute<Verblijfsobject> VBOs_ModelJaar (AdminDomain) := count(BAG_ModelJaar/vbo/geometry, BAG_ModelJaar/vbo/AdminDomain_rel)[Verblijfsobject]
 		, Descr = "Aantal VBOs in het model jaar per AdminDomain"
@@ -133,9 +134,72 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 					GroeneRivieren_OnbedijkteMaas ||
 					Natuurlijk_Rivierdal;
 			}
+			
+			container NbSGenuanceerd
+			{
+			}
 		}
 		
-		attribute <bool> BBGSamengesteld (AdminDomain) := BBG/Per_AdminDomain || /SourceData/Diversen/Per_AdminDomain/begrenzing_bebouwd_gebied || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsWoonlocatie || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsWerklocatie || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsZeehaven;
+		attribute <bool> BBGSamengesteld (AdminDomain) := /SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Is_BebouwdGebied
+		, Descr = "Bestaand bebouwd gebied volgens de eigen begrenzing per peiljaar. Verving de unie hieronder, die naast het VROM-raster uit 2003 ook elke cel met een woning of werklocatie meetelde, waardoor verspreide bebouwing als bebouwd gebied gold.";
+
+		attribute <bool> BBGSamengesteld_Unie (AdminDomain) := BBG/Per_AdminDomain || /SourceData/Diversen/Per_AdminDomain/begrenzing_bebouwd_gebied || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsWoonlocatie || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsWerklocatie || /BaseData/StartState/Grondgebruik/Per_AdminDomain/IsZeehaven
+		, Descr = "De oude definitie, bewaard om beide naast elkaar te kunnen meten. Niet in gebruik.";
+
+		container KantoorDominantie
+		: Descr = "Waar is zakelijke dienstverlening in het basisjaar de dominante werksubsector? Bron voor de verdikkingsingrepen van #668: de potentieelvloer in de dichtheid, de voorrangstrede en de zeefvrijstellingen gelden alleen op deze cellen. Bewust op de basisjaarstand verankerd, net als de rest van de potentieel- en zeefketen, zodat er geen kringverwijzing met de allocatie ontstaat."
+		{
+			attribute<Float32> KantoorBanen (AllocDomain) := sum(/BaseData/StartState/StateBasisjaar/State/Werken/Zak_dienstverlening[float32], AdminDomain/AllocDomain_rel), Descr = "Kantoorbanen in het basisjaar per 100m-cel.";
+			attribute<Float32> WerkBanen    (AllocDomain) := sum(
+				  /BaseData/StartState/StateBasisjaar/State/Werken/Nijverheid[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Logistiek[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Detailhandel[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Ov_consumentendiensten[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Zak_dienstverlening[float32]
+				+ /BaseData/StartState/StateBasisjaar/State/Werken/Overheid_kw_diensten[float32]
+				, AdminDomain/AllocDomain_rel), Descr = "Alle werkbanen in het basisjaar per 100m-cel.";
+			attribute<Float32> KantoorAandeel    (AllocDomain) := MakeDefined(KantoorBanen / WerkBanen, 0f), Descr = "Aandeel van kantoor in de werkbanen van de cel; 0 waar geen werk is.";
+			attribute<Bool>    IsKantoorDominant (AllocDomain) := KantoorBanen > 0f && KantoorAandeel >= /ModelParameters/Werken/KantoorDominantieDrempel, Descr = "Cel waar kantoor de werkstand domineert. Op deze cellen is toewijzing aan kantoor verdikking van de bestaande voorraad en geen nieuwbouw.";
+			attribute<Float32> WerkBanenWaarKantoorDominant (AllocDomain) := IsKantoorDominant ? WerkBanen : 0f, Descr = "De werkstand op de dominante cellen, als grondslag voor de potentieelvloer; elders 0, zodat een max_elem daar niets doet.";
+		}
+
+		container Opleggingsmasker
+		: Descr = "Waar mag het model een ander grondgebruik neerzetten dan er nu ligt? Een masker over het AdminDomain, gedeeld door iedereen die die vraag stelt. Zie #661.
+
+				De toets stond eerder drie keer los opgeschreven, en die drie liepen uit elkaar. Templates/VariantData_T
+				toetste bij ExogeenOpleggen op bestaand bebouwd gebied en op exogeen grondgebruik,
+				Templates/SourceData/NatuurAlloc_T en Diagnose/NatuurOverzicht alleen op bestaand bebouwd gebied. Gevolg
+				was dat de natuurallocatie natuur kon neerzetten op hoofdwegen, spoor, vliegvelden en begraafplaatsen, en
+				dat de diagnosekolom die zegt hoeveel er na het masker overblijft te hoog uitkwam. Nu leest elk van de
+				drie dit item.
+
+				HeeftPanden staat er bewust naast en niet in. Zie de toelichting daar."
+		{
+			attribute<Bool> IsBestaandBebouwdGebied (AdminDomain) := /BaseData/Omgeving/BBGSamengesteld
+			, Descr = "Bestaand bebouwd gebied volgens de eigen begrenzing, peiljaar uit ModelParameters/BegrenzingBebouwdGebied_jaar. Dat zijn vlakken op volle resolutie, dus dorpen en dorpsranden vallen erbinnen en verspreide bebouwing erbuiten. Zie #641 voor waarom de oplegging hier vervalt.";
+
+			attribute<Bool> IsExogeenGrondgebruik (AdminDomain) := MakeDefined(/Classifications/Grondgebruik/CBSKlasse/IsExogeen[/BaseData/StartState/Grondgebruik/Per_AdminDomain/gg_cbs], FALSE)
+			, Descr = "Grondgebruik dat het model niet omzet: hoofdwegen, spoorwegen, vliegvelden en begraafplaatsen. Dat is de groep Infra plus Begraafplaats uit de CBS-bodemstatistiek, dezelfde vlag waarmee de landgebruikskaart deze cellen al ongemoeid laat. Toegevoegd op verzoek vanuit Deltares op 26 augustus 2026, nadat de veenlevering natuur over Schiphol heen legde en de luchthaven daarmee wegsloopte.";
+
+			attribute<Bool> MagOpleggen (AdminDomain) := !IsBestaandBebouwdGebied && !IsExogeenGrondgebruik
+			, Descr = "Mag een exogene levering deze cel raken? In alle varianten hetzelfde. Valt de oplegging weg, dan blijft de bebouwing staan en gaat het gebied via Bouwregime hooguit op slot voor nieuwbouw.
+
+					De pandentoets zit hier niet in, en dat is het onderscheid dat #661 maakt. Een levering zegt waar
+					iets moet komen en heeft die afweging al gemaakt: bij veen, kust en rivieren is het bouwregime
+					Slopen, dus daar is de sloop de bedoeling. Een allocatie kiest zelf en kan dus uitwijken naar een
+					onbebouwde cel binnen dezelfde claimregio. Alleen die tweede leest HeeftPanden.";
+
+			attribute<Bool> HeeftPanden (AdminDomain) := ='/SourceData/Vastgoed/BAG/PerJaar/Y'+string(/ModelParameters/BAG_RecentYear)+'/pand/Counts/Per_AdminDomain > 0f'
+			, Descr = "Staat er een BAG-pand in de cel, geheel of gedeeltelijk? Dezelfde toets die de landbouwzeef al kent in Templates/Beschikbaarheden/Zeef_Basisjaar_T bij PandenInBasisjaar, met hetzelfde item als bron, zodat er geen tweede telling naast komt te staan.
+
+					Alle panden, niet alleen woonpanden. #630 zegt dat de bestaande bebouwing in de beekdalen blijft
+					staan, en dat gaat net zo goed over een schuur of een bedrijfspand als over een woning.
+
+					Peiljaar is het meest recente BAG-jaar en niet het modeljaar, om twee redenen. De landbouwzeef leest
+					precies dit item, dus het scheelt een tweede toedelingsmatrix over de panden, en de nieuwbouw tussen
+					modeljaar en recent jaar komt via BaseData/StartState/BAG_nieuwbouw alsnog in de stand terecht. De
+					prijs is dat een pand dat na het modeljaar gesloopt is hier niet meer meetelt.";
+		}
 		
 		unit<UInt32> RondBevolkingskern := SourceData/RegioIndelingen/Bevolkingskern_2011
 		{
@@ -181,7 +245,23 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		attribute<meter> Overstromingsdiepte              (AdminDomain) := SourceData/Water/Dieptekaart[meter], Descr = "Gemiddelde overstromingsdiepte in meters";
 		attribute<meter> OverstromingsdiepteOud           (AdminDomain) := value(SourceData/Water/DieptekaartOud == -9999f ? const(0f, AdminDomain) : SourceData/Water/DieptekaartOud, meter), Descr = "Gemiddelde overstromingsdiepte in meters";
 		
-		attribute<Bool> HogeGronden                       (AdminDomain) := !(Overstromingsdiepte > 0[meter]), Descr = "Hoge gronden, niet overstromingsgevoelig";
+		attribute<Bool> NietOverstroombaar                (AdminDomain) := IsNull(Overstromingsdiepte) || Overstromingsdiepte <= 0[meter]
+		, Descr = "De dieptelezing van hoge grond: de maximumdieptekaart geeft hier geen overstroming. Tot #698 was dit de definitie van HogeGronden, geschreven als !(diepte > 0); sindsdien is dat de fysisch-geografische lezing hieronder en dient dit item nog als terugval daarvan.
+
+					Het zwaartepunt zit in de null en niet in de nul: van de 1.821.012 ha die hier uitkomt heeft 1.767.506 ha helemaal geen waarde in de kaart en 53.506 ha een diepte van precies nul. De null staat er nu expliciet, want juist die stille tak veranderde bij #665 van betekenis toen de bergingsgrens van tien meter uit de dieptekaart naar ModelParameters/Waterberging/Maximum_Waterschijf verhuisde: cellen boven die grens droegen daarna een echte diepte en vielen hier uit. Dat verzette 357 ha.";
+
+		attribute<Bool> HogeGronden                       (AdminDomain) := IsDefined(SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/BNSN_rel_AdminDomain)
+			? Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/IsHoogNederland[SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/BNSN_rel_AdminDomain]
+			: NietOverstroombaar
+		, Descr = "Hoge gronden: de pleistocene helft van de Basiskaart Natuurlijk Systeem Nederland. Welke hoofdklasse aan welke kant valt staat als kolom IsHoogNederland in de classificatie en niet hier.
+
+					Tot #698 was dit de dieptelezing hierboven, NietOverstroombaar. Dat was een proxy: hoge grond was elke cel waar de maximumdieptekaart niets geeft. De twee geven landelijk bijna hetzelfde totaal, 1.820.435 tegen 1.821.012 ha, dus 577 ha verschil, terwijl er 588.279 ha van kant wisselt: 16,9 procent van het land. Vooral zeeklei telde in de dieptelezing voor 145.227 ha als hoge grond omdat de kaart daar leeg is, en van het dekzand viel 166.112 ha aan de lage kant.
+
+					Waarom de fysische geografie en niet de diepte. Dit item heeft vier lezers. Via NbSOPToepassingsgebied/Hoog_NL bepaalt het (1) welke NbS-ontwikkelpakketten waar mogen landen, waar de HNL-pakketten groen maken en de LNL-pakketten water; (2) of het groen in een ontwikkelpakket als naaldbos of als loofbos in de koolstofindicator telt, zie #699; (3) of doorlatend groen in de waterbergingsindicator meetelt, want alleen op hoge grond infiltreert het; en (4) de trede IsHoogNL, die vandaag door geen enkele lopende variant wordt gebruikt. Alleen de eerste lezer heeft een overstromingskant, en die wordt in de zeef al apart en op de werkelijke diepte getoetst via Zeef_Wonen_perOP_T/Impl/BouwwijzeNietOverstromingsbestendig. Wat de HNL/LNL-splitsing daarbovenop doet is de keuze tussen groen en blauw, en dat is net als lezer 2 en 3 een bodem- en grondwatervraag.
+
+					Waar de basiskaart geen hoofdklasse geeft valt hij terug op NietOverstroombaar. Dat is 19.491 ha, waarvan 1.321 ha bebouwd gebied: overwegend grote wateren en de rand langs kust en grens. De terugval is er zodat een ontbrekende polygoon geen cel van betekenis laat veranderen; een kale FALSE zou 11.812 ha stil naar laag Nederland verplaatsen.
+
+					De terugval staat als IsDefined en niet als MakeDefined om de uitkomst heen, want dat laatste doet hier niets: Bool kent in GeoDMS geen null, dus een lookup op een null-index geeft FALSE en niet null, en MakeDefined vindt niets om te vervangen. De eerste opzet had die vorm en liet de terugval stil weg.";
 		
 		container NbSOPToepassingsgebied
 		{
@@ -189,10 +269,95 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 			attribute<bool> Laag_NL (AdminDomain) := !Hoog_NL;
 			attribute<bool> Overal  (AdminDomain) := Hoog_NL || Laag_NL;
 		}
+
+
+		container Bebouwingstype_Veen_NbSGenuanceerd
+		: StorageName = "%RSo_DataDir%/Beleid/Overigen/AndersBouwen/bebouwingstype_nbsnuanc_20260729.gpkg"
+		, StorageType = "gdal.vect"
+		, StorageReadOnly = "TRUE"
+		, DialogData = "rdc_meter"
+		{
+			unit<uint8> BebouwingstypeK := cat_range(0b, 4b)
+			, Descr = "De vier categorieen van de bebouwingstypekaart veen (#614). Ze vallen een op een op een bouwregime, zie Bouwregime_rel: dat is de enige plek waar die vertaling staat."
+			{
+				attribute<string> Label : ['Aangepast bouwen','Slopen en op slot','Wonen op water','Zoals huidig'];
+				attribute<string> name  := AsItemName(label);
+
+				attribute<Classifications/Modellering/BouwregimeK> Bouwregime_rel := union_data(.
+					, Classifications/Modellering/BouwregimeK/V/BouwenMetMaatregelen // aangepast bouwen: bouwen mag, maar alleen bodemdalingbestendig
+					, Classifications/Modellering/BouwregimeK/V/Slopen              // slopen en op slot
+					, Classifications/Modellering/BouwregimeK/V/BouwenMetMaatregelen // wonen op water: bouwen mag, maar alleen drijvend
+					, Classifications/Modellering/BouwregimeK/V/Bouwen              // zoals huidig
+				), Descr = "Welk bouwregime hoort bij welke categorie. Twee categorieen komen op BouwenMetMaatregelen uit; welke eis daar precies geldt staat niet hier maar in VariantData/<variant>/BouwwijzeEis, want dat is de bouwwijze-as en niet de regime-as.";
+
+				container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+			}
+
+			unit<uint32> bebouwingstype_nbsnuanc 
+			{
+				attribute<BebouwingstypeK> BebouwingstypeK_rel               := rlookup(LowerCase(bebouwingstype), LowerCase(BebouwingstypeK/label));
+				attribute<.>            Per_AdminDomain  (AdminDomain) := poly2grid(geometry, AdminDomain);
+
+				attribute<bool>         NietBouwen       (AdminDomain) := BebouwingstypeK_rel[Per_AdminDomain] == BebouwingstypeK/v/Slopen_en_op_slot, IntegrityCheck = "all(IsDefined(BebouwingstypeK_rel) || !IsDefined(bebouwingstype) || bebouwingstype == '')", Descr = "Slopen en op slot uit het landschapstype veen (#614). De IntegrityCheck bewaakt de categorie-lookup: een spelling die niet in BebouwingstypeK staat valt via de rlookup stil terug op zoals huidig, en dan verdwijnt een hele categorie zonder melding. Polygonen zonder waarde zijn wel toegestaan, want die horen volgens de levering als zoals huidig te tellen.";
+				attribute<bool>         AangepastBouwen  (AdminDomain) := BebouwingstypeK_rel[Per_AdminDomain] == BebouwingstypeK/v/Aangepast_bouwen;
+				attribute<bool>         WonenOpWater     (AdminDomain) := BebouwingstypeK_rel[Per_AdminDomain] == BebouwingstypeK/v/Wonen_op_water, Descr = "Gebieden waar het landschapstype veen alleen drijvend wonen toelaat. Zie #505.";
+
+				attribute<Classifications/Modellering/BouwregimeK> Bouwregime (AdminDomain) := MakeDefined(BebouwingstypeK/Bouwregime_rel[BebouwingstypeK_rel[Per_AdminDomain]], Classifications/Modellering/BouwregimeK/V/Bouwen)
+				, Descr = "Het bouwregime van deze cel volgens de bebouwingstypekaart veen. Buiten het ruimtebeslag van de levering, en op polygonen zonder waarde, valt hij op Bouwen terug; dat is wat de levering met zoals huidig bedoelt. Dit is wat VariantData/<variant>/Bouwregime voor het landschapstype Veen ophaalt.";
+			}
+		}		
+
+		unit<uint32> KansrijkWoningbouw_Rivieren_NbSgenuanceerd
+		:	StorageName     = "%RSo_DataDir%/Beleid/Overigen/AndersBouwen/Rivieren_KansrijkWoningbouw_NbSgenuanceerd_20260717.shp"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "True"
+		,	DialogType      = "Map"
+		,	DialogData      = "geometry"
+		,	Source          = "Deltares, team Rivieren NL2120. Oorspronkelijke bestandsnaam kansrijk_woningbouw.shp, geleverd op 2026-08-26 in NbSGenuanceerd.2.zip. De datum in de bestandsnaam is de laatste wijzigingsdatum van de dbf. De eerste levering, van 2026-08-25 in NBS_genuanceerd_voorBart.zip, miste de dbf en de prj en was daarmee geen leesbare shapefile; deze tweede levering is compleet en heeft dezelfde geometrie."
+		,	Descr           = "Zeven met de hand getekende zoekgebieden waar woningbouw in het landschapstype Rivieren kansrijk is, samen 56.705 ha, van de Maasvallei tot de IJsseldelta. De levering heeft een enkel veld Id dat overal op nul staat, dus er valt niets aan te sturen: het zijn zeven vlakken zonder gradatie.
+
+							Dit is geen restrictie maar een voorkeur: de kaart komt terecht in de trede voor wonen, en alleen in de variant NbSGenuanceerd. Zie #620.
+
+							Gemeten op 25m telt het zoekgebied 56.702 ha. Daarvan ligt 17.268 ha binnen bestaand bebouwd gebied, waar de klasse BBG in de trede toch al voorgaat, en 15.548 ha in de riviertrajecten en binnendijkse gebieden die via NietBouwen op slot gaan (#621), waar de zeef wint en de trede niet aan bod komt. Er blijft 24.113 ha over waar de voorkeur werkelijk stuurt."
+		{
+			attribute<rdc_meter> geometry        (poly);
+			attribute<.>         Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+			attribute<.>         Per_AllocDomain (AllocDomain) := poly2grid(geometry, AllocDomain);
+			attribute<bool>      IsGebied        (AllocDomain) := IsDefined(Per_AllocDomain), Descr = "Ligt de allocatiecel in een kansrijk zoekgebied. Dit is wat de trede gebruikt, via Templates/VariantData_T/Trede/src/KansrijkWoningbouw.";
+			parameter<ha>        Areaal                        := sum(IsDefined(Per_AdminDomain) ? AdminDomain/NrHaPerCell : 0[ha]), Descr = "Controlegetal. In de levering 56.705 ha, hier minus wat buiten het studiegebied valt en plus of min de rastering.";
+		}
 		
 		attribute<Bool> N2K1000mBuffer0                   (AdminDomain) := ='potential(float32(SourceData/Omgevingsrecht/EU/Natura2000/Result_AdminDomain), /Geography/Distmatrices_'+AdminDomain_ref_short+'/pot1000m/Flat2) > 0f && !SourceData/Omgevingsrecht/EU/Natura2000/Result_AdminDomain', Descr = "1km buffer rond Natura2000 gebieden";
-		attribute<Bool> GrootWater1500mBuffer             (AllocDomain) := ='potential(float32(StartState/Grondgebruik/Per_AllocDomain/IsGrootWater), /Geography/Distmatrices_'+AllocDomain_ref_short+'/pot1500m/Flat2) > 0f', Descr = "1.5km buffer rond groot water (meren en grote rivieren)";
-		attribute<Bool> N2K1000mBuffer                    (AdminDomain) := N2K1000mBuffer0 && !GrootWater1500mBuffer[AdminDomain/AllocDomain_rel], Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water";
+
+		parameter<String> FileName_GrootWater1500mBuffer := '%LocalDataProjDir%/BaseData/Omgeving/GrootWater1500mBuffer_BBG'+/ModelParameters/BBG_Year+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_GrootWater1500mBuffer :=
+			  'bbg_year='          + /ModelParameters/BBG_Year
+			+ ';buffer_m=1500'
+			+ ';grootwater_flags=' + asList(string(/Classifications/Grondgebruik/CBSKlasse/IsGrootWater), ',')
+			+ ';alloc_grid='       + /ModelParameters/Advanced/AllocDomain_ref
+			+ ';study_area='       + /ModelParameters/StudyArea
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. bbg_year kiest de landgebruikskaart waar IsGrootWater uit komt, en kiest via de CBSKlasse-alias ook de klassenlijst. buffer_m staat als vaste waarde, want de potential kiest zijn kernel via het itempad en niet via een parameter. grootwater_flags is de klassenvlag IsGrootWater per CBS-klasse: een gewijzigde vlag verandert de uitkomst zonder de bestandsnaam te raken. alloc_grid vangt dat 25m tegenover 100m een ander bestand onder dezelfde naam oplevert.";
+		container Decoupling_GrootWater1500mBuffer := /Templates/DecoupledFile_T(FileName_GrootWater1500mBuffer, Fingerprint_GrootWater1500mBuffer);
+		attribute<Bool> Calc_GrootWater1500mBuffer        (AllocDomain) := ='potential(float32(StartState/Grondgebruik/Per_AllocDomain/IsGrootWater), /Geography/Distmatrices_'+AllocDomain_ref_short+'/pot1500m/Flat2) > 0f', Descr = "1.5km buffer rond groot water (meren en grote rivieren)";
+		attribute<Bool> Make_GrootWater1500mBuffer        (AllocDomain) := Calc_GrootWater1500mBuffer, StorageName = "=FileName_GrootWater1500mBuffer", StorageType = "tif", ExplicitSuppliers = "Decoupling_GrootWater1500mBuffer/Write_Fingerprint", Descr = "Schrijft de buffer eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan een container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Bool> Read_GrootWater1500mBuffer        (AllocDomain) : StorageName = "=FileName_GrootWater1500mBuffer", StorageType = "tif", StorageReadOnly = "TRUE";
+		attribute<Bool> GrootWater1500mBuffer             (AllocDomain) := = Decoupling_GrootWater1500mBuffer/MayReuse ? 'Read_GrootWater1500mBuffer' : 'Make_GrootWater1500mBuffer', Descr = "1.5km buffer rond groot water (meren en grote rivieren), ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_GrootWater1500mBuffer/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+		parameter<String> FileName_N2K1000mBuffer := '%LocalDataProjDir%/BaseData/Omgeving/N2K1000mBuffer_N2K20241119_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_N2K1000mBuffer :=
+			  'n2k_date=20241119'
+			+ ';buffer_m=1000'
+			+ ';admin_grid='  + /ModelParameters/Advanced/AdminDomain_ref
+			+ ';study_area='  + /ModelParameters/StudyArea
+			+ ';grootwater=[' + Fingerprint_GrootWater1500mBuffer + ']'
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. n2k_date staat als vaste waarde omdat de datum hard in het pad van SourceData/Omgevingsrecht/EU/Natura2000_2024 zit; komt daar een nieuwe levering, pas dan ook deze sleutel aan. buffer_m staat als vaste waarde, want de potential kiest zijn kernel via het itempad. De buffer sluit groot water uit, dus de volledige fingerprint van GrootWater1500mBuffer telt hier genest mee.";
+		container Decoupling_N2K1000mBuffer := /Templates/DecoupledFile_T(FileName_N2K1000mBuffer, Fingerprint_N2K1000mBuffer);
+		attribute<Bool> Calc_N2K1000mBuffer               (AdminDomain) := N2K1000mBuffer0 && !GrootWater1500mBuffer[AdminDomain/AllocDomain_rel], Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water";
+		attribute<Bool> Make_N2K1000mBuffer               (AdminDomain) := Calc_N2K1000mBuffer, StorageName = "=FileName_N2K1000mBuffer", StorageType = "tif", ExplicitSuppliers = "Decoupling_N2K1000mBuffer/Write_Fingerprint", Descr = "Schrijft de buffer eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan een container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Bool> Read_N2K1000mBuffer               (AdminDomain) : StorageName = "=FileName_N2K1000mBuffer", StorageType = "tif", StorageReadOnly = "TRUE";
+		attribute<Bool> N2K1000mBuffer                    (AdminDomain) := = Decoupling_N2K1000mBuffer/MayReuse ? 'Read_N2K1000mBuffer' : 'Make_N2K1000mBuffer', Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water, ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_N2K1000mBuffer/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
 		// attribute<Bool> Nationale_parken_van_wereldklasse (AllocDomain) := SourceData/Landschap/Nationale_parken_van_wereldklasse/IsNationaalParkWereldklasse, Descr = "Nationale parken van wereldklasse";
 		// attribute<Bool> VanGoghNationaalPark              (AllocDomain) := SourceData/Landschap/VanGoghNationaalPark/IsVanGoghNationaalPark, Descr = "Van Gogh Nationaal Park";
 		// attribute<Bool> Pampus                            (AllocDomain) := SourceData/Plancapaciteit/Wonen/NieuweNieuweKaart/Fijn/IsPampus/Per_AllocDomain, Descr = "Pampus";

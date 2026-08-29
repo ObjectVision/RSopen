@@ -17,10 +17,34 @@ container Bodem : using = "Classifications/Grondgebruik/Bodem"
 , Descr = "Bodemkundige gegevens zoals de bodemfysische eenhedenkaart, draagkracht en kwelgevoeligheid en bodemdaling."
 {
 
-	attribute<float32> altr_a04_20141201_gi_bodemC (rdc_100m)
-	:	StorageName     = "%RSo_DataDir%/Omgeving/Bodem/altr_a04_20141201_gi_bodemC.tif"
+	// #657: dit stond op rdc_100m, maar het bestand is een raster van 11.200 bij 13.000 cellen van 25 bij 25 meter met
+	// tiepunt (0, 625000), dus het ligt gewoon op rdc_25m. GeoDMS leest een raster op georeferentie en pakt de dichtstbijzijnde
+	// cel, dus op rdc_100m werd een op de zestien pixels gelezen en de rest weggegooid. Zie de sectie over rasters die niet op
+	// het modelraster liggen in .claude/skills/geodms-valkuilen. Het gevolg was zichtbaar in de koolstofindicator: elke 100
+	// meter blok kreeg de waarde van een willekeurige pixel erbinnen, en cellen die op een nulpixel vielen begonnen op nul.
+	attribute<ton_ha> BodemKoolstofvoorraad_src (rdc_25m)
+	:	Label           = "Bodemkoolstofvoorraad bovenste 30 cm bodem"
+	,	Source          = "Atlas Natuurlijk Kapitaal, bronhouder Alterra (Wageningen UR). Aangeleverd vanuit Deltares in RSopen-issue #483. Onderliggende metadata: nationaalgeoregister, dataset c207ab90-f6a0-4f70-85ca-1eb1961080d5."
+	,	URL             = "https://www.atlasnatuurlijkkapitaal.nl/natuurlijk-kapitaal/koolstofvastlegging"
+	,	Descr           = "Koolstofvoorraad in de bovenste 30 cm van de bodem voor heel Nederland, in ton C per hectare. "
+					      "De kaart is gemaakt door de landgebruikskaart (Basiskaart Natuur 2004) te combineren met de bodemkaart 1:50.000 (elf hoofdbodemgroepen), zie de Groot et al. (2005). "
+					      "Per combinatie van hoofdbodemgroep en landgebruikstype is een gemiddelde koolstofvoorraad bepaald op basis van de Landelijke Steekproef Kaarteenheden (LSK), waarin op circa 1.500 locaties bodemprofielen zijn bemonsterd en geanalyseerd, zie Lesschen et al. (2012). "
+					      "De hoogste voorraden liggen in veengebieden, de laagste in zandgebieden. "
+					      "Toelichting op het achterliggende model: https://www.atlasnatuurlijkkapitaal.nl/documenten/carbon-sequestration. "
+					      "Bedoeld gebruik in RSopen: startvoorraad koolstof in het basisjaar voor de indicator koolstofopslag en -vastlegging, zie https://github.com/ObjectVision/RSopen/wiki/Carbon-Storage-and-Sequestration."
+	,	StorageName     = "%RSo_DataDir%/Omgeving/Bodem/altr_a04_20141201_gi_bodemC.tif"
 	,	StorageType     = "gdal.grid"
 	,	StorageReadOnly = "True";
+
+	attribute<ton_ha> BodemKoolstofvoorraad (rdc_25m) := BodemKoolstofvoorraad_src < -1e38[ton_ha] ? null_f[ton_ha] : BodemKoolstofvoorraad_src
+	,	Label = "Bodemkoolstofvoorraad bovenste 30 cm bodem, zonder vulwaarden"
+	,	Descr = "Zelfde kaart als BodemKoolstofvoorraad_src, met de vulwaarde voor ontbrekende gegevens (-3,402823e+38, de minimale float32) op missing gezet. "
+			  "De kaart wordt sinds #657 op de eigen resolutie van 25 meter gelezen; daarvoor stond hij op rdc_100m en werd een op de zestien pixels gebruikt. "
+			  "Het gemiddelde en het maximum staan in de diagnose-items hieronder, zodat ze niet in een Descr verouderen.";
+
+	parameter<uint32>  NrCellenMetWaarde := sum(uint32(IsDefined(BodemKoolstofvoorraad))), Descr = "Controlegetal: aantal cellen van rdc_25m waar de bron een waarde geeft.";
+	parameter<ton_ha>  GemiddeldeVoorraad := mean(BodemKoolstofvoorraad), Descr = "Controlegetal: gemiddelde koolstofvoorraad over de cellen met een waarde.";
+	parameter<ton_ha>  MaximaleVoorraad   := max(BodemKoolstofvoorraad), Descr = "Controlegetal: hoogste koolstofvoorraad in de kaart.";
 
 	unit<UInt32> BOFEK 
 	: 	StorageName = "%RS_Lb_DataDir%/Landgebruik/BOFEK_2020.shp"
@@ -31,8 +55,10 @@ container Bodem : using = "Classifications/Grondgebruik/Bodem"
 	{
 		attribute<BOFEK_K> BOFEK_rel := rlookup(uint32(BOFEK2020), BOFEK_K/EK);
 		attribute<bool>    IsVeen    :=  BOFEK_K/IsVeen[BOFEK_rel];
+		attribute<bool>    IsVeenOfMoerig := BOFEK_K/IsVeenOfMoerig[BOFEK_rel], Descr = "Veengrond of moerige grond, de afbakening waarop SOMERS rekent. Zie Classifications/Grondgebruik/Bodem.";
 		attribute<.>       per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
 		attribute<bool>    IsVeen_grid     (AdminDomain) := IsVeen[per_AdminDomain];
+		attribute<bool>    IsVeenOfMoerig_grid (AdminDomain) := IsVeenOfMoerig[per_AdminDomain], Descr = "Null buiten het ruimtebeslag van BOFEK, dus wikkel hem in MakeDefined voordat je hem als vlag gebruikt.";
 		attribute<uint32>  BOFEK_CODE      (AdminDomain) := uint32(BOFEK2020)[per_AdminDomain];
 
 
@@ -84,14 +110,210 @@ container Bodem : using = "Classifications/Grondgebruik/Bodem"
 	
 	container Bodemdaling
 	{
-		attribute<cm> Bodemdaling_2016_2050_cm_1_org (rdc_100m)
-		: StorageName     = "%RSo_DataDir%/Omgeving/Bodem/Bodemdaling/Bodemdaling 2016-2050 (cm)1.tif"
-		, StorageReadOnly = "TRUE"
-		, StorageType     = "gdal.grid"
+		container Bron
+		: Descr = "De aangeleverde tif. Ligt wel op het RD-100m-raster, maar begint 13 km ten oosten en 5 km ten zuiden van de domeinhoek en heeft tegels van 128x128, dus GeoDMS waarschuwt over de offset. De nodatawaarde -3,40282E+38 leest GeoDMS als gewone waarde. Alleen nog nodig om met Maak de tif te genereren."
+		{
+			attribute<cm> Bodemdaling_2016_2050_cm_1_org (rdc_100m)
+			: StorageName     = "%RSo_DataDir%/Omgeving/Bodem/Bodemdaling/Bodemdaling 2016-2050 (cm)1.tif"
+			, StorageReadOnly = "TRUE"
+			, StorageType     = "gdal.grid"
+			, Source          = "Bodemdalingsvoorspellingskaart 2020-2050 (Bron3)"
+			, Descr           = "Bodemdaling in cm tussen 2016 en 2050, gebaseerd op de Bodemdalingsvoorspellingskaart 2020-2050 (Bron3) van het KNMI.";
+		}
+
+		container Maak
+		: Descr = "Zet de bron eenmalig om naar een getegelde, LZW-gecomprimeerde tif op het modelraster, met -3,40282E+38 als null. Draai dit met StudyArea = Nederland, want de tif beslaat het hele land."
+		{
+			parameter<Bool> IsNederland := lowercase(/ModelParameters/StudyArea) == 'nederland', Descr = "Bewaakt dat de tif niet per ongeluk met een provincie als studiegebied wordt weggeschreven.";
+
+			attribute<cm> Bodemdaling_2016_2050_cm_1 (rdc_100m) := (Bron/Bodemdaling_2016_2050_cm_1_org <= -3.40282E+38f ? null_f : Bron/Bodemdaling_2016_2050_cm_1_org)[cm]
+			, StorageName = "%RSo_DataDir%/Omgeving/Bodem/Bodemdaling/Bodemdaling_2016_2050_cm_100m_NL_rdc.tif", StorageType = "gdalwrite.grid", IntegrityCheck = "IsNederland";
+
+			parameter<String> Generate := 'Ready', ExplicitSuppliers = "Bodemdaling_2016_2050_cm_1";
+		}
+
+		attribute<cm> Bodemdaling_2016_2050_cm_1       (rdc_100m)
+		: StorageName     = "%RSo_DataDir%/Omgeving/Bodem/Bodemdaling/Bodemdaling_2016_2050_cm_100m_NL_rdc.tif"
+		, StorageReadOnly = "true"
 		, Source          = "Bodemdalingsvoorspellingskaart 2020-2050 (Bron3)"
-		, Descr           = "Bodemdaling in cm tussen 2016 en 2050, gebaseerd op de Bodemdalingsvoorspellingskaart 2020-2050 (Bron3) van het KNMI.";
-		
-		attribute<cm> Bodemdaling_2016_2050_cm_1       (rdc_100m) := (Bodemdaling_2016_2050_cm_1_org <= -3.40282E+38f ? null_f : Bodemdaling_2016_2050_cm_1_org)[cm], Descr = "Bodemdaling in cm tussen 2016 en 2050, gebaseerd op de Bodemdalingsvoorspellingskaart 2020-2050 (Bron3) van het KNMI. Waarden <-3.40282E+38cm zijn onwaarschijnlijk en worden als missing gezet.";
+		, Descr           = "Bodemdaling in cm tussen 2016 en 2050, gebaseerd op de Bodemdalingsvoorspellingskaart 2020-2050 (Bron3) van het KNMI. Cellen zonder voorspelling zijn null; in de bron stonden die op -3,40282E+38.";
+
 		attribute<cm> Bodemdaling_2016_2050_cm_1_25mtr  (rdc_25m) := Bodemdaling_2016_2050_cm_1[Geography/rdc_25m/rdc_100m_rel], Descr = "Bodemdaling in cm tussen 2016 en 2050, gebaseerd op de Bodemdalingsvoorspellingskaart 2020-2050 (Bron3) van het KNMI, geresampled naar 25m.";
+	}
+
+	container Bodemdalingbestendig
+	: Descr = "De hoeveelheidskaarten achter het landelijk afwegingskader bodemdalingbestendige nieuwbouw, geleverd door Deltares op 27 augustus 2026 bij #505.
+
+				Bron: Landelijk afwegingskader bodemdalingbestendige nieuwbouw, 11211556-001-BGS-0001, 23 maart 2026, Deltares en Sweco in opdracht van IenW.
+
+				Deze vier kaarten zijn de grootheden waarin de kengetallen van bijlage E van dat rapport zijn uitgedrukt. Ze
+				zijn dus geen kostenkaarten maar de invoer waarmee RSopen de kosten zelf uitrekent, op de grondgebruikfracties
+				van het eigen ontwikkelpakket. Zie BaseData/Suitabilities/Bodemdalingkosten.
+
+				De klassenkaart Handelingsperspectief is niet als invoer bedoeld maar als controlekaart: hij laat bestaand
+				stedelijk gebied, N2000 en buitendijks gebied bewust open, en juist daar bouwt RSopen wel."
+	{
+		container Bron
+		: Descr = "De aangeleverde bestanden, alleen nodig om met Maak de tifs op het modelraster te genereren. Namen dragen de leveringsdatum en een versienummer, want %RSo_DataDir% synchroniseert met Nextcloud en een eenmaal geplaatst bestand mag niet worden overschreven."
+		{
+			parameter<String> Map := '%RSo_DataDir%/Omgeving/Bodem/Bodemdalingbestendig/';
+
+			attribute<Float64> Ophoogdikte_org (rdc_100m)
+			:	StorageName     = "=Map + 'Ophoogdikte_Deltares20260827_v1.tif'"
+			,	StorageType     = "gdal.grid"
+			,	StorageReadOnly = "TRUE"
+			,	Descr           = "Figuur 3-3 en F-1: benodigde ophoogdikte zand voor integraal ophogen, in meter. Ligt op het RD-100m-raster met tiepunt 10.000 / 624.000, dus 100 kolommen en 10 rijen vanaf de domeinhoek. Waarden 0,20 tot 6,00 in stappen van 0,10; buiten het studiegebied NaN en op 788 cellen -999.";
+
+			attribute<Float64> Heipaallengte_org (rdc_100m)
+			:	StorageName     = "=Map + 'Heipaallengte_Deltares20260827_v1.tif'"
+			,	StorageType     = "gdal.grid"
+			,	StorageReadOnly = "TRUE"
+			,	Descr           = "Figuur D-2: benodigde heipaallengte in meter, afgerond op hele meters naar boven. Tiepunt 13.500 / 618.700. De eerste rij staat voluit op -3,40282E+38 en er is een losse cel met -10.";
+
+			attribute<Float64> AfgraafdiepteDrijvend_org (rdc_250m)
+			:	StorageName     = "=Map + 'AfgraafdiepteDrijvend_Deltares20260827_v1.tif'"
+			,	StorageType     = "gdal.grid"
+			,	StorageReadOnly = "TRUE"
+			,	Descr           = "Figuur D-13: af te graven diepte om op voldoende waterdiepte voor aquatisch bouwen te komen, in meter. Staat als enige op 250 meter, met tiepunt 0 / 625.000, dus precies op rdc_250m.";
+
+			unit<IPoint> EPS_domain :=
+				range(
+					gridset(
+						 rdc_meter_base
+						,point_yx(-99.9074645280691, 100.0, rdc_meter_base)
+						,point_yx(623999.953732264, 10000.0, rdc_meter_base)
+						,ipoint
+					)
+					,point_yx(0i, 0i)
+					,point_yx(3243i, 2700i)
+				)
+			,	Descr = "Het eigen raster van de EPS-kaart. Dat is geen vierkant raster: 3.243 rijen overspannen dezelfde 324 km die de andere kaarten met 3.240 rijen doen, dus de cellen zijn 100 bij 99,9074645280691 meter. De georeferentie is wel intern consistent, gecontroleerd door de waarden per horizontale band tegen Ophoogdikte te correleren: de piek schuift precies mee met wat de geotransform voorspelt, van nul rijen bovenin naar drie onderin. Daarom hier op het eigen raster gelezen en in Maak op het modelraster gezet, in plaats van GeoDMS op de offset te laten afronden.";
+
+			attribute<Float64> DikteEPS_org (EPS_domain)
+			:	StorageName     = "=Map + 'DikteEPS_Deltares20260827_v1.tif'"
+			,	StorageType     = "gdal.grid"
+			,	StorageReadOnly = "TRUE"
+			,	Descr           = "Figuur F-14: dikte van de EPS-laag bij een leeflaag van 30 cm, in meter. Waarden 0,18 tot 0,92 met een ophoping op beide uiteinden, buiten het gebied NaN. Er staat ook 2.283 km2 aan waarden op open water, in rechthoekige blokken; dat is een maskeringsfout in de levering en wordt hier niet gerepareerd, omdat de allocatie daar toch niet komt.";
+
+			attribute<UInt16> Handelingsperspectief_org (rdc_100m)
+			:	StorageName     = "=Map + 'Handelingsperspectief_Deltares20260827_v1.tif'"
+			,	StorageType     = "gdal.grid"
+			,	StorageReadOnly = "TRUE"
+			,	Descr           = "Figuur 6-9: het handelingsperspectief in vijf klassen, tiepunt 13.500 / 619.400. Er zat geen legenda bij; de volgorde 1 tot 5 is afgeleid en getoetst, zie Classifications/Modellering/HandelingsperspectiefK.";
+		}
+
+		container ControleBron
+		: Descr = "Leest de brontifs uit en schrijft de kengetallen naar een tekstbestand, zodat ze naast de metingen uit de levering te leggen zijn. Verwachte waarden staan in de Descr per regel; ze komen uit de doormeting van de geleverde bestanden bij #505."
+		{
+			parameter<String> NullSemantiek :=
+				  'rdc_100m cellen totaal      ' + string(#rdc_100m) + '\n'
+				+ 'Ophoogdikte IsDefined       ' + string(sum(uint32(IsDefined(Bron/Ophoogdikte_org)))) + '\n'
+				+ 'Ophoogdikte == 0            ' + string(sum(uint32(Bron/Ophoogdikte_org == 0d))) + '\n'
+				+ 'Ophoogdikte == -999         ' + string(sum(uint32(Bron/Ophoogdikte_org == -999d))) + '\n'
+				+ 'Ophoogdikte in [0.2, 6.0]   ' + string(sum(uint32(Bron/Ophoogdikte_org >= 0.2d && Bron/Ophoogdikte_org <= 6.0d))) + '\n'
+				+ 'Ophoogdikte max in bereik   ' + string(max(Bron/Ophoogdikte_org <= 6.0d ? Bron/Ophoogdikte_org : null_d)) + '\n'
+				+ 'Heipaal IsDefined           ' + string(sum(uint32(IsDefined(Bron/Heipaallengte_org)))) + '\n'
+				+ 'Heipaal == 0                ' + string(sum(uint32(Bron/Heipaallengte_org == 0d))) + '\n'
+				+ 'Heipaal in [0, 15]          ' + string(sum(uint32(Bron/Heipaallengte_org >= 0d && Bron/Heipaallengte_org <= 15d))) + '\n'
+				+ 'DikteEPS IsDefined          ' + string(sum(uint32(IsDefined(Bron/DikteEPS_org)))) + '\n'
+				+ 'DikteEPS cellen in domein   ' + string(#Bron/EPS_domain) + '\n'
+			,	StorageName = "='%LocalDataProjDir%/Diagnose/Bodemdalingbestendig_null.txt'"
+			,	StorageType = "str";
+
+			parameter<String> Waarden :=
+				  'Ophoogdikte           n=' + string(sum(uint32(IsDefined(Bron/Ophoogdikte_org) && Bron/Ophoogdikte_org > -900d))) + ' verwacht 3371148'
+				+ '  min=' + string(min(Bron/Ophoogdikte_org > -900d ? Bron/Ophoogdikte_org : null_d)) + ' verwacht 0.2'
+				+ '  max=' + string(max(Bron/Ophoogdikte_org)) + ' verwacht 6' + '\n'
+				+ 'Heipaallengte         n=' + string(sum(uint32(IsDefined(Bron/Heipaallengte_org) && Bron/Heipaallengte_org >= 0d))) + ' verwacht 8250227'
+				+ '  max=' + string(max(Bron/Heipaallengte_org)) + ' verwacht 15'
+				+ '  op15=' + string(sum(uint32(Bron/Heipaallengte_org == 15d))) + ' verwacht 336956' + '\n'
+				+ 'AfgraafdiepteDrijvend n=' + string(sum(uint32(Bron/AfgraafdiepteDrijvend_org > 0d))) + ' verwacht 534661'
+				+ '  max=' + string(max(Bron/AfgraafdiepteDrijvend_org)) + ' verwacht 251.368' + '\n'
+				+ 'DikteEPS              n=' + string(sum(uint32(IsDefined(Bron/DikteEPS_org)))) + ' verwacht 3268304'
+				+ '  min=' + string(min(Bron/DikteEPS_org)) + ' verwacht 0.18'
+				+ '  max=' + string(max(Bron/DikteEPS_org)) + ' verwacht 0.92' + '\n'
+				+ 'Handelingsperspectief k1=' + string(sum(uint32(Bron/Handelingsperspectief_org == 1w))) + ' verwacht 1209068'
+				+ '  k5=' + string(sum(uint32(Bron/Handelingsperspectief_org == 5w))) + ' verwacht 14126' + '\n'
+			,	StorageName = "='%LocalDataProjDir%/Diagnose/Bodemdalingbestendig_bron.txt'"
+			,	StorageType = "str";
+		}
+
+		container Maak
+		: Descr = "Zet de vier hoeveelheidskaarten en de klassenkaart eenmalig om naar tifs op het modelraster, met de vulwaarden op null. Draai dit met StudyArea = Nederland."
+		{
+			parameter<Bool> IsNederland := lowercase(/ModelParameters/StudyArea) == 'nederland', Descr = "Bewaakt dat de tifs niet per ongeluk met een provincie als studiegebied worden weggeschreven.";
+
+			parameter<String> Map := '%RSo_DataDir%/Omgeving/Bodem/Bodemdalingbestendig/';
+
+			parameter<String> Waarom := 'Alle vier de kaarten krijgen een expliciete bereikwacht in plaats van een ondergrenscheck. Reden, gemeten in ControleBron/NullSemantiek: een NaN in het bestand leest GeoDMS wel als null, maar de cellen van rdc_100m die buiten de extent van het geleverde bestand vallen leest hij als een gedefinieerde waarde die noch nul noch de vulwaarde is. Bij Ophoogdikte zijn dat er 352.000, precies het verschil tussen de 9.100.000 cellen van het modelraster en de 8.748.000 van het bestand. Een test op < 0 laat die dus door. Een bereikwacht sluit ze wel af: hij levert exact de 3.371.148 geldige cellen van de levering op.';
+
+			attribute<meter> Ophoogdikte (rdc_100m) :=
+				MakeDefined(
+					 (Bron/Ophoogdikte_org >= 0.2d && Bron/Ophoogdikte_org <= 6.0d ? Bron/Ophoogdikte_org : null_d)[float32]
+					,0.2f
+				)[meter]
+			,	StorageName = "=Map + 'Ophoogdikte_100m_NL_rdc_v1.tif'", StorageType = "gdalwrite.grid", IntegrityCheck = "IsNederland"
+			,	Descr = "Bereikwacht op [0,20 - 6,00], de geldige waarden van de levering; dat sluit de NaN, de 788 cellen op -999 en het gebied buiten de bestandsextent af.
+
+						Cellen zonder waarde krijgen 0,20 meter, de ondergrens van de methode zelf: het rapport eist dat het nieuwe maaiveld 20 cm boven het huidige uitkomt, dus dat is de ophoging waar geen bodemdalingsopgave speelt. Binnen Nederland gaat het om circa 866 km2 van de 33.883 km2 land dat de kaart niet dekt. Dit is een aanname en geen meting; zie de aannamelijst bij #505.";
+
+			attribute<meter> Heipaallengte (rdc_100m) := MakeDefined((Bron/Heipaallengte_org >= 0d && Bron/Heipaallengte_org <= 15d ? Bron/Heipaallengte_org : null_d)[float32], 0f)[meter]
+			,	StorageName = "=Map + 'Heipaallengte_100m_NL_rdc_v1.tif'", StorageType = "gdalwrite.grid", IntegrityCheck = "IsNederland"
+			,	Descr = "Bereikwacht op [0 - 15]; dat vangt zowel de -3,40282E+38-rij als de losse cel met -10 en het gebied buiten de bestandsextent. De nul blijft staan, want dat is binnen Nederland de geldige uitkomst niet heien nodig, en buiten Nederland alloceert het model niet.
+
+						De 15 is geen lengte maar de legendaklasse meer dan 14 meter. Zie de kaartlaag hieronder.";
+
+			attribute<meter> AfgraafdiepteDrijvend (rdc_100m) := Bron/AfgraafdiepteDrijvend_org[rdc_100m/rdc_250m_rel][float32][meter]
+			,	StorageName = "=Map + 'AfgraafdiepteDrijvend_100m_NL_rdc_v1.tif'", StorageType = "gdalwrite.grid", IntegrityCheck = "IsNederland"
+			,	Descr = "Van 250 naar 100 meter met de cel waarin het middelpunt valt. Dat is geen verfijning: elke 250-metercel wordt over zes of zeven 100-metercellen uitgesmeerd. De extreme waarden tot 251 meter blijven staan; het rapport kapt die bewust niet af, en omdat het model per cel het goedkoopste toegestane alternatief kiest valt drijvend bouwen daar vanzelf af.";
+
+			attribute<Float64> DikteEPS_op100m (rdc_100m) := Bron/DikteEPS_org[rdc_100m/point[Bron/EPS_domain]], Descr = "Van het scheve leveringsraster naar het modelraster, via het middelpunt van elke modelcel. Verschuiving hooguit een halve cel.";
+
+			attribute<meter> DikteEPS (rdc_100m) := (DikteEPS_op100m >= 0.18d && DikteEPS_op100m <= 0.92d ? DikteEPS_op100m : null_d)[float32][meter]
+			,	StorageName = "=Map + 'DikteEPS_100m_NL_rdc_v1.tif'", StorageType = "gdalwrite.grid", IntegrityCheck = "IsNederland"
+			,	Descr = "Bereikwacht op [0,18 - 0,92], het volledige bereik van de levering. Blijft null waar de kaart niets zegt; alternatief Licht ophoogmateriaal is daar dan niet beschikbaar en valt in de keuze vanzelf af.";
+
+			attribute<UInt16> Handelingsperspectief (rdc_100m) := Bron/Handelingsperspectief_org
+			,	StorageName = "=Map + 'Handelingsperspectief_100m_NL_rdc_v1.tif'", StorageType = "gdalwrite.grid", IntegrityCheck = "IsNederland";
+
+			parameter<String> Generate := 'Ready', ExplicitSuppliers = "Ophoogdikte;Heipaallengte;AfgraafdiepteDrijvend;DikteEPS;Handelingsperspectief";
+		}
+
+		parameter<String> Map := '%RSo_DataDir%/Omgeving/Bodem/Bodemdalingbestendig/';
+
+		attribute<meter> Ophoogdikte (rdc_100m)
+		:	StorageName = "=Map + 'Ophoogdikte_100m_NL_rdc_v1.tif'", StorageReadOnly = "true"
+		,	Source      = "Deltares en Sweco, 11211556-001-BGS-0001, Figuur 3-3, geleverd 27 augustus 2026"
+		,	Descr       = "Benodigde ophoogdikte zand voor integraal ophogen, in meter. Minimaal 0,20 meter, want de eis is dat het nieuwe maaiveld 20 cm boven het huidige uitkomt. Maximaal 6,00 meter, en dat plafond raakt 28 cellen.";
+
+		attribute<meter> Heipaallengte (rdc_100m)
+		:	StorageName = "=Map + 'Heipaallengte_100m_NL_rdc_v1.tif'", StorageReadOnly = "true"
+		,	Source      = "Deltares en Sweco, 11211556-001-BGS-0001, Figuur D-2, geleverd 27 augustus 2026"
+		,	Descr       = "Benodigde heipaallengte in meter. De waarde 15 is geen lengte maar de legendaklasse meer dan 14 meter, en daar valt 3.370 km2 onder; alternatief Alles funderen is daar dus onderschat. Zie #505 voor de weging: van dat gebied ligt 41 km2 in de klassen waar de dure alternatieven echt nodig zijn.";
+
+		attribute<meter> AfgraafdiepteDrijvend (rdc_100m)
+		:	StorageName = "=Map + 'AfgraafdiepteDrijvend_100m_NL_rdc_v1.tif'", StorageReadOnly = "true"
+		,	Source      = "Deltares en Sweco, 11211556-001-BGS-0001, Figuur D-13, geleverd 27 augustus 2026"
+		,	Descr       = "Af te graven diepte voor aquatisch bouwen, in meter, oorspronkelijk op 250 meter. Alleen voor alternatief Drijvend bouwen; de af te graven laag bij Licht ophoogmateriaal is een andere grootheid, zie AfgraafdiepteEPS.";
+
+		attribute<meter> DikteEPS (rdc_100m)
+		:	StorageName = "=Map + 'DikteEPS_100m_NL_rdc_v1.tif'", StorageReadOnly = "true"
+		,	Source      = "Deltares en Sweco, 11211556-001-BGS-0001, Figuur F-14, geleverd 27 augustus 2026"
+		,	Descr       = "Dikte van de EPS-laag bij een leeflaag van 30 cm, in meter.";
+
+		attribute<meter> AfgraafdiepteEPS (rdc_100m) := DikteEPS + 0.10[meter]
+		,	Descr = "De af te graven laag bij alternatief Licht ophoogmateriaal, meetkundig afgeleid en niet geleverd.
+
+					Deltares beschrijft die laag in D.2.4.1 en schetst hem in Figuur D-8, maar geeft er geen kaart van, terwijl de
+					kostenformule in bijlage E hem wel nodig heeft. Hij volgt echter uit hun eigen twee uitgangspunten: het
+					aangebrachte pakket is de EPS-laag plus 30 cm leeflaag, en het nieuwe maaiveld komt 20 cm boven het huidige.
+					De onderkant van het pakket ligt dan op 0,20 - (dikte + 0,30) onder het huidige maaiveld, dus je graaft
+					dikte + 0,10 meter af.
+
+					Deze post weegt licht: 5,00 euro per m2 per meter tegen 125,00 euro per m2 per meter voor de EPS zelf, oftewel
+					circa 4 procent van die kostenpost. Zie #505.";
+
+		attribute<Classifications/Modellering/HandelingsperspectiefK> Handelingsperspectief_rel (rdc_100m) := Bron/Handelingsperspectief_org[Classifications/Modellering/HandelingsperspectiefK]
+		,	Descr = "Controlekaart, geen invoer voor de kosten. Zie Classifications/Modellering/HandelingsperspectiefK.";
 	}
 }

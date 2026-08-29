@@ -20,6 +20,10 @@ Template Zichtjaar_T
 	//
 	
 	parameter<String>    Zichtjaar_name   := Time/Zichtjaar/name[id];
+	parameter<UInt16>    Zichtjaar_jaartal := Time/Zichtjaar/YearRange_rel[id][UInt16], Descr = "Het zichtjaar als getal. Bewust niet Zichtjaar_getal genoemd: die naam is verderop in dit sjabloon al bezet door de waterbergingscontainer, en dat is een Float32.";
+	parameter<String>    TIGRIS_Jaar_name  := 'Y' + string(Zichtjaar_jaartal >= ModelParameters/Advanced/FromWhichDoWeKeepTIGRISconstant ? ModelParameters/Advanced/FromWhichDoWeKeepTIGRISconstant : Zichtjaar_jaartal)
+	, Descr = "Uit welk TIGRIS-jaar dit zichtjaar zijn wonen- en werkenclaim haalt. Vanaf FromWhichDoWeKeepTIGRISconstant blijft de claim staan, dus 2070 tot en met 2120 lezen allemaal de map Y2060.
+				Dezelfde klem stond al aan de schrijfkant, in ZichtjaarxTXLClaimsxCase/UsedTIGRIS_year, maar daar alleen op de bron: het uitvoerpad hield het echte zichtjaar aan. De leeskant hier deed dat ook, en zocht dus een map Y2070 die per zichtjaar een kopie van de 2060-cijfers zou moeten bevatten. Door hier te klemmen is die kopie niet meer nodig en kan de claimreeks nooit meer stil uiteenlopen met wat de klem voorschrijft.";
 	unit<UInt8>          AllocRegio       := /Classifications/Modellering/AllocRegiosK;
 	unit<UInt8>          SectorAllocRegio := CaseClassifications/Actor/SectorAllocRegio;
 	
@@ -41,7 +45,11 @@ Template Zichtjaar_T
 		unit<UInt32> RegioUnit := = AllocRegio_path
 		{
 			attribute<rdc_meter> geometry (poly) := =AllocRegio_path+'/geometry';
-			attribute<.>          per_TigrisXLSrcRegio (PrivData/Claims/WonenEnWerken/SrcRegio) := point_in_polygon(PrivData/Claims/WonenEnWerken/SrcRegio/centroid, geometry);
+			attribute<rdc_meter>  geometry_buffered           (poly)                                 := geos_buffer_multi_polygon(geometry, 2500.0, 4b);
+			attribute<.>          per_TigrisXLSrcRegio_direct (PrivData/Claims/WonenEnWerken/SrcRegio) := point_in_polygon(PrivData/Claims/WonenEnWerken/SrcRegio/centroid, geometry);
+			attribute<.>          per_TigrisXLSrcRegio        (PrivData/Claims/WonenEnWerken/SrcRegio) := MakeDefined(per_TigrisXLSrcRegio_direct, point_in_polygon(PrivData/Claims/WonenEnWerken/SrcRegio/centroid, geometry_buffered))
+			,	IntegrityCheck = "all(IsDefined(this))"
+			,	Descr = "Zelfde constructie als RegioUnit/per_TigrisXLSrcRegio in Claims_TargetUnits_T: subzones met veel buitenwater kunnen hun zwaartepunt buiten de (uit gemeentegrenzen herbouwde) regiogeometrie hebben, waarna de sum in CalcStr hun claims geruisloos uit de regiototalen laat vallen (pbl-nl/model-RSopen#46). De bufferfallback van 2.5 km wijst zulke subzones alsnog toe; de IntegrityCheck laat een niet-toewijzing hard falen.";
 			attribute<.>          per_Bevolkingskern_2011 (RegioIndelingen/Bevolkingskern_2011) := point_in_polygon(centroid_or_mid(RegioIndelingen/Bevolkingskern_2011/geometry), geometry);
 			
 			attribute<Bool> Is300kPlusRegio := any(RegioIndelingen/Bevolkingskern_2011/isMeerdan300Kinw, per_Bevolkingskern_2011);
@@ -54,7 +62,7 @@ Template Zichtjaar_T
 		
 		parameter<String> CalcStr := 'sum(src/'+Zichtjaar_name+'/@X@/'+Scenario_name+'/'+Variant_name+'/Results/@Y@, RegioUnit/per_TigrisXLSrcRegio)';
 		
-		container Read_Wonen_WP2xVSSH_fss
+		container Read_Wonen_WP2xVSSH
 		: StorageName = "='%LocalDataProjDir%/BaseData/Vastgoed/WP2xVSSH_Proxy/'+AllocRegio_name+'/'+/ModelParameters/StudyArea+'.mmd'"
 		, StorageReadOnly = "TRUE"
 		{
@@ -65,34 +73,65 @@ Template Zichtjaar_T
 			// attribute<Woning> eengezins_Proxy              (RegioUnit);
 			// attribute<Woning> meergezins_Proxy             (RegioUnit);
 			
+		}
+		
+		container Wonen := Read_Wonen_WP2xVSSH
+		{
 			attribute<Woning> eengezins_VrijeSector  (RegioUnit) := Read_Wonen_CSV/eengezins  * eengezins_VrijeSector_Proxy  / eengezins_Proxy;
 			attribute<Woning> eengezins_SocialeHuur  (RegioUnit) := Read_Wonen_CSV/eengezins  * eengezins_SocialeHuur_Proxy  / eengezins_Proxy;
 			attribute<Woning> meergezins_VrijeSector (RegioUnit) := Read_Wonen_CSV/meergezins * meergezins_VrijeSector_Proxy / meergezins_Proxy;
 			attribute<Woning> meergezins_SocialeHuur (RegioUnit) := Read_Wonen_CSV/meergezins * meergezins_SocialeHuur_Proxy / meergezins_Proxy;
+			attribute<Woning> Totaal                 (RegioUnit) := ='add('+asList(WP2xVSSH/name,',')+')';
 		}
 		
-		container Wonen := Read_Wonen_WP2xVSSH_fss
-		{
-			attribute<Woning> Totaal (RegioUnit) := ='add('+asList(WP2xVSSH/name,',')+')';
-		}
-		
-		container Werken := Read_werken_CSV;
+		container Werken := = lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
+								? 'Read_werken_CSV'
+								: lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TrendLISARegio')
+									? 'Werken_Geankerd_Regio'
+									: 'Werken_Geankerd'
+		, Descr = "De banenclaim per regio. Welke van de twee geldt staat in ModelParameters/ClaimBasisjaar/Anker; op de terugvalstand is dit letterlijk Read_werken_CSV en verandert er niets ten opzichte van voor #667.";
 		
 		container Verblijfsrecreatie 
 		{
 			attribute<Float32> Totaal       (RegioUnit) := Objecten;
-			attribute<Float32> Objecten     (RegioUnit) := ='/BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Read_Betas/Objecten 
-														+ (/BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Read_Betas/Objecten_β * ('+right(string(Zichtjaar_name),4)+'f-'+right(string(/ModelParameters/BAG_RecentYear),4)+'[float32]))
+			attribute<Float32> Objecten     (RegioUnit) := ='/BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Betas/Objecten 
+														+ (/BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Betas/Objecten_β * ('+right(string(Zichtjaar_name),4)+'f-'+right(string(/ModelParameters/BAG_RecentYear),4)+'[float32]))
 														* VariantParameters/VariantK/ClaimGroeiFActorTovTrendObjecten[VariantParameters/VariantK/V/'+Variant_name+']';
-			attribute<Float32> BrutoOpp     (RegioUnit) := ='/BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Read_Betas/BrutoOpp 
-														+ (/BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Read_Betas/BrutoOpp_β * ('+right(string(Zichtjaar_name),4)+'f-'+right(string(/ModelParameters/BBG_Verblijfsrecreatie_Year),4)+'[float32]))
+			attribute<Float32> BrutoOpp     (RegioUnit) := ='/BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Betas/BrutoOpp 
+														+ (/BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Betas/BrutoOpp_β * ('+right(string(Zichtjaar_name),4)+'f-'+right(string(/ModelParameters/BBG_Verblijfsrecreatie_Year),4)+'[float32]))
 														* VariantParameters/VariantK/ClaimGroeiFActorTovTrendHa[VariantParameters/VariantK/V/'+Variant_name+']';
-			attribute<vbo_ha>  Object_perHa (RegioUnit) := Objecten / BrutoOpp;
+			attribute<vbo_ha>  Object_perHa (RegioUnit) := =ModelParameters/Verblijfsrecreatie/NieuweCellenOpMarginaleDichtheid ? 'Object_perHa_marginaal' : 'Object_perHa_gemiddeld'
+			, Descr = "Dichtheid waarmee de allocatie een nieuw gealloceerde cel omrekent naar objecten (via Templates/Densities). Schakelbaar tussen de marginale trenddichtheid en de oude gemiddelde voorraaddichtheid, zie ModelParameters/Verblijfsrecreatie/NieuweCellenOpMarginaleDichtheid.";
+			attribute<vbo_ha>  Object_perHa_gemiddeld (RegioUnit) := Objecten / BrutoOpp
+			, Descr = "Gemiddelde dichtheid van de hele voorraad in dit zichtjaar: alle objecten gedeeld door alle terreinhectares, inclusief kampeerterreinen en oude ruime parken. Voor nieuw terrein is dit te laag: nieuwe parken raken volgens de trends bijna twee keer zo dicht bebouwd.";
+			attribute<vbo_ha>  Object_perHa_marginaal (RegioUnit) := TrendBetas/BrutoOpp_β >= 1f ? value(TrendBetas/Objecten_β / TrendBetas/BrutoOpp_β, vbo_ha) : Object_perHa_gemiddeld
+			, Descr = "Marginale dichtheid uit de trends: objecten erbij per jaar gedeeld door hectares erbij per jaar, per regio. Dit is de dichtheid waarmee nieuw terrein volgens de waarnemingen wordt bebouwd; hiermee spoort het gealloceerde areaal met de eigen BrutoOpp-trend. Valt per regio terug op de gemiddelde dichtheid wanneer de hectaretrend vrijwel nul is (minder dan 1 ha per jaar) en de deling zou ontsporen.";
+			container TrendBetas := /BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Betas;
 		}
 		
 		container Waterberging
+		: Descr = "Regionale waterbergingsopgave in m3 per maand, per waterbergingsregio. De aangeleverde reeks van Deltares (ObjectVision/RSopen#575) kent alleen 2050 en 2100; de tussenliggende en latere zichtjaren worden hier geinterpoleerd. Deze container heeft alleen betekenis voor de AllocRegio Waterbergingsregio, want alleen die indeling komt voor in ModelParameters/Waterberging/Claims."
 		{
-			attribute<Float32> Totaal       (RegioUnit) := /SourceData/RegioIndelingen/Waterschap/waterbergingsvraag;
+			parameter<String>  ClaimBron       := = 'VariantParameters/VariantK/WaterbergingClaimBron[VariantParameters/VariantK/V/'+Variant_name+']', Descr = "Welke aangeleverde variantkolom deze RS-variant gebruikt: BAU of BAU2.";
+			parameter<Bool>    OpBestaandWater := = 'VariantParameters/VariantK/WaterbergingOpBestaandWater[VariantParameters/VariantK/V/'+Variant_name+']', Descr = "Wordt het peil op bestaand oppervlaktewater 15 cm opgezet?";
+			parameter<String>  ClaimKolom      := (OpBestaandWater ? 'OokBestaand_' : 'Nieuw_') + ClaimBron, Descr = "Naam van de kolom in ModelParameters/Waterberging/Claims, zonder het zichtjaarsuffix.";
+			
+			attribute<meter3>  Opgave_Y2050 (RegioUnit) := = 'rjoin(lowercase(RegioUnit/label), lowercase(ModelParameters/Waterberging/Claims/Deelgebied), ModelParameters/Waterberging/Claims/'+ClaimKolom+'_Y2050)'
+			,	IntegrityCheck = "all(IsDefined(this))"
+			,	Descr = "Aangeleverde opgave voor 2050. De koppeling gaat op naam en niet op rijnummer, want de rijvolgorde in de shapefile wijkt af van de volgorde in de aanlevering. De IntegrityCheck laat een regio zonder claim hard falen in plaats van hem stil op null te zetten.";
+			
+			attribute<meter3>  Opgave_Y2100 (RegioUnit) := = 'rjoin(lowercase(RegioUnit/label), lowercase(ModelParameters/Waterberging/Claims/Deelgebied), ModelParameters/Waterberging/Claims/'+ClaimKolom+'_Y2100)'
+			,	IntegrityCheck = "all(IsDefined(this))"
+			,	Descr = "Aangeleverde opgave voor 2100, zie Opgave_Y2050.";
+			
+			parameter<Float32> Zichtjaar_getal := = right(string(Zichtjaar_name),4)+'f';
+			parameter<Float32> Basisjaar_getal := = right(string(/ModelParameters/Model_StartYear),4)+'f';
+			
+			attribute<meter3>  Totaal (RegioUnit) :=
+				Zichtjaar_getal <= 2050f
+				?	Opgave_Y2050 * ((Zichtjaar_getal - Basisjaar_getal) / (2050f - Basisjaar_getal))
+				:	Opgave_Y2050 + (Opgave_Y2100 - Opgave_Y2050) * ((Zichtjaar_getal - 2050f) / (2100f - 2050f))
+			,	Descr = "Stand van de waterbergingsopgave in dit zichtjaar. Tot en met 2050 lineair opgebouwd vanaf 0 in het basisjaar, daarna lineair door naar de 2100-waarde.";
 		}	
 		
 		container Wind
@@ -146,7 +185,7 @@ Template Zichtjaar_T
 				attribute<MW> Ruimte    (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] 
 																	* (sum_uint32(ThisVariant/Zeef/'+Zichtjaar_name+'/SectorxSubsectoren/Wind/Totaal/IsBeschikbaar, RegioUnitSub/Per_CompactedAdminDomain)[float32] 
 																		/ sum(sum_uint32(ThisVariant/Zeef/'+Zichtjaar_name+'/SectorxSubsectoren/Wind/Totaal/IsBeschikbaar, RegioUnitSub/Per_CompactedAdminDomain)[float32])))[MW]';
-				attribute<MW> Vraag     (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] * (sum(BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/Per_AdminDomain)[float32] / sum(sum(BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/Per_AdminDomain)[float32])[float32]))[MW]';
+				attribute<MW> Vraag     (RegioUnitSub) := = '((Nationaal/DitScenario/Zichtjaar/OpLandOfBinnenwater[id])[MW] * (sum(/BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/Per_AdminDomain)[float32] / sum(sum(/BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/Per_AdminDomain)[float32])[float32]))[MW]';
 			}
 			
 			attribute<MW> Totaal0 (RegioUnit) := = 'recollect_by_cond(RegioUnitSub_Condition, Regionaal/'+Variant+')';
@@ -205,8 +244,8 @@ Template Zichtjaar_T
 																  )
 																)[MW]';
 																// , StorageName = "='%LocalDataProjDir%/VariantData/Claims/Zon/Regionaal_Ruimte_'+Zichtjaar_name+'_Nederland.fss'";
-				attribute<MW> Vraag     (RegioUnitSub) := = '((Nationaal/Zichtjaar/Resultaat[id])[MW] * (sum(BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32] 
-																	/ sum(sum(BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32])[float32]))[MW]';
+				attribute<MW> Vraag     (RegioUnitSub) := = '((Nationaal/Zichtjaar/Resultaat[id])[MW] * (sum(/BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32] 
+																	/ sum(sum(/BaseData/StartState/VBOs_ModelJaar, RegioUnitSub/per_AdminDomain)[float32])[float32]))[MW]';
 																// , StorageName = "='%LocalDataProjDir%/VariantData/Claims/Zon/Regionaal_Vraag_'+Zichtjaar_name+'_Nederland.fss'";
 			}
 			
@@ -325,7 +364,7 @@ Template Zichtjaar_T
 		}
 		
 		parameter<String> ClaimDir        := '%RSo_DataDir%/Claims/TXL_'+ModelParameters/TIGRIS_Filedate;
-		parameter<String> File_csv_name   := ClaimDir +'/'+Scenario_name+'/'+/VariantParameters/VariantK/ClaimVariantName[Variant_rel]+'/'+Zichtjaar_name+'/'+AllocRegio_name;
+		parameter<String> File_csv_name   := ClaimDir +'/'+Scenario_name+'/'+/VariantParameters/VariantK/ClaimVariantName[Variant_rel]+'/'+TIGRIS_Jaar_name+'/'+AllocRegio_name, Descr = "Let op: TIGRIS_Jaar_name en niet Zichtjaar_name, zodat zichtjaren voorbij FromWhichDoWeKeepTIGRISconstant de laatst geleverde claimmap lezen in plaats van een kopie daarvan te vereisen.";
 		
 		container Read_Wonen_CSV :=
 		for_each_ndv(
@@ -340,6 +379,78 @@ Template Zichtjaar_T
 				, RegioUnit
 				, job
 			), StorageName = "=File_csv_name+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE"
+		{
+			attribute<job> Totaal   (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
+		}
+
+		// #667: de claim kan op de waargenomen trend van het basisjaar worden geankerd in plaats van op het
+		// TIGRIS-niveau. Zie ModelParameters/ClaimBasisjaar voor de onderbouwing en de gemeten uitwerking.
+		parameter<String> File_csv_basisjaar := '%PrivDataDir%/Claims/TXL_'+ModelParameters/TIGRIS_Filedate +'/'+Scenario_name+'/'+/VariantParameters/VariantK/ClaimVariantName[Variant_rel]+'/Y'+string(/ModelParameters/Model_StartYear)+'/NL'
+		, Descr = "De landelijke TIGRIS-claim van het claimbasisjaar. Bewust NL en niet AllocRegio_name: de ankerfactor is landelijk per subsector, zodat het ruimtelijke patroon van TIGRIS ongemoeid blijft en de claims op de vier allocatieniveaus onderling consistent blijven. Een factor per regio zou dat laatste breken, want een verhouding is niet optelbaar.";
+
+		unit<UInt32> NL_Basisjaar := /SourceData/RegioIndelingen/NL;
+
+		container Read_Werken_Basisjaar_CSV :=
+		for_each_ndv(
+				Jobs6/name
+				, NL_Basisjaar
+				, job
+			), StorageName = "=File_csv_basisjaar+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE"
+		, Descr = "Deze map bestaat sinds Classifications/Time/TigrisJaar het claimbasisjaar meeneemt en de aggregatie over Time/ClaimJaar loopt. Zonder die twee is dit bestand er niet en faalt het lezen hard, wat de bedoeling is: stil terugvallen op het TIGRIS-niveau zou de schakelaar betekenisloos maken.";
+
+		container Ankerfactor :=
+			for_each_nedv(
+				Jobs6/name
+				, lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
+					? 'const(1f, void)'
+					: 'float32(/ModelParameters/ClaimBasisjaar/TrendLISA/'+Jobs6/name+') / float32(sum(Read_Werken_Basisjaar_CSV/'+Jobs6/name+'))'
+				, void
+				, float32
+			), Descr = "Per werksubsector de verhouding tussen de waargenomen trendwaarde in het basisjaar en wat TIGRIS voor datzelfde jaar geeft. Op de terugvalstand exact 1, dus dan is de claim letterlijk de oude.";
+
+		// De regionale variant: dezelfde gedachte, maar met een factor per regio in plaats van landelijk.
+		// De trend komt per gemeente binnen en wordt door het model naar deze regio-indeling opgeteld, op
+		// dezelfde manier waarop de claim dat wordt, zodat er geen eigen regiokoppeling tussen zit.
+		parameter<String> File_csv_basisjaar_regio := '%PrivDataDir%/Claims/TXL_'+ModelParameters/TIGRIS_Filedate +'/'+Scenario_name+'/'+/VariantParameters/VariantK/ClaimVariantName[Variant_rel]+'/Y'+string(/ModelParameters/Model_StartYear)+'/'+AllocRegio_name;
+
+		container Read_Werken_Basisjaar_Regio_CSV :=
+		for_each_ndv(
+				Jobs6/name
+				, RegioUnit
+				, job
+			), StorageName = "=File_csv_basisjaar_regio+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE";
+
+		container TrendRegio := /PrivData/TrendBasisjaar/PerRegio_T(RegioUnit)
+		, Descr = "De waargenomen trend van het basisjaar, opgeteld naar deze allocatieregio.";
+
+		container Ankerfactor_Regio :=
+			for_each_nedv(
+				Jobs6/name
+				, 'Read_Werken_Basisjaar_Regio_CSV/'+Jobs6/name+' > /ModelParameters/ClaimBasisjaar/Ondergrens'
+					+ ' ? float32(TrendRegio/Trend/'+Jobs6/name+') / float32(Read_Werken_Basisjaar_Regio_CSV/'+Jobs6/name+')'
+					+ ' : Ankerfactor/'+Jobs6/name
+				, RegioUnit
+				, float32
+			), Descr = "Per regio en per subsector de verhouding tussen de waargenomen trend in het basisjaar en wat TIGRIS voor datzelfde jaar en dezelfde regio geeft. Onder de ondergrens valt een regio terug op de landelijke factor, want een verhouding tussen twee kleine getallen is geen schatting maar ruis.";
+
+		container Werken_Geankerd_Regio :=
+			for_each_nedv(
+				Jobs6/name
+				, 'Read_Werken_CSV/'+Jobs6/name+' * Ankerfactor_Regio/'+Jobs6/name
+				, RegioUnit
+				, job
+			)
+		{
+			attribute<job> Totaal   (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
+		}
+
+		container Werken_Geankerd :=
+			for_each_nedv(
+				Jobs6/name
+				, 'Read_Werken_CSV/'+Jobs6/name+' * Ankerfactor/'+Jobs6/name
+				, RegioUnit
+				, job
+			)
 		{
 			attribute<job> Totaal   (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
 		}

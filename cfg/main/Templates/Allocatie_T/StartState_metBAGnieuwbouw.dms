@@ -1,0 +1,174 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Aangezien het startjaar van de simulaties in het model vaak niet samenvalt met de meest actuele invoerdata die
+// voorhanden is bij bronhouders, is er meer informatie over de meest recente ontwikkelingen nodig. Voor de stand
+// van wonen, werken en verblijfsrecreatie in het basisjaar wordt de BAG gebruikt, echter deze dataset wordt
+// dagelijks geüpdatet. Oftewel, recente ontwikkelingen tussen startjaar en de datum van de meest recente BAG-
+// versie in het model zijn al beschikbaar. Daarom worden tussen het startjaar en het eerste gemodelleerde
+// zichtjaar deze recente bouwontwikkelingen meegenomen en hoeven daarmee niet meer gealloceerd te worden in het
+// model. Daarnaast zit er in BAG ook al status-informatie voor ontwikkelingen in de nabije toekomst, panden die
+// waarvoor een bouwvergunning verleend is, of de bouw al gestart is. Hiervan kan met grote zekerheid worden
+// aangenomen dat deze gerealiseerd worden. Eveneens zijn er panden ofwel objecten die gesloopt zullen gaan
+// worden. Een pand waarvoor een sloopvergunning verleend is zal zeer waarschijnlijk in de nabije toekomst
+// gesloopt gaan worden en deze ontwikkeling wordt dan ook meegenomen in het eerstvolgende zichtjaar. Al deze
+// informatie wordt toegepast in het eerste zichtjaar. Bepaal de initiele subsector_rel op basis van
+// BAGnieuwbouw. Door de argmax in de stand te bepalen. initialisatie attribute om later geupdatet te worden.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container StartState_metBAGnieuwbouw :=
+	for_each_nedv(
+		Sector/xSubsector/wo_Landbouw/name
+		, 'max_elem(MakeDefined(StartState/'+Sector/xSubsector/wo_Landbouw/name+' + /BaseData/StartState/BAG_nieuwbouw/'+Sector/xSubsector/wo_Landbouw/name+', 0f), 0f)'
+		, CompactedAdminDomain
+		, float32
+	), URL = "https://github.com/ObjectVision/RSopen/wiki/Modelstructuur-op-hoofdlijnen#opnemen-meest-recente-ontwikkelingen"
+	, Descr = "Aangezien het startjaar van de simulaties in het model vaak niet samenvalt met de meest actuele invoerdata die voorhanden is bij bronhouders, is er meer informatie over de meest recente ontwikkelingen nodig. 
+				Voor de stand van wonen, werken en verblijfsrecreatie in het basisjaar wordt de BAG gebruikt, echter deze dataset wordt dagelijks geüpdatet. Oftewel, recente ontwikkelingen tussen startjaar en de 
+				datum van de meest recente BAG-versie in het model zijn al beschikbaar. Daarom worden tussen het startjaar en het eerste gemodelleerde zichtjaar deze recente bouwontwikkelingen meegenomen en 
+				hoeven daarmee niet meer gealloceerd te worden in het model. Daarnaast zit er in BAG ook al status-informatie voor ontwikkelingen in de nabije toekomst, panden die waarvoor een bouwvergunning 
+				verleend is, of de bouw al gestart is. Hiervan kan met grote zekerheid worden aangenomen dat deze gerealiseerd worden. Eveneens zijn er panden ofwel objecten die gesloopt zullen gaan worden. 
+				Een pand waarvoor een sloopvergunning verleend is zal zeer waarschijnlijk in de nabije toekomst gesloopt gaan worden en deze ontwikkeling wordt dan ook meegenomen in het eerstvolgende zichtjaar. 
+				Al deze informatie wordt toegepast in het eerste zichtjaar."
+{
+	// pas op: dat er nieuwbouw van bepaalde subsector heeft plaatsgevonden betekent niet dat betreffende subsector dominant is in een cel
+	attribute<Sector/xSubsector> SubSector_rel_sw_case (CompactedAdminDomain) :=
+		= uint8(#Sector/xSubsector/wo_Landbouw) > 0b  
+			? 'switch(
+				'+asList('case(/BaseData/StartState/BAG_nieuwbouw/'+Sector/xSubsector/wo_Landbouw/name+' > 0f, '+string(id(Sector/xSubsector/wo_Landbouw))+'[Sector/xSubsector])', ',')+'
+				, (0f/0f)[Sector/xSubsector]
+				)'
+			: 'const(null_f, CompactedAdminDomain, Sector/xSubsector)';
+		
+	attribute<Sector/xSubsector> SubSector_rel (CompactedAdminDomain) :=
+		=  uint8(#Sector/xSubsector/wo_Landbouw) > 0b //zijn er subsectoren die niet landbouw zijn?
+			? 'ArgMax_ifdefined(
+					'+asList('value(/BaseData/StartState/BAG_nieuwbouw/'+Sector/xSubsector/wo_Landbouw/name+', float32) > 0f 
+								? value(/BaseData/StartState/BAG_nieuwbouw/'+Sector/xSubsector/wo_Landbouw/name+', float32) 
+								: null_f'
+						, ',')+'
+				)[uint8]'
+			: 'const(null_b, CompactedAdminDomain, Sector/xSubsector)', Descr = "Bepaal de initiele subsector_rel op basis van BAGnieuwbouw. Door de argmax in de stand te bepalen.";
+	
+	// Issue #550: ken aan BAG-nieuwbouw cellen een representatief Ontwikkelpakket (OP) toe, zodat OP-afhankelijke
+	// indicatoren (o.a. groenwaarde/woningprijs) werken. Match op geobserveerde kenmerken: dominante WP4 (verplicht),
+	// dominante VSSH (gemeente-kans P_SH; voorkeur, niet hard), en dichtstbijzijnde OP qua dichtheid + woonoppervlakte
+	// per woning. De woning-AANTALLEN blijven uit de echte BAG-tellingen komen; deze OP-rel levert alleen de kenmerken.
+	container OPMatch_BAGnieuwbouw
+	: Descr = "Issue #550: OP-toekenning voor BAG-nieuwbouw cellen via kenmerk-match (WP4 + VSSH + dichtheid + woonoppervlakte)."
+	{
+		container n_perWP4 :=
+			for_each_nedv(
+				Classifications/Vastgoed/WP4/name
+				, '/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+					+ ' + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/count_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+					+ ' + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+				, CompactedAdminDomain
+				, Woning
+			), Descr = "Nieuwbouw-woningen per WP4 per cel (som van de drie nieuw-VBO sets).";
+
+		container opp_perWP4 :=
+			for_each_nedv(
+				Classifications/Vastgoed/WP4/name
+				, '/BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/Opp_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+					+ ' + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/Opp_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+					+ ' + /BaseData/StartState/BAG_nieuwbouw/CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/Opp_Per_CompactedAdminDomain_WP4/'+Classifications/Vastgoed/WP4/name
+				, CompactedAdminDomain
+				, meter2
+			), Descr = "Nieuwbouw woon-gebruiksoppervlak per WP4 per cel (som van de drie nieuw-VBO sets).";
+
+		attribute<Woning> n_tot   (CompactedAdminDomain) := ='add('+asItemList('n_perWP4/'+Classifications/Vastgoed/WP4/name)+')', Descr = "Totaal aantal nieuwbouw-woningen per cel.";
+		attribute<meter2> opp_tot (CompactedAdminDomain) := ='add('+asItemList('opp_perWP4/'+Classifications/Vastgoed/WP4/name)+')', Descr = "Totaal nieuwbouw woon-gebruiksoppervlak per cel.";
+
+		attribute<Classifications/Vastgoed/WP4> domWP4 (CompactedAdminDomain) := ='ArgMax_ifdefined('+asItemList('n_perWP4/'+Classifications/Vastgoed/WP4/name+' > 0[Woning] ? n_perWP4/'+Classifications/Vastgoed/WP4/name+'[float32] : null_f')+')[Classifications/Vastgoed/WP4]'
+			, Descr = "Dominante WP4 op basis van aantal nieuwbouw-woningen (null als geen nieuwbouw).";
+
+		attribute<Classifications/Vastgoed/VSSH> domVSSH (CompactedAdminDomain) :=
+			/BaseData/StartState/Verdeling_VSSH/per_Gemeente/P_SH_perCompactedAdminDomain > 0.5f
+				? Classifications/Vastgoed/VSSH/V/SocialeHuur
+				: Classifications/Vastgoed/VSSH/V/VrijeSector
+			, Descr = "Dominante VSSH via gemeente-kans sociale huur (consistent met BAG_nieuwbouw/Wonen).";
+
+		attribute<float32>   cel_dichtheid (CompactedAdminDomain) := n_tot[float32] / AdminDomain/NrHaPerCell[float32], Descr = "Geobserveerde woningdichtheid per cel (woningen/ha, als float32 voor vergelijking met OP/Dichtheid).";
+		attribute<float32>   cel_opp       (CompactedAdminDomain) := opp_tot[float32] / n_tot[float32], Descr = "Geobserveerde gemiddelde woonoppervlakte per woning (m2).";
+
+		attribute<OP> OP_rel (CompactedAdminDomain) :=
+			= 'n_tot > 0[Woning] && IsDefined(../SubSector_rel) 
+				? ArgMax_ifdefined('
+					+ asItemList(
+						'OP/WP4_rel['+string(id(OP))+'[OP]] == domWP4'
+						' ? 0f - ( (OP/VSSH_rel['+string(id(OP))+'[OP]] == domVSSH ? 0f : 1000000f)'
+						' + abs((OP/Dichtheid['+string(id(OP))+'[OP]][float32] - cel_dichtheid[float32]) / cel_dichtheid[float32])'
+						' + (cel_opp > 0f ? abs((OP/Woonoppervlakte_woning['+string(id(OP))+'[OP]][float32] - cel_opp) / cel_opp) : 0f) )'
+						' : null_f'
+					)+ ')[OP] 
+				: const(0b/0b, CompactedAdminDomain, OP)'
+			, Descr = "Best passend OP: zelfde WP4 (verplicht), voorkeur zelfde VSSH, dan minimale relatieve afstand in dichtheid + woonoppervlakte/woning. Undefined waar geen nieuwbouw.
+
+				De tweede voorwaarde bewaakt de invariant dat een gedefinieerde OP_rel een gedefinieerde SubSector_rel impliceert, waar de rest van het model op steunt. De allocatie houdt die invariant zelf in stand: per_OP en per_SectorxSubsector hangen in Iter_Allocatie allebei aan dezelfde Beschikbaar en dezelfde groepsgroottetoets, en Beschikbaar_Init eist een lege SubSector_rel. De startstand was de enige plek die hem brak, want n_tot is de bruto woningtoevoeging per WP4 terwijl SubSector_rel een ArgMax is over de netto subsectorkolommen van BAG_nieuwbouw, inclusief de sloopaftrekken. Een cel kan bruto nieuwbouw hebben terwijl geen enkele netto kolom boven nul uitkomt; in Y2040 van WLO_hoog_BAU waren dat er 59.
+
+				Zo'n cel is voor de allocatie gewoon beschikbaar, want die kijkt naar SubSector_rel. Kreeg zij toch een proxypakket, dan bleef dat door de eerste-wint in Iter_T staan terwijl de voetafdruk het nieuw gealloceerde pakket volgde, en wees de weggeschreven stand met twee velden naar twee verschillende pakketten. Dat was het verschil van 12,499992 m2 in de equivalentietoets van 2026-08-28, precies twee pakketten uit elkaar (gebouwvoetafdruk 2000 tegen 1800,0001 per hectare maal de celgrootte van 0,0625 ha). De vlag IsBAGnieuwbouwWonen hieronder leest deze OP_rel en versmalt dus vanzelf mee, zodat vlag en pakket gekoppeld blijven.";
+
+		attribute<Bool> IsBAGnieuwbouwWonen (CompactedAdminDomain) := IsDefined(OP_rel), Descr = "Vlag voor BAG-nieuwbouw wonen-cellen, los van OP_rel. Gebruikt om bestaande indicatoren (verharding/waterberging) hun BAG-fallback te laten behouden nu BAG-cellen wel een OP_rel hebben (issue #550).";
+	}
+
+	attribute<OP> OP_rel (CompactedAdminDomain) := OPMatch_BAGnieuwbouw/OP_rel, Descr = "Issue #550: OP voor BAG-nieuwbouw cellen via kenmerk-match; undefined waar geen nieuwbouw (wordt later door allocatie gevuld via MakeDefined in Iter_T).";
+	
+	container PandFootprint :=
+		for_each_nedv(
+			Jobs6/name
+			,'StartState/PandFootprint/'+Jobs6/name+' + /BaseData/StartState/BAG_nieuwbouw/PandFootprint/'+Jobs6/name+' > AdminDomain/NrMeter2PerCell[m2PandFootprint]
+				? min_elem(max_elem(StartState/PandFootprint/'+Jobs6/name+' - (StartState/PandFootprint/'+Jobs6/name+' + /BaseData/StartState/BAG_nieuwbouw/PandFootprint/'+Jobs6/name+' - AdminDomain/NrMeter2PerCell[m2PandFootprint]) + /BaseData/StartState/BAG_nieuwbouw/PandFootprint/'+Jobs6/name+', 0[m2PandFootprint]), AdminDomain/NrMeter2PerCell[m2PandFootprint])
+				: min_elem(max_elem(StartState/PandFootprint/'+Jobs6/name+' + /BaseData/StartState/BAG_nieuwbouw/PandFootprint/'+Jobs6/name+', 0[m2PandFootprint]), AdminDomain/NrMeter2PerCell[m2PandFootprint])'
+			, CompactedAdminDomain
+			, m2PandFootprint
+		), Descr = "voor werk-subsector de pandfootprint uit de start situatie plus eventuele toevoegen uit BAGnieuwbouw. Als deze som groter is dan de cellsize, dan 'corrigeert' BAG-nieuwbouw de start situatie. En de stand kan niet negatief zijn (en door afronding soms weer groter dan cellsize, dus ook min_elem)";
+	
+	container Wonen
+	{
+		attribute<Woning>          Totaal        (CompactedAdminDomain) := ='add('+asItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
+		attribute<m2PandFootprint> Footprint     (CompactedAdminDomain) := 
+			StartState/Wonen/Footprint + /BaseData/StartState/BAG_nieuwbouw/Wonen/Footprint > AdminDomain/NrMeter2PerCell[m2PandFootprint]
+				? min_elem(max_elem(StartState/Wonen/Footprint - (StartState/Wonen/Footprint + /BaseData/StartState/BAG_nieuwbouw/Wonen/Footprint - AdminDomain/NrMeter2PerCell[m2PandFootprint]) + /BaseData/StartState/BAG_nieuwbouw/Wonen/Footprint, 0[m2PandFootprint]), AdminDomain/NrMeter2PerCell[m2PandFootprint])
+				: min_elem(max_elem(StartState/Wonen/Footprint + /BaseData/StartState/BAG_nieuwbouw/Wonen/Footprint, 0[m2PandFootprint]), AdminDomain/NrMeter2PerCell[m2PandFootprint]);
+	}
+
+	container Werken
+	{
+		attribute<Job>          Totaal        (CompactedAdminDomain) := ='add('+asItemList(Jobs6/name)+')';
+	}
+
+	container Wind
+	{
+		attribute<Yr>    jaartal_ingebruikname (CompactedAdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector 
+																				? 'IsDefined(StartState/Wind/jaartal_ingebruikname)
+																					? StartState/Wind/jaartal_ingebruikname
+																					: /BaseData/StartState/BAG_nieuwbouw/Wind/jaartal_ingebruikname'
+																				: '/BaseData/StartState/BAG_nieuwbouw/Wind/jaartal_ingebruikname';
+																				
+		attribute<Meter> MaxWerpafstandNom     (CompactedAdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector 
+																				? 'StartState/Wind/MaxWerpafstandNom' 
+																				: 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/StartState/StateBasisjaar/src/Wind/MaxWerpAfstandNom)';
+		attribute<Meter> Ashoogte              (CompactedAdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector 
+																				? 'StartState/Wind/Ashoogte' 
+																				: 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/StartState/StateBasisjaar/src/Wind/Ashoogte)';
+		attribute<Meter> Rotordiameter         (CompactedAdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector 
+																				? 'StartState/Wind/Rotordiameter' 
+																				: 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/StartState/StateBasisjaar/src/Wind/Rotordiameter)';
+	}
+	
+	container Landbouw := 
+		for_each_nedv(
+			LandbouwKlasses/name
+			, 'const(null_f,CompactedAdminDomain,ha)'
+			, CompactedAdminDomain
+			, ha
+		);
+}

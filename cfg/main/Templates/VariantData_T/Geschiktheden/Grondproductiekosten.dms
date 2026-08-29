@@ -1,0 +1,106 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Schatting van de grondproductiekosten voor verschillende bouwtypen op basis van een set van modelvarianten.
+// Drempelwaarde voor de p-waarde waaronder een coëfficiënt als significant wordt beschouwd. 1 als er anders
+// gebouwd moet worden ivm draagkracht of kwel, anders 0 Laadt via #include: C, T.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Grondproductiekosten : using = "/Geography"
+, Descr = "Schatting van de grondproductiekosten voor verschillende bouwtypen op basis van een set van modelvarianten."
+{
+	parameter<Float32> Significatie_threshold := /ModelParameters/Werken/Grondproductie_significatie_threshold, Descr = "Drempelwaarde voor de p-waarde waaronder een coëfficiënt als significant wordt beschouwd.";
+	
+	#include<C.dms>
+	
+	container ReadData := for_each_ne(C/GrondproductieModelVarianten/name, 'T/ReadData('+string(id(C/GrondproductieModelVarianten))+'[C/GrondproductieModelVarianten])')
+	{
+		container LocatieVariabelen
+		{
+			attribute<Float32> AndersBouwen         (AdminDomain) :=
+				= !VariantParameters/VariantK/BodemdalingkostenInSaldo[Variant_rel]
+					? '/SourceData/Bodem/DraagkrachtKwel/AndersBouwen[AdminDomain/rdc_100m_rel][float32]'
+					: 'const(0f, AdminDomain)'
+			, Descr = "1 als er anders gebouwd moet worden ivm draagkracht of kwel, anders 0. Sinds #505 op nul in de varianten waar BodemdalingkostenInSaldo aanstaat: de dummy blijft dan als variabele bestaan, zodat de rlookup naar de schattings-csv blijft kloppen, maar hij draagt niets meer bij omdat de coefficient met nul wordt vermenigvuldigd.
+
+						Deze naam is niet vrij te kiezen: hij is de sleutel waarmee C/GrondproductieVariabelen via rlookup de kolom
+						variabele uit de Fakton-schattingen van december 2019 opzoekt. Hernoemen hier zonder de CSV mee te
+						hernoemen breekt de koppeling stil, want een rlookup die niets vindt geeft null.
+
+						Verwar hem niet met het anders bouwen uit de landschapstypen, dat sinds #614 BouwregimeK en
+						BouwwijzeK heet. Dit is een landsdekkende expert-judgementkaart uit 2019 over draagkracht en kwel, en
+						hij werkt als kosten en niet als restrictie: coefficient 0,798 op BouwWoonrijp en 0,388 op PlanProces,
+						in een semi-log model, dus maal 2,22 respectievelijk 1,47 waar de dummy 1 is. Dat is het hele
+						bodemeffect in de grondproductiekosten. Zodra de kengetallen per inrichtingsalternatief uit #505
+						meedoen hoort deze term eruit, anders wordt de bodem twee keer beprijsd.";
+			attribute<Float32> AfstandLocatus       (AdminDomain) := (/SourceData/Vastgoed/AfstandLocatus_src = 0f ? 1f : /SourceData/Vastgoed/AfstandLocatus_src < 0f ? 50000f : /SourceData/Vastgoed/AfstandLocatus_src)[AdminDomain/rdc_100m_rel], Descr = "Afstand in meters tot de dichtstbijzijnde Locatus winkel (minimaal 1m, maximaal 50km)";
+			attribute<Float32> Kaveldichtheid       (AdminDomain) := /SourceData/Diversen/Per_AdminDomain/Kaveldichtheid[float32], Descr = "Aantal kavels per hectare in de buurt (1km) van de cel";
+			attribute<Float32> OmvangPlangebied     (AdminDomain) :=
+				(/SourceData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain
+					? /ModelParameters/Advanced/Minimum_alloc_group_size_Binnenstedelijk_Wonen
+					: /ModelParameters/Advanced/Minimum_alloc_group_size_Buitenstedelijk_Wonen
+				) / 1[ha], Descr = "Omvang van het plangebied in hectare, als invulling van de regressievariabele OmvangPlangebied. Gevuld met de minimale clusteromvang uit het geclusterd alloceren (#508), dus 0,4 ha binnen woonkern en 2 ha erbuiten: dat is het kleinste samenhangende gebied dat het model daadwerkelijk ontwikkelt. Stond eerder op NrHaPerCell, oftewel 0,0625 ha voor een cel van 25 bij 25 meter, wat geen plangebied is maar een gridcel. Let op dat dit een ondergrens is, dus voor de componenten met schaalvoordelen (PlanProces, coefficient -0,252) een bovengrens aan de kosten per hectare oplevert. Zie #505.";
+			attribute<min>     Reistijd5kInw        (AdminDomain) := convert(/SourceData/Diversen/Per_AdminDomain/Reistijd5kInw, min), Descr = "Reistijd in minuten naar 5.000 inwoners. De bron staat in seconden en werd ook als seconden aan de regressie gevoerd, terwijl de coefficient van -0,052 alleen als per minuut te lezen is. Met seconden liep de exponent naar -55 en viel de hele PlanProces-component weg: mediaan 22 eurocent per hectare binnen BBG. Zie #505.";
+		}
+	}
+	
+	container Calculations := 
+		for_each_ne(
+			C/Combi/name,
+			'T/CalculateCosts('+
+				string(id(C/Combi))+'[C/Combi],
+				ReadData/'+C/Combi/GrondproductieModelVarianten_name+'/ModelVariant,
+				ReadData/'+C/Combi/GrondproductieModelVarianten_name+'/ModelVariant/estimate,
+				ReadData/'+C/Combi/GrondproductieModelVarianten_name+'/ModelVariant/stderror,
+				ReadData/'+C/Combi/GrondproductieModelVarianten_name+'/ModelVariant/pvalue,'+
+				quote(C/Onzekerheid1/CalcStr[C/Onzekerheid/first_rel[C/Combi/second_rel]])+','+
+				quote(C/Onzekerheid2/name[C/Onzekerheid/second_rel[C/Combi/second_rel]])+
+			')'
+		), Descr = "Berekening van de grondproductiekosten voor elke combinatie van bouwtype en onzekerheidsscenario."
+	{
+		container Totaal :=
+			for_each_ind(
+				'nedv',
+				C/Onzekerheid/name,
+				replace(
+					'add('+asItemList(C/GrondproductieModelVarianten/name+'/@V@/Kosten')+')',
+					'@V@', C/Onzekerheid/name
+				),
+				AdminDomain, Eur_Ha
+			), Descr = "Totaal van de geschatte kosten over alle modelvarianten voor een combinatie van bouwtype en onzekerheidsscenario.";
+	}
+	
+	container Results :=
+		for_each_ind(
+			'nedvc'
+			,C/Combi/name
+			, 'Calculations/'+C/Combi/name+'/Kosten * /ModelParameters/Wonen/PrijsIndex_Bouwkosten_2017_naar_'+string(/ModelParameters/Model_StartYear)
+			, AdminDomain
+			, Eur_Ha
+			, 'Classified/'+C/Combi/name+'/Target_9K/ClassBreaks'
+		), Descr = "Schatting is dat kosten 2017 waren, dus opslag naar dat jaar."
+	{
+		container Statistics := for_each_ne(C/Combi/name, 'T/Statistics('+quote(C/Combi/GrondproductieModelVarianten_name)+','+string(C/Combi/second_rel)+'[C/Onzekerheid])'), Descr = "Berekening van de statistieken (mean, p10, p90) van de geschatte kosten per combinatie van bouwtype en onzekerheidsscenario.";
+		
+		container Totaal :=
+			for_each_ind(
+				'nedv'
+				,C/Onzekerheid/name
+				,replace(
+					'add('+asItemList(C/GrondproductieModelVarianten/name+'/@V@')+')'
+					,'@V@', C/Onzekerheid/name
+				)
+				,AdminDomain
+				, Eur_Ha
+			), Descr = "Totaal van de geschatte kosten over alle modelvarianten voor een onzekerheidsscenario.";
+	}
+	
+	#include<T.dms>
+}

@@ -1,0 +1,115 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Genereert het ontkoppelde aanvullingsbestand op de statische logistieke pandenset (stand 2021):
+// panden met bouwjaar vanaf het peiljaar die volgens BAG en LISA logistiek zijn. De regel en de
+// drempels zijn gekalibreerd tegen die set als ground truth via WritePrivData/LogistiekReplicatie
+// (nieuwbouwcohort, m2-precisie circa 0,8; voorraad-ratio 0,87). De condities lopen bewust NIET via
+// de gebruiksdoel-plus-machinerie: die hangt zelf aan IsLogistiekFunctie en zou circulair worden.
+// Het resultaat (alleen pand_bag_nr) wordt gelezen door SourceData/Vastgoed/Logistiek_panden_Aanvulling
+// wanneer ModelParameters/Advanced/BAG_LogistiekDynamisch aan staat.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container LogistiekAanvulling : using = "Units"
+, Descr = "Maakt de LISA-afgeleide aanvulling op de statische logistieke pandenset: nieuwbouw vanaf het peiljaar, ontkoppeld weggeschreven als pand_bag_nr-lijst"
+{
+	parameter<UInt32>  NefsPeiljaar      := 2021,  Descr = "Stand van de statische set; alleen panden met bouwjaar vanaf dit jaar komen voor aanvulling in aanmerking. Oudere panden zijn door de bronset beoordeeld; dat oordeel blijft leidend.";
+	parameter<Float32> MinKernAandeel    := 0.3f,  Descr = "Minimaal aandeel kern-logistieke banen (groothandel zonder handelsbemiddeling, plus vervoer, opslag en post) in het pand";
+	parameter<Float64> MinFootprint      := 500d,  Descr = "Ondergrens footprint in m2, gelijk aan de ondergrens van de bronset";
+	parameter<Float64> MinFootprint_Leeg := 2500d, Descr = "Ondergrens footprint in m2 voor panden zonder eigen vestiging (de nabijheidsregel)";
+	parameter<Float64> BufferAfstand     := 100d,  Descr = "Zoekafstand in meter vanaf de pandrand naar een kern-logistiek LISA-punt, voor panden zonder eigen vestiging. Vanaf de rand en niet vanaf de centroid: grote hallen hebben hun middelpunt ver van de rand. Op het nieuwbouwcohort van de replicatie-toets ruilt dit precisie voor recall (m2-precisie circa 0,75 bij m2-recall 0,75) en is de voorraadomvang vrijwel in balans, waar de centroid-variant de logistieke voorraad zo'n 19 procent onderschat.";
+
+	unit<UInt32> Pand := ='SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/pand'
+	, Descr = "Meest recente BAG-jaargang: de aanvulling dekt alle nieuwbouw tot en met dit jaar en geldt via pand_bag_nr ook voor eerdere jaargangen"
+	{
+		attribute<Bool> NietInBronset := !IsDefined(rlookup(pand_bag_nr, SourceData/Vastgoed/Logistiek_panden/pand_bag_nr)), Descr = "Buiten de volledige statische set, dus ook buiten de daar afgekeurde categorie XXL retail";
+		attribute<Bool> IsNieuw       := MakeDefined(uint32(Bouwjaar_trunc) >= NefsPeiljaar, false);
+		attribute<Bool> GeenWoon      := Counts/woon_VBOs == 0;
+		attribute<Bool> GrootGenoeg   := Footprint >= value(MinFootprint, m2PandFootprint);
+	}
+
+	unit<UInt32> vbo_j := ='SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/vbo'
+	, Descr = "Vbo-set van dezelfde jaargang, voor de doeltellingen op de ruwe BAG-gebruiksdoelen";
+
+	container DoelTellingen
+	: Descr = "Vbo-tellingen per pand op de ruwe BAG-gebruiksdoelen (vlag-onafhankelijk, in tegenstelling tot de gebruiksdoel-plus-afleiding). Herbouwt het doelfilter uit de replicatie-toets: industrie, gemengde utiliteit of geen vbo mag; een puur ander utiliteitsdoel (kantoor, winkel, bijeenkomst, e.d.) niet."
+	{
+		attribute<UInt32> n_industrie (Pand) := pcount(vbo_j/Per_Gebruiksdoel/industrie/select/gerelateerdPand/Pand_rel);
+		attribute<UInt32> n_anderdoel (Pand) :=
+			  pcount(vbo_j/Per_Gebruiksdoel/Kantoor/select/gerelateerdPand/Pand_rel)
+			+ pcount(vbo_j/Per_Gebruiksdoel/winkel/select/gerelateerdPand/Pand_rel)
+			+ pcount(vbo_j/Per_Gebruiksdoel/bijeenkomst/select/gerelateerdPand/Pand_rel)
+			+ pcount(vbo_j/Per_Gebruiksdoel/onderwijs/select/gerelateerdPand/Pand_rel)
+			+ pcount(vbo_j/Per_Gebruiksdoel/Gezondheidszorg/select/gerelateerdPand/Pand_rel)
+			+ pcount(vbo_j/Per_Gebruiksdoel/sport/select/gerelateerdPand/Pand_rel)
+			+ pcount(vbo_j/Per_Gebruiksdoel/logies/select/gerelateerdPand/Pand_rel)
+			+ pcount(vbo_j/Per_Gebruiksdoel/cel/select/gerelateerdPand/Pand_rel)
+			+ pcount(vbo_j/Per_Gebruiksdoel/overige_gebruiks/select/gerelateerdPand/Pand_rel);
+		attribute<Bool>   Doel_ok     (Pand) := n_anderdoel == 0 || n_industrie > 0;
+	}
+
+	unit<UInt32> LISA_pnt := WritePrivData/LISA/fss
+	, Descr = "LISA-punten van LISA_StartYear, met kern-logistiek-vlag en de koppeling naar de pandenset van BAG_RecentYear"
+	{
+		attribute<Bool> IsKernLogistiek :=
+			   (left(SBI08, 2) == '46' && left(SBI08, 3) != '461')
+			|| left(SBI08, 2) == '49' || left(SBI08, 2) == '50' || left(SBI08, 2) == '51'
+			|| left(SBI08, 2) == '52' || left(SBI08, 2) == '53'
+		, Descr = "Groothandel (46, zonder 461 handelsbemiddeling) en vervoer, opslag en post (49 t/m 53). Autohandel (45) telt bewust niet mee: dat bleek in de replicatie-toets de grootste bron van fout-positieven.";
+		attribute<Pand> Pand_rel := point_in_polygon(geometry, Pand/geometry);
+	}
+
+	attribute<UInt32> KernBanen   (Pand) := sum(uint32(LISA_pnt/IsKernLogistiek) * LISA_pnt/banen, LISA_pnt/Pand_rel);
+	attribute<UInt32> TotaalBanen (Pand) := sum(LISA_pnt/banen, LISA_pnt/Pand_rel);
+
+	attribute<Bool> Kandidaat    (Pand) := Pand/NietInBronset && Pand/IsNieuw && Pand/GeenWoon && Pand/GrootGenoeg && DoelTellingen/Doel_ok;
+	attribute<Bool> DirectLogistiek (Pand) := Kandidaat && TotaalBanen > 0 && float32(KernBanen) > MinKernAandeel * float32(TotaalBanen);
+
+	unit<UInt32> LegeKandidaten := select_with_org_rel(Kandidaat && TotaalBanen == 0 && Pand/Footprint >= value(MinFootprint_Leeg, m2PandFootprint))
+	, Descr = "Kandidaten zonder eigen vestiging: grote hallen waarvan het LISA-punt vaak op een buurpand staat. Een kern-logistiek punt binnen de zoekafstand telt als bewijs."
+	{
+		attribute<rdc_meter> geometry (poly)        := org_rel -> geometry;
+		attribute<rdc_meter> geometry_buffer (poly) := bg_buffer_multi_polygon(geometry, BufferAfstand, 4b);
+	}
+
+	unit<UInt32> KernPunten := select_with_org_rel(LISA_pnt/IsKernLogistiek)
+	{
+		attribute<rdc_meter>      geometry          := WritePrivData/LISA/fss/geometry[org_rel];
+		attribute<LegeKandidaten> LegeKandidaat_rel := point_in_polygon(geometry, LegeKandidaten/geometry_buffer);
+	}
+
+	attribute<Bool> NabijLogistiek (Pand) := recollect_by_cond(Kandidaat && TotaalBanen == 0 && Pand/Footprint >= value(MinFootprint_Leeg, m2PandFootprint), pcount(KernPunten/LegeKandidaat_rel) > 0, false);
+
+	unit<UInt32> Make_Aanvulling := select_with_org_rel(DirectLogistiek || NabijLogistiek)
+	,	StorageName    = "='%RSo_DataDir%/Vastgoed/LogistiekBuildings/LogistiekPandenAanvulling_BAG'+string(ModelParameters/BAG_RecentYear)+'_LISA'+string(ModelParameters/LISA_StartYear)+'_v1.mmd'"
+	,	IntegrityCheck = "lowercase(/ModelParameters/StudyArea) == lowercase('Nederland') && not(/ModelParameters/Advanced/BAG_LogistiekDynamisch)"
+	,	Descr          = "Schrijft de aanvulling ontkoppeld weg: alleen pand_bag_nr, geen banen of vestigingsgegevens. Genereren kan alleen met BAG_LogistiekDynamisch op FALSE (anders trekt het pand-domein het nog te schrijven bestand als supplier mee); de IntegrityCheck dwingt dat af. Publicatie van dit bestand behoeft een check op de LISA-licentievoorwaarden."
+	{
+		attribute<uint64> pand_bag_nr := org_rel -> pand_bag_nr;
+	}
+
+	parameter<String> Generate := 'Ready', ExplicitSuppliers = "Make_Aanvulling", Descr = "Triggerparameter om het aanvullingsbestand te genereren";
+
+	container Controle
+	: Descr = "Sluitende telling op de meest recente BAG-jaargang: met BAG_LogistiekDynamisch aan hoort n_union gelijk te zijn aan n_statisch plus n_aanvulling (de aanvulling bevat per constructie geen panden uit de statische set)"
+	{
+		parameter<UInt32> n_statisch   := ='sum_uint32(IsDefined(rlookup(SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/pand/pand_bag_nr, SourceData/Vastgoed/Logistiek_panden/Logistics/pand_bag_nr)))';
+		parameter<UInt32> n_aanvulling := ='sum_uint32(IsDefined(rlookup(SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/pand/pand_bag_nr, SourceData/Vastgoed/Logistiek_panden_Aanvulling/pand_bag_nr)))';
+		parameter<UInt32> n_union      := ='sum_uint32(SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/pand/IsLogistiekFunctie)';
+
+		unit<uint8> Export : NrOfRows = 3
+		,	StorageName = "%LocalDataProjDir%/Indicatoren/LogistiekAanvulling_Controle.csv"
+		,	StorageType = "gdalwrite.vect"
+		{
+			attribute<string> naam   : ['n_statisch', 'n_aanvulling', 'n_union'];
+			attribute<string> waarde := union_data(., string(n_statisch), string(n_aanvulling), string(n_union));
+		}
+	}
+}

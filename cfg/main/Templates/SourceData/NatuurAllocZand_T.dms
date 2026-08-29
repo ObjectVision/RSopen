@@ -1,0 +1,65 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Per variant de natte en de droge natuuropgave van het landschapstype Zand alloceren. Zie ObjectVision/RSopen#652.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template NatuurAllocZand_T
+: Descr = "Zet de opgave van een variant om in twee aanroepen van NatuurAlloc_T, een voor natte en een voor droge natuur, en voegt de uitkomsten samen.
+
+			Nat en droog zijn bewust twee losse allocaties en niet een met zes typen. De zeven sluiten elkaar uit,
+			want natte natuur mag alleen in de beekdalen en droge natuur alleen daarbuiten, en de claimregios
+			verschillen: natte natuur telt per deelgebied, droge natuur per deelgebied maal NNN-ring. Twee
+			allocaties over disjuncte gebieden geven dezelfde uitkomst als een gecombineerde en zijn beter te lezen.
+
+			De ingangen:
+			  Variant_name : alleen voor de beschrijvingen.
+			  NatKolom     : welk kolompaar uit ModelParameters/Natuur/NatClaims, BAU of NbS. NbSMax en
+			                 NbSGenuanceerd delen bij natte natuur een kolom, zo staat het in de aanlevering.
+			  DroogKolom   : welke kolom uit ModelParameters/Natuur/DroogClaims, BAU, NbSMax of NbSGenuanceerd.
+			  Src          : de container met de gedeelde kaarten, SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Zand."
+{
+	parameter<String> Variant_name;
+	parameter<String> NatKolom;
+	parameter<String> DroogKolom;
+	container         Src;
+	//
+
+	container Claim_Nat :=
+		for_each_nedv(
+			Src/NatType/name
+			, '(' + replace(Src/NatType/ClaimExpr, '@K@', NatKolom) + ')[Src/Claimregio_Nat/Deelgebied_rel]'
+			, Src/Claimregio_Nat
+			, Ha
+		), Descr = "Opgave natte natuur per deelgebied per type. De Excel geeft twee klassen, bos/moeras en vochtige graslanden; de eerste valt hier uiteen in broekbos en moeras volgens ModelParameters/Natuur/Aandeel_Broekbos.";
+
+	container Claim_Droog :=
+		for_each_nedv(
+			Src/DroogType/name
+			, '(/ModelParameters/Natuur/DroogClaims/' + DroogKolom + ' * /ModelParameters/Natuur/' + Src/DroogType/AandeelNaam + ')[Src/Claimregio_Droog/Claim_rel]'
+			, Src/Claimregio_Droog
+			, Ha
+		), Descr = "Opgave droge natuur per deelgebied maal ring per type. De Excel geeft geen splitsing naar subtype, dus die komt uit de vaste aandelen 60-30-10 uit #652.";
+
+	container Alloc_Nat   := /Templates/SourceData/NatuurAlloc_T('Zand nat '   + Variant_name, Src/NatType,   Src/Claimregio_Nat,   Claim_Nat,   Src/Geschiktheid_Nat);
+	container Alloc_Droog := /Templates/SourceData/NatuurAlloc_T('Zand droog ' + Variant_name, Src/DroogType, Src/Claimregio_Droog, Claim_Droog, Src/Geschiktheid_Droog);
+
+	attribute</Classifications/Grondgebruik/INL_Beheertype> INL_Beheertype_rel_AD (AdminDomain) := MakeDefined(Alloc_Nat/INL_Beheertype_rel_AD, Alloc_Droog/INL_Beheertype_rel_AD)
+	, Descr = "De twee allocaties samen. De volgorde doet er niet toe: de zeven sluiten elkaar uit, want natte natuur landt alleen binnen het beekdalherstel en droge natuur alleen daarbuiten.";
+
+	attribute</Classifications/Grondgebruik/NatuurType> NatuurTypen_rel_AD (AdminDomain) := /Classifications/Grondgebruik/INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+
+	attribute</Classifications/Grondgebruik/INL_Beheertype> ExoNatuur (AdminDomain) := MakeDefined(Alloc_Nat/ExoNatuur, Alloc_Droog/ExoNatuur);
+	attribute</Classifications/Grondgebruik/INL_Beheertype> ExoWater  (AdminDomain) := MakeDefined(Alloc_Nat/ExoWater,  Alloc_Droog/ExoWater), Descr = "Met de huidige zes beheertypen levert dit niets op: geen van de typen valt onder een NatuurType dat als water te boek staat. Staat hier voor als er open water bij komt.";
+
+	parameter<Ha> Claim_NL        := Alloc_Nat/Controle/Claim_NL        + Alloc_Droog/Controle/Claim_NL;
+	parameter<Ha> Gerealiseerd_NL := Alloc_Nat/Controle/Gerealiseerd_NL + Alloc_Droog/Controle/Gerealiseerd_NL;
+	parameter<Ha> Tekort_NL       := Claim_NL - Gerealiseerd_NL, Descr = "Het getal dat na een run gerapporteerd moet worden: hoeveel van de opgave niet in de zeef paste.";
+}

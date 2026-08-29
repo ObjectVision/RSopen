@@ -297,10 +297,13 @@ container RegioIndelingen
 				attribute<rdc_meter> geometry (poly) := union_data(.,BoudingBox_minus_NL[rdc_meter]);
 			}
 			
-			parameter<meter> x_min  := 0[meter];
-			parameter<meter> x_max  := 280000[meter]; 
-			parameter<meter> y_min  := 300000[meter];
-			parameter<meter> y_max  := 625000[meter];
+			// meter_f64 en niet meter: rdc_meter is een DPoint, en point_xy heeft dan float64-argumenten
+			// nodig. Met float32 vindt hij alleen de fpoint-variant en faalt de operatorkeuze. Zie de
+			// gelijke constructie in Geography/CreateTiles.dms, die daar wel al op float64 rekent.
+			parameter<meter_f64> x_min  := 0[meter_f64];
+			parameter<meter_f64> x_max  := 280000[meter_f64];
+			parameter<meter_f64> y_min  := 300000[meter_f64];
+			parameter<meter_f64> y_max  := 625000[meter_f64];
 			
 			parameter<rdc_meter> top_left     := point_xy(x_min,y_max, rdc_meter);
 			parameter<rdc_meter> top_right    := point_xy(x_max,y_max, rdc_meter);
@@ -326,6 +329,24 @@ container RegioIndelingen
 			attribute<StudyArea>         Per_CompactedAdminDomain (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Per_AdminDomain);
 			attribute<StudyArea>         Per_CompactedAllocDomain (CompactedAllocDomain) := collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, Per_AllocDomain);
 		}
+	}
+	
+	container Impl_BegrenzingBebouwdGebied
+	:	StorageName     = "='%RSo_DataDir%/RegioIndelingen/BegrenzingBebouwdGebied_'+ModelParameters/BegrenzingBebouwdGebied_jaar+'.gpkg'"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "True"
+	,	SyncMode        = "AllTables"
+	,	DialogData      = "rdc_meter_base"
+	,	KeepData        = "TRUE"
+	,	Descr           = "Begrenzing bebouwd gebied, eigen afleiding in het project BegrenzingBebouwdGebied. Vervangt het VROM-raster uit 2003 op 100 meter als afbakening van bestaand bebouwd gebied.";
+
+	unit<UInt32>  BegrenzingBebouwdGebied := Impl_BegrenzingBebouwdGebied/Export_gpkg
+	, Descr = "Bebouwd gebied per peiljaar, als vlakken op volle resolutie. Het peiljaar staat in ModelParameters/BegrenzingBebouwdGebied_jaar."
+	{
+		attribute<rdc_meter> geometry        (poly)        := Impl_BegrenzingBebouwdGebied/Export_gpkg/geometry[rdc_meter];
+		attribute<float64>   area_ha                       := Impl_BegrenzingBebouwdGebied/Export_gpkg/area_ha;
+		attribute<.>         Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain), Descr = "Rechtstreeks op AdminDomain, niet via AllocDomain, zodat de resolutie van de begrenzing behouden blijft.";
+		attribute<Bool>      Is_BebouwdGebied(AdminDomain) := IsDefined(Per_AdminDomain);
 	}
 	
 	unit<UInt32>  NVM := Impl/Read_NVM_2011_COROP2022Begrenzing_shp/ZonderBuitengebied
@@ -398,11 +419,11 @@ container RegioIndelingen
 		
 		container Relaties
 		{
-			attribute<..>                              LMSSubzone (..) := id(..);
+			attribute<..>                              LMSSubzone   (..) := id(..);
 			attribute<CBS/Y2024/Gemeente>              Gemeente2024 (..) := point_in_polygon(centroid_or_mid(../geometry), CBS/Y2024/Gemeente/geometry_base);
-			attribute<RegioIndelingen/NVM>             NVM (..) := point_in_polygon(centroid_or_mid(../geometry), RegioIndelingen/NVM/geometry);
-			attribute<CBS/last/corop>                  COROP (..) := point_in_polygon(centroid_or_mid(../geometry), CBS/last/corop/geometry);
-			attribute<Geography/RegioIndelingen/NL>    NL (..) := point_in_polygon(centroid_or_mid(../geometry), RegioIndelingen/NL/geometry);
+			attribute<RegioIndelingen/NVM>             NVM          (..) := point_in_polygon(centroid_or_mid(../geometry_rd), RegioIndelingen/NVM/geometry);
+			attribute<CBS/last/corop>                  COROP        (..) := point_in_polygon(centroid_or_mid(../geometry_rd), CBS/last/corop/geometry);
+			attribute<RegioIndelingen/NL>              NL           (..) := point_in_polygon(centroid_or_mid(../geometry_rd), RegioIndelingen/NL/geometry);
 		}
 		
 		container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
@@ -485,59 +506,41 @@ container RegioIndelingen
 		attribute<.>         Per_CompactedAdminDomain (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Per_AdminDomain);
 		
 		container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+	}
+
+	unit<UInt32> Waterbergingsregio := union_unit(impl/Waterbergingsregios/Read_Deelgebieden_shp, impl/Waterbergingsregios/RestVanNederland)
+	, Descr = "Allocatie-indeling voor de sector Waterberging: de acht veen-deelgebieden waarvoor Deltares een waterbergingsopgave levert, plus een restregio die de rest van Nederland dekt en claim 0 krijgt (ObjectVision/RSopen#575). De restregio maakt de indeling landsdekkend; zonder die regio zouden cellen buiten het veen geen allocatieregio hebben."
+	, DialogData = "geometry"
+	{
+		attribute<rdc_meter> geometry                      (poly) := union_data(., impl/Waterbergingsregios/Read_Deelgebieden_shp/geometry, impl/Waterbergingsregios/RestVanNederland/geometry);
+		attribute<string>    label                                := union_data(., impl/Waterbergingsregios/Read_Deelgebieden_shp/label,    impl/Waterbergingsregios/RestVanNederland/label), DialogType = "LabelText";
+		attribute<string>    name                                 := AsItemName(label);
+		attribute<bool>      IsRestRegio                          := id(.) == RestRegio_rel;
 		
-		attribute<meter2>   veen_opp        := switch(
-													case(id(.) ==  v/Waterschap_Hollandse_Delta, 7764375[meter2])
-													, case(id(.) ==  v/Waterschap_Aa_en_Maas, 21778124[meter2])
-													, case(id(.) ==  v/Hoogheemraadschap_van_Delfland, 23890000[meter2])
-													, case(id(.) ==  v/Wetterskip_Fryslân, 585316864[meter2])
-													, case(id(.) ==  v/Waterschap_Rivierenland, 174578128[meter2])
-													, case(id(.) ==  v/Waterschap_Noorderzijlvest, 82218128[meter2])
-													, case(id(.) ==  v/Waterschap_Rijn_en_IJssel, 7912500[meter2])
-													, case(id(.) ==  v/Waterschap_Vallei_en_Veluwe, 76515000[meter2])
-													, case(id(.) ==  v/Waterschap_Vechtstromen, 145703744[meter2])
-													, case(id(.) ==  v/Waterschap_Zuiderzeeland, 23675624[meter2])
-													, case(id(.) ==  v/Waterschap_De_Dommel, 9460000[meter2])
-													, case(id(.) ==  v/Waterschap_Amstel_Gooi_en_Vecht, 214664368[meter2])
-													, case(id(.) ==  v/Waterschap_Limburg, 22447500[meter2])
-													, case(id(.) ==  v/Waterschap_Brabantse_Delta, 21445000[meter2])
-													, case(id(.) ==  v/Waterschap_Scheldestromen, 3371875[meter2])
-													, case(id(.) ==  v/Waterschap_Hunze_en_Aa_s, 215687504[meter2])
-													, case(id(.) ==  v/Hoogheemraadschap_Hollands_Noorderkwartier, 246795632[meter2])
-													, case(id(.) ==  v/Hoogheemraadschap_De_Stichtse_Rijnlanden, 160870000[meter2])
-													, case(id(.) ==  v/Hoogheemraadschap_van_Schieland_en_de_Krimpenerwaard, 143093120[meter2])
-													, case(id(.) ==  v/Hoogheemraadschap_van_Rijnland, 196681248[meter2])
-													, case(id(.) ==  v/Waterschap_Drents_Overijsselse_Delta, 340382496[meter2])
-													, null_f
-												), Descr = "obv sum_uint32(/SourceData/Bodem/BOFEK/IsVeen_grid, per_AdminDomain)[float32] * AdminDomain/NrMeter2PerCell";
-		// attribute<meter2>    veen_opp        := sum_uint32(/SourceData/Bodem/BOFEK/IsVeen_grid, per_AdminDomain)[float32] * AdminDomain/NrMeter2PerCell;
- 
-		attribute<meter>   onderwater_drainage_flux := switch(
-													  case(id(.) ==  v/Waterschap_Hollandse_Delta, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Aa_en_Maas, null_f[meter])
-													, case(id(.) ==  v/Hoogheemraadschap_van_Delfland, 0.013[meter])
-													, case(id(.) ==  v/Wetterskip_Fryslân, 0.060[meter])
-													, case(id(.) ==  v/Waterschap_Rivierenland, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Noorderzijlvest, 0.013[meter])
-													, case(id(.) ==  v/Waterschap_Rijn_en_IJssel, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Vallei_en_Veluwe, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Vechtstromen, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Zuiderzeeland, null_f[meter])
-													, case(id(.) ==  v/Waterschap_De_Dommel, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Amstel_Gooi_en_Vecht, 0.088[meter])
-													, case(id(.) ==  v/Waterschap_Limburg, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Brabantse_Delta, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Scheldestromen, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Hunze_en_Aa_s, 0.406[meter])
-													, case(id(.) ==  v/Hoogheemraadschap_Hollands_Noorderkwartier, null_f[meter])
-													, case(id(.) ==  v/Hoogheemraadschap_De_Stichtse_Rijnlanden, null_f[meter])
-													, case(id(.) ==  v/Hoogheemraadschap_van_Schieland_en_de_Krimpenerwaard, null_f[meter])
-													, case(id(.) ==  v/Hoogheemraadschap_van_Rijnland, null_f[meter])
-													, case(id(.) ==  v/Waterschap_Drents_Overijsselse_Delta, 0.276[meter])
-													, null_f
-												), Descr = "obv figuur 14 uit STOWA_2024-41_waterkwantiteit-in-het-veen.pdf";
-												
-		attribute<meter3>   waterbergingsvraag     := veen_opp * onderwater_drainage_flux;
+		parameter<.>         RestRegio_rel                        := value(#impl/Waterbergingsregios/Read_Deelgebieden_shp, .), Descr = "Index van de restregio: die staat achter de deelgebieden in de union_unit.";
+		
+		attribute<UInt32>    Deelgebied_rel  (AllocDomain) := poly2grid(impl/Waterbergingsregios/Read_Deelgebieden_shp/geometry, AllocDomain)[UInt32], Descr = "Alleen de acht deelgebieden gerasterd; cellen daarbuiten zijn null.";
+		attribute<.>         Deelgebied_regio_rel (AllocDomain) := value(Deelgebied_rel, .), Descr = "Deelgebied_rel omgezet naar deze unit; buiten de deelgebieden nog steeds null.";
+		
+		attribute<.>         Per_AllocDomain                   (AllocDomain) :=
+			IsDefined(NL/Per_AllocDomain)
+			?	MakeDefined(Deelgebied_regio_rel, const(RestRegio_rel, AllocDomain))
+			:	Deelgebied_regio_rel
+		, Descr = "Cellen binnen een deelgebied krijgen dat deelgebied, de overige Nederlandse cellen de restregio. Buiten Nederland blijft de toewijzing null, net als bij de andere regio-indelingen. Zo opgebouwd in plaats van poly2grid over de restgeometrie, omdat die geometrie een groot vlak met acht gaten is en de toewijzing op de randen dan van de precisie van geos afhangt.";
+		attribute<.>         Per_AdminDomain                   (AdminDomain) := Per_AllocDomain[AdminDomain/AllocDomain_rel];
+		attribute<.>         Per_CompactedAdminDomain (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Per_AdminDomain);
+		attribute<.>         Per_CompactedAllocDomain (CompactedAllocDomain) := collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, Per_AllocDomain);
+		
+		container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+		
+		unit<UInt32> StudyArea := select_with_org_rel(IsDefined(point_in_polygon(centroid_or_mid(geometry), Geography/rdc_meter/geometry)))
+		{
+			attribute<rdc_meter> geometry                                 (poly) := ../geometry[org_rel];
+			attribute<.>         Per_AdminDomain                   (AdminDomain) := Per_AllocDomain[AdminDomain/AllocDomain_rel];
+			attribute<StudyArea> Per_AllocDomain                   (AllocDomain) := poly2grid(geometry, AllocDomain);
+			attribute<StudyArea> Per_CompactedAdminDomain (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Per_AdminDomain);
+			attribute<StudyArea> Per_CompactedAllocDomain (CompactedAllocDomain) := collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, Per_AllocDomain);
+		}
 	}
 
 	container Landschappen
@@ -546,28 +549,31 @@ container RegioIndelingen
 		:	StorageName     = "%RSo_DataDir%/RegioIndelingen/Landschapsindelingen/Begrenzing laagveengebied.shp"
 		,	StorageType     = "gdal.vect"
 		,	StorageReadOnly = "True"
-		,	Descr           = ""
+		,	Descr           = "Grove omhullende van het laagveenlandschap: twee polygonen van 25 en 21 punten, samen ruim 1,5 miljoen ha. Overlapt de omhullenden van de andere landschappen fors, dus niet geschikt als exclusieve indeling."
 		,	DialogData      = "rdc_meter"
 		{
-
+			attribute<.>    Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+			attribute<bool> IsGebied        (AdminDomain) := IsDefined(Per_AdminDomain);
 		}
 		unit<UInt32> Rivierengebied
 		:	StorageName     = "%RSo_DataDir%/RegioIndelingen/Landschapsindelingen/Begrenzing rivierengebied.shp"
 		,	StorageType     = "gdal.vect"
 		,	StorageReadOnly = "True"
-		,	Descr           = ""
+		,	Descr           = "Grove omhullende van het rivierenlandschap: een polygoon van 275 punten en ruim 344.000 ha. Zie Rivierengebied_500m_buffer voor de fijnere studiegebiedbegrenzing."
 		,	DialogData      = "rdc_meter"
 		{
-		
+			attribute<.>    Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+			attribute<bool> IsGebied        (AdminDomain) := IsDefined(Per_AdminDomain);
 		}
 		unit<UInt32> Zandgebied
 		:	StorageName     = "%RSo_DataDir%/RegioIndelingen/Landschapsindelingen/Begrenzing zandgebied.shp"
 		,	StorageType     = "gdal.vect"
 		,	StorageReadOnly = "True"
-		,	Descr           = ""
+		,	Descr           = "Grove omhullende van het zandlandschap: een polygoon van 47 punten en ruim 3 miljoen ha. Bedoeld om landschappen ruwweg uit elkaar te houden, niet als scherpe grens."
 		,	DialogData      = "rdc_meter"
 		{
-		
+			attribute<.>    Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+			attribute<bool> IsGebied        (AdminDomain) := IsDefined(Per_AdminDomain);
 		}
 		
 		unit<UInt32> Kustgebied

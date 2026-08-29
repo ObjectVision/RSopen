@@ -53,12 +53,48 @@ container BAG_nieuwbouw : using = "Classifications"
 	
 	attribute<Bool> IsNieuwVBO_TussenModelenRecentJaar (BAG_RecentsteJaar_vbo_voorraad) := !IsDefined(rlookup(BAG_RecentsteJaar_vbo_voorraad/vbo_bag_nr, BAG_ModelJaar_vbo_voorraad/vbo_bag_nr)), Descr = "";
 	attribute<Bool> IsWegVBO_TussenModelenRecentJaar       (BAG_ModelJaar_vbo_voorraad) := !IsDefined(rlookup(BAG_ModelJaar_vbo_voorraad/vbo_bag_nr, BAG_RecentsteJaar_vbo_voorraad/vbo_bag_nr)), Descr = "";
-	attribute<Bool> IsNieuwVBO_NaRecentJaarWelActief            (BAG_RecentsteJaar_vbo) := BAG_RecentsteJaar_vbo/status_rel == vbo_status/V/Verblijfsobject_gevormd, Descr = "";
-	attribute<Bool> IsNieuwVBO_NaRecentJaar            (BAG_RecentsteJaar_vbo_toekomst) := !IsDefined(rlookup(BAG_RecentsteJaar_vbo_toekomst/vbo_bag_nr, BAG_RecentsteJaar_vbo_voorraad/vbo_bag_nr)), Descr = "Alle objecten in toekomstset die nog niet in de voorraad set zaten, moeten wel nieuw toegevoegd zijn. Later kijken wat daarvan de status is.";
-	attribute<Bool> IsWegVBO_NaRecentJaar              (BAG_RecentsteJaar_vbo_toekomst) := IsDefined(rlookup(BAG_RecentsteJaar_vbo_toekomst/vbo_bag_nr, BAG_RecentsteJaar_vbo_voorraad/vbo_bag_nr)) && vbo_status/IsIngetrokken[BAG_RecentsteJaar_vbo_toekomst/status_rel], Descr = "Alle objecten die in toekomstset zitten met onttrekkingstatus, en voorraad waren.";
+	attribute<Bool> IsNieuwVBO_NaRecentJaarWelActief            (BAG_RecentsteJaar_vbo) := BAG_RecentsteJaar_vbo/status_rel == vbo_status/V/Verblijfsobject_gevormd
+																						&& BAG_RecentsteJaar_vbo/Begindatum >= /ModelParameters/Advanced/PijplijnOndergrensDatum
+	, Descr = "Verblijfsobjecten die op de peildatum de status gevormd dragen, dus de pijplijn die nog voorraad moet worden. De ondergrens op de begindatum houdt voorkomens buiten die al jaren stilliggen; zie ModelParameters/Advanced/MaxLeeftijdPijplijn voor de meting waarop die grens rust."
+	, IntegrityCheck = "all(!this || BAG_RecentsteJaar_vbo/Begindatum >= /ModelParameters/Advanced/PijplijnOndergrensDatum)";
+	attribute<Bool> IsNieuwVBO_NaRecentJaar_Kandidaat  (BAG_RecentsteJaar_vbo_toekomst) := !IsDefined(rlookup(BAG_RecentsteJaar_vbo_toekomst/vbo_bag_nr, BAG_RecentsteJaar_vbo_voorraad/vbo_bag_nr))
+																						&& !IsDefined(rlookup(BAG_RecentsteJaar_vbo_toekomst/vbo_bag_nr, NieuwVBO_NaRecentJaarWelActief/vbo_bag_nr))
+																						&& !vbo_status/IsIngetrokken[BAG_RecentsteJaar_vbo_toekomst/status_rel]
+	, Descr = "Alle objecten in de toekomstset die nog niet in de voorraadset zaten, dus nieuw toegevoegd.
+				Twee voorwaarden erbij. Een object dat op de peildatum al de status gevormd had, zit al in NieuwVBO_NaRecentJaarWelActief en telde daarvoor twee keer mee zodra het daarna in gebruik werd genomen. En een toekomstvoorkomen met een ingetrokken status (niet gerealiseerd, ingetrokken, ten onrechte opgevoerd) zegt juist dat er niets komt; dat telde als nieuwbouw en kon er nooit meer uit, want de weg-tegenhanger eist lidmaatschap van de voorraad.
+
+				Dit is de kandidaatvlag; IsNieuwVBO_NaRecentJaar hieronder houdt daar per object nog maar een voorkomen van over.";
+
+	unit<UInt32> NieuwVBO_NaRecentJaar_Ontdubbeld := select_with_org_rel(IsNieuwVBO_NaRecentJaar_Kandidaat)
+	, Descr = "Hulpset om per object een voorkomen over te houden. De toekomstset bevat voorkomens en geen objecten: elke mutatie sinds de peildatum is een eigen rij, en zonder ontdubbeling telt een object dat eerst wordt gevormd en daarna in gebruik genomen twee keer mee."
+	{
+		attribute<uint64> vbo_bag_nr := org_rel -> vbo_bag_nr;
+		attribute<Bool>   IsEerste   := id(.) == rlookup(vbo_bag_nr, vbo_bag_nr), Descr = "rlookup geeft per waarde de eerste rij met diezelfde waarde, dus dit is waar op precies een rij per bag-nummer.";
+	}
+
+	attribute<Bool> IsNieuwVBO_NaRecentJaar           (BAG_RecentsteJaar_vbo_toekomst) := MakeDefined(recollect_by_cond(IsNieuwVBO_NaRecentJaar_Kandidaat, NieuwVBO_NaRecentJaar_Ontdubbeld/IsEerste), FALSE)
+	, Descr = "De kandidaten, ontdubbeld naar een voorkomen per object."
+	, IntegrityCheck = "sum(uint32(this && IsDefined(rlookup(BAG_RecentsteJaar_vbo_toekomst/vbo_bag_nr, NieuwVBO_NaRecentJaarWelActief/vbo_bag_nr)))) == 0"; //geen overlap met de pijplijnroute; bewaakt de reparatie uit #703 tegen stille terugval
+	attribute<Bool> IsWegVBO_NaRecentJaar_Kandidaat    (BAG_RecentsteJaar_vbo_toekomst) := IsDefined(rlookup(BAG_RecentsteJaar_vbo_toekomst/vbo_bag_nr, BAG_RecentsteJaar_vbo_voorraad/vbo_bag_nr)) && vbo_status/IsIngetrokken[BAG_RecentsteJaar_vbo_toekomst/status_rel], Descr = "Alle objecten die in de toekomstset zitten met een onttrekkingsstatus en voorraad waren. Kandidaatvlag; de ontdubbeling gebeurt hieronder.";
+
+	unit<UInt32> WegVBO_NaRecentJaar_Ontdubbeld := select_with_org_rel(IsWegVBO_NaRecentJaar_Kandidaat)
+	, Descr = "Zelfde ontdubbeling als aan de nieuw-kant. Een object met twee ingetrokken voorkomens, bijvoorbeeld eerst ingetrokken en daarna ten onrechte opgevoerd, werd twee keer afgetrokken. Ontdubbelen aan een kant alleen zou het saldo kantelen, dus dit hoort samen met de nieuw-kant te gebeuren."
+	{
+		attribute<uint64> vbo_bag_nr := org_rel -> vbo_bag_nr;
+		attribute<Bool>   IsEerste   := id(.) == rlookup(vbo_bag_nr, vbo_bag_nr);
+	}
+
+	attribute<Bool> IsWegVBO_NaRecentJaar             (BAG_RecentsteJaar_vbo_toekomst) := MakeDefined(recollect_by_cond(IsWegVBO_NaRecentJaar_Kandidaat, WegVBO_NaRecentJaar_Ontdubbeld/IsEerste), FALSE)
+	, Descr = "De kandidaten, ontdubbeld naar een voorkomen per object.";
 	
-	attribute<Bool> IsNieuwPand_NaRecentJaarWelActief          (BAG_RecentsteJaar_pand) := pand_status/WordtGebouwd[BAG_RecentsteJaar_pand/status_rel], Descr = "alle panden, die op meest recente datum de status bouw gestart of vergunning verleend hebben, en dus binnenkort voorraad gaan worden.";
-	attribute<Bool> IsNieuwPand_NaRecentJaar          (BAG_RecentsteJaar_pand_toekomst) := !IsDefined(rlookup(BAG_RecentsteJaar_pand_toekomst/pand_bag_nr, BAG_RecentsteJaar_pand_voorraad/pand_bag_nr)), Descr = "alle panden, die op meest recente datum de status bouw gestart of vergunning verleend hebben, en dus binnenkort voorraad gaan worden.";
+	attribute<Bool> IsNieuwPand_NaRecentJaarWelActief          (BAG_RecentsteJaar_pand) := pand_status/WordtGebouwd[BAG_RecentsteJaar_pand/status_rel]
+																						&& BAG_RecentsteJaar_pand/Begindatum >= /ModelParameters/Advanced/PijplijnOndergrensDatum
+	, Descr = "Alle panden die op de peildatum de status bouw gestart of bouwvergunning verleend hebben en dus binnenkort voorraad worden. Zelfde ondergrens op de begindatum als bij de verblijfsobjecten.";
+	attribute<Bool> IsNieuwPand_NaRecentJaar          (BAG_RecentsteJaar_pand_toekomst) := !IsDefined(rlookup(BAG_RecentsteJaar_pand_toekomst/pand_bag_nr, BAG_RecentsteJaar_pand_voorraad/pand_bag_nr))
+																						&& !IsDefined(rlookup(BAG_RecentsteJaar_pand_toekomst/pand_bag_nr, NieuwPand_NaRecentJaarWelActief/pand_bag_nr))
+																						&& !pand_status/IsIngetrokken[BAG_RecentsteJaar_pand_toekomst/status_rel]
+	, Descr = "Alle panden in de toekomstset die nog niet in de voorraad zaten. Dezelfde twee voorwaarden als bij de verblijfsobjecten.
+				De overlap met NieuwPand_NaRecentJaarWelActief was gegarandeerd en niet toevallig: WordtGebouwd en IsVoorraad sluiten elkaar uit, dus de voorraadtoets hierboven kan voor een pand in aanbouw nooit aanslaan. Beide pandensets verdeelden vervolgens hun volledige voetafdruk, zodat zo'n pand twee keer als nieuwbouw in de boeken kwam.";
 	attribute<Bool> IsWegPand_NaRecentJaar            (BAG_RecentsteJaar_pand_toekomst) := pand_status/IsIngetrokken[BAG_RecentsteJaar_pand_toekomst/status_rel], Descr = "alle panden, die op meest recente datum de status sloop vergunning verleend of gesloopt hebben, en dus binnenkort uit de voorraad gaan.";
 	
 	
@@ -112,6 +148,15 @@ container BAG_nieuwbouw : using = "Classifications"
 				, .
 				, float32
 			), Descr = "Count aantal vbo's per gebruiksdoel in een pand vertaalt naar het vbo";
+			
+		container VBOopp_InPand_perGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'pand_domain/Oppervlaktes/VBOopp_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[gerelateerdPand/pand_rel][gerelateerdPand_rel]'
+				, .
+				, meter2
+			), Descr = "Het totale vbo-oppervlak van dit gebruiksdoel in het hele pand, uit dezelfde pandenset als Footprint_perGebruiksdoel hierboven. Noemer voor de verdeling van de pandvoetafdruk over de verblijfsobjecten van deze subset.
+						Vbos_InPand_perGebruiksdoel hierboven telt alleen de objecten binnen de subset terwijl de teller over alle objecten van het pand gaat. Delen door die telling boekt de volledige pandvoetafdruk als nieuwbouw zodra er een object bijkomt: een hal waar tussen het modeljaar en het recentste jaar een verblijfsobject bij is geregistreerd, telde met haar hele oppervlak mee.";
 	}
 	
 	unit<UInt32> WegVBO_TussenModelenRecentJaar := select_with_org_rel(IsWegVBO_TussenModelenRecentJaar) //fka VBOsWegTussenModelenRecentJaar
@@ -162,6 +207,15 @@ container BAG_nieuwbouw : using = "Classifications"
 				, .
 				, float32
 			), Descr = "Count aantal vbo's per gebruiksdoel in een pand vertaalt naar het vbo";
+			
+		container VBOopp_InPand_perGebruiksdoel :=
+			for_each_nedv(
+				Vastgoed/vbo_gebruiksdoel_plus/name
+				, 'pand_domain/Oppervlaktes/VBOopp_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[gerelateerdPand/pand_rel][gerelateerdPand_rel]'
+				, .
+				, meter2
+			), Descr = "Het totale vbo-oppervlak van dit gebruiksdoel in het hele pand, uit dezelfde pandenset als Footprint_perGebruiksdoel hierboven. Noemer voor de verdeling van de pandvoetafdruk over de verblijfsobjecten van deze subset.
+						Vbos_InPand_perGebruiksdoel hierboven telt alleen de objecten binnen de subset terwijl de teller over alle objecten van het pand gaat. Delen door die telling boekt de volledige pandvoetafdruk als nieuwbouw zodra er een object bijkomt: een hal waar tussen het modeljaar en het recentste jaar een verblijfsobject bij is geregistreerd, telde met haar hele oppervlak mee.";
 	}
 	
 	
@@ -220,7 +274,8 @@ container BAG_nieuwbouw : using = "Classifications"
 	, Descr = "VBO's nog niet bestonden in de meest recente BAG, maar wel in toekomst-BAG."
 	{
 		attribute<rdc_meter>                  geometry               := org_rel -> geometry;
-		attribute<uint64>                     vbo_bag_nr             := org_rel -> vbo_bag_nr;
+		attribute<uint64>                     vbo_bag_nr             := org_rel -> vbo_bag_nr
+		, IntegrityCheck = "all(id(.) == rlookup(this, this))", cdf = "elke rij is de eerste met zijn bag-nummer, dus de ontdubbeling van #703 staat nog";
 		attribute<gerelateerdPand>            gerelateerdPand_rel    := rlookup(vbo_bag_nr, gerelateerdPand/vbo_bag_nr);
 		attribute<m2_vbo>                     oppervlakte_trunc      := org_rel -> oppervlakte_trunc;
 		attribute<m2_vbo>                     vbo_opp                := org_rel -> oppervlakte_trunc;
@@ -272,10 +327,41 @@ container BAG_nieuwbouw : using = "Classifications"
 			), Descr = "Count aantal vbo's per gebruiksdoel in een pand vertaalt naar het vbo";
 	}
 	
+	attribute<Bool> IsNieuwVBO_InBestaandPand (BAG_RecentsteJaar_vbo) := IsNieuwVBO_NaRecentJaarWelActief
+																		&& !IsDefined(rlookup(BAG_RecentsteJaar_vbo/vbo_bag_nr, NieuwVBO_NaRecentJaarWelActief/gerelateerdPand/vbo_bag_nr))
+																		&& IsDefined(rlookup(BAG_RecentsteJaar_vbo/vbo_bag_nr, BAG_RecentsteJaar/vbo_alle_statussen/gerelateerdPand/vbo_bag_nr))
+	, Descr = "Gevormde verblijfsobjecten in een pand dat niet in aanbouw of vergund is: splitsingen, verbouwingen en transformaties binnen bestaande bouw. Die vielen tot #703 volledig weg, want de pijplijnroute telt alleen objecten waarvan het pand de status bouw gestart of bouwvergunning verleend draagt. Gemeten op de jaargang 20260710 gaat het om 48.478 objecten waarvan 39.768 met een woonfunctie.
+				Deze route telt ze als eenheden met een voetafdruk van nul: het pand staat al in de stand, dus zijn oppervlak is al geboekt. De middelste voorwaarde sluit de objecten uit die de pijplijnroute wel meetelt; de laatste eist een pand met een op de peildatum geldig voorkomen, en dat heeft op die jaargang elk gevormd object.";
+
+	unit<UInt32> NieuwVBO_InBestaandPand := select_with_org_rel(IsNieuwVBO_InBestaandPand)
+	, Descr = "De splitsingen en verbouwingen uit IsNieuwVBO_InBestaandPand, met de typering van het bestaande pand en de ligging van het object zelf. Geen voetafdrukkant: die is per constructie nul."
+	{
+		attribute<rdc_meter>       geometry        := org_rel -> geometry;
+		attribute<uint64>          vbo_bag_nr      := org_rel -> vbo_bag_nr;
+		attribute<Bool>            IsWoon          := ='org_rel -> Impl/gebruiksdoelen_cbs/woon';
+
+		attribute<uint64>          pand_bag_nr     := BAG_RecentsteJaar/vbo_alle_statussen/gerelateerdPand/pand_bag_nr[rlookup(vbo_bag_nr, BAG_RecentsteJaar/vbo_alle_statussen/gerelateerdPand/vbo_bag_nr)]
+		, Descr = "Het eerste gerelateerde pand met een geldig voorkomen op de peildatum.";
+		attribute<BAG_RecentsteJaar_pand> pand_rel := rlookup(pand_bag_nr, BAG_RecentsteJaar_pand/pand_bag_nr);
+		attribute<WP5>             WP5_rel         := pand_rel -> WP5_rel, Descr = "De typering van het bestaande pand: een gesplitst appartementencomplex geeft meergezins, een gesplitste vrijstaande woning eengezins.";
+		attribute<WP2>             WP2_rel         := WP5/WP2_rel[WP5_rel];
+
+		attribute<AdminDomain>     AdminDomain_rel := geometry[AdminDomain];
+
+		container count_Per_CompactedAdminDomain_WP2 :=
+			for_each_nedv(
+				Vastgoed/WP2/name
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, sum_uint32(IsWoon && (IsDefined(WP2_rel) ? WP2_rel == '+string(id(Vastgoed/WP2))+'[Vastgoed/WP2] : '+(Vastgoed/WP2/name == 'meergezins' ? 'TRUE' : 'FALSE')+'), AdminDomain_rel))[float32]'
+				, CompactedAdminDomain
+				, float32
+			), Descr = "Aantal woonobjecten per WP2-klasse per cel, op de ligging van het object zelf. Objecten zonder pandtypering vallen terug op meergezins, want een toevoeging binnen bestaande bouw is vrijwel altijd een appartement. Zelfde naamgeving als de vijf bestaande termen, zodat de optelling in Wonen en de diagnose hetzelfde patroon kunnen volgen.";
+	}
+
 	unit<UInt32> NieuwPand_NaRecentJaarWelActief := select_with_org_rel(IsNieuwPand_NaRecentJaarWelActief)
 	{
 		parameter<Bool>            Issubset        := TRUE;
 		attribute<Bool>            pand_selection_condition (BAG_RecentsteJaar_pand) := IsNieuwPand_NaRecentJaarWelActief;
+		attribute<Bool>            LigtInCBSVerblijfsrecreatie := org_rel -> LigtInCBSVerblijfsrecreatie, Descr = "Ligt het zwaartepunt van dit pand binnen de CBS-verblijfsrecreatiegebieden? select_with_org_rel neemt geen attributen mee, dus hier expliciet opgehaald; nodig om de stand verblijfsrecreatie op dezelfde populatie te tellen als de claim (#364).";
 		
 		attribute<rdc_meter>       geometry (poly) := org_rel -> geometry;
 		attribute<yr>              Bouwjaar        := org_rel -> Bouwjaar;
@@ -304,6 +390,7 @@ container BAG_nieuwbouw : using = "Classifications"
 	{
 		parameter<Bool>            Issubset        := TRUE;
 		attribute<Bool>            pand_selection_condition (BAG_RecentsteJaar_pand_toekomst) := IsNieuwPand_NaRecentJaar;
+		attribute<Bool>            LigtInCBSVerblijfsrecreatie := org_rel -> LigtInCBSVerblijfsrecreatie, Descr = "Ligt het zwaartepunt van dit pand binnen de CBS-verblijfsrecreatiegebieden? select_with_org_rel neemt geen attributen mee, dus hier expliciet opgehaald; nodig om de stand verblijfsrecreatie op dezelfde populatie te tellen als de claim (#364).";
 		
 		attribute<rdc_meter>       geometry (poly) := org_rel -> geometry;
 		attribute<yr>              Bouwjaar        := org_rel -> Bouwjaar;
@@ -351,15 +438,18 @@ container BAG_nieuwbouw : using = "Classifications"
 	, Descr = "alle VBO's, die in BAG-toekomst nieuw de status ingetrokken hebben, en dus binnenkort uit de voorraad gaan."
 	{
 		attribute<rdc_meter>            geometry           := org_rel -> geometry;
-		attribute<uint64>               vbo_bag_nr         := org_rel -> vbo_bag_nr;
+		attribute<uint64>               vbo_bag_nr         := org_rel -> vbo_bag_nr
+		, IntegrityCheck = "all(id(.) == rlookup(this, this))", cdf = "elke rij is de eerste met zijn bag-nummer, dus de ontdubbeling van #703 staat nog";
 		attribute<gerelateerdPand>      gerelateerdPand_rel    := rlookup(vbo_bag_nr, gerelateerdPand/vbo_bag_nr);
 		attribute<m2_vbo>               oppervlakte_trunc  := org_rel -> oppervlakte_trunc;
 		attribute<WP4>                        WP4_rel                := WP5/WP4_rel[WP5_rel];
 		attribute<WP2>                        WP2_rel                := WP5/WP2_rel[WP5_rel];
 		attribute<WP5>                        WP5_rel                := gerelateerdPand_rel -> WP5_rel;
 
-		unit<uint32> pand_domain := WegPand_NaRecentJaar;
-		unit<uint32> vbo_domain  := BAG_RecentsteJaar_vbo_toekomst;
+		unit<uint32> pand_domain := BAG_RecentsteJaar_pand_voorraad
+		, Descr = "De volledige pandvoorraad van het recentste jaar, niet langer alleen de panden met een ingetrokken toekomstvoorkomen. Een onttrokken verblijfsobject zit per definitie in de voorraad van het recentste jaar, dus zijn pand ook; de oude vernauwing tot WegPand_NaRecentJaar liet elke onttrekking zonder pandsloop (samenvoeging, functiewijziging, onttrekking van een enkel appartement) stil uit de aftrek vallen. Zelfde constructie als de Tussen-set, die BAG_ModelJaar_pand_voorraad gebruikt.";
+		unit<uint32> vbo_domain  := BAG_RecentsteJaar_vbo_voorraad
+		, Descr = "De vbo-pandrelatie uit de voorraadset in plaats van de toekomstset. De toekomstrelatie kent alleen panden met een voorkomen sinds de peildatum, dus ook met een bredere pandenset bleef de koppeling daar leeg voor panden die gewoon blijven staan.";
 		
 		unit<UInt32> gerelateerdPand := select_with_org_rel(IsDefined(rlookup(vbo_domain/gerelateerdPand/vbo_bag_nr, ./vbo_bag_nr)) 
 																	&& IsDefined(rlookup(vbo_domain/gerelateerdPand/pand_bag_nr, pand_domain/pand_bag_nr)))
@@ -383,7 +473,7 @@ container BAG_nieuwbouw : using = "Classifications"
 		container Footprint_perGebruiksdoel :=
 			for_each_nedv(
 				Vastgoed/vbo_gebruiksdoel_plus/name
-				, 'pand_domain/Footprint_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[gerelateerdPand/pand_rel][gerelateerdPand_rel]'
+				, 'pand_domain/Oppervlaktes/Footprint_perGebruiksdoel/'+Vastgoed/vbo_gebruiksdoel_plus/name+'[gerelateerdPand/pand_rel][gerelateerdPand_rel]'
 				, .
 				, m2PandFootprint
 			), Descr = "Ophalen footprint per functie uit pandenset naar deze vbo subset.";
@@ -402,6 +492,7 @@ container BAG_nieuwbouw : using = "Classifications"
 	{
 		parameter<Bool>            Issubset        := TRUE;
 		attribute<Bool>            pand_selection_condition (BAG_RecentsteJaar_pand_toekomst) := IsWegPand_NaRecentJaar;
+		attribute<Bool>            LigtInCBSVerblijfsrecreatie := org_rel -> LigtInCBSVerblijfsrecreatie, Descr = "Ligt het zwaartepunt van dit pand binnen de CBS-verblijfsrecreatiegebieden? select_with_org_rel neemt geen attributen mee, dus hier expliciet opgehaald; nodig om de stand verblijfsrecreatie op dezelfde populatie te tellen als de claim (#364).";
 		
 		unit<uint32> pand_domain := BAG_RecentsteJaar_pand_toekomst;
 		unit<uint32> vbo_domain  := WegVBO_NaRecentJaar;
@@ -462,7 +553,8 @@ container BAG_nieuwbouw : using = "Classifications"
 			, 'value('
 				'(CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/'+Classifications/Vastgoed/WP2xVSSH/WP_name+' + '                  // nieuwe voorraad vbo's tussen model/recent Year 
 				 'CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/count_Per_CompactedAdminDomain_WP2/'+Classifications/Vastgoed/WP2xVSSH/WP_name+' + '                    // nieuwe VBOs na recent Year die toen wel al actief waren
-				 'CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/'+Classifications/Vastgoed/WP2xVSSH/WP_name+')'                               // nieuwe VBOs na recent Year die ook nog niet actief waren
+				 'CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/'+Classifications/Vastgoed/WP2xVSSH/WP_name+' + '                               // nieuwe VBOs na recent Year die ook nog niet actief waren
+				 'NieuwVBO_InBestaandPand/count_Per_CompactedAdminDomain_WP2/'+Classifications/Vastgoed/WP2xVSSH/WP_name+')'                                                            // splitsingen en verbouwingen in bestaande panden, voetafdruk nul (#703)
 				'* '+(Classifications/Vastgoed/WP2xVSSH/VSSH_rel = Classifications/Vastgoed/VSSH/V/SocialeHuur ? 'BaseData/StartState/Verdeling_VSSH/per_Gemeente/P_SH_perCompactedAdminDomain' : '(1f - BaseData/StartState/Verdeling_VSSH/per_Gemeente/P_SH_perCompactedAdminDomain)')+'[float32],'
 				'Woning'
 			')'
@@ -477,7 +569,9 @@ container BAG_nieuwbouw : using = "Classifications"
 																		+ CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain
 																		- CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain
 																		- CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/Uitsmeren_Totaal/Footprint_Per_CompactedAdminDomain;
-		attribute<woning>          Totaal    (CompactedAdminDomain) := ='add('+AsItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
+		attribute<woning>          Totaal    (CompactedAdminDomain) := ='add('+AsItemList(Classifications/Vastgoed/WP2xVSSH/name)+')'
+		, IntegrityCheck = "abs(sum(float32(this)) - ((sum(CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/eengezins + CalcNieuwbouw_perDoel/woon/NieuwVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/meergezins) + sum(CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/count_Per_CompactedAdminDomain_WP2/eengezins + CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaarWelActief_PerDoel/count_Per_CompactedAdminDomain_WP2/meergezins) + sum(CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/eengezins + CalcNieuwbouw_perDoel/woon/NieuwVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2/meergezins) + sum(NieuwVBO_InBestaandPand/count_Per_CompactedAdminDomain_WP2/eengezins + NieuwVBO_InBestaandPand/count_Per_CompactedAdminDomain_WP2/meergezins)) - (sum(CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/eengezins_VrijeSector) + sum(CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/eengezins_SocialeHuur) + sum(CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/meergezins_VrijeSector) + sum(CalcNieuwbouw_perDoel/woon/WegVBO_TussenModelenRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/meergezins_SocialeHuur) + sum(CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/eengezins_VrijeSector) + sum(CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/eengezins_SocialeHuur) + sum(CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/meergezins_VrijeSector) + sum(CalcNieuwbouw_perDoel/woon/WegVBO_NaRecentJaar_PerDoel/count_Per_CompactedAdminDomain_WP2xVSSH/meergezins_SocialeHuur)))[float32]) < 0.005f * sum(float32(this))"
+		, cdf = "de som over de WP2xVSSH-kolommen hoort op de som van de vijf termen uit te komen; wijkt hij meer dan een half procent af, dan sommeert de VSSH-verdeling niet meer tot een of is een term losgeraakt";
 	}
 
 	container Werken :=
@@ -518,14 +612,25 @@ container BAG_nieuwbouw : using = "Classifications"
 		, per CompactedAdminDomain op. En corrigeer voor max cell size. Dit kan groter zijn door overlappende panden.";
 	
 	container Verblijfsrecreatie
+	: Descr = "Nieuwe en verdwenen logies-objecten tussen basisjaar en de recentste BAG. Standaard tellen, net als in de basisjaarstand, alleen de objecten binnen de CBS-verblijfsrecreatiegebieden mee, zodat stand en claim over dezelfde populatie gaan (#364)."
 	{
-		attribute<verblijfsobject> Totaal (CompactedAdminDomain) := 
+		attribute<verblijfsobject> Totaal (CompactedAdminDomain) := =ModelParameters/Verblijfsrecreatie/StandAlleenInCBSGebied ? 'Totaal_inCBSVerblijfsrecreatie' : 'Totaal_AlleLogies';
+		
+		attribute<verblijfsobject> Totaal_AlleLogies (CompactedAdminDomain) := 
 			value(CalcNieuwbouw_perDoel/logies/NieuwVBO_TussenModelenRecentJaar_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_Per_CompactedAdminDomain 
 				+ CalcNieuwbouw_perDoel/logies/NieuwVBO_NaRecentJaarWelActief_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_Per_CompactedAdminDomain 
 				+ CalcNieuwbouw_perDoel/logies/NieuwVBO_NaRecentJaar_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_Per_CompactedAdminDomain 
 				- CalcNieuwbouw_perDoel/logies/WegVBO_TussenModelenRecentJaar_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_Per_CompactedAdminDomain
 				- CalcNieuwbouw_perDoel/logies/WegVBO_NaRecentJaar_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_Per_CompactedAdminDomain
-				, verblijfsobject);
+				, verblijfsobject), Descr = "Alle logies-objecten, ongeacht waar ze liggen. Dit was de telling van voor #364.";
+		
+		attribute<verblijfsobject> Totaal_inCBSVerblijfsrecreatie (CompactedAdminDomain) := 
+			value(CalcNieuwbouw_perDoel/logies/NieuwVBO_TussenModelenRecentJaar_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_inCBS_Per_CompactedAdminDomain 
+				+ CalcNieuwbouw_perDoel/logies/NieuwVBO_NaRecentJaarWelActief_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_inCBS_Per_CompactedAdminDomain 
+				+ CalcNieuwbouw_perDoel/logies/NieuwVBO_NaRecentJaar_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_inCBS_Per_CompactedAdminDomain 
+				- CalcNieuwbouw_perDoel/logies/WegVBO_TussenModelenRecentJaar_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_inCBS_Per_CompactedAdminDomain
+				- CalcNieuwbouw_perDoel/logies/WegVBO_NaRecentJaar_PerDoel/Uitsmeren_Totaal/Aantal_Vbos_inCBS_Per_CompactedAdminDomain
+				, verblijfsobject), Descr = "Alleen de logies-objecten in panden binnen de CBS-verblijfsrecreatiegebieden.";
 	}
 	
 	container Waterberging

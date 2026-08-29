@@ -1,0 +1,240 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Sjabloon dat een natuuropgave per claimregio per natuurbeheertype op de kaart zet. Zie ObjectVision/RSopen#652
+// en ObjectVision/RSopen#653.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template NatuurAlloc_T
+: Descr = "Verdeelt een natuuropgave over de cellen binnen claimregios, en levert het resultaat af in dezelfde vorm als de leveringen die rechtstreeks een kaart geven: een INL_Beheertype per cel, plus ExoNatuur en ExoWater.
+
+			Dit is de preprocessingroute uit #652 en #653. De natuur wordt hier gealloceerd en daarna via
+			VariantData/ExogeenOpleggen opgelegd, en niet als sector in de allocatielus meegenomen. De reden staat
+			in #652: een sector erbij betekent een nieuwe StandVar en dus een ophoging van het SS-nummer in de
+			bestandsnamen van alle standbestanden, terwijl de opgave een hard doel is en de leveringen geen tijdpad
+			kennen. De verdringing die een sector zou geven levert dan weinig op.
+
+			Het rekenwerk zelf gaat wel met de echte allocator, discrete_alloc_sp, dezelfde operator die de
+			landbouwallocatie gebruikt in Templates/Allocatie/Iter_Landbouw_T. Het is dus geen eigengebouwde
+			rangorde: de opgave per regio per type is een harde bovengrens en binnen die grens wordt de som van de
+			geschiktheid gemaximaliseerd.
+
+			De ingangen:
+			  Naam             : label voor de herkenning, komt terug in de controlecontainer.
+			  Type_src         : de natuurbeheertypen die verdeeld worden, met name en INL_Beheertype_rel.
+			  Regio_src        : de claimregios, met label en Per_AdminDomain.
+			  Claim_src        : per type een attribute Ha over Regio_src, de opgave.
+			  Geschiktheid_src : per type een attribute float32 over AdminDomain met waarden tussen 0 en 1, en
+			                     null waar dat type niet mag landen. De zeef zit dus in de nullen; er is bewust
+			                     geen aparte zeef-ingang, want een zeef die pas na de allocatie werkt zou
+			                     wegknippen wat al gealloceerd is en daarmee de opgave stilzwijgend missen.
+
+			De namen in Type_src/name moeten geldige itemnamen zijn: ze worden de containerleden van Suitability,
+			MinClaims en MaxClaims."
+{
+	parameter<String> Naam;
+	unit<UInt8>       Type_src;
+	unit<UInt32>      Regio_src;
+	container         Claim_src;
+	container         Geschiktheid_src;
+	//
+
+	unit<UInt8> Type := range(uint8, 0b, uint8(#Type_src) + 1b)
+	, Descr = "De natuurbeheertypen uit de opgave, met achteraan een extra regel Rest: het type dat blijft wat het is.
+
+				Rest is nodig omdat discrete_alloc_sp elke cel in het domein aan een type toewijst. Zonder die
+				uitweg zou de allocator de opgave over het hele domein moeten uitsmeren. Rest krijgt geschiktheid 0
+				en geen bovengrens, dus alles wat de opgave niet opsoupeert komt daar terecht en houdt zijn
+				huidige grondgebruik.
+
+				Opgebouwd als range plus een verwijzing terug, en niet met union_unit: die maakt van twee
+				uint8-units een uint32-unit, terwijl discrete_alloc_sp voor zijn eerste argument juist een
+				attribuut over een uint8-unit eist."
+	{
+		attribute<Bool>     IsRest  := id(.) == uint8(#Type_src);
+		attribute<Type_src> Src_rel := IsRest ? null_b[Type_src] : value(id(.), Type_src);
+
+		attribute<String> name := MakeDefined(Type_src/name[Src_rel], 'Rest');
+
+		attribute</Classifications/Grondgebruik/INL_Beheertype> INL_Beheertype_rel := Type_src/INL_Beheertype_rel[Src_rel]
+		, Descr = "Rest heeft geen beheertype, dus die cellen vallen vanzelf uit INL_Beheertype_rel_AD en daarmee uit de oplegging.";
+	}
+
+	parameter<Bool> NatuurNietOpPanden := TRUE
+	, Descr = "Weert de allocatie natuur van cellen waar een pand staat? Staat aan, dus ja. Zie #661.
+
+				De zeven van zand eisen agrarisch LGN, en dat is geen bewijs dat een cel onbebouwd is: de woningstand
+				komt uit BAG-panden zonder LGN-toets, en het legen gebeurt per cel. Een cel die op 25 meter modaal
+				agrarisch is kan gewoon woningen bevatten. Zonder deze toets sloopte de zandallocatie in
+				NbSGenuanceerd 1.037 woningen op cellen waar het bouwregime NietBouwen is, dus waar de levering de
+				bebouwing juist wil sparen. Dat is in strijd met #630, dat zegt dat in de beekdalen de bestaande
+				bebouwing blijft staan en er alleen geen nieuwbouw meer bij komt.
+
+				Uitzetten geeft het gedrag van voor #661 terug. Doe dat alleen om te meten, en leg de uitkomst dan
+				naast Controle/Krapte: de toets maakt de zeef kleiner en kan een opgave die eerst paste alsnog te
+				krap maken. Controle/Areaal_Verlies_Pandentoets zegt om hoeveel hectare het per regio gaat.";
+
+	attribute<Bool> MagOpleggen  (AdminDomain) := /BaseData/Omgeving/Opleggingsmasker/MagOpleggen
+	, Descr = "Het gedeelde opleggingsmasker: buiten bestaand bebouwd gebied (#641) en niet over exogeen grondgebruik, dus geen natuur op hoofdwegen, spoor, vliegvelden en begraafplaatsen.
+
+				Hier stond tot #661 een eigen kopie die alleen op bestaand bebouwd gebied toetste, waardoor de
+				allocatie wel op infrastructuur kon landen terwijl de leveringen dat al niet meer konden. Nu leest
+				dit hetzelfde item als VariantData/ExogeenOpleggen en als het diagnoseharnas.
+
+				De toets staat hier in de zeef en niet achteraf op het resultaat zoals bij een levering. Dat verschil
+				is wezenlijk: knip je hem er achteraf uit, dan haal je de opgave stilzwijgend niet, terwijl hij hier
+				de hectares elders binnen dezelfde regio laat landen.";
+
+	attribute<Bool> HeeftPanden  (AdminDomain) := NatuurNietOpPanden && /BaseData/Omgeving/Opleggingsmasker/HeeftPanden
+	, Descr = "Staat er een BAG-pand in de cel? Dezelfde toets die de landbouwzeef al kent, met hetzelfde item als bron. Zie NatuurNietOpPanden hierboven voor het waarom en de schakelaar.";
+
+	attribute<Bool> IsToegestaan (AdminDomain) := ='OR('+AsItemList('IsDefined(Geschiktheid_src/'+Type_src/name+')')+')'
+	, Descr = "Is hier tenminste een van de typen toegestaan? Dat volgt uit de nullen in Geschiktheid_src.";
+
+	attribute<Bool> IsInRegio    (AdminDomain) := IsDefined(Regio_src/Per_AdminDomain);
+
+	attribute<Bool> IsKandidaat  (AdminDomain) := IsInRegio && IsToegestaan && MagOpleggen && !HeeftPanden && /Geography/rdc_meter/IsStudyArea_AdminDomain
+	, Descr = "De cellen waarover de allocatie loopt.";
+
+	attribute<Bool> IsKandidaat_ZonderPandentoets (AdminDomain) := IsInRegio && IsToegestaan && MagOpleggen && /Geography/rdc_meter/IsStudyArea_AdminDomain
+	, Descr = "Dezelfde zeef zonder de pandentoets. Wordt niet gealloceerd; staat er alleen om in Controle te kunnen zeggen hoeveel ruimte de pandentoets kost.";
+
+	unit<UInt64> Domein := select_with_org_rel(IsKandidaat)
+	, Descr = "Alleen de kandidaatcellen, niet het hele compacted domain. De cellen daarbuiten kunnen per definitie niets krijgen, en dit scheelt bij zand ruwweg een orde van grootte in rekentijd en geheugen."
+	{
+		attribute<.>         Per_AdminDomain (AdminDomain) := invert(org_rel);
+		attribute<Regio_src> Regio_rel                     := Regio_src/Per_AdminDomain[org_rel];
+	}
+
+	parameter<Float32> Schaal    := 1000000f, Descr = "discrete_alloc_sp rekent met int32, dus de geschiktheid tussen 0 en 1 wordt hier opgeschaald. Een miljoen past ruim in int32 en houdt zes cijfers achter de komma over.";
+	parameter<Int32>   Threshold := -999999i, Descr = "Alle cellen komen in aanmerking. De begrenzing zit in MaxClaims en in de nullen van de geschiktheid, niet in een drempelwaarde.";
+
+	container Suitability :=
+		for_each_nedv(
+			Type/name
+			, Type/IsRest
+				? 'const(0i, Domein)'
+				: 'int32(Geschiktheid_src/'+Type/name+'[Domein/org_rel] * Schaal) + 1i'
+			, Domein
+			, Int32
+		)
+	, Descr = "Geschiktheid per type per kandidaatcel, als int32. De plus een zorgt dat een echt type altijd boven Rest uitkomt, ook bij geschiktheid nul; anders is de allocator onverschillig tussen wel en niet alloceren. Null blijft null en betekent dat dit type hier niet mag.";
+
+	container MinClaims :=
+		for_each_nedv(
+			Type/name
+			, 'const(uint32(0), Regio_src)'
+			, Regio_src
+			, UInt32
+		)
+	, Descr = "Geen ondergrenzen. De opgave staat als bovengrens in MaxClaims, en omdat Rest geschiktheid 0 heeft vult de allocator vanzelf tot die bovengrens zolang er kandidaatcellen zijn. Een harde ondergrens zou de allocatie laten falen zodra een regio te weinig ruimte heeft, in plaats van een meetbaar tekort op te leveren.";
+
+	container MaxClaims :=
+		for_each_nedv(
+			Type/name
+			, Type/IsRest
+				? 'const(uint32(#Domein), Regio_src)'
+				: 'uint32(Claim_src/'+Type/name+' / AdminDomain/NrHaPerCell)'
+			, Regio_src
+			, UInt32
+		)
+	, Descr = "De opgave per regio per type, omgerekend van hectares naar cellen. Rest krijgt de omvang van het hele domein als bovengrens en is daarmee onbegrensd.";
+
+	container Alloc :=
+		discrete_alloc_sp(
+			  Type/name        // 1 string  attribute  Typenames
+			, Domein           // 2 uint32  unit       Domain
+			, Suitability      // 3 int32   container  SuitabilityMaps
+			, Regio_src        // 4 uint32  unit       Regions
+			, Domein/Regio_rel // 5 uint32  attribute  RegionMap
+			, MinClaims        // 6 uint32  container  MinClaims
+			, MaxClaims        // 7 uint32  container  MaxClaims
+			, Threshold        // 8 int32   parameter  Threshold
+		)
+	, Descr = "De allocatie zelf.";
+
+	attribute<Type> Type_rel_Domein (Domein)      := Alloc/landuse;
+	attribute<Type> Type_rel        (AdminDomain) := Type_rel_Domein[Domein/Per_AdminDomain], Descr = "Het gealloceerde type per cel, null buiten het domein.";
+
+	attribute</Classifications/Grondgebruik/INL_Beheertype> INL_Beheertype_rel_AD (AdminDomain) := Type/INL_Beheertype_rel[Type_rel];
+	attribute</Classifications/Grondgebruik/NatuurType>     NatuurTypen_rel_AD    (AdminDomain) := /Classifications/Grondgebruik/INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+
+	attribute</Classifications/Grondgebruik/INL_Beheertype> ExoNatuur (AdminDomain) := /Classifications/Grondgebruik/NatuurType/IsExogeenOpTeLeggen_Natuur[NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[/Classifications/Grondgebruik/INL_Beheertype];
+	attribute</Classifications/Grondgebruik/INL_Beheertype> ExoWater  (AdminDomain) := /Classifications/Grondgebruik/NatuurType/IsExogeenOpTeLeggen_Water [NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[/Classifications/Grondgebruik/INL_Beheertype];
+
+	container Controle
+	: Descr = "Legt het gerealiseerde areaal naast de opgave. De allocatie kan de opgave nooit overschrijden, want die staat als bovengrens in MaxClaims; missen kan wel, als er te weinig kandidaatcellen in de regio liggen. Tekort is dus het getal om naar te kijken."
+	{
+		container Gerealiseerd :=
+			for_each_nedv(
+				Type_src/name
+				, 'sum(float32(Type_rel_Domein == value('+string(id(Type_src))+', Type)), Domein/Regio_rel) * AdminDomain/NrHaPerCell'
+				, Regio_src
+				, Ha
+			), Descr = "Gealloceerd areaal per regio per type.";
+
+		container Tekort :=
+			for_each_nedv(
+				Type_src/name
+				, 'Claim_src/'+Type_src/name+' - Gerealiseerd/'+Type_src/name
+				, Regio_src
+				, Ha
+			), Descr = "Opgave min realisatie per regio per type. Positief betekent dat de regio te weinig ruimte bood, op een halve cel afronding na.";
+
+		attribute<Ha> Areaal_Kandidaat (Regio_src) := sum(const(1f, Domein), Domein/Regio_rel) * AdminDomain/NrHaPerCell
+		, Descr = "Hoeveel ruimte een regio uberhaupt biedt na de zeef. Diagnose bij een tekort: ligt het aan de zeef of aan de opgave.";
+
+		attribute<Ha> Areaal_Kandidaat_ZonderPanden (Regio_src) := sum(float32(IsKandidaat_ZonderPandentoets), Regio_src/Per_AdminDomain) * AdminDomain/NrHaPerCell
+		, Descr = "Wat Areaal_Kandidaat zou zijn zonder de pandentoets uit #661. Op dezelfde manier geteld als Areaal_Kandidaat, dus cellen tellen en daarna keer de celgrootte, zodat het verschil tussen de twee geen afrondingsruis oplevert.";
+
+		attribute<Ha> Areaal_Verlies_Pandentoets (Regio_src) := Areaal_Kandidaat_ZonderPanden - Areaal_Kandidaat
+		, Descr = "Hoeveel ruimte de pandentoets een regio kost. Leg dit naast Krapte hieronder: pas als het verlies de regio over de streep duwt gaat de opgave er werkelijk aan onderdoor. Nul zodra NatuurNietOpPanden uit staat.";
+
+		parameter<Ha> Verlies_Pandentoets_NL := sum(Areaal_Verlies_Pandentoets)
+		, Descr = "Hetzelfde landelijk. Dit is het getal dat bij het aanzetten van de pandentoets gerapporteerd moet worden, naast Tekort_NL.";
+
+		attribute<Float32> IsGealloceerd_AD  (AdminDomain) := float32(IsDefined(INL_Beheertype_rel_AD));
+		attribute<Float32> Buurt_Natuur_AD    (AdminDomain) := potential(IsGealloceerd_AD,     /Geography/Distmatrices_25m/pot50m/Flat2) / /Geography/Distmatrices_25m/pot50m/oppervlakte;
+		attribute<Float32> Buurt_Kandidaat_AD (AdminDomain) := potential(float32(IsKandidaat), /Geography/Distmatrices_25m/pot50m/Flat2) / /Geography/Distmatrices_25m/pot50m/oppervlakte;
+
+		parameter<Float32> Vulgraad := sum(IsGealloceerd_AD) / max_elem(float32(#Domein), 1f), Descr = "Welk deel van de kandidaatcellen natuur wordt.";
+
+		parameter<Float32> Aaneengeslotenheid := sum(IsGealloceerd_AD * Buurt_Natuur_AD) / max_elem(sum(IsGealloceerd_AD), 1f)
+		, Descr = "Hoe aaneengesloten ligt de nieuwe natuur. Gemeten als het aandeel van de dertien cellen binnen 50 meter dat ook natuur wordt, gemiddeld over alle cellen die natuur worden. De cel zelf telt mee, dus de ondergrens is 1 op 13, ofwel 0,077.
+
+					Dit is het getal waarop het spikkelpatroon uit #652 afgerekend wordt. Leg het naast Aaneengeslotenheid_Aselect hieronder: die zegt wat er uit zou komen als dezelfde hoeveelheid cellen willekeurig over de zeef was gestrooid.";
+
+		container Buurt_PerType :=
+			for_each_nedv(
+				Type_src/name
+				, 'potential(float32(Type_rel == value(' + string(id(Type_src)) + ', Type)), /Geography/Distmatrices_25m/pot50m/Flat2) / /Geography/Distmatrices_25m/pot50m/oppervlakte'
+				, AdminDomain
+				, Float32
+			);
+
+		attribute<Float32> Buurt_EigenType_AD (AdminDomain) := ='add(' + AsItemList('Buurt_PerType/' + Type_src/name + ' * float32(Type_rel == value(' + string(id(Type_src)) + ', Type))') + ')'
+		, Descr = "Het aandeel van de dertien cellen binnen 50 meter dat hetzelfde type krijgt als de cel zelf. De typen worden hier per stuk geteld en daarna weer bij elkaar geraapt, want GeoDMS kent geen operator die per cel het juiste veld uitkiest.";
+
+		parameter<Float32> Aaneengeslotenheid_Type := sum(IsGealloceerd_AD * Buurt_EigenType_AD) / max_elem(sum(IsGealloceerd_AD), 1f)
+		, Descr = "Aaneengeslotenheid, maar dan alleen de buren van hetzelfde type. Het verschil met Aaneengeslotenheid zegt of de typen als vlekken naast elkaar liggen of door elkaar heen. Bij drie typen die volledig door elkaar liggen komt dit getal op ongeveer een derde van Aaneengeslotenheid uit, bij zuivere vlekken op bijna hetzelfde getal.";
+
+		parameter<Float32> Aaneengeslotenheid_Aselect :=
+			(1f + (/Geography/Distmatrices_25m/pot50m/oppervlakte * (sum(IsGealloceerd_AD * Buurt_Kandidaat_AD) / max_elem(sum(IsGealloceerd_AD), 1f)) - 1f) * Vulgraad)
+				/ /Geography/Distmatrices_25m/pot50m/oppervlakte
+		, Descr = "Wat Aaneengeslotenheid zou zijn bij een willekeurige trekking uit de zeef: de cel zelf plus de buurcellen die kandidaat zijn maal de vulgraad, gedeeld door de dertien cellen in de schijf. De vergelijking van beide getallen is de toets, niet de hoogte van een van de twee.";
+
+		attribute<Ha> Claim_Totaal (Regio_src) := ='add('+AsItemList('Claim_src/'+Type_src/name)+')', Descr = "Opgave over alle typen samen, per regio.";
+		attribute<Ha> Krapte       (Regio_src) := Claim_Totaal - Areaal_Kandidaat, Descr = "Positief betekent dat de opgave niet in de zeef past, ongeacht hoe de allocator kiest.";
+
+		parameter<Ha> Claim_NL        := sum(Claim_Totaal);
+		parameter<Ha> Gerealiseerd_NL := ='add('+AsItemList('sum(Gerealiseerd/'+Type_src/name+')')+')';
+		parameter<Ha> Tekort_NL       := Claim_NL - Gerealiseerd_NL, Descr = "Het getal dat na een run gerapporteerd moet worden.";
+	}
+}

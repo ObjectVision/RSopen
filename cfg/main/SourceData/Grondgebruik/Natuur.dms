@@ -1,0 +1,1700 @@
+container Natuur
+{
+	container Bron
+	: Descr = "De leveringen zelf: het inlezen van de kaarten en tabellen per landschap, en de omzetting naar natuurbeheertypen. Hier wordt niets gecombineerd en niets per variant gekozen; dat gebeurt in Varianten.
+
+				Onderaan staan per levering de twee stromen apart, natuur en water. Welke van de twee een beheertype
+				krijgt hangt af van het natuurtype, behalve bij rivieren: daar loopt die keuze over de categorie van het
+				ecotoop, omdat het beheertype N01.03 Rivier- en moeraslandschap zowel terrestrische als
+				waterecotopen verzamelt. Zie #621."
+	{
+		container Landelijk_BAU 
+		{
+			attribute<uint8> NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel0 (rdc_2_5m)
+			:	StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/BAU/NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel_20250925_110353.tif"
+			,	Source          = "WUR"
+			, 	Descr           = "Dit bestand dient als de ruimtelijke mal voor de natuurvlakken binnen de visie NL2120. Het representeert de geografische afbakening van waar natuur aanwezig is of gepland is binnen de vigerende beleidskaders."
+			, 	LazyCalculated  = "true";
+		
+			attribute<INL_Beheertype>  NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel (rdc_2_5m) := rlookup(NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel0, INL_Beheertype/MNP_BeheertypenKaart_val);
+			attribute<INL_Beheertype>  Write_NL2120_MNP_BAU_INL_beheertypen_25m (rdc_25m) := modus(NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel, rdc_2_5m/rdc_25m_rel)
+			,	StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/BAU/NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel_20250925_110353_25m.tif"
+			, 	StorageType     = "gdalwrite.grid"
+			;
+			attribute<INL_Beheertype>  INL_Beheertype_rel_AD (AdminDomain)
+			:	StorageName     = "=PropValue(Write_NL2120_MNP_BAU_INL_beheertypen_25m, 'StorageName')"
+			, 	StorageType     = "gdal.grid"
+			, 	StorageReadOnly = "true";
+			attribute<NatuurType>     NatuurTypen_rel_AD   (AdminDomain) := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+			attribute<INL_Beheertype> ExoNatuur (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Natuur[NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+			attribute<INL_Beheertype> ExoWater  (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Water [NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+		}
+
+		unit<uint32> Rivieren_BAU_mmd
+		:	StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/BAU/BAU-Natuur.mmd"
+		, 	StorageReadOnly = "true"
+		,	Source          = "Ontvangen van Deltares op 20260611"
+		, 	Descr           = "Natuur_Y2120_Rivierengebied_BAU";
+		unit<uint32> Rivieren_BAU := Rivieren_BAU_mmd
+		{
+			attribute<HydrologieK>    Hydrologie_rel    := rlookup(hydrologie, HydrologieK/label);
+			attribute<EcotoopK>       Ecotoop_rel       := rlookup(NL_2120, EcotoopK/label);
+			attribute<GeomorfologieK> Geomorfologie_rel := rlookup(zonering, GeomorfologieK/label);
+			attribute<bool>           IsNat              := HydrologieK/IsOever[Hydrologie_rel] || Geomorfologie_rel == GeomorfologieK/V/Oevers; // Nat = oeverzone (HydrologieK/IsOever) of geomorfologische zone 'Oevers'. 'Oeverwal/hoge uiterwaard' is droog.
+		
+			unit<uint8> HydrologieK := unique_uint8(hydrologie)
+			{
+				attribute<string> label := values;
+				attribute<bool>   IsOever := substr(label, 0, 5) == 'Oever', Descr = "Natte oeverzone: alle 'Oever - ...'-klassen. Onderscheidt nat/droog t.b.v. de beheertype-keuze.";
+				container V := for_each_nedv(AsItemName(label), 'value('+string(id(.))+', ..)', void, .);
+			}
+			unit<uint8> EcotoopK := unique_uint8(NL_2120)
+			{
+				attribute<string> label := values;
+				container V := for_each_nedv(AsItemName(label), 'value('+string(id(.))+', ..)', void, .);
+			}
+			unit<uint8> GeomorfologieK := unique_uint8(zonering)
+			{
+				attribute<string> label := values;
+				container V := for_each_nedv(AsItemName(label), 'value('+string(id(.))+', ..)', void, .);
+			}
+		
+			attribute<INL_Beheertype> INL_Beheertype_rel := 
+				switch(
+						case(Ecotoop_rel == EcotoopK/V/Moeras                                 , INL_Beheertype/V_obvCode/N05_04) // dynamisch moeras
+					,case(Ecotoop_rel == EcotoopK/V/Natuurlijk_bos && IsNat                , INL_Beheertype/V_obvCode/N14_01) // rivier-/beekbegeleidend bos (zachthoutooibos)
+					,case(Ecotoop_rel == EcotoopK/V/Natuurlijk_bos                         , INL_Beheertype/V_obvCode/N14_03) // haagbeuken-/essenbos (hardhoutooibos)
+					,case(Ecotoop_rel == EcotoopK/V/Natuurlijk_grasland && IsNat           , INL_Beheertype/V_obvCode/N10_02) // vochtig hooiland
+					,case(Ecotoop_rel == EcotoopK/V/Natuurlijk_grasland                    , INL_Beheertype/V_obvCode/N12_02) // kruiden-/faunarijk grasland
+					,case(Ecotoop_rel == EcotoopK/V/Onbegroeid_pionier_natuurlijk_ && IsNat, INL_Beheertype/V_obvCode/N05_01_14 ) // slikkige rivieroever
+					,case(Ecotoop_rel == EcotoopK/V/Onbegroeid_pionier_natuurlijk_         , INL_Beheertype/V_obvCode/N05_01_13) // open zand
+					,case(Ecotoop_rel == EcotoopK/V/Ruigte                                 , INL_Beheertype/V_obvCode/N12_06) // ruigteveld
+					,case(Ecotoop_rel == EcotoopK/V/Struweel_houtig_                       , INL_Beheertype/V_obvCode/N05_01_06) // moerasstruweel (wilg)
+					,case(Ecotoop_rel == EcotoopK/V/Stagnant_water                         , INL_Beheertype/V_obvCode/N04_02) // zoete plas
+					,case(Ecotoop_rel == EcotoopK/V/Zomerbed                               , INL_Beheertype/V_obvCode/N02_01) // rivier
+					, null_b // agrarisch gebruik/grasland en bebouwd = geen natuur -> geen beheertype
+				);
+		
+			attribute<.>              Per_AdminDomain       (AdminDomain) := poly2grid(geometry, AdminDomain);
+			attribute<INL_Beheertype> INL_Beheertype_rel_AD (AdminDomain) := INL_Beheertype_rel[Per_AdminDomain];
+			attribute<NatuurType>     NatuurTypen_rel_AD    (AdminDomain) := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+			attribute<INL_Beheertype> ExoNatuur (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Natuur[NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+			attribute<INL_Beheertype> ExoWater  (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Water [NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+		}
+	
+		unit<uint32> Rivieren_NbSMax 
+		:	StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbS/Natuur_Y2120_Rivierengebied_NbSMax_20260629.shp"
+		, 	StorageType     = "gdal.vect"
+		,	Source          = "Ontvangen van Deltares op 20260528"
+		, 	Descr           = "In de bijlage de kaartlaag voor NbS Max. Voor BaU nemen we de bestaande riviertranches (zie ook bestand) en de verdere veranderingen in het 
+									BaU ruimtescanner scenario. Het GIS bestand heeft 3 lagen 'nieuwe uiterwaarden, moerasgebieden en water'. 
+									In deze gebieden moet de bestaande bebouwing verdwijnen (uitkoop) en zijn er toekomstige bouwrestricties. 
+									De moerasgebieden zijn ook tevens waterberginggebieden. Ook de landbouwfunctie verdwijnt in deze gebieden. 
+									Ze moeten nog aangeven welk percentage welk type natuur wordt. Ga er vanuit dat dit een combinatie wordt van 
+									open zand/grindvlakte, ruigte, grasland, zachthoutooibos, hardhoutooibos, zomerbed (water) en uiterwaardwater. 
+									Volgens mij is het voor de meeste indicatoren nu niet relevant welk natuurtype het precies wordt. 
+									Met uitzondering van koolstofvastlegging."
+		, DialogData = "rdc_meter"
+		{
+			attribute<.>      Per_AdminDomain   (AdminDomain) := poly2grid(geometry, AdminDomain);
+			attribute<INL_Beheertype> INL_Beheertype_rel := switch(
+																	case(lowercase(type) == 'moeras',              rlookup('N05.04',    INL_Beheertype/code)) // moerasgebied -> dynamisch moeras
+																,case(lowercase(type) == 'uiterwaarden',        rlookup('N12.02',    INL_Beheertype/code)) // nieuwe uiterwaard (mix) -> kruiden-/faunarijk grasland als representatieve klasse
+																,case(lowercase(type) == 'water (beek bypass)', rlookup('N03.01',    INL_Beheertype/code)) // nevengeul -> beek en bron
+																, null_b
+															);
+			attribute<INL_Beheertype> INL_Beheertype_rel_AD (AdminDomain) := INL_Beheertype_rel[Per_AdminDomain];
+			attribute<NatuurType>     NatuurTypen_rel_AD    (AdminDomain) := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+			attribute<INL_Beheertype> ExoNatuur (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Natuur[NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+			attribute<INL_Beheertype> ExoWater  (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Water [NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+		}
+	
+		// unit<uint32> Rivieren_NbSMax
+		// :	StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbS/Natuur_Y2120_Rivierengebied_NbSMax_20260528.shp"
+		// , 	StorageType     = "gdal.vect"
+		// ,	Source          = "Ontvangen van Deltares op 20260528"
+		// , 	Descr           = "In de bijlage de kaartlaag voor NbS Max. Voor BaU nemen we de bestaande riviertranches (zie ook bestand) en de verdere veranderingen in het 
+		// 							BaU ruimtescanner scenario. Het GIS bestand heeft 3 lagen 'nieuwe uiterwaarden, moerasgebieden en water'. 
+		// 							In deze gebieden moet de bestaande bebouwing verdwijnen (uitkoop) en zijn er toekomstige bouwrestricties. 
+		// 							De moerasgebieden zijn ook tevens waterberginggebieden. Ook de landbouwfunctie verdwijnt in deze gebieden. 
+		// 							Ze moeten nog aangeven welk percentage welk type natuur wordt. Ga er vanuit dat dit een combinatie wordt van 
+		// 							open zand/grindvlakte, ruigte, grasland, zachthoutooibos, hardhoutooibos, zomerbed (water) en uiterwaardwater. 
+		// 							Volgens mij is het voor de meeste indicatoren nu niet relevant welk natuurtype het precies wordt. 
+		// 							Met uitzondering van koolstofvastlegging."
+		// , DialogData = "rdc_meter"
+		// {
+		// 	attribute<.>      Per_AdminDomain   (AdminDomain) := poly2grid(geometry, AdminDomain);
+		// 	attribute<INL_Beheertype> INL_Beheertype_rel := switch(
+		// 														 case(lowercase(type) == 'moeras',              rlookup('N05.04',    INL_Beheertype/code)) // moerasgebied -> dynamisch moeras
+		// 														,case(lowercase(type) == 'uiterwaarden',        rlookup('N12.02',    INL_Beheertype/code)) // nieuwe uiterwaard (mix) -> kruiden-/faunarijk grasland als representatieve klasse
+		// 														,case(lowercase(type) == 'water (beek bypass)', rlookup('N03.01',    INL_Beheertype/code)) // nevengeul -> beek en bron
+		// 														, null_b
+		// 													);
+		// 	attribute<INL_Beheertype> INL_Beheertype_rel_AD (AdminDomain) := INL_Beheertype_rel[Per_AdminDomain];
+		// 	attribute<NatuurType>     NatuurTypen_rel_AD    (AdminDomain) := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+		// }
+
+		// De SqlString doet drie dingen die niet vanzelf spreken, zie #613.
+		// 1. Hernoemen. De kolomnamen in de bron beginnen met een cijfer en zijn dus geen geldige DMS-itemnamen. Ze gaan naar
+		//    BS2, BS3a en verder, gelijk aan NbSVeen/NbSBouwsteen/name, en meteen van percentage naar fractie. Kolommen die in
+		//    een van beide lagen ontbreken komen als 0.0 mee, zodat beide lagen dezelfde twaalf bouwstenen kennen.
+		// 2. Ontdubbelen. In de peilvakkenlaag komen 201 geometrieen meer dan een keer voor, bij 104 daarvan met verschillende
+		//    percentages. Deltares laat weten dat de middelste rij de juiste is; dat is wat rn = (cnt + 1) / 2 selecteert.
+		//    8439 rijen worden zo 7666. Gemeten scheelt de keuze tussen eerste, middelste en laatste minder dan een half
+		//    procent per bouwsteen, dus dit is vooral een kwestie van reproduceerbaar vastleggen.
+		// 3. Sorteren op oppervlak, groot eerst. De bron bevat geneste polygonen: een groot peilvak zonder bouwsteen 9a met
+		//    daarbinnen kleine waterpolygonen die volledig 9a zijn. poly2grid laat de laatste polygoon winnen, dus zonder
+		//    deze ordening wist het grote peilvak de kleine eronder uit en verdween er 1.500 ha bouwsteen 9a. Klein moet dus
+		//    als laatste komen. Het gaat in totaal om 2.252 ha overlappend oppervlak.
+		
+		container Rivieren_NbSGenuanceerd
+		: Descr = "De levering van team Rivieren voor NbSGenuanceerd: 59 gebieden met per gebied een verdeling over vijftien ecotopen. Zie #621.
+
+				Alleen het inlezen staat hier. Wat het model met die verdeling doet, namelijk er een kaart van
+				maken door de cellen binnen elk gebied op natheid te rangschikken, staat in
+				Varianten/NbSGenuanceerd/Landschap/Rivieren."
+		{
+				container Levering
+				: StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/Rivieren_Ecotopen_Beheertypen_NbSgenuanceerd_20260825.gpkg"
+				, StorageType     = "gdal.vect"
+				, StorageReadOnly = "TRUE"
+				, Source          = "Deltares, team Rivieren NL2120. Oorspronkelijke bestandsnaam riviertraces_en_binnendijks_zonder_altena_ecotopen_beheertypen.gpkg, geleverd op 2026-08-25 via SharePoint NL2120, map Toekomstbeelden/Kernteam/Uitgangspunten en beoordeling/RSInput/NiewueNatuurRiviertenNbSGenuanceerd. Naast de geopackage horen bij dezelfde levering drie tabellen, die in dezelfde map staan: Rivieren_Ecotoopoppervlakten_NbSgenuanceerd_20260825.xlsx met de arealen, Rivieren_Ecotooptypen_typologie_NbSgenuanceerd_20260825.xlsx met de typologie en Rivieren_Natuurbeheertypen_naar_ecotopen_20260825.xlsx met de conversietabel. De inhoud van die laatste twee staat in Classifications/Grondgebruik/RivierEcotoop.dms."
+				, DialogData      = "rdc_meter"
+				{
+					unit<uint32> gebied
+					: SqlString = "select coalesce(\"% Natuurlijk grasland\", 0) as Fr_NatuurlijkGrasland, coalesce(\"% Stroomdalgrasland\", 0) as Fr_Stroomdalgrasland, coalesce(\"% Agrarisch grasland\", 0) as Fr_AgrarischGrasland, coalesce(\"% Agrarisch gebruik\", 0) as Fr_AgrarischGebruik, coalesce(\"% Hardhout ooibos\", 0) as Fr_HardhoutOoibos, coalesce(\"% Zachthout ooibos\", 0) as Fr_ZachthoutOoibos, coalesce(\"% Struweel (houtig)\", 0) as Fr_Struweel, coalesce(\"% Moeras\", 0) as Fr_Moeras, coalesce(\"% Onbegroeid & pionier (natuurlijk)\", 0) as Fr_OnbegroeidPionier, coalesce(\"% Ruigte nat\", 0) as Fr_RuigteNat, coalesce(\"% Ruigte droog\", 0) as Fr_RuigteDroog, coalesce(\"% Zomerbed rivier\", 0) as Fr_ZomerbedRivier, coalesce(\"% Stromend water\", 0) as Fr_StromendWater, coalesce(\"% Stagnant water\", 0) as Fr_StagnantWater, coalesce(\"% Bebouwd/verhard/antropogeen\", 0) as Fr_BebouwdVerhard, \"type\" as gebiedtype, join_id, geom from riviertraces_binnendijks_ecotopen_beheertypen order by ST_Area(geom) desc"
+					, Descr = "De 59 gebieden met hun ecotoopverdeling. De SqlString doet twee dingen. Ten eerste hernoemen: de kolomnamen in de bron beginnen met een procentteken en zijn dus geen geldige DMS-itemnamen; ze gaan naar Fr_ plus de naam uit RivierEcotoop. Ten tweede sorteren op oppervlak, groot eerst, zodat een klein gebied dat binnen een groot ligt bij het rasteren wint. In deze levering overlappen de gebieden elkaar niet, maar dezelfde valkuil kostte bij het veengebied 1.500 ha, zie #613. Controle/PerEcotoop bewaakt dat.";
+				}
+
+				unit<uint32> DijkenBehouden
+				:  StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/Rivieren_DijkenBehouden_NbSgenuanceerd_20260826.shp"
+				,  StorageType     = "gdal.vect"
+				,  StorageReadOnly = "True"
+				,  DialogType      = "Map"
+				,  DialogData      = "geometry"
+				,  Source          = "Deltares, team Rivieren NL2120. Oorspronkelijke bestandsnaam dijken_behouden.shp, geleverd op 2026-08-28 in dijken_behouden2.zip via SharePoint NL2120, map Toekomstbeelden/Kernteam/Uitgangspunten en beoordeling/RSInput. De datum in de bestandsnaam is de laatste wijzigingsdatum van de dbf."
+				,  Descr           = "De dijken die behouden blijven, 31 polygonen en samen 566 ha. Overwegend langgerekte stroken van dertig tot vijftig meter breed en enkele kilometers lang, plus twee compactere vlakken van 110 en 30 ha. Ze liggen op de grens tussen de nieuwe uiterwaarden en de riviertrajecten: 231 ha valt binnen de 36 binnendijkse gebieden, 152 ha binnen de 23 riviertrajecten en 183 ha buiten de levering.
+									De dbf heeft twee velden, id en maatregel, en die zijn op een record na leeg. Er valt dus niets te selecteren en het hele bestand geldt als behouden dijk. Wat de levering met deze shape wil staat in Varianten/NbSGenuanceerd/Landschap/Rivieren/Sloopgebied; zie #620."
+				{
+					attribute<rdc_meter> geometry        (poly);
+					attribute<.>         Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+				}
+		}
+		
+		container Veen_NbSGenuanceerd
+		: Descr = "NbS-bouwstenen in het veengebied en de daaruit volgende natuurbeheertypen, voor de variant NbSGenuanceerd."
+		{
+			container Bron_PerPeilvak
+			: StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/NBSnuanc_bouwsteen_pct_perpeilvak.gpkg"
+			, StorageType     = "gdal.vect"
+			, StorageReadOnly = "TRUE"
+			, Source          = "Deltares, aangeleverd via SURFdrive NL2120/Veen/NBS nuanc/nbsnuanc/voorNatuur"
+			, DialogData      = "rdc_meter"
+			{
+				unit<uint32> gebied
+				: SqlString = "select coalesce(\"2_pct\", 0) / 100.0 as BS2, coalesce(\"3a_pct\", 0) / 100.0 as BS3a, coalesce(\"3b_pct\", 0) / 100.0 as BS3b, coalesce(\"4a_pct\", 0) / 100.0 as BS4a, coalesce(\"4b_pct\", 0) / 100.0 as BS4b, coalesce(\"5_pct\", 0) / 100.0 as BS5, coalesce(\"6_pct\", 0) / 100.0 as BS6, coalesce(\"7_pct\", 0) / 100.0 as BS7, coalesce(\"8_pct\", 0) / 100.0 as BS8, coalesce(\"9a_pct\", 0) / 100.0 as BS9a, coalesce(\"9b_pct\", 0) / 100.0 as BS9b, 0.0 as BS10a, geom from (select *, row_number() over (partition by geom order by fid) as rn, count(*) over (partition by geom) as cnt from NBSnuanc_bouwsteen_pct_perpeilvak) where rn = (cnt + 1) / 2 order by ST_Area(geom) desc"
+				, Descr = "Gebieden met een peilvak. De percentages per bouwsteen tellen per peilvak niet tot 100 op; de rest is bouwsteen 0, 1 of 10.";
+			}
+			container Bron_ZonderPeilvak
+			: StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/NBSnuanc_bouwsteen_pct_zonderpv.gpkg"
+			, StorageType     = "gdal.vect"
+			, StorageReadOnly = "TRUE"
+			, Source          = "Deltares, aangeleverd via SURFdrive NL2120/Veen/NBS nuanc/nbsnuanc/voorNatuur"
+			, DialogData      = "rdc_meter"
+			{
+				unit<uint32> gebied
+				: SqlString = "select coalesce(\"2_pct\", 0) / 100.0 as BS2, coalesce(\"3a_pct\", 0) / 100.0 as BS3a, coalesce(\"3b_pct\", 0) / 100.0 as BS3b, coalesce(\"4a_pct\", 0) / 100.0 as BS4a, coalesce(\"4b_pct\", 0) / 100.0 as BS4b, coalesce(\"5_pct\", 0) / 100.0 as BS5, 0.0 as BS6, coalesce(\"7_pct\", 0) / 100.0 as BS7, 0.0 as BS8, 0.0 as BS9a, 0.0 as BS9b, coalesce(\"10_pct\", 0) / 100.0 as BS10a, geom from (select *, row_number() over (partition by geom order by fid) as rn, count(*) over (partition by geom) as cnt from NBSnuanc_bouwsteen_pct_zonderpv) where rn = (cnt + 1) / 2 order by ST_Area(geom) desc"
+				, Descr = "Gebieden zonder peilvak. Hier geldt in principe een bouwsteen per gridcel, dus 100 procent. Voor 3 en 4 is de locatie van variant a en b niet bepaald, dus staat het daar op 50-50.";
+			}
+		}
+
+		container Kust_NbSGenuanceerd
+		: Descr = "Ruimtebeslag van de NbS-bouwstenen uit het landschapstype Kust, voor de variant NbSGenuanceerd. Zie issue #654.
+
+					Drie leveringen van team Kust, een per deelgebied:
+					  Duinen : zandige kust, kerven in de duinen, variant A.
+					  Wadden : meegroeilandschappen en voorlanden, variant C.
+					  ZWD    : Zuidwestelijke Delta, meegroeilandschappen en voorlanden, variant C.
+
+					Deze levering van 2026-08-28 vervangt de levering van 2026-08-21 uit #623. Drie dingen zijn
+					veranderd. De Wadden en de Zuidwestelijke Delta zijn nu variant C in plaats van variant A, en
+					daarmee een stuk kleiner: samen 30.239 ha tegen 57.771 ha. De duinen zijn dezelfde 49 kerven als
+					in #623, maar nu in RD in plaats van WGS84. En elke levering draagt nu het natuurbeheertype als
+					kolomnaam mee, wat eerder een voorlopige keuze van het model was.
+
+					In dit hele ruimtebeslag verandert het huidige grondgebruik in natuur. Er mag dus niet meer
+					gebouwd worden, maar de bestaande bebouwing blijft sinds #707 wel staan. Dat loopt via
+					NietBouwen (de zeef voor wonen en werken) en via ExoNatuur (het exogeen opleggen). De
+					landgebruiksklasse wordt dus natuur terwijl de stand een verspreide woning kan houden.
+
+					De megasuppleties zijn nog steeds niet geleverd: dat zijn puntlocaties op zee zonder ruimtebeslag
+					op land."
+		{
+
+			unit<uint32> Duinen
+			:  StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/Kust_Duinen_varA_NbSgenuanceerd_20260828.shp"
+			,  StorageType     = "gdal.vect"
+			,  StorageReadOnly = "True"
+			,  DialogType      = "Map"
+			,  DialogData      = "geometry"
+			,  Source          = "Deltares, team Kust NL2120. Oorspronkelijke bestandsnaam varA_Duinen.shp, geleverd op 2026-08-29 via SharePoint NL2120, map Toekomstbeelden/Kernteam/Uitgangspunten en beoordeling/RSInput/Natuur Kust. De datum in de bestandsnaam is de laatste wijzigingsdatum van de dbf."
+			,  Descr           = "Zandige kust: 49 polygonen met hoge potentie voor kerven, samen 20.228 ha, van Walcheren tot de oostelijke Waddeneilanden.
+
+								Dezelfde geometrie als de kerven uit #623, maar nu in RD geleverd; de omweg via WGS84 is daarmee vervallen. Het veld id is nog steeds niet uniek: 49 records op 32 ids, want de multipart-polygonen zijn geexplodeerd met behoud van het id van de ouder. De kolommen oppervlakt en oppvl2 tot en met oppvl5 bevatten dezelfde oppervlakte in m2, maar alleen oppvl5 is voor alle 49 records gevuld; Surface is wel overal gevuld en gelijk aan de polygoonoppervlakte. Reken met de geometrie.
+
+								Nieuw is de kolom N08.02, het natuurbeheertype open duin, met waarde 1 voor 48 van de 49 records. Bij record 46 (69 ha) is die leeg. Zie Beheertypecode_Duinen in Varianten/NbSGenuanceerd/Landschap/Kust: de kolomnaam kan hier niet als attribuut worden ingelezen, want een punt is in GeoDMS geen geldig naamteken."
+			{
+				attribute<rdc_meter> geometry        (poly);
+				attribute<.>         Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+			}
+
+			unit<uint32> Wadden
+			:  StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/Kust_Wadden_varC_NbSgenuanceerd_20260828.shp"
+			,  StorageType     = "gdal.vect"
+			,  StorageReadOnly = "True"
+			,  DialogType      = "Map"
+			,  DialogData      = "geometry"
+			,  Source          = "Deltares, team Kust NL2120. Oorspronkelijke bestandsnaam varC_wadden.shp, geleverd op 2026-08-29, zelfde map als Duinen."
+			,  Descr           = "Waddengebied: 12 polygonen meegroeilandschap en voorland, variant C, samen 17.081 ha.
+
+								Variant C is hier veel soberder dan de variant A uit #623, die 47.100 ha besloeg. Alles is binnendijks en alles ligt op het vasteland: de velden layer en path wijzen alle twaalf naar Waddenzee_Vasteland_Binnendijks. De eilanden en de buitendijkse delen die in variant A wel zaten zijn in variant C niet meer opgenomen. Het veld zijde staat dan ook overal op land.
+
+								De kolom N09.01, schor of kwelder, staat voor alle twaalf op 1. Zie Beheertypecode_Kwelder."
+			{
+				attribute<rdc_meter> geometry        (poly);
+				attribute<string>    zijde;
+				attribute<.>         Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+			}
+
+			unit<uint32> ZWD
+			:  StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/Kust_ZWD_varC_NbSgenuanceerd_20260828.shp"
+			,  StorageType     = "gdal.vect"
+			,  StorageReadOnly = "True"
+			,  DialogType      = "Map"
+			,  DialogData      = "geometry"
+			,  Source          = "Deltares, team Kust NL2120. Oorspronkelijke bestandsnaam Nbt_varC_ZWD.shp, geleverd op 2026-08-29, zelfde map als Duinen."
+			,  Descr           = "Zuidwestelijke Delta: 34 polygonen meegroeilandschap en voorland, variant C, samen 13.158 ha, waarvan 8.416 ha binnendijks en 4.742 ha buitendijks. Het ruimtebeslag ligt langs de Westerschelde; de laagnamen in het bestand noemen dat ook zo.
+
+								Het veld zijde heeft twee waarden: land is binnendijks, zee is buitendijks. Anders dan bij de Wadden hangt het beheertype hier aan die zijde. De zestien buitendijkse polygonen dragen N01.02, duin- en kwelderlandschap; zeventien van de achttien binnendijkse dragen N09.01, schor of kwelder. Bij de achttiende, record 3 van 199 ha, staan beide kolommen op nul. Die telt hier gewoon mee als binnendijks, dus als schor of kwelder; dat is vraag 2 in #654.
+
+								De negen binnendijkse polygonen uit de laag NBS_NuanSelectieGebiedsproces dragen een polderadministratie mee: NAAM, Eiland, JaarIndijk, Wilderom, DoNotUse en reason. DoNotUse staat bij die negen op nul en is bij de overige 25 leeg. De overige velden zijn zonale statistiek en worden hier niet gebruikt. De namen zijn in de dbf afgekapt: Elev. mean en Elev. me_1 tot en met me_5 zijn count, min, max, mean, median en stddev van de hoogte, in dezelfde volgorde als de reeksen GHW (gemiddeld hoogwater) en SSC (sedimentconcentratie). Het veld opp_m2 is niet de polygoonoppervlakte maar de celtelling maal 22500 m2 van het 150m-statistiekraster."
+			{
+				attribute<rdc_meter> geometry        (poly);
+				attribute<string>    zijde;
+				attribute<.>         Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+			}
+
+		}
+
+		container Zand_NbSGenuanceerd
+		: Descr = "Beekdalherstel uit het landschapstype Zand, voor de variant NbSGenuanceerd. Zie issue #630.
+
+					Een levering van team Zand: de beekdalen en droogdalen waar herstel plaatsvindt. Anders dan bij
+					kust gaat het hier alleen op slot voor nieuwbouw. De bestaande bebouwing mag blijven staan, dus
+					er loopt geen tak naar ExoNatuur en naar de sloop- en uitkoopindicatoren.
+
+					De natuurontwikkeling zit hier nog niet in. Volgens de levering wordt de landbouwgrond in de
+					beekdalen omgezet naar natuur en vochtig grasland (natuurinclusieve landbouw niveau 3), maar
+					welk natuurbeheertype dat is en of het om alle landbouwgrond gaat staat nog uit bij team Zand.
+					Zodra dat er is komt dat hier bij, met dezelfde opbouw als Kust_NbSGenuanceerd: een
+					INL_Beheertype_rel_AD plus ExoNatuur."
+		{
+			unit<uint32> Beekdalherstel
+			:  StorageName     = "%RSo_DataDir%/Beleid/Overigen/AndersBouwen/Zand_Beekdalherstel_NbSgenuanceerd_20260819.shp"
+			,  StorageType     = "gdal.vect"
+			,  StorageReadOnly = "True"
+			,  DialogType      = "Map"
+			,  DialogData      = "geometry"
+			,  Source          = "Deltares, team Zand NL2120. Oorspronkelijke bestandsnaam beekdalherstel.shp, geleverd op 2026-08-21 via SharePoint NL2120, map Toekomstbeelden/Kernteam/Uitgangspunten en beoordeling/RSInput/beekdalherstel. De datum in de bestandsnaam is de laatste wijzigingsdatum van de dbf."
+			,  Descr           = "30.753 polygonen, samen ongeveer 220.796 ha, van Zeeuws-Vlaanderen tot Groningen.
+
+								Twee velden: BKNSN_code met het subtype uit de Basiskaart Natuurlijk Systeem Nederland en
+								Subtype_na met de bijbehorende omschrijving. Dat laatste veld is in de dbf afgekapt van
+								Subtype_naam. Er is geen veld dat beekdalherstel onderscheidt van beekdal, dus de aanname
+								is dat de hele levering herstelgebied is. Dat is vraag 1 uit #630."
+			{
+				attribute<rdc_meter> geometry             (poly);
+				attribute<string>    BKNSN_code;
+				attribute<string>    Subtype_na;
+				attribute<.>         Per_AdminDomain       (AdminDomain) := poly2grid(geometry, AdminDomain);
+			}
+		}
+
+		container Zand_Allocatiebasis
+		: Descr = "De variant-onafhankelijke voorbereiding voor de extra natuur in het landschapstype Zand: claimregios, NNN-ringen, zeven, typen en geschiktheid. De allocatie zelf staat per variant onder Varianten, want die hangt af van de opgave en dus van de variant; dit deel niet, en het is te duur om drie keer te berekenen.
+
+				De gedeelde kaarten voor de extra natuur in het landschapstype Zand: claimregio's, zeven, typen en geschiktheid. Zie issue #652.
+
+					Anders dan bij veen, kust en rivieren geeft de aanlevering hier geen kaart maar alleen een opgave in
+					hectares per claimregio. Het model moet dus zelf bepalen waar die natuur landt. Dat gebeurt met
+					Templates/SourceData/NatuurAlloc_T, dat de opgave als harde bovengrens aan discrete_alloc_sp
+					meegeeft; de aanroep staat in Varianten/NbSGenuanceerd/Zand_Alloc. De getallen staan in
+					ModelParameters/Natuur.
+
+					Nat en droog zijn twee gescheiden werelden, en dat is geen modelkeuze maar staat zo in de
+					aanlevering. Natte natuur is beekdalherstel en landt alleen binnen het ruimtebeslag van #630;
+					droge natuur is bos, heide en zand en landt alleen daarbuiten, op de geomorfologisch geschikte
+					delen. Ze delen de claimregio-indeling niet: natte natuur telt per deelgebied, droge natuur per
+					deelgebied maal NNN-ring.
+
+					De zes BKNSN-subtypen die de aanlevering voor natte natuur noemt, beekdal en droogdal in hun
+					varianten, zijn precies de zes codes die in de beekdalherstel-levering van #630 zitten. Voor die
+					kant is er dus geen aparte subtypenkaart nodig. Voor droge natuur wel, en die is er niet: de
+					config heeft alleen de hoofdklassenkaart met elf klassen. Zie IsDroogBKN voor hoe dat is opgelost
+					en wat het kost."
+		{
+			unit<UInt32> Claimregios_shp
+			:  StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/Zand_Claimregios_20260708.shp"
+			,  StorageType     = "gdal.vect"
+			,  StorageReadOnly = "True"
+			,  DialogType      = "Map"
+			,  DialogData      = "geometry"
+			,  Source          = "Deltares, team Zand NL2120. Oorspronkelijke bestandsnaam begrenzing_zand.shp, geleverd op 2026-08-25 via SharePoint NL2120, map Toekomstbeelden/Kernteam/Uitgangspunten en beoordeling/RSInput/begrenzing_zand. De datum in de bestandsnaam is de laatste wijzigingsdatum van de dbf."
+			,  Descr           = "259 polygonen, samen 1.668.981 ha, zonder onderlinge overlap. Het veld deelgeb2 draagt de claimregio; deelgebied is in de hele levering leeg. Het veld fgr onderscheidt Hogere Zandgronden (248 polygonen, 1.618.033 ha) van Heuvelland (11 polygonen, 50.948 ha)."
+			{
+				attribute<rdc_meter> geometry (poly);
+				attribute<String>    deelgeb2;
+				attribute<String>    fgr;
+
+				attribute</ModelParameters/Natuur/Deelgebied> Deelgebied_rel := rlookup(deelgeb2, /ModelParameters/Natuur/Deelgebied/Shapesleutel)
+				, IntegrityCheck = "all(IsDefined(this))"
+				, Descr = "Koppeling aan de opgave, over de veldwaarde en niet over de naam: de namen in de Excel en in de shapefile lopen uiteen, en Twente-Achterho is in de dbf afgekapt op vijftien tekens. De IntegrityCheck laat een onbekende waarde hard falen in plaats van hem stil op null te zetten.";
+			}
+			unit<UInt32> NNN
+			:  StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NatuurNetwerkNedeland_inspire-pv-ps.nlps-nnn_EPSG28992_20230829.gpkg"
+			,  StorageType     = "gdal.vect"
+			,  StorageReadOnly = "True"
+			,  DialogType      = "Map"
+			,  DialogData      = "geometry"
+			,  Source          = "Provincies, via PDOK, INSPIRE-thema Protected Sites, peildatum 2023-08-29."
+			,  Descr           = "Het Natuurnetwerk Nederland, 40.468 polygonen. De overige velden zijn INSPIRE-boekhouding en worden hier niet gebruikt; alleen de geometrie telt."
+			{
+				attribute<rdc_meter> geometry (poly);
+			}
+		}
+	}
+
+	container Basisjaar
+	: Descr = "De natuur zoals die er in het basisjaar ligt, met een natuurbeheertype per cel. Zie ObjectVision/RSopen#652.
+
+				Twee bronnen, elk voor de vraag die hij kan beantwoorden. Het landgebruik in het basisjaar bepaalt OF
+				een cel natuur is; dat loopt via LGN, precies zoals de basisjaarkaart van het landgebruik het ook
+				doet. De MNP-beheertypenkaart bepaalt WELK beheertype het dan is; die is als enige bron in
+				INL_Beheertype geclassificeerd, 84 typen.
+
+				Waarom niet NVK Huidig, dat immers echt huidig is: die kaart heeft in de bron 171 klassen, maar de
+				config vertaalt ze naar LHMType, en daar houdt natuur op bij zeven klassen. Een koppeltabel van
+				NVK-klasse naar INL-beheertype bestaat niet. De MNP-kaart hangt via LHMType_rel juist onder dezelfde
+				typologie, dus die sluit wel aan.
+
+				Waarom de MNP-kaart dan niet rechtstreeks: die is planpotentieel, dus huidige natuur plus de
+				volledige realisatie van alle geplande maatregelen, inclusief het Natuurnetwerk. Het masker op het
+				basisjaar-landgebruik haalt dat plandeel eruit. Zodra er een huidig-variant van dezelfde kaart komt
+				kan die het masker vervangen; dat is de nettere oplossing en staat uit bij de aanleverende partij.
+
+				Deze kaart heeft twee taken. Hij is de achtervang onder de landschapstypen in de NbS-varianten, in
+				plaats van de volle MNP-kaart die daar 187.445 ha landbouwgrond omzette op gezag van een BAU-plan.
+				En hij is de beoogde basis voor de indicatoren over bestaande natuurwaarden, waaronder de
+				koolstofvoorraad in het basisjaar die in #483 nog op nul staat."
+	{
+		attribute</Classifications/Grondgebruik/LGNKlasse>   LGN          (AdminDomain) := /SourceData/Grondgebruik/LGN/m25;
+		attribute</Classifications/Actor/LU_ModelType>       LU_Basisjaar (AdminDomain) := /Classifications/Grondgebruik/LGNKlasse/LU_ModelType_rel[LGN];
+
+		attribute<bool> IsNatuur (AdminDomain) := MakeDefined(/Classifications/Actor/LU_ModelType/IsNatuur[LU_Basisjaar], FALSE)
+		, Descr = "Is deze cel in het basisjaar natuur volgens het model? Dezelfde definitie als de indicator Grondgebruik/Verandering/Natuur_Basisjaar gebruikt, namelijk LU_ModelType/IsNatuur, alleen dan rechtstreeks uit LGN in plaats van uit de landgebruikskaart per casus. Riet en moerasbomen tellen hier dus niet mee: die zijn in LU_ModelType natte teelt. Dat wijkt bewust af van de hedonische definitie in #566.";
+
+		attribute<bool> IsWater (AdminDomain) := MakeDefined(/Classifications/Grondgebruik/LGNKlasse/IsWater_hedonisch[LGN], FALSE)
+		, Descr = "Is deze cel in het basisjaar open water? Nodig als tegenhanger van IsNatuur bij het bepalen van nieuw water: een cel die al water is, is geen nieuwe waterberging of nevengeul.
+
+					Rechtstreeks op de LGN-klasse en niet via LU_ModelType, zoals IsNatuur hierboven wel doet. Dat is
+					geen slordigheid maar een noodzaak: de klassen 16 zoet water en 17 zout water hebben in de
+					LGN-tabel een lege LU_ModelType, dus die route levert overal null en daarmee IsWater overal
+					FALSE. Dat was tot 26 augustus 2026 het geval en het viel op doordat het zomerbed van de rivieren
+					op nul procent bestaand water uitkwam.";
+
+		attribute<INL_Beheertype> BT_NVK_2_5m (rdc_2_5m)   := /Classifications/Grondgebruik/NVK/HDB_NVKKlasse/INL_Beheertype_rel[/SourceData/Grondgebruik/NVK/Huidig/Read_Huidig_2_5m]
+		, Descr = "Beheertype volgens de NVK-kaart huidig, op de bronresolutie van 2,5 meter. De 171 NVK-klassen dragen de beheertypecode in hun naam; 75 daarvan koppelen aan de Index Natuur en Landschap, de rest zijn agrarische klassen en landschapselementen.";
+
+		attribute<INL_Beheertype> BT_NVK (AdminDomain) := modus(BT_NVK_2_5m, rdc_2_5m/rdc_25m_rel)
+		, Descr = "Idem op 25 meter. Modus en niet de eerste, zodat een cel het type krijgt dat er het meest voorkomt.";
+
+		attribute<INL_Beheertype> BT_Levering (AdminDomain) := Bron/Landelijk_BAU/INL_Beheertype_rel_AD
+		, Descr = "Het beheertype uit de bron, nog zonder masker. Een bron en niet twee, en dat is een gemeten keuze.
+
+					De NVK-kaart huidig is de voor de hand liggende tweede bron: die is echt huidig, terwijl de
+					MNP-kaart planpotentieel is. Maar het masker op IsNatuur haalt dat plandeel er toch al uit, dus
+					waar een cel vandaag natuur is, is het MNP-type ook een huidig type.
+
+					Wat NVK toevoegt is bovendien weinig en wat het kost is veel. Toevoegen dicht 1.032 ha van de
+					44.877 ha natuur zonder beheertype; de twee kaarten zwijgen vrijwel op dezelfde plekken. En waar
+					ze allebei spreken, 456.934 ha, zijn ze het over 154.895 ha eens op beheertypeniveau en over
+					396.796 ha op natuurtypeniveau. Het verschil zit dus vooral in het detailniveau, N05.01 tegenover
+					N05.01.13, maar op 60.000 ha gaat het echt over wat voor natuur er ligt. Twee bronnen door elkaar
+					mengen zou die onenigheid als naadverschil tussen buurcellen de kaart in trekken.
+
+					Doorslaggevend is de aansluiting: BAU legt de MNP-kaart rechtstreeks op, en alle vier de
+					landschapstypen leveren in INL_Beheertype. Een basisjaarkaart met NVK-typen zou daar per
+					constructie mee botsen.
+
+					De NVK-koppeling blijft wel bestaan, in Classifications/Grondgebruik/NVK/HDB_NVKKlasse en in
+					Controle hieronder, zodat de vergelijking gedocumenteerd en herhaalbaar is. Zie #652.";
+
+		attribute<INL_Beheertype> INL_Beheertype_rel_AD (AdminDomain) := IsNatuur ? BT_Levering : null_b[INL_Beheertype]
+		, Descr = "Het beheertype van de bestaande natuur. Null waar de cel geen natuur is, en ook waar hij dat wel is maar geen van beide bronnen een type geeft; zie Controle/Areaal_ZonderBeheertype.";
+
+		attribute<NatuurType>     NatuurTypen_rel_AD (AdminDomain) := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+		attribute<INL_Beheertype> ExoNatuur          (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Natuur[NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+		attribute<INL_Beheertype> ExoWater           (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Water [NatuurTypen_rel_AD] ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+
+		container Controle
+		{
+			parameter<Ha> Areaal_Natuur           := sum(IsNatuur && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Natuur in het basisjaar volgens LGN.";
+			parameter<Ha> Areaal_MetBeheertype    := sum(IsDefined(INL_Beheertype_rel_AD) && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Daarvan het deel waar een van beide bronnen een beheertype geeft.";
+			parameter<Ha> Areaal_BT_uit_NVK       := sum(IsNatuur && IsDefined(BT_NVK) && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Bestaande natuur waarvoor de NVK-kaart een beheertype geeft.";
+			parameter<Ha> Areaal_BT_uit_MNP       := sum(IsNatuur && IsDefined(Bron/Landelijk_BAU/INL_Beheertype_rel_AD) && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Bestaande natuur waarvoor de MNP-kaart een beheertype geeft.";
+			parameter<Ha> Areaal_BT_alleen_NVK    := sum(IsNatuur && IsDefined(BT_NVK) && !IsDefined(Bron/Landelijk_BAU/INL_Beheertype_rel_AD) && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het gat dat de NVK-kaart dicht: hier zwijgt de MNP-kaart.";
+			parameter<Ha> Areaal_BT_Beide         := sum(IsNatuur && IsDefined(BT_NVK) && IsDefined(Bron/Landelijk_BAU/INL_Beheertype_rel_AD) && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waar beide bronnen een type geven.";
+			parameter<Ha> Areaal_BT_Eens          := sum(IsNatuur && BT_NVK == Bron/Landelijk_BAU/INL_Beheertype_rel_AD && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "En waar ze het daar ook over eens zijn, op het niveau van het beheertype zelf.";
+			parameter<Ha> Areaal_NT_Eens          := sum(IsNatuur && INL_Beheertype/NatuurType_rel[BT_NVK] == INL_Beheertype/NatuurType_rel[Bron/Landelijk_BAU/INL_Beheertype_rel_AD] && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Idem, maar dan op het grovere niveau van het natuurtype, de achttien N-hoofdklassen. Ligt dit veel hoger dan Areaal_BT_Eens, dan zit het verschil tussen de twee kaarten vooral in het detailniveau, bijvoorbeeld N05.01 tegenover N05.01.13, en niet in de vraag wat voor natuur het is.";
+			parameter<Ha> Areaal_ZonderBeheertype := Areaal_Natuur - Areaal_MetBeheertype, Descr = "Natuur zonder beheertype: LGN zegt natuur, de MNP-kaart zwijgt. Dit is het gat dat overblijft en dat de indicatoren over bestaande natuurwaarden niet kunnen bedienen. Loopt dit hoog op, dan is een huidig-kaart van de aanleverende partij geen luxe maar noodzaak.";
+			parameter<Ha> Areaal_MNP_Plandeel     := sum(IsDefined(Bron/Landelijk_BAU/INL_Beheertype_rel_AD) && !IsNatuur && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "De andere kant: waar de MNP-kaart een beheertype geeft en het basisjaar geen natuur. Dat is het planpotentieel, en dat is precies wat met deze kaart niet meer wordt opgelegd in de NbS-varianten.";
+		}
+	}
+
+	container Varianten
+	: Descr = "Per variant welke leveringen natuur opleggen, en wat daarvan nieuw is ten opzichte van het basisjaar. Zie ObjectVision/RSopen#652.
+
+				Elke variant volgt dezelfde drie stappen. Landschap houdt de landschapstypen uit elkaar, een
+				subcontainer per landschap, elk met een natuur- en een waterstroom. Natuur_Totaal voegt ze samen; de
+				volgorde bepaalt wie wint waar twee leveringen dezelfde cel raken, en die is overal veen, kust,
+				zand, rivieren. Natuur_Nieuw houdt daarvan over wat het basisjaar nog niet was.
+
+				Die laatste stap is de kern van de herstructurering. Tot 26 augustus 2026 legde het model in elke
+				variant ook de bestaande natuur op: in BAU omdat de MNP-kaart huidige natuur en planpotentieel niet
+				scheidt, in de NbS-varianten via een achtervang die daarop terugviel. Daardoor legde NbSGenuanceerd
+				1,41 miljoen ha natuur op waarvan het overgrote deel al natuur was, en was uit dat cijfer niet af te
+				lezen wat er nu eigenlijk verandert. Nu legt elke variant alleen op wat er verandert.
+
+				Dat kan omdat niets van de oplegging afhangt om bestaande natuur natuur te laten blijven. De
+				landgebruikskaart valt zonder oplegging terug op het basisjaar, de koolstofklasse valt via
+				PrevZichtjaar terug op BaseYear, en voor de zeef geldt dat bos en open natuurlijk terrein in de
+				NbS-varianten al evident benut zijn voor wonen en werken."
+	{
+		container BAU
+		: Descr = "BAU kent geen landschapstype. De levering is de landelijke MNP-planpotentieelkaart, en er is dus geen Landschap-container: er valt niets te combineren. Na aftrek van het basisjaar blijft het plandeel over, wat vigerend natuurbeleid volgens die kaart nog realiseert. Voorheen legde BAU de hele kaart op, 854.258 ha."
+		{
+			attribute<INL_Beheertype> Natuur_Totaal (AdminDomain) := Bron/Landelijk_BAU/ExoNatuur;
+			attribute<INL_Beheertype> Water_Totaal  (AdminDomain) := Bron/Landelijk_BAU/ExoWater;
+			attribute<INL_Beheertype> Natuur_Nieuw  (AdminDomain) := !Basisjaar/IsNatuur ? Natuur_Totaal : null_b[INL_Beheertype];
+			attribute<INL_Beheertype> Water_Nieuw   (AdminDomain) := !Basisjaar/IsWater  ? Water_Totaal  : null_b[INL_Beheertype];
+		}
+
+		container BAU2 := BAU, Descr = "BAU2 verschilt van BAU in de klimaat- en claimreeksen, niet in de natuur. Deze gelijkstelling staat er zodat dat zichtbaar een keuze is en geen omissie; komt er een eigen natuurlevering voor BAU2, dan komt die hier.";
+
+		container NbSMax
+		: Descr = "NbSMax heeft een landschapslevering, de rivierenkaart NbSMax, en die is klein: 46.233 ha voor aftrek van het basisjaar. Daarnaast neemt deze variant het plandeel uit BAU over.
+
+					Dat laatste is geen landschap en staat daarom naast Landschap en niet erin. Het is de invulling
+					van een gat: zonder dat plandeel legt NbSMax minder op dan BAU, en dat komt doordat er voor deze
+					variant maar een landschapstype is aangeleverd. Besloten vanuit Deltares op 26 augustus 2026."
+		{
+			container Landschap
+			{
+				container Rivieren
+				{
+					attribute<INL_Beheertype> Natuur (AdminDomain) := Bron/Rivieren_NbSMax/ExoNatuur;
+					attribute<INL_Beheertype> Water  (AdminDomain) := Bron/Rivieren_NbSMax/ExoWater;
+				}
+			}
+
+			attribute<INL_Beheertype> Natuur_Totaal (AdminDomain) := MakeDefined(Landschap/Rivieren/Natuur, BAU/Natuur_Nieuw), Descr = "Het landschapstype gaat voor op het BAU-plan waar ze dezelfde cel raken.";
+			attribute<INL_Beheertype> Water_Totaal  (AdminDomain) := MakeDefined(Landschap/Rivieren/Water,  BAU/Water_Nieuw);
+			attribute<INL_Beheertype> Natuur_Nieuw  (AdminDomain) := !Basisjaar/IsNatuur ? Natuur_Totaal : null_b[INL_Beheertype];
+			attribute<INL_Beheertype> Water_Nieuw   (AdminDomain) := !Basisjaar/IsWater  ? Water_Totaal  : null_b[INL_Beheertype];
+		}
+
+		container NbSGenuanceerd
+		: Descr = "De variant met de meeste invoer: alle vier de landschappen leveren. Veen komt uit de NbS-bouwstenen (#613), kust uit kerven, meegroeilandschappen en voorlanden (#623), zand uit de gealloceerde opgave per claimregio (#652) en rivieren uit de ecotoopverdeling per riviertraject (#621).
+
+					Geen BAU-plandeel hier: de vier landschapstypen vervangen het vigerende natuurplan en komen er
+					niet bovenop."
+		{
+			container Landschap
+			{
+				container Veen
+				: Descr = "NbS-bouwstenen in het veengebied en de natuur die daaruit volgt. Zie #613 voor de inlees en #660 voor de allocatie.
+
+							De levering geeft per peilvak het aandeel van elke bouwsteen, en daaruit volgt per peilvak het
+							aandeel van elk natuurbeheertype. Dat is een verdeling en geen kaart: binnen een peilvak is elke
+							fractie overal gelijk.
+
+							Tot #660 maakte het model daar een kaart van met een ArgMax zonder drempel. Omdat de fracties
+							binnen een peilvak overal gelijk zijn wees die ArgMax in elke cel van het peilvak hetzelfde type
+							aan, en werd het hele peilvak dat beheertype, ook waar de levering zegt dat er maar een deel
+							natuur wordt. Dat blies het opgelegde areaal op en sloopte de bebouwing mee: 25.029 woningen
+							binnen het ruimtebeslag van de bebouwingstypekaart veen en buiten de categorie slopen en op slot,
+							waar die kaart juist zegt dat er gebouwd mag blijven worden.
+
+							Nu is het een allocatie met het peilvak als claimregio, dezelfde route als de zandnatuur uit #652.
+							De opgave per peilvak per beheertype is de fractie maal het gerasterde peilvakoppervlak, en
+							Templates/SourceData/NatuurAlloc_T verdeelt die over de cellen binnen de zeef. Alleen dat deel
+							wordt opgelegd en dus geleegd; de rest van het peilvak houdt zijn huidige grondgebruik, zie
+							Fr_BlijftZoalsHetIs.
+
+							Het inlezen van de twee geopackages staat in Bron/Veen_NbSGenuanceerd."
+				{
+					container Src := Bron/Veen_NbSGenuanceerd;
+
+					// ---- van de levering naar fracties per cel ----
+
+					attribute<Src/Bron_PerPeilvak/gebied>    PerPeilvak_rel    (AdminDomain) := poly2grid(Src/Bron_PerPeilvak/gebied/geometry, AdminDomain);
+					attribute<Src/Bron_ZonderPeilvak/gebied> ZonderPeilvak_rel (AdminDomain) := poly2grid(Src/Bron_ZonderPeilvak/gebied/geometry, AdminDomain);
+					attribute<bool>                      IsVeengebied      (AdminDomain) := IsDefined(PerPeilvak_rel) || IsDefined(ZonderPeilvak_rel), Descr = "Cel valt binnen het door Deltares aangeleverde veengebied. Bouwsteen 0, 1 en 10 zijn niet aangeleverd en vallen hier dus grotendeels buiten.";
+
+					container Fr_perBouwsteen := 
+						for_each_nedv(
+							NbSVeen/NbSBouwsteen/MetBrondata/name
+							, 'MakeDefined(Src/Bron_ZonderPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[ZonderPeilvak_rel], Src/Bron_PerPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[PerPeilvak_rel])[float32]'
+							, AdminDomain
+							, float32
+						), Descr = "Fractie van het celoppervlak per NbS-bouwsteen. Buiten het veengebied null, binnen het veengebied nul waar de bouwsteen niet voorkomt. De laag zonder peilvak gaat voor waar de twee elkaar overlappen, en Peilvak/Per_AdminDomain volgt diezelfde voorrang.";
+
+
+					parameter<string> Expr_Natuurtype :='add('+AsItemList('Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name+' * NbSVeen/Fracties_vd_Bouwsteen/@NT@[NbSVeen/NbSBouwsteen/V/'+NbSVeen/NbSBouwsteen/MetBrondata/name+']')+')', Descr = "Sjabloon voor Fr_perNatuurtype: per bouwsteen de fractie van de cel maal het aandeel van het natuurbeheertype in die bouwsteen, gesommeerd over alle bouwstenen.";
+
+					container Fr_perNatuurtype := 
+						for_each_nedv(
+							NbSVeen/NbSNatuurtype/InGebruik/name
+							, replace(Expr_Natuurtype, '@NT@', NbSVeen/NbSNatuurtype/InGebruik/name)
+							, AdminDomain
+							, float32
+						), Descr = "Fractie van het celoppervlak per natuurbeheertype, als mengsel over alle bouwstenen in het gebied. Dit is product 2 uit #613, en sinds #660 de opgave die de allocatie moet halen: constant binnen een peilvak, dus een aandeel en geen ligging.";
+
+					parameter<string> Expr_Landgebruik :='add('+AsItemList('Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name+' * NbSVeen/NbSBouwsteen/Fr_@LG@[NbSVeen/NbSBouwsteen/V/'+NbSVeen/NbSBouwsteen/MetBrondata/name+']')+')', Descr = "Sjabloon voor Fr_perLandgebruik, zelfde opzet als Expr_Natuurtype maar dan voor de hoofdtypen landgebruik uit kolommen X:AC.";
+
+					container Fr_perLandgebruik :=
+						for_each_nedv(
+							NbSVeen/NbSLandgebruik/name
+							, replace(Expr_Landgebruik, '@LG@', NbSVeen/NbSLandgebruik/name)
+							, AdminDomain
+							, float32
+						), Descr = "Fractie van het celoppervlak per hoofdtype landgebruik. Hiervan wordt OppervlakteWater gealloceerd, zie Fr_Water_Totaal; de overige vijf kolommen beschrijven wat er blijft en worden niet opgelegd.
+
+									Let op VernatGrasland_Kruidenrijk: dat is de kolom die in de brontabel N12.02 agrarisch heet. Die geldt hier als agrarisch grasland en niet als natuur, conform de brontabel zelf, die hem buiten de N-typen houdt, en conform de economische functie grasland en veeteelt van bouwsteen 3a en 4a. Zou dat besluit omgaan, dan is het een kwestie van deze kaart optellen bij Fr_perNatuurtype/N12_02. Zie #613.";
+
+					attribute<float32>              Fr_Bouwsteen_Totaal     (AdminDomain) := ='add('+AsItemList('Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name)+')', IntegrityCheck = "all(IsNull(this) || this <= 1.02f)", Descr = "Som van de bouwsteenfracties per cel. Blijft onder 1 omdat de rest bouwsteen 0, 1 of 10 is; zie Fr_Bouwsteen_Rest. In de bron komen afrondingen tot 101 procent voor; boven 102 procent klopt er iets niet, bijvoorbeeld doordat de twee lagen elkaar zijn gaan overlappen.";
+
+					attribute<float32>              Fr_Bouwsteen_Rest       (AdminDomain) := 1f - Fr_Bouwsteen_Totaal, Descr = "Het deel van het peilvak dat niet is aangeleverd: bouwsteen 0 bestaande natuur en grasland zonder vernatting, bouwsteen 1 grasland met een grondwaterstand rond 40 cm, en bouwsteen 10 bestaand dicht bebouwd gebied. Die drie hebben geen natuurbeheertype en veranderen dus niet van grondgebruik. Dit is de vraag uit #660 over de resterende fractie: hij heeft nu een naam, en Fr_BlijftZoalsHetIs telt hem samen met de niet-natuurdelen van de wel aangeleverde bouwstenen.";
+
+					attribute<float32>              Fr_Natuur_Totaal        (AdminDomain) := ='add('+AsItemList('Fr_perNatuurtype/'+NbSVeen/NbSNatuurtype/InGebruik/name)+')', Descr = "Som over alle natuurbeheertypen. Blijft onder het aandeel N-typen van de bouwstenen zolang 3b en 4b geen verdeling hebben.";
+					attribute<float32>              Fr_Water_Totaal         (AdminDomain) := Fr_perLandgebruik/OppervlakteWater, Descr = "Het aandeel open water dat de levering vraagt: 0,75 in bouwsteen 9a nieuw open water voor waterbuffering en 9b bestaand open water met extra buffercapaciteit, en nul in de rest. Tot #660 werd deze kolom nergens gelezen en liep de enige plek waar de veenlevering iets over open water zegt dood. Hij staat sindsdien als eigen type in VeenType, maar wordt sinds het antwoord in #664 niet meer gealloceerd: zie WaterbufferingAlloceren.";
+					attribute<float32>              Fr_Opgelegd             (AdminDomain) := = WaterbufferingAlloceren
+																								? 'Fr_Natuur_Totaal + Fr_Water_Totaal'
+																								: 'Fr_Natuur_Totaal'
+					, Descr = "Het deel van de cel dat volgens de levering van grondgebruik verandert, en daarmee de opgave die de allocatie over het peilvak moet verdelen. Het open water telt hier alleen mee zolang WaterbufferingAlloceren aanstaat; staat die uit, dan hoort die fractie bij Fr_BlijftZoalsHetIs, want het model doet er niets mee.";
+					attribute<float32>              Fr_BlijftZoalsHetIs     (AdminDomain) := 1f - Fr_Opgelegd
+					, IntegrityCheck = "all(IsNull(this) || this > -0.02f)"
+					, Descr = "Het deel van de cel dat zijn huidige grondgebruik houdt: de niet aangeleverde bouwstenen uit Fr_Bouwsteen_Rest plus het grasland, de natte teelt en het bebouwde deel binnen de wel aangeleverde bouwstenen. In de allocatie is dit het type Rest van NatuurAlloc_T, dat geen beheertype heeft en dus vanzelf uit de oplegging valt.";
+
+					// ---- de claimregio: het peilvak ----
+
+					unit<uint32> Peilvak := union_unit(Src/Bron_ZonderPeilvak/gebied, Src/Bron_PerPeilvak/gebied)
+					, Descr = "De claimregio's van de veenallocatie: de gebieden uit de twee leveringen achter elkaar, eerst die zonder peilvak en dan die met. Twee lagen in een unit, want een cel valt in de ene of in de andere en de opgave geldt per gebied.
+
+								De volgorde is die van Fr_perBouwsteen: waar de twee lagen elkaar overlappen wint de laag zonder peilvak."
+					{
+						parameter<uint32> Offset_PerPeilvak := uint32(#(Src/Bron_ZonderPeilvak/gebied)), Descr = "Waar de gebieden met peilvak in deze unit beginnen.";
+
+						attribute<bool>   IsZonderPeilvak := uint32(id(.)) < Offset_PerPeilvak;
+						attribute<uint32> Nr              := union_data(., uint32(id(Src/Bron_ZonderPeilvak/gebied)), uint32(id(Src/Bron_PerPeilvak/gebied))), Descr = "Het rijnummer binnen de eigen bronlaag. Met union_data en niet met id(.) min de offset: een ternair rekent in GeoDMS beide takken over alle elementen uit, dus die aftrekking zou ook op de eerste bronlaag losgaan en op een uint32 onder nul duiken.";
+						attribute<string> Label           := (IsZonderPeilvak ? 'zonder peilvak ' : 'peilvak ') + string(Nr), DialogType = "LabelText", Descr = "De leveringen dragen geen naam of code per gebied, dus het label is de herkomst plus het rijnummer.";
+						attribute<Ha>     Opp_Vector      := union_data(., Controle/opp_zp, Controle/opp_pv), Descr = "Polygoonoppervlak van het gebied. Telt de genestelde stukken dubbel, net als Controle/PerBouwsteen/Vector.";
+
+						attribute<.> Rel_ZonderPeilvak (Src/Bron_ZonderPeilvak/gebied) := value(uint32(id(Src/Bron_ZonderPeilvak/gebied)), .);
+						attribute<.> Rel_PerPeilvak    (Src/Bron_PerPeilvak/gebied)    := value(uint32(id(Src/Bron_PerPeilvak/gebied)) + Offset_PerPeilvak, .)
+						, Descr = "Van een gebied in de bronlaag naar zijn plek in deze unit. De optelling staat op het brondomein, waar elk rijnummer bestaat, en niet op AdminDomain, waar de meeste cellen buiten de laag vallen en de relatie dus null is. Een null plus de offset is op een integer geen null.";
+
+						attribute<.> Per_AdminDomain (AdminDomain) := MakeDefined(Rel_ZonderPeilvak[ZonderPeilvak_rel], Rel_PerPeilvak[PerPeilvak_rel])
+						, Descr = "In welk gebied valt de cel. Dezelfde voorrang als Fr_perBouwsteen, want het zijn dezelfde twee poly2grid-uitkomsten: de laag zonder peilvak gaat voor.
+
+									Hier staat geen toets op het studiegebied. Die is er wel, maar een stap verder: de opgave wordt over VeenCel gesommeerd en dat domein is al tot het studiegebied beperkt, en NatuurAlloc_T/IsKandidaat toetst er zelf ook op.";
+					}
+
+					attribute<bool> IsVeenCel (AdminDomain) := IsVeengebied && Geography/rdc_meter/IsStudyArea_AdminDomain;
+
+					unit<uint64> VeenCel := select_with_org_rel(IsVeenCel)
+					, Descr = "Alleen de cellen in het veengebied. De opgave per peilvak wordt hierover gesommeerd en niet over het volle raster, zodat er geen lege cellen in de partitionering meelopen."
+					{
+						attribute<AdminDomain> AdminDomain_rel               := org_rel;
+						attribute<.>           Per_AdminDomain (AdminDomain) := invert(org_rel);
+					}
+
+					attribute<Peilvak> Peilvak_rel_Cel (VeenCel) := Peilvak/Per_AdminDomain[VeenCel/AdminDomain_rel]
+					, IntegrityCheck = "all(IsDefined(this))"
+					, Descr = "Het gebied van de cel, op het veencelendomein. De IntegrityCheck bewaakt dat IsVeengebied en Peilvak/Per_AdminDomain dezelfde cellen dekken.";
+
+					attribute<Ha> Opp_Peilvak (Peilvak) := sum(const(1f, VeenCel), Peilvak_rel_Cel) * AdminDomain/NrHaPerCell
+					, Descr = "Het gerasterde oppervlak van het gebied binnen het studiegebied. Dit is de basis onder de opgave: fractie maal dit getal.";
+
+					// ---- de typen die verdeeld worden ----
+
+					parameter<string> Beheertypecode_OpenWater := 'N04.02'
+					, Descr = "Welk beheertype krijgt het open water uit kolom OppervlakteWater? N04.02 Zoete plas. Die kolom draagt zelf geen beheertypecode, want in de brontabel staat hij naast de N-typen en niet ertussen. N04.02 is wel het type waar bouwsteen 9a en 9b hun N-typedeel grotendeels op uitkomen, dus het water uit die bouwstenen komt langs beide wegen in dezelfde klasse terecht.
+
+								N04 staat in NatuurType als water te boek, dus dit deel gaat via ExoWater de oplegging in en niet via ExoNatuur. Of die stroom ook werkelijk wordt opgelegd hangt aan VariantK/ExogeenWaterOpleggen, die vandaag overal uit staat.";
+
+					parameter<bool> WaterbufferingAlloceren := FALSE
+					, Descr = "Alloceert het model het open water uit kolom OppervlakteWater, dus de waterbuffering van bouwsteen 9a en 9b?
+
+								Staat uit sinds 28 augustus 2026, op het antwoord van Deltares in #664. Bouwsteen 9a, nieuw open water voor waterbuffering, hoort niet als levering te worden opgelegd maar door RuimteScanner zelf bepaald te worden: de sector Waterberging alloceert die opgave al, op de aangeleverde watertekortgetallen per deelgebied uit #575. De aangeleverde 9a-vlakken zijn de gebieden die Deltares vanuit de systeemanalyse logisch acht, en dus geen voorschrift. Bouwsteen 9b is bestaand open water, waarvan alleen de extra buffercapaciteit nieuw is, en die zit in RS niet als ruimtelijke ingreep maar hooguit als peilopzet in de aangeleverde opgave; het ruimtebeslag blijft vanzelf bestaan, want het is al water en Zeef_Natuur landt er niet op.
+
+								Zolang deze schakelaar uit staat is de opgave voor dit type nul en verbruikt het geen kandidaatcellen meer, zodat de terrestrische typen de ruimte in die peilgebieden krijgen. Het scheelt 45.084 ha op een opgave van 258.748 ha.
+
+								Let op wat hier niet onder valt: het natuurtypedeel van bouwsteen 9a en 9b, dat 0,20 van hun oppervlak beslaat en vrijwel helemaal uit N04.01 en N04.02 bestaat, wordt nog wel gealloceerd. Dat loopt via Fr_perNatuurtype en niet via deze kolom. Of ook dat deel moet vervallen als bouwsteen 9a in zijn geheel wordt genegeerd, staat als vraag open in #664.";
+
+					unit<uint8> VeenType := range(uint8, 0b, uint8(#(NbSVeen/NbSNatuurtype/InGebruik)) + 1b)
+					, Descr = "De typen die over het peilvak verdeeld worden: de achttien natuurbeheertypen die in de bouwstenentabel voorkomen, met achteraan het open water uit kolom OppervlakteWater.
+
+								Het open water staat er als negentiende regel bij en niet als N-type, omdat de brontabel het zo geeft: kolom AZ telt de N-typen, kolom AB het oppervlaktewater, en die twee staan naast elkaar. Voor de allocatie maakt dat onderscheid niet uit, voor de herkomst wel.
+
+								Het type Rest, alles wat blijft zoals het is, komt er in NatuurAlloc_T zelf bij."
+					{
+						attribute<bool>                            IsOppervlakteWater := uint8(id(.)) == uint8(#(NbSVeen/NbSNatuurtype/InGebruik));
+						attribute<NbSVeen/NbSNatuurtype/InGebruik> Src_rel            := IsOppervlakteWater ? null_b[NbSVeen/NbSNatuurtype/InGebruik] : value(id(.), NbSVeen/NbSNatuurtype/InGebruik);
+
+						attribute<string> Typenaam := MakeDefined(NbSVeen/NbSNatuurtype/InGebruik/name[Src_rel], 'OppervlakteWater')
+						, Descr = "De naam van het type, onder een eigen naam en niet alleen als name. Een kale name binnen een unit levert de naam van de unit zelf op, en die valkuil ligt hier op de loer omdat de paden hieronder de typenaam nodig hebben.";
+
+						attribute<string> name  := Typenaam, Descr = "NatuurAlloc_T verlangt name, en gebruikt hem als itemnaam in Suitability, MinClaims en MaxClaims.";
+						attribute<string> Label := MakeDefined(NbSVeen/NbSNatuurtype/InGebruik/Label[Src_rel], 'Open water uit bouwsteen 9a en 9b'), DialogType = "LabelText";
+
+						attribute<INL_Beheertype> INL_Beheertype_rel := MakeDefined(NbSVeen/NbSNatuurtype/InGebruik/INL_Beheertype_rel[Src_rel], rlookup(Beheertypecode_OpenWater, INL_Beheertype/code))
+						, IntegrityCheck = "all(IsDefined(this))"
+						, Descr = "Faalt als Beheertypecode_OpenWater niet in INL_Beheertype voorkomt; voor de achttien N-typen bewaakt NbSNatuurtype die koppeling zelf al.";
+
+						attribute<NatuurType> NatuurType_rel := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel];
+
+						attribute<bool> WordtGealloceerd := !IsOppervlakteWater || WaterbufferingAlloceren
+						, Descr = "Doet dit type mee in de allocatie? Alleen het oppervlaktewater kan eruit vallen, via WaterbufferingAlloceren. Een type dat niet meedoet krijgt opgave nul, aan beide kanten van het controlegetal in Controle/PerType, zodat de rasteringstoets niet op een bewuste nul struikelt.";
+
+						attribute<bool> IsWaterstroom := MakeDefined(NatuurType/IsExogeenOpTeLeggen_Water[NatuurType_rel], FALSE)
+						, Descr = "Gaat dit type als water de oplegging in? Dat zijn N04.01 en N04.02 uit de bouwstenentabel plus het oppervlaktewater. Dezelfde vlag die NatuurAlloc_T gebruikt om ExoNatuur en ExoWater te scheiden, hier alvast nodig om de juiste zeef en de juiste aanhakingsterm te kiezen.";
+
+						attribute<string> FrPad := IsOppervlakteWater ? 'Fr_Water_Totaal' : 'Fr_perNatuurtype/' + Typenaam
+						, Descr = "Waar staat de fractie van dit type per cel.";
+
+						attribute<string> FractiePad := IsOppervlakteWater ? 'NbSVeen/NbSBouwsteen/Fr_OppervlakteWater' : 'NbSVeen/Fracties_vd_Bouwsteen/' + Typenaam
+						, Descr = "Waar staat het aandeel van dit type per bouwsteen. Alleen voor het controlegetal in Controle/PerType.";
+
+						attribute<string> ClaimExpr := WordtGealloceerd
+														? 'sum(' + FrPad + '[VeenCel/AdminDomain_rel], Peilvak_rel_Cel) * AdminDomain/NrHaPerCell'
+														: 'const(0[Ha], Peilvak)'
+						, Descr = "De opgave per peilvak: de fractie maal het gerasterde peilvakoppervlak. Omdat de fractie binnen een peilvak overal gelijk is komt dit neer op fractie maal Opp_Peilvak, alleen dan zonder afrondingsverschil. Nul voor een type dat niet meedoet, en dan verbruikt het ook geen kandidaatcellen.";
+
+						attribute<string> VectorExpr := WordtGealloceerd
+														? 'sum(Controle/PerBouwsteen/Vector * ' + FractiePad + '[NbSVeen/NbSBouwsteen/MetBrondata/org_rel])'
+														: '0[Ha]'
+						, Descr = "Het geleverde areaal per type voor het controlegetal in Controle/PerType. Volgt dezelfde vlag als ClaimExpr: bij een type dat bewust niet wordt gealloceerd staan beide kanten op nul, zodat de toets het rasteren blijft bewaken en niet de keuze om het type over te slaan.";
+
+						attribute<string> ZeefPad     := IsWaterstroom ? 'Zeef_Water'          : 'Zeef_Natuur';
+						attribute<string> AanhakenPad := IsWaterstroom ? 'Aanhaken_Water_100m' : 'Aanhaken_Natuur_100m';
+					}
+
+					// ---- waar mag het landen ----
+
+					parameter<bool> OntzieBebouwingsklassen := TRUE
+					, Descr = "Sluit de zeef de cellen uit waar de bebouwingstypekaart veen zegt dat er gebouwd mag blijven worden?
+
+								Staat aan. Dat is het antwoord op de eerste ontwerpvraag uit #660. Twee leveringen van hetzelfde landschapstype spreken elkaar anders tegen: de bebouwingstypekaart (#614) zegt op een cel zoals huidig, aangepast bouwen of wonen op water, en de bouwstenenkaart legt er natuur op, waarna de cel geleegd wordt. Dat kostte 25.029 woningen, gemeten in NbSGenuanceerd 2030 via VariantData/NbSGenuanceerd/Sloop/Verschil.
+
+								Het strookt bovendien met de bouwstenentabel zelf, die per bouwsteen 5 procent van het oppervlak als bebouwd apart zet en bouwsteen 10 helemaal. De zeef legt dus alleen vast waar dat bebouwde deel ligt, in plaats van het over het peilvak uit te smeren.
+
+								De categorie slopen en op slot blijft wel in de zeef: daar wil de levering de bebouwing juist kwijt. Let op dat de sloop daar niet aan deze allocatie hangt: cellen met bouwregime Slopen worden hoe dan ook geleegd via VariantData/Sloop/DoorBouwregime, ook waar geen natuur landt.
+
+								Deze schakelaar overlapt met de pandentoets die NatuurAlloc_T sinds #661 kent, maar valt er niet mee samen. De pandentoets spaart de cel waar een pand staat; deze schakelaar spaart het hele gebied dat de levering als blijvend aanmerkt, dus ook de tuinen, de straat en de open plekken ertussen. De gemeten 25.029 woningen zijn van voor allebei, dus de pandentoets neemt daar een deel van weg.
+
+								Blijkt een peilvak te krap voor zijn opgave, dan is dit de eerste knop om aan te draaien: de twee toetsen samen halen meer uit de zeef dan elk apart. Het tekort staat per peilvak in Alloc/Controle/Krapte en het verlies door de pandentoets in Alloc/Controle/Areaal_Verlies_Pandentoets.";
+
+					parameter<bool> OntzieBestaandeNatuur := FALSE
+					, Descr = "Sluit de zeef de cellen uit die in het basisjaar al natuur zijn?
+
+								Staat uit sinds 28 augustus 2026, op het antwoord van Deltares in #660: de aangeleverde natuur komt in de plaats van de bestaande natuur in het peilgebied en niet erbovenop. De percentages beschrijven dus een eindtoestand, en een peilgebied dat al natuur heeft hoeft dat deel niet nog eens te maken. De allocatie mag daarom op bestaande natuur landen, waarna Varianten/NbSGenuanceerd/Natuur_Nieuw die cel uit de oplegging houdt: het beheertype dat er ligt blijft staan, de opgave is gehaald en er wordt niets geleegd.
+
+								Stond tot dan aan, op de redenering dat bouwsteen 0a bestaande natuur op veen niet is aangeleverd en de percentages dus over de rest van het peilgebied zouden gaan. Dat is met dat antwoord achterhaald.
+
+								Let op wat dit met de controlegetallen doet. De opgave verandert niet, want die is nog steeds de fractie maal het gerasterde peilgebiedoppervlak, maar een deel ervan wordt nu gehaald door cellen die al natuur zijn. Tekort_Totaal daalt daardoor. Areaal_ExoNatuur blijft ongeveer gelijk, want dat telt de allocatie en niet de oplegging; wat krimpt is wat er na Varianten/NbSGenuanceerd/Natuur_Nieuw overblijft, dus de nieuwe natuur op de kaart. Areaal_OpBestaandeNatuur hieronder meet precies dat verschil.
+
+								Voor de waterstroom gold dit al: bouwsteen 9b heet bestaand open water met extra buffercapaciteit, dus daar hoort de allocatie juist op te landen. Zie Zeef_Water.";
+
+					parameter<bool> OntzieBestaandWater := TRUE
+					, Descr = "Sluit de zeef de cellen uit die in het basisjaar al open water zijn, voor de terrestrische natuur?
+
+								Staat aan. Een terrestrisch natuurbeheertype op de bodem van een bestaande plas is geen ingreep die de levering bedoelt; het open water uit de bouwstenen loopt via de waterstroom en Zeef_Water.
+
+								Deze toets zat tot 28 augustus 2026 in OntzieBestaandeNatuur, in dezelfde haakjes. Bij het antwoord uit #660 is zij eruit gehaald en apart gezet, want dat antwoord gaat over bestaande natuur en zegt niets over bestaand water.";
+
+					parameter<bool> OntzieZoalsHuidig     := TRUE
+					, Descr = "Houdt de categorie zoals huidig nieuwe natuur uit de zeef? Van de drie is dit de categorie waarvoor het meeste te zeggen valt: de levering zegt er dat er niets verandert, dus natuur opleggen spreekt haar het duidelijkst tegen.";
+
+					parameter<bool> OntzieAangepastBouwen := FALSE
+					, Descr = "Houdt de categorie aangepast bouwen nieuwe natuur uit de zeef? Deze staat het wankelst van de drie. De categorie komt uit op bouwregime BouwenMetMaatregelen en zegt dus iets over hoe er gebouwd mag worden, niet dat het huidige grondgebruik blijft: opgehoogd bouwen of bouwen op palen verandert niets aan wat er nu ligt. Het fijnmazige sparen van bestaande bebouwing doen de pandentoets uit #661 en het opleggingsmasker uit #641 al, per cel in plaats van per peilgebied.
+
+								Staat op FALSE sinds 27 augustus 2026, en Deltares heeft die lezing op 28 augustus in #660 bevestigd: aangepast bouwen gaat over de bouwwijze en niet over het huidige grondgebruik. Datzelfde antwoord geldt voor wonen op water, zie de schakelaar hieronder. De pandentoets en het opleggingsmasker doen het sparen per cel. Gemeten wat dat doet, ten opzichte van alleen wonen op water uit: het tekort gaat van 44.507 naar 27.906 ha, de te krappe peilvakken van 4.192 naar 1.177, en het opgelegde natuurareaal stijgt met 16.385 ha. De prijs is sloop: Sloop/Verschil/Woningen_ZonderMasker_InVeenlevering gaat van 0,25 naar 61,8 woningen. Deze categorie is de enige van de drie die de opgelegde kaart werkelijk verzet.";
+
+					parameter<bool> OntzieWonenOpWater    := FALSE
+					, Descr = "Houdt de categorie wonen op water nieuwe natuur uit de zeef? Deze is aantoonbaar in strijd met de andere levering. De twee kaarten delen de sleutel GPGIDENT, en gekruist blijkt dat alle 307 peilgebieden met wonen op water bouwsteen 9a of 9b dragen, gemiddeld 96,6 procent van het peilgebied, tegenover 91 van de 3.957 peilgebieden met slopen en op slot. De categorie markeert dus exact de polders die de bouwstenenkaart onder water zet, en uitsluiten maakt de wateropgave onmogelijk in precies de gebieden waarvoor zij bedoeld is.
+
+								Staat daarom op FALSE. Dat is een reparatie en geen beleidskeuze: het tekort gaat van 87.409 naar 44.507 ha en van die 42.902 ha winst is 41.649 ha waterstroom. De opgelegde kaart verandert nauwelijks, met 1.253 ha extra natuur, want de waterstroom wordt met VariantK/ExogeenWaterOpleggen op FALSE toch niet opgelegd. Zie #665.";
+
+					attribute<bool> IsZoalsHuidig (AdminDomain) :=
+						   IsDefined(/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/Per_AdminDomain)
+						&& !/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/NietBouwen
+						&& !/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/AangepastBouwen
+						&& !/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/WonenOpWater
+					, Descr = "De categorie zoals huidig, als complement binnen het ruimtebeslag van de levering. De kaart heeft er geen eigen vlag voor, en zo tellen de polygonen zonder waarde vanzelf mee, wat spoort met de IntegrityCheck bij BebouwingstypeK_rel: die horen volgens de levering als zoals huidig te tellen.";
+
+					attribute<bool> GrondgebruikBlijft (AdminDomain) :=
+						   (OntzieZoalsHuidig     && IsZoalsHuidig)
+						|| (OntzieAangepastBouwen && /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/AangepastBouwen)
+						|| (OntzieWonenOpWater    && /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/WonenOpWater)
+					, Descr = "Cel ligt in het ruimtebeslag van de bebouwingstypekaart veen, in een categorie die volgens de schakelaars hierboven zijn huidige grondgebruik houdt. Buiten dat ruimtebeslag onwaar.
+
+								Heette tot #665 BebouwingBlijft en toetste toen in een keer op alles wat geen slopen en op slot is. Die naam en die vorm hielden een leesfout in stand: de bebouwingstypekaart spreekt over de bouwwijze en niet over het grondgebruik, en de drie categorieen hebben elk een eigen reden die niets met elkaar te maken heeft. Nu staan ze los, elk met die reden erbij.
+
+								De kaart zelf staat in BaseData omdat VariantData hem daar ophaalt voor het bouwregime; hier wordt hij alleen gelezen. Dat is de enige verwijzing van SourceData naar BaseData in deze container.";
+
+					attribute<bool> Zeef_Basis (AdminDomain) := IsVeengebied && !(OntzieBebouwingsklassen && GrondgebruikBlijft)
+					, Descr = "Het deel van het veengebied dat uberhaupt in aanmerking komt. Twee toetsen zitten hier bewust niet in maar in NatuurAlloc_T, die ze voor alle natuurallocaties gelijk houdt: het gedeelde opleggingsmasker, dus bestaand bebouwd gebied (#641) en exogeen grondgebruik, en de pandentoets uit #661.
+
+								Die pandentoets geldt sinds deze wijziging ook voor veen, want veen is nu een allocatie en geen levering meer. Dat is de bedoeling: een allocatie kan uitwijken naar een onbebouwde cel binnen hetzelfde peilvak, terwijl een levering die afweging al gemaakt had. Zie BaseData/Omgeving/Opleggingsmasker voor dat onderscheid.";
+
+					attribute<bool> Zeef_Natuur (AdminDomain) := Zeef_Basis && !(OntzieBestaandeNatuur && Basisjaar/IsNatuur) && !(OntzieBestaandWater && Basisjaar/IsWater)
+					, Descr = "Waar mag terrestrische natuur landen: in het veengebied en niet op bestaand open water. Sinds #660 wel op bestaande natuur, want de aangeleverde natuur komt daarvoor in de plaats. De twee toetsen staan los omdat ze op een verschillend antwoord berusten; zie de twee schakelaars hierboven.";
+
+					attribute<bool> Zeef_Water (AdminDomain) := Zeef_Basis && !(OntzieBestaandeNatuur && Basisjaar/IsNatuur)
+					, Descr = "Waar mag het water landen. Bestaand open water telt hier wel mee, anders dan bij Zeef_Natuur: bouwsteen 9b is bestaand open water met extra buffercapaciteit, en die hectares horen daar te landen. Varianten/NbSGenuanceerd/Water_Nieuw haalt ze er daarna weer uit, zodat alleen het nieuwe water wordt opgelegd.
+
+								Sinds OntzieBestaandeNatuur op FALSE staat mag het water ook op bestaande natuur landen. Dat volgt uit hetzelfde antwoord in #660: de levering beschrijft de eindtoestand van het peilgebied, dus een peilgebied dat voor 75 procent open water moet worden mag dat deel ook uit bestaande natuur halen.";
+
+					// ---- de geschiktheid: aanhaken plus ruis, net als bij zand ----
+
+					parameter<string> Cluster_Straal := '500m'
+					, Descr = "Over welke straal de geschiktheid wordt uitgesmeerd, en daarmee hoe groot de natuurvlekken worden. Zelfde keuze en zelfde reden als bij de zandnatuur in #652: zonder uitsmeren kiest de allocator de losse toppen van een ruisoppervlak en wordt het een spikkelkaart van cellen van 25 bij 25 meter.
+
+								Vijfhonderd meter is een schijf van 78 ha, en dat is hier ruimer dan bij zand: veel peilvakken zijn kleiner dan de schijf en de opgave per type binnen een peilvak is vaak maar enkele procenten. Het gevolg is dat een type binnen een peilvak in een of twee vlekken landt in plaats van in veel kleine, en dat is de bedoeling. Wie meer en kleinere vlekken wil zet dit lager; de toets staat in Diagnose/VeenNatuur/vorm.";
+
+					parameter<float32> Ruis_Amplitude := 0.5f
+					, Descr = "Hoe zwaar de ruis meeweegt ten opzichte van de aanhaking bij wat er al ligt. Beide lopen van 0 tot 1 en de som wordt door 1 plus dit getal gedeeld, zodat de geschiktheid tussen 0 en 1 blijft zoals NatuurAlloc_T verlangt.
+
+								De taakverdeling volgt uit de wiskunde van de allocator. Welke cellen natuur worden hangt af van de hele geschiktheid, dus daar telt de aanhaking mee. Welk van de negentien typen een cel wordt hangt alleen af van het verschil tussen de typen, en binnen de terrestrische groep is dat alleen de ruis, want de aanhakingsterm is daar voor alle typen dezelfde en valt tegen elkaar weg. Zo komen de typen als aaneengesloten vlekken naast elkaar te liggen in plaats van door elkaar heen.";
+
+					parameter<uint32> Seed := 6600
+					, Descr = "Vaste seed voor de ruis, zodat twee runs met dezelfde configuratie dezelfde kaart geven. Per type een eigen trekking, seed plus het rijnummer in VeenType.";
+
+					attribute<float32> Natuur_Aandeel_100m      (rdc_100m) := mean(float32(Basisjaar/IsNatuur), AdminDomain/rdc_100m_rel);
+					attribute<float32> Water_Aandeel_100m       (rdc_100m) := mean(float32(Basisjaar/IsWater),  AdminDomain/rdc_100m_rel);
+
+					attribute<float32> Aanhaken_Natuur_100m (rdc_100m) :=
+						='potential(Natuur_Aandeel_100m, /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
+							/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte'
+					, Descr = "Het aandeel bestaande natuur in een schijf rond de cel, tussen 0 en 1. Nieuwe natuur tegen bestaande natuur aan is meer waard dan een even grote vlek midden in het grasland.
+
+								Op 100 meter gerekend en niet op de 25 meter van het AdminDomain, om dezelfde reden als bij zand: een schijf van 500 meter vraagt op 25 meter een kern van 41 bij 41 cellen over ruim 27 miljoen cellen. De prijs is dat de rand van een natuurvlek op 100 meter verspringt, en dat is ruim binnen de nauwkeurigheid van een levering die alleen aandelen per peilvak geeft.";
+
+					attribute<float32> Aanhaken_Water_100m (rdc_100m) :=
+						='potential(Water_Aandeel_100m, /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
+							/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte'
+					, Descr = "Idem voor bestaand open water. De waterstroom haakt daaraan aan en niet aan de natuur: nieuw open water voor waterbuffering hoort aan bestaande plassen, sloten en boezems vast te zitten, en bouwsteen 9b is bestaand open water.";
+
+					container Ruis :=
+						for_each_nedv(
+							VeenType/name
+							, 'potential(rnd_uniform(' + string(Seed + uint32(id(VeenType))) + ', rdc_500m, range(float32, 0f, 1f))[rdc_100m/rdc_500m_rel], /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
+									/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte'
+							, rdc_100m
+							, float32
+						)
+					, Descr = "Een glad ruisoppervlak per type, tussen 0 en 1. De trekking gebeurt per cel van 500 meter en wordt daarna over een schijf van Cluster_Straal gemiddeld; per cel trekken en dat middelen zou honderd trekkingen zo dicht op een half brengen dat er geen relief overblijft.";
+
+					container Geschiktheid :=
+						for_each_nedv(
+							VeenType/name
+							, VeenType/ZeefPad + ' ? ((' + VeenType/AanhakenPad + ' + Ruis_Amplitude * Ruis/' + VeenType/name + ') / (1f + Ruis_Amplitude))[AdminDomain/rdc_100m_rel] : null_f'
+							, AdminDomain
+							, float32
+						)
+					, Descr = "Geschiktheid per type: aanhaking bij wat er al ligt plus ruis, en null buiten de zeef. De zeef zit hier in de nullen en niet ernaast, want NatuurAlloc_T verlangt dat: een zeef die pas na de allocatie werkt zou wegknippen wat al gealloceerd is en de opgave stilzwijgend missen.";
+
+					// ---- de opgave en de allocatie ----
+
+					container Claim :=
+						for_each_nedv(
+							VeenType/name
+							, VeenType/ClaimExpr
+							, Peilvak
+							, Ha
+						)
+					, Descr = "De opgave in hectares per peilvak per type: de aangeleverde fractie maal het gerasterde peilvakoppervlak. Dit is wat #660 vraagt, en het vervangt de ArgMax die van elk peilvak een enkele klasse maakte.";
+
+					container Alloc := /Templates/SourceData/NatuurAlloc_T('Veen NbSGenuanceerd', VeenType, Peilvak, Claim, Geschiktheid)
+					, Descr = "De allocatie zelf, hetzelfde sjabloon als bij de zandnatuur uit #652. De opgave per peilvak per type is een harde bovengrens en binnen die grens maximaliseert discrete_alloc_sp de som van de geschiktheid. Wat de opgave niet opsoupeert valt in het type Rest en houdt zijn huidige grondgebruik.
+
+								Alleen NbSGenuanceerd heeft een veenlevering, dus deze aanroep staat hier en niet in een sjabloon per variant.";
+
+					// ---- kaartbeelden van de levering zelf, niet de oplegging ----
+
+					attribute<NbSVeen/NbSBouwsteen> DominanteBouwsteen (AdminDomain) := ='NbSVeen/NbSBouwsteen/MetBrondata/org_rel[ArgMax_ifdefined('+AsItemList('Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name+' > 0f ? Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name+' : null_f')+')[NbSVeen/NbSBouwsteen/MetBrondata]]', Descr = "De bouwsteen met de grootste fractie in de cel, product 1 uit #613. Alleen bedoeld voor kaartweergave: bij een gelijke stand wint de eerste, en minderheidsbouwstenen binnen een peilvak verdwijnen. Reken met Fr_perBouwsteen.";
+
+					attribute<INL_Beheertype>       DominantNatuurtype (AdminDomain) := ='NbSVeen/NbSNatuurtype/InGebruik/INL_Beheertype_rel[ArgMax_ifdefined('+AsItemList('Fr_perNatuurtype/'+NbSVeen/NbSNatuurtype/InGebruik/name+' > 0f ? Fr_perNatuurtype/'+NbSVeen/NbSNatuurtype/InGebruik/name+' : null_f')+')[NbSVeen/NbSNatuurtype/InGebruik]]'
+					, Descr = "Het natuurbeheertype met de grootste fractie in de cel, product 3 uit #613. Dit was tot #660 de kaart die werd opgelegd, en dat kon niet: de fracties zijn binnen een peilvak overal gelijk, dus deze ArgMax kleurt het hele peilvak in een klasse ongeacht hoe klein die fractie is. Blijft staan voor kaartweergave naast DominanteBouwsteen; wat er wordt opgelegd staat in INL_Beheertype_rel_AD.";
+
+					// ---- wat er wordt opgelegd ----
+
+					attribute<INL_Beheertype>       INL_Beheertype_rel_AD (AdminDomain) := Alloc/INL_Beheertype_rel_AD, Descr = "Het gealloceerde beheertype per cel, null waar de cel blijft zoals hij is.";
+					attribute<NatuurType>           NatuurTypen_rel_AD    (AdminDomain) := Alloc/NatuurTypen_rel_AD;
+					attribute<INL_Beheertype>       ExoNatuur             (AdminDomain) := Alloc/ExoNatuur;
+					attribute<INL_Beheertype>       ExoWater              (AdminDomain) := Alloc/ExoWater;
+
+					attribute<INL_Beheertype> Natuur (AdminDomain) := ExoNatuur;
+					attribute<INL_Beheertype> Water  (AdminDomain) := ExoWater;
+
+					container Controle
+					: Descr = "Twee controles. De eerste vergelijkt het gerasterde areaal met het areaal dat rechtstreeks uit de polygonen volgt, per bouwsteen en per type, met een IntegrityCheck op de afwijking; dat bewaakt het rasteren en de nesting in de bron. De tweede legt de opgave naast wat de allocatie ervan haalt; die faalt niet hard, want een tekort is een uitkomst en geen fout."
+					{
+						attribute<Ha> opp_pv (Src/Bron_PerPeilvak/gebied)    := area(Src/Bron_PerPeilvak/gebied/geometry, meter2_f64)[Ha];
+						attribute<Ha> opp_zp (Src/Bron_ZonderPeilvak/gebied) := area(Src/Bron_ZonderPeilvak/gebied/geometry, meter2_f64)[Ha];
+
+						unit<uint8> PerBouwsteen := NbSVeen/NbSBouwsteen/MetBrondata
+						, Descr = "Vangnet voor de nesting in de bron: als de ordening in de SqlString wegvalt, wist een groot peilvak de kleine polygonen eronder uit en loopt het raster stil weg bij de vector."
+						{
+							attribute<string> code := NbSVeen/NbSBouwsteen/MetBrondata/code;
+
+							attribute<Ha> Vector := ='union_data(., '+AsItemList('sum(Src/Bron_PerPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[float32] * Controle/opp_pv) + sum(Src/Bron_ZonderPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[float32] * Controle/opp_zp)')+')'
+							, Descr = "Areaal per bouwsteen rechtstreeks uit de polygonen. Telt de genestelde stukken dubbel, dus dit ligt iets boven de rasterwaarde.";
+
+							attribute<Ha> Raster := ='union_data(., '+AsItemList('sum(Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name+') * AdminDomain/NrHaPerCell')+')'
+							, Descr = "Areaal per bouwsteen zoals het model het gerasterd heeft.";
+
+							attribute<float32> Ratio := Raster / Vector
+							, IntegrityCheck = "all(abs(this - 1f) < 0.05f)"
+							, Descr = "Het raster mag hooguit 5 procent van de vectorbron afwijken. De genestelde polygonen verklaren tot ongeveer 2 procent; loopt het verder weg, dan wint bij het rasteren de verkeerde polygoon. Zie #613.";
+						}
+
+						unit<uint8> PerType := VeenType
+						, Descr = "Hetzelfde controlegetal, maar dan per natuurbeheertype en voor het oppervlaktewater, plus wat de allocatie ervan realiseert. Dit is het controlegetal dat #660 vraagt."
+						{
+							attribute<string> Label := VeenType/Label, DialogType = "LabelText";
+
+							attribute<Ha> Vector := ='union_data(., '+AsItemList(VeenType/VectorExpr)+')'
+							, Descr = "Geleverd areaal per type: het polygoonareaal per bouwsteen maal het aandeel van dit type in die bouwsteen, opgeteld over de bouwstenen. Nul voor een type dat volgens VeenType/WordtGealloceerd niet meedoet, net als de opgave zelf.";
+
+							attribute<Ha> Raster := ='union_data(., '+AsItemList('sum(Claim/'+VeenType/name+')')+')'
+							, Descr = "Hetzelfde areaal zoals het model het gerasterd heeft, en daarmee precies de opgave die de allocatie meekrijgt. Loopt over VeenCel en dus over het studiegebied, waar PerBouwsteen/Raster over het hele raster loopt; met studiegebied Nederland scheelt dat niets.";
+
+							attribute<float32> Ratio := VeenType/WordtGealloceerd ? Raster / Vector : 1f
+							, IntegrityCheck = "all(abs(this - 1f) < 0.05f)"
+							, Descr = "Dezelfde tolerantie en dezelfde oorzaken als bij PerBouwsteen: de fracties per type zijn een vaste combinatie van de fracties per bouwsteen, dus een afwijking hier komt van het rasteren en niet van de tabel.
+
+										Een type dat bewust niet wordt gealloceerd staat op 1 en niet op nul gedeeld door nul. Die deling geeft een null, en een null valt door de IntegrityCheck heen als onwaar, dus dan zou een bewuste keuze als een rasteringsfout binnenkomen.";
+
+							attribute<Ha> Gerealiseerd := ='union_data(., '+AsItemList('sum(Alloc/Controle/Gerealiseerd/'+VeenType/name+')')+')'
+							, Descr = "Wat de allocatie er landelijk van neerzet.";
+
+							attribute<Ha> Tekort := Raster - Gerealiseerd
+							, Descr = "Opgave min realisatie. Positief betekent dat de zeef in een of meer peilvakken te klein was; NatuurAlloc_T/Controle/Krapte laat per peilvak zien waar. Hier staat bewust geen IntegrityCheck op: een tekort is een meetbare uitkomst van de invoer en mag het model niet laten falen.";
+						}
+
+						parameter<Ha> Areaal_Veengebied      := sum(IsVeengebied && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het hele ruimtebeslag van de twee leveringen binnen het studiegebied.";
+						parameter<Ha> Areaal_Zeef_Natuur     := sum(Zeef_Natuur   ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat daarvan overblijft voor de terrestrische natuur. Vergelijk met Claim_NTypen.";
+						parameter<Ha> Areaal_Zeef_Water      := sum(Zeef_Water    ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Idem voor de waterstroom.";
+						parameter<Ha> Areaal_BebouwingBlijft := sum(IsVeengebied && GrondgebruikBlijft ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel van het veengebied de schakelaar OntzieBebouwingsklassen uit de zeef haalt, gegeven de stand van de drie categorieschakelaars.";
+						attribute<Ha> Opp_AlNatuurOfWater_PerPeilvak (Peilvak) := sum(float32(Basisjaar/IsNatuur[VeenCel/AdminDomain_rel] || Basisjaar/IsWater[VeenCel/AdminDomain_rel]), Peilvak_rel_Cel) * AdminDomain/NrHaPerCell
+						, Descr = "Hoeveel van elk peilgebied in het basisjaar al natuur of open water is. Nodig om te bepalen bij welke lezing van de aangeleverde percentages de opgave nog past: over het hele peilgebied, of over het deel dat niet al natuur of water is. Zie Diagnose/VeenNatuur/Krapte.";
+
+						parameter<Ha> Areaal_ZoalsHuidig     := sum(IsVeengebied && IsZoalsHuidig ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat elke categorie apart beslaat binnen het veengebied, ongeacht of haar schakelaar aanstaat. Zo is met een run te zien wat elke categorie kost.";
+						parameter<Ha> Areaal_AangepastBouwen := sum(IsVeengebied && /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/AangepastBouwen ? AdminDomain/NrHaPerCell : 0[Ha]);
+						parameter<Ha> Areaal_WonenOpWater    := sum(IsVeengebied && /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/WonenOpWater    ? AdminDomain/NrHaPerCell : 0[Ha]);
+						parameter<Ha> Areaal_AlNatuur        := sum(IsVeengebied && Basisjaar/IsNatuur ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel van het veengebied in het basisjaar al natuur is, en dus onder bouwsteen 0a valt.";
+						parameter<Ha> Areaal_AlWater         := sum(IsVeengebied && Basisjaar/IsWater  ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Idem voor bestaand open water, de plek waar bouwsteen 9b hoort te landen.";
+
+						parameter<Ha> Claim_NTypen           := ='add('+AsItemList('sum(Claim/'+NbSVeen/NbSNatuurtype/InGebruik/name+')')+')', Descr = "De opgave over de achttien natuurbeheertypen uit de bouwstenentabel samen, dus inclusief het water dat via N04.01 en N04.02 loopt.";
+						parameter<Ha> Claim_OppervlakteWater := sum(Claim/OppervlakteWater), Descr = "De opgave voor het open water uit kolom OppervlakteWater, die tot #660 nergens werd gelezen.";
+						parameter<Ha> Claim_Totaal           := Claim_NTypen + Claim_OppervlakteWater;
+						parameter<Ha> Gerealiseerd_Totaal    := Alloc/Controle/Gerealiseerd_NL;
+						parameter<Ha> Tekort_Totaal          := Alloc/Controle/Tekort_NL, Descr = "Het getal dat na een run gerapporteerd moet worden: hoeveel van de opgave niet in de zeef paste.";
+
+						parameter<Ha> Verlies_Pandentoets    := Alloc/Controle/Verlies_Pandentoets_NL, Descr = "Hoeveel ruimte de pandentoets uit #661 de veenzeef kost. Leg dit naast Tekort_Totaal: pas als het verlies een peilvak over de streep duwt gaat de opgave er werkelijk aan onderdoor.";
+
+						parameter<Ha> Areaal_ExoNatuur       := sum(IsDefined(Natuur) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat er als natuur wordt opgelegd. Tot #660 was dit het hele veengebied op de bebouwde cellen na, want de ArgMax kende geen drempel.
+
+																			Dit is de allocatie en nog niet de oplegging: Varianten/NbSGenuanceerd/Natuur_Nieuw haalt er daarna de cellen uit die in het basisjaar al natuur waren. Sinds OntzieBestaandeNatuur op FALSE staat is dat een echt verschil geworden, en Areaal_OpBestaandeNatuur hieronder is precies dat deel.";
+						parameter<Ha> Areaal_OpBestaandeNatuur := sum(IsDefined(Natuur) && Basisjaar/IsNatuur ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel van de opgave wordt gehaald door cellen die in het basisjaar al natuur waren. Dat is de omvang van het antwoord uit #660, dat de aangeleverde natuur in de plaats komt van de bestaande natuur en er niet bovenop: deze hectares tellen mee voor de opgave, maar er verandert niets op de kaart en er wordt niets geleegd. Nul zolang OntzieBestaandeNatuur aanstaat.";
+						parameter<Ha> Areaal_ExoWater        := sum(IsDefined(Water)  ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat er als water wordt opgelegd. Gaat pas de oplegging in als VariantK/ExogeenWaterOpleggen aanstaat.";
+					}
+				}
+				container Kust
+				: Descr = "Kerven, meegroeilandschappen en voorlanden uit het landschapstype Kust. Zie issue #654, dat de levering uit #623 vervangt.
+
+							Drie leveringen van team Kust, een per deelgebied. Duinen zijn duingebieden met hoge potentie
+							voor verstuiving, variant A; Wadden en ZWD leveren meegroeilandschappen en voorlanden, allebei
+							variant C. In dit hele ruimtebeslag verandert het grondgebruik in natuur, dus er mag niet meer
+							gebouwd worden, terwijl de bestaande bebouwing sinds #707 blijft staan.
+
+							De megasuppleties zijn niet geleverd: dat zijn puntlocaties op zee zonder ruimtebeslag op land.
+
+							Het inlezen van de drie shapes staat in Bron/Kust_NbSGenuanceerd; hier staat wat het
+							model ermee doet."
+				{
+					container Src := Bron/Kust_NbSGenuanceerd;
+
+					parameter<bool> NeemBuitendijksMee := TRUE
+					, Descr = "Tellen ook de buitendijkse delen mee (veld zijde is zee)? Staat aan, want de aanleverende partij schrijft dat het hele ruimtebeslag natuur wordt.
+
+								Deze schakelaar weegt in variant C veel minder zwaar dan in variant A. De Wadden leveren nu
+								alleen binnendijks vasteland, dus daar valt niets meer af; alleen de Zuidwestelijke Delta heeft
+								nog een buitendijkse zijde. Uitzetten haalt daarmee 4.742 ha uit de oplegging in plaats van de
+								31.689 ha uit #623. Het gaat wel om precies de kwelder- en voorlandvorming waar de
+								meegroeilandschappen om draaien, dus de schakelaar hoort aan te blijven staan.";
+
+					container Duinen
+					{
+						attribute<bool> IsGebied (AdminDomain) := IsDefined(Src/Duinen/Per_AdminDomain), Descr = "De duinenlevering kent geen binnen- en buitendijks onderscheid, dus hier telt het hele ruimtebeslag.";
+					}
+
+					container Wadden
+					{
+						attribute<bool> IsBinnendijks (Src/Wadden)  := lowercase(Src/Wadden/zijde) == 'land', Descr = "Het veld zijde heeft twee waarden: land is binnendijks, zee is buitendijks. In variant C staat het voor alle twaalf records op land.";
+						attribute<bool> IsMeegenomen  (Src/Wadden)  := IsBinnendijks || NeemBuitendijksMee;
+						attribute<bool> IsGebied      (AdminDomain) := MakeDefined(IsMeegenomen[Src/Wadden/Per_AdminDomain], FALSE), Descr = "Eerst per record beslissen en dan pas naar het raster: andersom levert de negatie buiten het ruimtebeslag TRUE op.";
+					}
+
+					container ZWD
+					{
+						attribute<bool> IsBinnendijks       (Src/ZWD)     := lowercase(Src/ZWD/zijde) == 'land';
+						attribute<bool> IsMeegenomen        (Src/ZWD)     := IsBinnendijks || NeemBuitendijksMee;
+						attribute<bool> IsGebied            (AdminDomain) := MakeDefined(IsMeegenomen[Src/ZWD/Per_AdminDomain], FALSE);
+						attribute<bool> IsBuitendijksGebied (AdminDomain) := MakeDefined(!IsBinnendijks[Src/ZWD/Per_AdminDomain], FALSE) && IsGebied, Descr = "Alleen de buitendijkse zijde, want daar hangt in deze levering een ander beheertype aan.";
+					}
+
+					attribute<bool> IsKustIngreep (AdminDomain) := Duinen/IsGebied || Wadden/IsGebied || ZWD/IsGebied
+					, Descr = "Cel valt in het ruimtebeslag van een van de drie leveringen. Hier gebeuren twee dingen. Er mag niet meer gebouwd worden, dat loopt via NietBouwen hieronder naar de zeef. En er wordt natuur opgelegd, dat loopt via ExoNatuur.
+
+									Wat hier sinds #707 niet meer gebeurt is slopen. Tot dan zette Templates/VariantData_T het hele ruimtebeslag op regime Slopen en werd de bestaande bebouwing geleegd; nu staat daar NietBouwen. Een verspreide woning binnen het ruimtebeslag blijft dus staan met de landgebruiksklasse natuur eromheen. Gemeten op de woningvoorraad in het basisjaar gaat het om 2.369 woningen, zie Sloop/Verschil/Kust707 in Templates/VariantData_T.";
+					attribute<bool> NietBouwen    (AdminDomain) := IsKustIngreep, Descr = "Hier mag niet meer gebouwd worden. Wordt in VariantData/NietBouwen opgepakt en daar alleen voor de variant NbSGenuanceerd aangezet.";
+
+					parameter<string> Beheertypecode_Duinen   := 'N08.02'
+					, Descr = "Open duin. Komt uit de levering zelf: de duinenshape draagt een kolom N08.02 die voor 48 van de 49 records op 1 staat. Dat is grover dan de N08.02.02 (stuivend duinzand) waar #623 voorlopig mee rekende, en het is nu een keuze van de aanleverende partij in plaats van een aanname van het model. De kolomnaam kan niet als attribuut worden ingelezen omdat een punt in GeoDMS geen geldig naamteken is, dus staat de code hier.";
+					parameter<string> Beheertypecode_Kwelder  := 'N09.01'
+					, Descr = "Schor of kwelder. Komt uit de levering: de kolom N09.01 staat op 1 voor alle twaalf Waddenrecords en voor zeventien van de achttien binnendijkse ZWD-records.";
+					parameter<string> Beheertypecode_Voorland := 'N01.02'
+					, Descr = "Duin- en kwelderlandschap. Komt uit de levering: de kolom N01.02 staat op 1 voor alle zestien buitendijkse ZWD-records. Nieuw ten opzichte van #623, dat buitendijks en binnendijks hetzelfde type gaf.";
+
+					attribute<INL_Beheertype> INL_Beheertype_rel_AD (AdminDomain) :=
+						Duinen/IsGebied
+							? rlookup(Beheertypecode_Duinen, INL_Beheertype/code)
+							: ZWD/IsBuitendijksGebied
+								? rlookup(Beheertypecode_Voorland, INL_Beheertype/code)
+								: IsKustIngreep
+									? rlookup(Beheertypecode_Kwelder, INL_Beheertype/code)
+									: null_b[INL_Beheertype]
+					, IntegrityCheck = "IsDefined(rlookup(Beheertypecode_Duinen, INL_Beheertype/code)) && IsDefined(rlookup(Beheertypecode_Kwelder, INL_Beheertype/code)) && IsDefined(rlookup(Beheertypecode_Voorland, INL_Beheertype/code))"
+					, Descr = "Beheertype per cel. Duinen gaan voor waar ze een meegroeilandschap zouden overlappen, en binnen de Zuidwestelijke Delta gaat de buitendijkse zijde voor op de binnendijkse; in de praktijk overlappen die elkaar nauwelijks. Het ene binnendijkse ZWD-record zonder beheertype in de levering valt hiermee op kwelder, zie vraag 2 in #654. De IntegrityCheck faalt als een van de drie codes niet in INL_Beheertype voorkomt.";
+
+					attribute<bool> IsVoorlandCel (AdminDomain) := INL_Beheertype_rel_AD == rlookup(Beheertypecode_Voorland, INL_Beheertype/code), Descr = "De cellen die het buitendijkse beheertype uit de ZWD-levering dragen. Apart benoemd omdat de natuur-waterscheiding hieronder er een uitzondering voor maakt.";
+
+					parameter<bool> VoorlandAlsNatuur := TRUE
+					, Descr = "Gaat het buitendijkse voorland als natuur de oplegging in, of als water? Staat op natuur, en dat is een correctie op de indeling en niet op de levering.
+
+								De vlaggen IsExogeenOpTeLeggen_Natuur en _Water hangen aan NatuurType, de tweecijferige groep boven de
+								beheertypen. De hele groep N01 telt daar als water, want de eerste code eronder is N01.01 Zee en wad.
+								Maar de code die deze levering geeft is N01.02 Duin- en kwelderlandschap, en dat is land: dezelfde tabel
+								INL_Beheertype geeft er LHMType duinvegetatie aan, net als aan de duinen. Zonder deze uitzondering valt het
+								voorland dus in de waterstroom, en die wordt met VariantK/ExogeenWaterOpleggen op FALSE helemaal niet
+								opgelegd. De 4.742 ha buitendijks zou dan wel op slot gaan en gesloopt worden, maar niets terugkrijgen.
+
+								Gemeten op 25m gaat het om 4.742 ha, waarvan 3.022 ha al natuur is en 534 ha al water. Wat er werkelijk
+								verandert is de resterende 1.187 ha. In #623 kreeg dit gebied N09.01 en landde het gewoon als natuur; deze
+								schakelaar houdt dat zo.
+
+								De echte oplossing zit een laag dieper: de natuur-waterscheiding hoort per beheertypecode te gelden en niet
+								per tweecijferige groep. Zolang die er niet is staat de uitzondering hier. Zie vraag 3 in #654.";
+
+					attribute<NatuurType>     NatuurTypen_rel_AD (AdminDomain) := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+					attribute<INL_Beheertype> Natuur             (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Natuur[NatuurTypen_rel_AD] || (VoorlandAlsNatuur && IsVoorlandCel) ? INL_Beheertype_rel_AD : null_b[INL_Beheertype];
+					attribute<INL_Beheertype> Water              (AdminDomain) := NatuurType/IsExogeenOpTeLeggen_Water [NatuurTypen_rel_AD] && !(VoorlandAlsNatuur && IsVoorlandCel) ? INL_Beheertype_rel_AD : null_b[INL_Beheertype]
+					, Descr = "Van de drie aangeleverde beheertypen telt alleen N01.02 als water, en dat is de groepsindeling en niet de bedoeling van de levering; zie VoorlandAlsNatuur hierboven. Met die schakelaar aan blijft deze stroom leeg. Staat hier voor als er straks wel echt open water uit de kustlevering komt.";
+
+					container Controle
+					{
+						parameter<Ha> Areaal_Duinen := sum(Duinen/IsGebied ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. In de levering 20.228 ha, gemeten op 25m 20.225 ha; het verschil is de rastering en wat buiten het studiegebied valt.";
+						parameter<Ha> Areaal_Wadden := sum(Wadden/IsGebied ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. In de levering 17.081 ha, gemeten op 25m 17.072 ha. Alles binnendijks, dus NeemBuitendijksMee doet hier niets.";
+						parameter<Ha> Areaal_ZWD    := sum(ZWD/IsGebied    ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. In de levering 13.158 ha met NeemBuitendijksMee, 8.416 ha zonder; gemeten op 25m 13.091 ha respectievelijk 8.349 ha.";
+						parameter<Ha> Areaal_Totaal := sum(IsKustIngreep   ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal over de drie leveringen samen, dus zonder dubbeltelling van overlap. Gemeten op 25m 50.388 ha, precies de som van de drie afzonderlijk: anders dan in #623 overlappen de leveringen elkaar niet. Daarvan is 19.969 ha in het basisjaar al natuur en 2.682 ha al water.";
+					}
+				}
+				container Zand
+				: Descr = "Beekdalherstel en extra natuur uit het landschapstype Zand. Zie #630 voor het ruimtebeslag dat op slot gaat en #652 voor de opgave die hier gealloceerd wordt.
+
+							Anders dan veen, kust en rivieren levert zand geen kaart met natuur maar twee dingen: een
+							ruimtebeslag waar niet meer gebouwd mag worden, en een opgave in hectares per claimregio.
+							Die opgave moet het model zelf op de kaart zetten, en dat gebeurt hieronder in Alloc.
+
+							Het inlezen van de drie bestanden, de beekdalen, de claimregios en het Natuurnetwerk,
+							staat in Bron/Zand_NbSGenuanceerd en Bron/Zand_Allocatiebasis."
+				{
+					container Src      := Bron/Zand_NbSGenuanceerd;
+					container SrcBasis := Bron/Zand_Allocatiebasis;
+
+					parameter<bool> NeemDroogdalenMee := TRUE
+					, Descr = "Tellen naast de beekdalen ook de droogdalen mee? Staat aan, want de levering heet beekdalherstel en de aanleverende partij heeft de droogdalen daar zelf in gezet.
+
+								De levering bestaat voor 192.726 ha uit beekdal (Dz5, Dz6 en Lg5) en voor 28.070 ha uit
+								droogdal (Sw4, Sw4x en Lg6). Uitzetten haalt dus ruim een achtste van het ruimtebeslag weg.
+								Dit is vraag 1 uit #630 en staat nog uit bij team Zand.";
+
+					parameter<bool> BeperkTotZandgebied := FALSE
+					, Descr = "Alleen de dalen binnen de landschapsbegrenzing van zand op slot, of de hele levering? Staat uit, want de aanleverende partij heeft de hele shape geleverd.
+
+								Dit is vraag 2 uit #630: de levering loopt door in andere landschappen. In termen van de
+								Basiskaart Natuurlijk Systeem doet ze dat niet, want alle records vallen in Dekzandgebied (Dz),
+								Stuwwallen (Sw) of loss (Lg). Het is dus de NL2120-landschapsindeling waar ze buiten treedt.
+								Let op dat Begrenzing zandgebied een grove omhullende van 47 punten is, geen scherpe grens.";
+
+					unit<uint8> DalTypeK : NrOfRows = 6
+					, Descr = "De zes BKNSN-subtypen in de levering, met per type of het een beekdal of een droogdal is. De aantallen records zijn ter orientatie; de arealen staan bij NeemDroogdalenMee."
+					{
+						attribute<string> code      : ['Dz5','Dz6','Lg5','Sw4','Sw4x','Lg6'];
+						attribute<string> label     : ['Beekdal zand/leem','Beekdal veen','Beekdal','Droogdal','Droogdal met keileem','Droogdal'];
+						attribute<bool>   IsBeekdal : [TRUE,TRUE,TRUE,FALSE,FALSE,FALSE];
+						attribute<uint32> NrRecords : [18418,4222,179,6056,298,1580];
+					}
+
+						attribute<DalTypeK>  DalTypeK_rel (Src/Beekdalherstel) := rlookup(Src/Beekdalherstel/BKNSN_code, DalTypeK/code), IntegrityCheck = "all(IsDefined(this))", Descr = "Faalt als er een BKNSN-code in de levering staat die niet in DalTypeK is opgenomen, bijvoorbeeld na een nieuwe levering.";
+						attribute<bool>      IsBeekdal    (Src/Beekdalherstel) := DalTypeK/IsBeekdal[DalTypeK_rel];
+						attribute<bool>      IsDroogdal   (Src/Beekdalherstel) := !IsBeekdal;
+						attribute<bool>      IsMeegenomen (Src/Beekdalherstel) := IsBeekdal || NeemDroogdalenMee;
+						attribute<bool>      IsGebied              (AdminDomain) := MakeDefined(IsMeegenomen[Src/Beekdalherstel/Per_AdminDomain], FALSE);
+						attribute<bool>      IsBeekdalCel          (AdminDomain) := MakeDefined(IsBeekdal[Src/Beekdalherstel/Per_AdminDomain], FALSE), Descr = "Alleen voor de controlegetallen hieronder.";
+						attribute<bool>      IsDroogdalCel         (AdminDomain) := MakeDefined(IsDroogdal[Src/Beekdalherstel/Per_AdminDomain], FALSE), Descr = "Alleen voor de controlegetallen hieronder. Let op: eerst per record negeren en dan pas naar het raster, anders levert de negatie buiten het ruimtebeslag TRUE op.";
+
+					attribute<bool> IsInZandgebied   (AdminDomain) := /SourceData/RegioIndelingen/Landschappen/Zandgebied/IsGebied, Descr = "Valt de cel binnen de NL2120-landschapsbegrenzing van zand. Alleen gebruikt als BeperkTotZandgebied aan staat.";
+					attribute<bool> IsBeekdalHerstel (AdminDomain) := IsGebied && (IsInZandgebied || !BeperkTotZandgebied)
+					, Descr = "Cel valt in het ruimtebeslag van de levering, na toepassing van de twee schakelaars hierboven. Hier mag niet meer gebouwd worden. Er wordt niet gesloopt, dus er loopt geen tak naar ExoNatuur.";
+					attribute<bool> NietBouwen       (AdminDomain) := IsBeekdalHerstel, Descr = "Hier mag niet meer gebouwd worden. Wordt in VariantData/NietBouwen opgepakt en daar alleen voor de variant NbSGenuanceerd aangezet.";
+
+					parameter<Ha> Areaal_Beekdalen        := sum(IsBeekdalCel  ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. In de levering 192.726 ha, op 25m 192.675 ha; het verschil is de rastering.";
+					parameter<Ha> Areaal_Droogdalen       := sum(IsDroogdalCel ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. In de levering 28.070 ha, op 25m ook 28.070 ha.";
+					parameter<Ha> Areaal_Totaal           := sum(IsBeekdalHerstel             ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal na de schakelaars: het areaal dat daadwerkelijk op slot gaat. Met beide schakelaars op hun huidige stand 220.746 ha op 25m, tegen 220.796 ha in de levering.";
+					parameter<Ha> Areaal_BuitenZandgebied := sum(IsGebied && !IsInZandgebied ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal bij vraag 2 uit #630: hoeveel van de levering ligt buiten de landschapsbegrenzing van zand. Dat is maar 156 ha van de 220.746, dus BeperkTotZandgebied aanzetten verandert vrijwel niets. Dat komt doordat Begrenzing zandgebied een grove omhullende is.";
+					parameter<Ha> Areaal_OokInLaagveen    := sum(IsGebied && /SourceData/RegioIndelingen/Landschappen/Laagveen/IsGebied       ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal bij vraag 2 uit #630: hoeveel van de levering valt ook binnen de omhullende van het laagveenlandschap. Dat is 49.498 ha, ruim een vijfde. De omhullenden overlappen elkaar, dus dit is geen exclusieve toedeling; het is wel de plek waar de opmerking dat de shape doorloopt in andere landschappen vandaan komt.";
+					parameter<Ha> Areaal_OokInRivieren    := sum(IsGebied && /SourceData/RegioIndelingen/Landschappen/Rivierengebied/IsGebied ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Idem voor het rivierenlandschap: 789 ha.";
+
+
+					attribute<SrcBasis/Claimregios_shp> Regio_rel_AD      (AdminDomain) := poly2grid(SrcBasis/Claimregios_shp/geometry, AdminDomain);
+					attribute</ModelParameters/Natuur/Deelgebied> Deelgebied_rel_AD (AdminDomain) := SrcBasis/Claimregios_shp/Deelgebied_rel[Regio_rel_AD];
+
+
+					parameter<Meter> Ringresolutie := 100[Meter]
+					, Descr = "Op welke resolutie de afstandsringen rond het NNN bepaald worden. Op 100 meter, niet op de 25 meter van het AdminDomain, en dat is een bewuste afweging. De ring van 2.000 meter vraagt op 25 meter een kern van 161 bij 161 cellen over ruim 27 miljoen cellen; op 100 meter is dat 41 bij 41 over 1,7 miljoen cellen, ruwweg zestig keer zo goedkoop. De prijs is dat de ringgrens tot 100 meter kan verspringen, op een ringbreedte van 500 tot 1.000 meter. Wie het scherper wil: zet de drie potentialen hieronder op Distmatrices_25m en rdc_25m.";
+
+					attribute<Bool> IsNNN_100m       (rdc_100m) := IsDefined(poly2grid(SrcBasis/NNN/geometry, rdc_100m));
+					attribute<Bool> Binnen500_100m   (rdc_100m) := potential(float32(IsNNN_100m), /Geography/Distmatrices_100m/pot500m/Flat2)  > 0f;
+					attribute<Bool> Binnen1000_100m  (rdc_100m) := potential(float32(IsNNN_100m), /Geography/Distmatrices_100m/pot1000m/Flat2) > 0f;
+					attribute<Bool> Binnen2000_100m  (rdc_100m) := potential(float32(IsNNN_100m), /Geography/Distmatrices_100m/pot2000m/Flat2) > 0f;
+
+					attribute</ModelParameters/Natuur/Ring> Calc_Ring_rel_100m (rdc_100m) :=
+						  IsNNN_100m      ? /ModelParameters/Natuur/Ring/V/InNNN
+						: Binnen500_100m  ? /ModelParameters/Natuur/Ring/V/Tot500m
+						: Binnen1000_100m ? /ModelParameters/Natuur/Ring/V/Tot1000m
+						: Binnen2000_100m ? /ModelParameters/Natuur/Ring/V/Tot2000m
+						:                   /ModelParameters/Natuur/Ring/V/Verder
+					, Descr = "De ring waar de cel in valt. De reeks is uitputtend, dus dit is overal gevuld; buiten de claimregio's doet het er niet toe.";
+
+					parameter<String> FileName_Ring_rel_100m := '%LocalDataProjDir%/BaseData/Grondgebruik/Natuur/Ring_rel_100m_NNN20230829_'+/ModelParameters/StudyArea+'.tif'
+					, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft. PropValue van een StorageName levert de expressietekst en niet de uitkomst, en daar kan ExistingFile niets mee.";
+
+					parameter<String> Fingerprint_Ring_rel_100m :=
+						  'nnn_date=20230829'
+						+ ';ring_resolution_m=' + string(Ringresolutie)
+						+ ';ring_kernels_m=500,1000,2000'
+						+ ';ring_count='        + string(#/ModelParameters/Natuur/Ring)
+						+ ';ring_names='        + asList(/ModelParameters/Natuur/Ring/name, ',')
+						+ ';study_area='        + /ModelParameters/StudyArea
+					, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. nnn_date staat als vaste waarde omdat de datum hard in het pad van SrcBasis/NNN zit; komt daar een nieuwe levering, pas dan ook deze sleutel aan. ring_kernels_m staat eveneens als vaste waarde, want de drie potentialen hierboven kiezen hun kernel via het itempad en niet via een parameter; hetzelfde geldt voor de keuze van Distmatrices_100m en rdc_100m, waar Ringresolutie de documentatieparameter van is. De ringindeling zelf staat erin omdat een gewijzigde klasselijst dezelfde bestandsnaam zou hergebruiken.";
+
+					container Decoupling_Ring_rel_100m := /Templates/DecoupledFile_T(FileName_Ring_rel_100m, Fingerprint_Ring_rel_100m);
+
+					attribute</ModelParameters/Natuur/Ring> Make_Ring_rel_100m (rdc_100m) := Calc_Ring_rel_100m, StorageName = "=FileName_Ring_rel_100m", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_Ring_rel_100m/Write_Fingerprint"
+					, Descr = "Schrijft de ringkaart eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan een container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+					attribute</ModelParameters/Natuur/Ring> Read_Ring_rel_100m (rdc_100m) : StorageName = "=FileName_Ring_rel_100m", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+
+					attribute</ModelParameters/Natuur/Ring> Ring_rel_100m (rdc_100m) := = Decoupling_Ring_rel_100m/MayReuse ? 'Read_Ring_rel_100m' : 'Make_Ring_rel_100m'
+					, Descr = "De ring waar de cel in valt, ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_Ring_rel_100m/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+					attribute</ModelParameters/Natuur/Ring> Ring_rel_AD (AdminDomain) := Ring_rel_100m[AdminDomain/rdc_100m_rel];
+
+					unit<UInt32> Claimregio_Nat := range(uint32, 0, uint32(#/ModelParameters/Natuur/Deelgebied))
+					, Descr = "De claimregio's van de natte natuur: de deelgebieden zelf."
+					{
+						attribute</ModelParameters/Natuur/Deelgebied> Deelgebied_rel                := value(id(.), /ModelParameters/Natuur/Deelgebied);
+						attribute<String>                             Label                         := /ModelParameters/Natuur/Deelgebied/Label[Deelgebied_rel], DialogType = "LabelText";
+						attribute<.>                                  Per_AdminDomain (AdminDomain) := value(uint32(Deelgebied_rel_AD), .);
+					}
+
+					unit<UInt32> Claimregio_Droog := range(uint32, 0, uint32(#/ModelParameters/Natuur/DroogClaims))
+					, Descr = "De claimregio's van de droge natuur: deelgebied maal NNN-ring, in dezelfde volgorde als ModelParameters/Natuur/DroogClaims, dus deelgebied voorop en ring binnenin."
+					{
+						attribute</ModelParameters/Natuur/DroogClaims> Claim_rel := value(id(.), /ModelParameters/Natuur/DroogClaims);
+						attribute<String>                              Label     := /ModelParameters/Natuur/DroogClaims/Label[Claim_rel], DialogType = "LabelText";
+
+						attribute<UInt32> Index_AD (AdminDomain) := uint32(Deelgebied_rel_AD) < 5u ? uint32(Deelgebied_rel_AD) * 5u + uint32(Ring_rel_AD) : null_u
+						, Descr = "Het rijnummer in DroogClaims. De grens bij 5 sluit de zesde regio uit, die alleen bestaat omdat de shapefile een zwerfpolygoon met deelgeb2 gelijk aan Veen bevat. Een niet-toegekende cel geeft hier null, want een vergelijking met null levert FALSE op.";
+
+						attribute<.> Per_AdminDomain (AdminDomain) := value(Index_AD, .);
+					}
+
+					unit<UInt8> NatType : NrOfRows = 3
+					, Descr = "De natte natuurtypen. De aanlevering onderscheidt bos/moeras van vochtige graslanden; de eerste valt hier uiteen in broekbos en moeras."
+					{
+						attribute<String> name : ['VochtigHooiland','Broekbos','Moeras'];
+						attribute<String> code : ['N10.02','N14.01','N05.04'];
+						attribute<String> ClaimExpr :
+						[
+							 '/ModelParameters/Natuur/NatClaims/@K@_VochtigGrasland'
+							,'/ModelParameters/Natuur/NatClaims/@K@_BosMoeras * /ModelParameters/Natuur/Aandeel_Broekbos'
+							,'/ModelParameters/Natuur/NatClaims/@K@_BosMoeras * (1f - /ModelParameters/Natuur/Aandeel_Broekbos)'
+						], Descr = "Sjabloon voor de opgave, met @K@ voor de variantkolom. Wordt ingevuld in NatuurAllocZand_T.";
+
+						attribute<INL_Beheertype> INL_Beheertype_rel := rlookup(code, INL_Beheertype/code)
+						, IntegrityCheck = "all(IsDefined(this))"
+						, Descr = "De vertaling van de omschrijving in #652 naar een beheertype. Vochtige graslanden worden N10.02 Vochtig hooiland, broekbos N14.01 Rivier- en beekbegeleidend bos, want in een beekdal is broekbos beekbegeleidend bos, en moeras N05.04 Dynamisch moeras. Voor het veenbroekbos in de beekdalen op veen, subtype Dz6, zou N14.02 Hoog- en laagveenbos passender zijn; dat onderscheid is niet gemaakt omdat de opgave geen splitsing naar subtype geeft.";
+					}
+
+					unit<UInt8> DroogType : NrOfRows = 3
+					, Descr = "De droge natuurtypen, met de vaste aandelen 60-30-10 uit #652."
+					{
+						attribute<String> name        : ['Bos','Heide','OpenZand'];
+						attribute<String> code        : ['N15.02','N07.01','N07.02'];
+						attribute<String> AandeelNaam : ['Aandeel_Droog_Bos','Aandeel_Droog_Heide','Aandeel_Droog_OpenZand'];
+
+						attribute<INL_Beheertype> INL_Beheertype_rel := rlookup(code, INL_Beheertype/code)
+						, IntegrityCheck = "all(IsDefined(this))"
+						, Descr = "Bos wordt N15.02 Dennen-, eiken- en beukenbos, heide N07.01 Droge heide en open zand N07.02 Zandverstuiving. Dat laatste bewust niet N05.01.13 Open zand: die code hangt in de classificatie onder moeras en hoort bij de rivieren, terwijl het hier om stuifzand in het zandlandschap gaat.";
+					}
+
+					attribute<Bool> IsAgrarischGrasland (LGNKlasse) := LGNKlasse/code == 1w || LGNKlasse/code == 45w
+					, Descr = "De zeef van de natte natuur volgens #652: agrarisch grasland. Dat is LGN 1 agrarisch gras plus 45 natuurlijk beheerde agrarische graslanden.";
+
+					attribute<Bool> IsAgrarisch (LGNKlasse) := IsAgrarischGrasland
+						|| LGNKlasse/code ==  2w || LGNKlasse/code ==  3w || LGNKlasse/code ==  4w || LGNKlasse/code ==  5w
+						|| LGNKlasse/code ==  6w || LGNKlasse/code ==  9w || LGNKlasse/code == 10w
+						|| LGNKlasse/code == 61w || LGNKlasse/code == 62w
+					, Descr = "De zeef van de droge natuur volgens #652: alle agrarische klassen behalve glastuinbouw. Dus mais, aardappelen, bieten, granen, overige landbouwgewassen, boomgaarden, bloembollen, boomkwekerijen en fruitkwekerijen bovenop het grasland, en klasse 8 glastuinbouw er niet bij.";
+
+					attribute<Bool> IsDroogBKN (AdminDomain) :=
+						   /SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/BNSN_rel_AdminDomain == /Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/V/Stuwwallen
+						|| /SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/BNSN_rel_AdminDomain == /Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/V/Kleileemgebied
+						|| /SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/BNSN_rel_AdminDomain == /Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/V/Dekzandgebied
+					, Descr = "Ligt de cel in een landvorm die volgens de aanlevering geschikt is voor droge bos-, zand- en heidesystemen?
+
+								De aanlevering noemt subtypen: dekzandrug, dekzandvlakte, grondmorene in drie varianten,
+								smeltwaterafzetting, stuifzandduin en stuwwal. De config heeft alleen de hoofdklassenkaart met
+								elf klassen, dus die subtypen zijn hier samengenomen tot drie hoofdklassen: Stuwwallen dekt
+								stuwwal, Dekzandgebied dekt dekzandrug, dekzandvlakte, smeltwaterafzetting en stuifzandduin, en
+								Kleileemgebied dekt de grondmorene, die immers keileem is. Samen 1.466.906 ha van de 1.668.981
+								ha in de claimregio's.
+
+								Dat is grover dan gevraagd, maar het verschil is klein: de subtypen die binnen deze drie
+								hoofdklassen vallen en NIET in de lijst staan zijn de beekdalen en droogdalen, en die worden
+								hieronder al apart uitgesloten omdat daar juist de natte natuur landt. Wat er dus echt
+								verloren gaat is de scheiding tussen de kleinere landvormen binnen het dekzandgebied. Wil je
+								dat scherper, dan is de subtypenversie van de Basiskaart Natuurlijk Systeem nodig, via de
+								Klimaateffectatlas of rechtstreeks bij de aanleverende partij, die hem voor de opgave al
+								gebruikt heeft.";
+
+					parameter<Bool> NatteNatuurOpAlleLandbouw := TRUE
+					, Descr = "Mag natte natuur op alle landbouwgrond in de beekdalen landen, of alleen op agrarisch grasland?
+
+								Staat aan. Issue #652 schrijft agrarisch grasland voor, maar dan past de opgave niet: de zeef
+								biedt dan 100.221 ha binnen het beekdalherstel en na de toets op bestaand bebouwd gebied nog
+								97.126 ha, tegen een opgave van 109.972 ha in NbSMax en NbSGenuanceerd. Het tekort van 12.846 ha
+								zat in alle vijf de deelgebieden, dus het was geen kwestie van een scheve verdeling. Met alle
+								agrarische klassen is er 143.138 ha beschikbaar en past de opgave met ruimte over. Het hele
+								beekdalherstel is 220.746 ha.
+
+								Uitzetten geeft de letterlijke lezing van #652 terug, met dat tekort. De diagnose-uitdraai
+								zandnatuur_krapte_nat.txt laat het per deelgebied zien.";
+
+					attribute<Bool> Zeef_Nat (AdminDomain) := IsBeekdalHerstel && MakeDefined((NatteNatuurOpAlleLandbouw ? IsAgrarisch : IsAgrarischGrasland)[/SourceData/Grondgebruik/LGN/m25], FALSE)
+					, Descr = "Waar mag natte natuur landen: binnen het beekdalherstel uit #630 en op landbouwgrond, zie NatteNatuurOpAlleLandbouw voor welke klassen dat zijn.";
+
+					attribute<Bool> Zeef_Droog (AdminDomain) := !IsBeekdalHerstel && IsDroogBKN && MakeDefined(IsAgrarisch[/SourceData/Grondgebruik/LGN/m25], FALSE)
+					, Descr = "Waar mag droge natuur landen: buiten het beekdalherstel, op een geschikte landvorm en op agrarische grond.";
+
+					parameter<String> Cluster_Straal := '500m'
+					, Descr = "Over welke straal de geschiktheid wordt uitgesmeerd, en daarmee hoe groot de natuurvlekken worden.
+
+								Dit is het antwoord op het spikkelpatroon. De aanlevering geeft binnen een claimregio geen
+								voorkeur voor de ene plek boven de andere, dus stond hier eerst een trekking per cel. De
+								arealen klopten daarmee, maar de allocator koos dan de losse toppen van een ruisoppervlak,
+								en die liggen als losse cellen van 25 bij 25 meter verspreid over het landbouwgebied.
+								Hetzelfde probleem als bij waterberging in #575, en met dezelfde oplossing: middel de
+								geschiktheid over een schijf, dan komen er aaneengesloten gebieden boven de zaaglijn uit in
+								plaats van losse toppen.
+
+								Vijfhonderd meter is een schijf van 78 ha. Groter geeft grotere en dus minder vlekken,
+								kleiner geeft er meer en kleinere.";
+
+					parameter<Float32> Ruis_Amplitude := 0.5f
+					, Descr = "Hoe zwaar de ruis meeweegt ten opzichte van de aansluiting bij bestaande natuur. Beide lopen van 0 tot 1, en de som wordt door 1 plus dit getal gedeeld, zodat de geschiktheid tussen 0 en 1 blijft zoals NatuurAlloc_T verlangt.
+
+								Op een half gezet. De ruis kan de aansluiting daarmee overstemmen zodra het aandeel
+								bestaande natuur in de omgeving onder de helft ligt, en dat is in verreweg de meeste
+								claimregio's het geval. Zonder ruis zou de allocatie in de buitenste ringen op een vlak van
+								allemaal nullen stuiten en daar weer willekeurig kiezen; met alleen ruis zou ze nergens
+								aansluiten bij wat er al ligt.";
+
+					parameter<UInt32> Seed_Nat   := 6520, Descr = "Vaste seeds voor de ruis, zodat twee runs met dezelfde configuratie dezelfde kaart geven. Per type een eigen seed, want de ruis is het enige dat de typen ruimtelijk uit elkaar houdt: de aansluitingsterm is voor alle typen gelijk en valt bij de keuze tussen typen dus tegen elkaar weg.";
+					parameter<UInt32> Seed_Droog := 6530;
+
+					attribute<Float32> Natuur_Aandeel_100m      (rdc_100m) := mean(float32(Basisjaar/IsNatuur), AdminDomain/rdc_100m_rel);
+					attribute<Float32> NatuurWater_Aandeel_100m (rdc_100m) := mean(float32(Basisjaar/IsNatuur || Basisjaar/IsWater), AdminDomain/rdc_100m_rel)
+					, Descr = "Voor de natte natuur telt bestaand open water mee als aanknopingspunt: in een beekdal is de beek zelf de plek waar natte natuur zich aan vastzet.";
+
+					attribute<Float32> Aanhaken_Droog_100m (rdc_100m) :=
+						='potential(Natuur_Aandeel_100m, /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
+							/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte'
+					, Descr = "Het aandeel bestaande natuur in een schijf rond de cel, tussen 0 en 1. Nieuwe natuur die tegen bestaande natuur aan ligt is meer waard dan een even grote vlek midden in het landbouwgebied, en dit is de maat die daarvoor zorgt.
+
+								Op 100 meter gerekend en niet op de 25 meter van het AdminDomain, om dezelfde reden als bij
+								Ringresolutie: een schijf van 500 meter vraagt op 25 meter een kern van 41 bij 41 cellen over
+								ruim 27 miljoen cellen, op 100 meter is dat 11 bij 11 over 1,7 miljoen. De prijs is dat de
+								rand van een natuurvlek op 100 meter verspringt, en dat is ruim binnen de nauwkeurigheid van
+								een opgave die alleen hectares per claimregio geeft.";
+
+					attribute<Float32> Aanhaken_Nat_100m (rdc_100m) :=
+						='potential(NatuurWater_Aandeel_100m, /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
+							/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte';
+
+					container Ruis_Nat :=
+						for_each_nedv(
+							NatType/name
+							, 'potential(rnd_uniform(' + string(Seed_Nat + uint32(id(NatType))) + ', rdc_500m, range(float32, 0f, 1f))[rdc_100m/rdc_500m_rel], /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
+									/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte'
+							, rdc_100m
+							, Float32
+						)
+					, Descr = "Een glad ruisoppervlak per type, tussen 0 en 1.
+
+								De trekking gebeurt per cel van 500 meter en wordt daarna over een schijf van Cluster_Straal
+								gemiddeld. Twee redenen om niet per cel te trekken en dat te middelen: het gemiddelde van
+								honderd trekkingen ligt zo dicht op een half dat er geen reliëf overblijft, en een gemiddelde
+								van een handvol trekkingen blijft vanzelf tussen 0 en 1 zonder dat er genormaliseerd of
+								afgekapt hoeft te worden.";
+
+					container Ruis_Droog :=
+						for_each_nedv(
+							DroogType/name
+							, 'potential(rnd_uniform(' + string(Seed_Droog + uint32(id(DroogType))) + ', rdc_500m, range(float32, 0f, 1f))[rdc_100m/rdc_500m_rel], /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
+									/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte'
+							, rdc_100m
+							, Float32
+						);
+
+					container Geschiktheid_Nat :=
+						for_each_nedv(
+							NatType/name
+							, 'Zeef_Nat ? ((Aanhaken_Nat_100m + Ruis_Amplitude * Ruis_Nat/' + NatType/name + ') / (1f + Ruis_Amplitude))[AdminDomain/rdc_100m_rel] : null_f'
+							, AdminDomain
+							, Float32
+						)
+					, Descr = "Geschiktheid voor natte natuur: aansluiting bij bestaande natuur en water, plus ruis, en null buiten de zeef.
+
+								Beide termen zijn glad, en dat is de hele bedoeling: de allocator maximaliseert de som van de
+								geschiktheid binnen de opgave, dus met een glad oppervlak komen er aaneengesloten vlekken uit
+								en niet de losse toppen die een trekking per cel oplevert.
+
+								De taakverdeling tussen de twee termen zit in de wiskunde van de allocator. Welke cellen
+								natuur worden hangt af van de hele geschiktheid, dus daar telt de aansluiting mee. Welk van de
+								drie typen een cel wordt hangt alleen af van het verschil tussen de typen, en dat is de ruis,
+								want de aansluitingsterm is voor alle typen dezelfde en valt weg. Zo komen de typen als
+								aaneengesloten vlekken naast elkaar te liggen in plaats van door elkaar heen.";
+
+					container Geschiktheid_Droog :=
+						for_each_nedv(
+							DroogType/name
+							, 'Zeef_Droog ? ((Aanhaken_Droog_100m + Ruis_Amplitude * Ruis_Droog/' + DroogType/name + ') / (1f + Ruis_Amplitude))[AdminDomain/rdc_100m_rel] : null_f'
+							, AdminDomain
+							, Float32
+						)
+					, Descr = "Idem voor droge natuur. De ligging ten opzichte van het NNN, die #652 als trede noemt, zit hier niet in de geschiktheid maar in de claimregio: de aanlevering geeft per ring een eigen getal en heeft die afweging dus al gemaakt. De aansluiting bij bestaande natuur is iets anders dan die ring, want het NNN bevat ook nog niet gerealiseerde natuur.";
+
+					container Controle
+					: Descr = "Controlegetallen op de zeven en de indeling, los van de allocatie zelf."
+					{
+						parameter<Ha> Areaal_Claimregios := sum(IsDefined(Regio_rel_AD)  ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. In de levering 1.668.981 ha.";
+						parameter<Ha> Areaal_Zeef_Nat    := sum(Zeef_Nat                 ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel agrarisch grasland ligt er in het beekdalherstel. Vergelijk met de opgave van 109.972 ha in NbS.";
+						parameter<Ha> Areaal_Zeef_Droog  := sum(Zeef_Droog               ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel agrarische grond op geschikte landvorm ligt er buiten de beekdalen. Vergelijk met de opgave van 180.158 ha in NbSMax.";
+						parameter<Ha> Areaal_DroogBKN    := sum(IsDroogBKN               ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Areaal van de drie hoofdklassen samen, over heel Nederland.";
+						parameter<Ha> Areaal_NNN         := sum(IsNNN_100m[AdminDomain/rdc_100m_rel] ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Areaal van het Natuurnetwerk Nederland zoals het model het op 100 meter ziet.";
+
+						parameter<Ha> Areaal_Beekdal_Totaal       := sum(IsBeekdalHerstel ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het hele beekdalherstel uit #630, 220.746 ha.";
+						parameter<Ha> Areaal_Beekdal_AlleLandbouw := sum(IsBeekdalHerstel && MakeDefined(IsAgrarisch[/SourceData/Grondgebruik/LGN/m25], FALSE) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel ruimte de natte natuur zou krijgen als de zeef alle agrarische klassen toeliet in plaats van alleen grasland. Het verschil met Areaal_Zeef_Nat is de enige knop waarmee de natte opgave alsnog past; zie de meting bij Zeef_Nat.";
+					}
+
+					container Alloc := /Templates/SourceData/NatuurAllocZand_T('NbSGenuanceerd', 'NbS', 'NbSGenuanceerd', .)
+					, Descr = "De allocatie zelf. Krijgt deze container mee als bron, want claimregios, zeven, typen en geschiktheid staan hierboven.
+
+								Alleen NbSGenuanceerd krijgt hem. De aanlevering bevat ook een kolom voor BAU, 7.903 ha
+								droog binnen het NNN plus 9.987 ha nat, en voor NbSMax, 180.100 ha droog. Die staan in
+								ModelParameters/Natuur klaar maar zijn niet aangesloten: #652 gaat over NbSGenuanceerd,
+								en voor BAU speelt bovendien dubbeltelling met het Natuurnetwerk, dat al in de MNP-kaart
+								zit.";
+
+					attribute<INL_Beheertype> Natuur (AdminDomain) := Alloc/ExoNatuur;
+					attribute<INL_Beheertype> Water  (AdminDomain) := Alloc/ExoWater;
+				}
+				container Rivieren
+				: Descr = "Riviertrajecten en binnendijkse gebieden uit het landschapstype Rivieren. Zie issue #621.
+
+							De levering geeft per gebied geen kaart maar een verdeling: het aandeel van elk van de
+							vijftien ecotooptypen, samen 100 procent. Het model werkt per cel met een klasse en niet
+							met een mengsel, dus die verdeling moet naar een kaart.
+
+							Dat gebeurt door de cellen binnen elk gebied te rangschikken op natheid en de
+							cumulatieve aandelen op die volgorde te leggen: de natste cellen krijgen het zomerbed,
+							de droogste het bebouwde en agrarische deel, en daartussen de reeks van
+							NbSRivieren/Gradient. Omdat er geteld wordt en niet gedrempeld, kloppen de arealen per
+							gebied tot op een cel na, en omdat er op natheid geordend wordt ontstaat een zonering in
+							plaats van ruis.
+
+							Tot 26 augustus 2026 stond hier een trekking: elke cel kreeg een toevalswaarde en viel
+							daarmee in een klasse. De arealen klopten, maar het kaartbeeld was onbruikbaar, met
+							ooibos als losse vlekken van 25 bij 25 meter tussen het grasland.
+
+							Het inlezen van de geopackage staat in Bron/Rivieren_NbSGenuanceerd."
+				{
+					container Src := Bron/Rivieren_NbSGenuanceerd;
+
+					parameter<bool> NeemBinnendijksMee := TRUE
+					, Descr = "Tellen naast de buitendijkse riviertrajecten ook de binnendijkse gebieden mee? Staat aan, want de levering bevat ze en het landschapstype gaat er expliciet over.
+
+								Uitzetten haalt 23.886 ha uit het ruimtebeslag, ruim een kwart, en daarmee ook de enige
+								agrarische rest in de levering. De aanleverende partij tekent bij de binnendijkse set aan dat
+								het een gefilterde selectie van 36 gebieden is en niet dezelfde reeks als in NbSMax, dus voor
+								een vergelijking tussen varianten is deze schakelaar het aangewezen instrument.";
+
+					parameter<uint32> Trekking_Seed := 621
+					, Descr = "Vaste seed voor de ruis die gelijke natheidswaarden uit elkaar trekt. Zonder ruis krijgen cellen met dezelfde diepte een willekeurige maar niet-reproduceerbare volgorde; met een vaste seed geeft dezelfde configuratie altijd dezelfde kaart.";
+
+					parameter<float32> Ruis_Amplitude := 0.01f
+					, Descr = "Hoe zwaar de ruis meeweegt in de rangschikking, in meters natheid. Klein gehouden: hij hoort alleen gelijke waarden uit elkaar te trekken, niet de zonering te verstoren. Grote vlakken met exact dezelfde diepte, zoals de binnendijkse gebieden zonder dieptedata, worden hierdoor niet in een strakke band opgedeeld maar krijgen een gevlekt patroon binnen hun klasse.";
+
+					parameter<Meter> Natheid_Water_Bonus := 12[Meter]
+					, Descr = "Opslag voor cellen die in het basisjaar al open water zijn. Die horen bovenaan de natheidsrangorde, want daar ligt het zomerbed en het stromende water. De opslag ligt boven de diepste dieptewaarde die in de kaart voorkomt, zodat bestaand water altijd voorgaat.";
+
+					// ---- welke cellen doen mee ----
+					attribute<bool> IsBinnendijks (Src/Levering/gebied) := Src/Levering/gebied/gebiedtype == 'Binnendijks', Descr = "Het veld type heeft twee waarden: Buitendijks voor de 23 riviertrajecten, Binnendijks voor de 36 overige gebieden.";
+					attribute<bool> IsBuitendijks (Src/Levering/gebied) := !IsBinnendijks, Descr = "Hier per record negeren en niet pas op het raster: buiten het ruimtebeslag levert de negatie van een lege verwijzing TRUE op.";
+					attribute<bool> IsMeegenomen  (Src/Levering/gebied) := !IsBinnendijks || NeemBinnendijksMee;
+
+					attribute<Src/Levering/gebied> Gebied_rel_Bron (AdminDomain) := poly2grid(Src/Levering/gebied/geometry, AdminDomain);
+					attribute<Src/Levering/gebied> Gebied_rel      (AdminDomain) := MakeDefined(IsMeegenomen[Gebied_rel_Bron], FALSE) ? Gebied_rel_Bron : null_u[Src/Levering/gebied]
+					, Descr = "Het gebied waar de cel in valt, na de schakelaar NeemBinnendijksMee. Eerst per record beslissen en dan pas naar het raster: de negatie andersom levert buiten het ruimtebeslag TRUE op.";
+
+					attribute<bool> WordtGeordend (AdminDomain) := IsDefined(Gebied_rel) && /Geography/rdc_meter/IsStudyArea_AdminDomain, Descr = "De cellen die een ecotoop krijgen: het hele ruimtebeslag binnen het studiegebied.";
+
+					// ---- de natheid waarop gerangschikt wordt ----
+					unit<uint64> RivierCel := select_with_org_rel(WordtGeordend)
+					, Descr = "Alleen de cellen die meedoen, ongeveer 3,5 miljoen. Het sorteren gebeurt hier en niet op AdminDomain; dat scheelt een factor veertig."
+					{
+						attribute<AdminDomain> AdminDomain_rel               := org_rel;
+						attribute<.>           Per_AdminDomain (AdminDomain) := invert(org_rel);
+					}
+
+					attribute<Src/Levering/gebied> Gebied_Cel (RivierCel) := Gebied_rel[RivierCel/AdminDomain_rel], IntegrityCheck = "all(IsDefined(this))";
+					attribute<bool>                IsBinnendijks_Cel (RivierCel) := MakeDefined(IsBinnendijks[Gebied_Cel], FALSE);
+					attribute<bool>                IsWater_Cel (RivierCel) := Basisjaar/IsWater[RivierCel/AdminDomain_rel];
+
+					attribute<Meter> Diepte_Cel (RivierCel) :=
+						IsBinnendijks_Cel
+							? /SourceData/Water/Dieptekaart[RivierCel/AdminDomain_rel]
+							: MakeDefined(/SourceData/Water/Waterdiepte_A_PrimairOnbeschermd[RivierCel/AdminDomain_rel], /SourceData/Water/Dieptekaart[RivierCel/AdminDomain_rel])
+					, Descr = "De overstromingsdiepte als maat voor de hoogteligging binnen de uiterwaard: dieper is lager en natter.
+
+								Buitendijks de A-kaart van het onbeschermde hoofdwatersysteem, met de gecombineerde kaart
+								als achtervang waar A leeg is. Binnendijks alleen de gecombineerde kaart, want daar dekt A
+								maar een deel. Dit las tot #665 Dieptekaart0, omdat Dieptekaart toen alles boven tien meter
+								op null zette en dat juist de diepste cellen zijn, die hier bovenaan de rangorde horen. Die
+								klem is nu verhuisd naar de waterberging, waar hij hoort, en Dieptekaart houdt alleen de
+								onzinwaarden uit de C-kaart tegen. Dat is hier de betere bron: 147 miljoen meter hoort net
+								zomin bovenaan de rangorde.";
+
+					parameter<string> Waterkern_Straal := '150m'
+					, Descr = "Over welke straal gemeten wordt hoezeer een watercel door water omringd is.
+
+								Nodig omdat alle watercellen anders even nat zijn en dus op een hoop belanden. De diepte
+								helpt daar niet: de overstromingskaart heeft in de geul zelf vaak geen waarde, want die
+								kaart gaat over land dat onderloopt. Daardoor werd de keuze welke watercel het zomerbed
+								wordt en welke stagnant water door de ruis bepaald, en dat gaf een gespikkelde zoom langs
+								de oever in plaats van een gevulde geul.
+
+								Honderdvijftig meter is ruim de halve breedte van de Waal, dus het midden van de geul komt
+								op bijna 1 uit en de oeverzone loopt naar 0 af. Kleiner maakt het onderscheid tussen kern
+								en rand te scherp, groter smeert het uit over de uiterwaard.";
+
+					parameter<Meter> Waterkern_Bonus := 6[Meter]
+					, Descr = "Hoeveel de waterkern bovenop de wateropslag meetelt. Watercellen komen daarmee tussen 12 en 18 meter natheid te liggen, dus altijd boven land, en binnen het water bepaalt de kern de volgorde: het midden van de geul wordt zomerbed, de randen worden stromend en stagnant water.";
+
+					attribute<float32> Waterkern_AD (AdminDomain) :=
+						='potential(float32(Basisjaar/IsWater), /Geography/Distmatrices_25m/pot' + Waterkern_Straal + '/Flat2)
+							/ /Geography/Distmatrices_25m/pot' + Waterkern_Straal + '/oppervlakte'
+					, Descr = "Het aandeel water in een schijf rond de cel, tussen 0 en 1. Hoog in het midden van een brede geul, laag aan de oever en in smalle strangen.";
+
+					attribute<Meter> Natheid_Cel (RivierCel) := MakeDefined(Diepte_Cel, 0[Meter]) + (IsWater_Cel ? Natheid_Water_Bonus + Waterkern_Bonus * Waterkern_AD[RivierCel/AdminDomain_rel] : 0[Meter])
+					, Descr = "Hoe nat is deze cel. Bestaand open water gaat voor op alles, daarna de diepte. Cellen zonder dieptewaarde tellen als droogst; zie Controle/Areaal_ZonderDiepte voor hoeveel dat er zijn.";
+
+					attribute<float32> Ruis_Cel (RivierCel) := ='rnd_uniform(' + string(Trekking_Seed) + ', RivierCel, range(float32, 0f, 1f))';
+
+					parameter<string> Natheid_Straal := '50m'
+					, Descr = "Over welke straal de natheid wordt gemiddeld voordat er gerangschikt wordt.
+
+								De dieptekaart varieert op celniveau sterker dan de hoogteligging doet. Rangschikken op de
+								kale celwaarde geeft daardoor vertanding tussen aangrenzende zones: naast elkaar liggende
+								cellen wisselen van klasse omdat hun diepte een decimeter verschilt. Middelen over een
+								schijf haalt die ruis eruit en laat de vorm van de uiterwaard staan.
+
+								Vijftig meter is een schijf van 0,8 ha, ruim genoeg om celruis weg te halen en klein
+								genoeg om een uiterwaard van een paar honderd meter breed niet plat te strijken. Op pot0m
+								zetten schakelt het uit; dan telt alleen de cel zelf.";
+
+					attribute<float32> Natheid_AD (AdminDomain) := WordtGeordend ? Natheid_Cel[RivierCel/Per_AdminDomain] / 1[Meter] : 0f
+					, Descr = "De natheid terug op het volle raster, nul buiten het ruimtebeslag. Nodig omdat potential op een grid werkt en niet op het celdomein.";
+
+					attribute<float32> Natheid_Glad_AD (AdminDomain) :=
+						='potential(Natheid_AD, /Geography/Distmatrices_25m/pot' + Natheid_Straal + '/Flat2)
+							/ max_elem(potential(float32(WordtGeordend), /Geography/Distmatrices_25m/pot' + Natheid_Straal + '/Flat2), 1f)'
+					, Descr = "Het gemiddelde van de natheid over de schijf, alleen over de cellen die in het ruimtebeslag vallen. De deling door hetzelfde potentiaal van het masker maakt er een echt gemiddelde van; zonder die correctie zou een cel aan de rand van de uiterwaard omlaag getrokken worden door de nullen erbuiten.";
+
+					attribute<float32> Ordening_Cel (RivierCel) := Natheid_Glad_AD[RivierCel/AdminDomain_rel] + Ruis_Amplitude * Ruis_Cel
+					, Descr = "De grootheid waarop gesorteerd wordt, hoog is nat. De gladgestreken natheid bepaalt de zonering, de ruis breekt de resterende gelijke waarden.";
+
+					// ---- de empirische verdelingsfunctie per gebied ----
+					parameter<float32> Ordening_Max    := max(Ordening_Cel);
+					parameter<float32> Ordening_Bereik := Ordening_Max - min(Ordening_Cel) + 1f;
+
+					attribute<float64> Sleutel (RivierCel) := float64(uint32(Gebied_Cel)) + float64((Ordening_Max - Ordening_Cel) / Ordening_Bereik)
+					, Descr = "Sorteersleutel: het gebiedsnummer als geheel deel en de omgekeerde natheid als breukdeel, geschaald op strikt kleiner dan 1. Oplopend sorteren geeft daarmee eerst alle cellen van gebied 0 van nat naar droog, dan die van gebied 1, enzovoort. Zo hoeft er niet per gebied gerangschikt te worden, wat GeoDMS niet als operator kent.";
+
+					attribute<uint64> Rang_Globaal (RivierCel) := invert(index(Sleutel))[uint64], Descr = "Het rangnummer van de cel in de globale sortering.";
+
+					attribute<uint64> Aantal_Cellen (Src/Levering/gebied) := pcount(Gebied_Cel);
+					attribute<uint64> Startpositie  (Src/Levering/gebied) := cumulate(Aantal_Cellen) - Aantal_Cellen, Descr = "Waar begint dit gebied in de globale sortering. cumulate telt inclusief, dus het eigen aantal er weer af.";
+
+					attribute<float32> Positie (RivierCel) := (float32(Rang_Globaal - Startpositie[Gebied_Cel]) + 0.5f) / float32(Aantal_Cellen[Gebied_Cel])
+					, IntegrityCheck = "all(this > 0f && this < 1f)"
+					, Descr = "De empirische verdelingsfunctie: 0 is de natste cel van het gebied, 1 de droogste. Per gebied exact gelijkmatig verdeeld, en daarom kloppen de arealen. De halve cel erbij zet de waarde midden in zijn bakje.";
+
+					// ---- de cumulatieve aandelen, in gradientvolgorde ----
+					container CumFractie :=
+						for_each_nedv(
+							'CumFr_' + NbSRivieren/Gradient/name
+							, NbSRivieren/Gradient/IsEerste
+								? 'Src/Levering/gebied/Fr_' + NbSRivieren/Gradient/name + '[float32]'
+								: 'CumFr_' + NbSRivieren/Gradient/VorigeName + ' + Src/Levering/gebied/Fr_' + NbSRivieren/Gradient/name + '[float32]'
+							, Src/Levering/gebied
+							, float32
+						), Descr = "Cumulatieve aandelen per gebied, in de volgorde van NbSRivieren/Gradient, dus van nat naar droog. De laatste komt per gebied op 1 uit.";
+
+					attribute<NbSRivieren/Gradient> Gradient_rel_Cel (RivierCel) :=
+						='min_elem(' + AsList('uint8(Positie >= CumFractie/CumFr_' + NbSRivieren/Gradient/name + '[Gebied_Cel])', ' + ') + ', ' + string(uint8(#NbSRivieren/Gradient) - 1b) + 'b)[NbSRivieren/Gradient]'
+					, Descr = "De plek van de cel op de gradient: het aantal cumulatieve grenzen dat onder Positie ligt. De min_elem vangt af dat de laatste grens door afronding net onder 1 kan uitkomen.";
+
+					attribute<NbSRivieren/RivierEcotoop> Ecotoop_rel_AD (AdminDomain) := recollect_by_cond(WordtGeordend, NbSRivieren/Gradient/RivierEcotoop_rel[Gradient_rel_Cel])
+					, Descr = "Het ecotoop per cel, waar alles hieronder aan hangt.";
+
+					// ---- van ecotoop naar beheertype en naar de oplegging ----
+					container Fr_perEcotoop :=
+						for_each_nedv(
+							NbSRivieren/RivierEcotoop/name
+							, 'Src/Levering/gebied/Fr_' + NbSRivieren/RivierEcotoop/name + '[Gebied_rel][float32]'
+							, AdminDomain
+							, float32
+						), Descr = "Aandeel van het celoppervlak per ecotoop, zoals de levering het geeft. Buiten het ruimtebeslag null. Dit is de exacte, ononderbroken vorm van de levering; Ecotoop_rel_AD is de kaart die eruit volgt.";
+
+					attribute<INL_Beheertype> INL_Beheertype_rel_AD (AdminDomain) := NbSRivieren/RivierEcotoop/INL_Beheertype_rel[Ecotoop_rel_AD]
+					, Descr = "Het natuurbeheertype dat bij het ecotoop hoort. Null waar de cel op agrarisch grasland, agrarisch gebruik of bebouwd uitkomt: daar wordt niets opgelegd.";
+					attribute<NatuurType>     NatuurTypen_rel_AD    (AdminDomain) := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel_AD];
+
+					attribute<INL_Beheertype> Natuur (AdminDomain) := MakeDefined(NbSRivieren/RivierEcotoop/IsNatuurlijkTerrestrisch[Ecotoop_rel_AD], FALSE) && !Sloopgebied/GeenOplegging ? INL_Beheertype_rel_AD : null_b[INL_Beheertype]
+					, Descr = "Exogeen op te leggen natuur: de cellen die op een terrestrisch natuurecotoop uitkomen.
+
+								De keuze tussen natuur en water loopt hier over de categorie van het ecotoop en niet over
+								NatuurType/IsExogeenOpTeLeggen_Natuur, zoals bij de andere leveringen. Dat moet ook: het
+								beheertype N01.03 Rivier- en moeraslandschap verzamelt vier terrestrische ecotopen en twee
+								waterecotopen, en valt als NatuurType onder N01, dat als water te boek staat. Via die weg zou
+								28.665 ha grasland, struweel en ruigte in de waterstroom belanden.
+
+								Sinds #620 valt Sloopgebied/GeenOplegging eraf: op de dijken die behouden blijven wordt niets
+								opgelegd, want een dijk die blijft liggen wordt geen uiterwaardnatuur. Dat kost 259 ha van
+								de levering en Deltares is er op 28 augustus 2026 mee akkoord gegaan. Het is dezelfde
+								ingreep als die van #641 voor bestaand bebouwd gebied, alleen hier lokaal en niet in het
+								algemene opleggingsmasker, omdat de aanleiding uit deze levering komt.";
+
+					attribute<INL_Beheertype> Water (AdminDomain) := MakeDefined(NbSRivieren/RivierEcotoop/IsWater[Ecotoop_rel_AD], FALSE) && !Sloopgebied/GeenOplegging ? INL_Beheertype_rel_AD : null_b[INL_Beheertype]
+					, Descr = "Exogeen op te leggen water: zomerbed, stromend water en stagnant water. Dezelfde uitzondering voor Sloopgebied/GeenOplegging als bij de natuur. Let op dat ExogeenOpleggen/Totaal in VariantData op dit moment alleen de natuurstroom neemt en de waterstroom laat liggen. Dit deel van de levering wordt dus wel op slot gezet maar nog niet opgelegd.";
+
+					attribute<bool> IsRivierIngreep (AdminDomain) := IsDefined(Gebied_rel), Descr = "Cel valt in het ruimtebeslag van de levering, na de schakelaar NeemBinnendijksMee.";
+					attribute<bool> NietBouwen      (AdminDomain) := IsRivierIngreep
+					, Descr = "Hier mag niet meer gebouwd worden. Wordt in VariantData/NietBouwen opgepakt en daar alleen voor de variant NbSGenuanceerd aangezet. Dit is het hele ruimtebeslag, dus ook het deel dat agrarisch blijft: dat ligt in de uiterwaard van het landschapstype en komt daarmee niet in aanmerking voor nieuwbouw. Blijft ongewijzigd na #620: de aanscherping van 28 augustus 2026 raakt alleen de sloop, niet de bouwrestrictie.";
+
+					container Sloopgebied
+					: Descr = "Waar wijkt de bestaande bebouwing en waar blijft ze staan. Zie #620.
+								Tot deze splitsing gold het hele ruimtebeslag als sloopgebied. Team Rivieren heeft dat op
+								28 augustus 2026 aangescherpt: slopen, uitkopen en het verplaatsen van arbeidsplaatsen
+								gebeurt in de nieuwe uiterwaarden, dus de 36 binnendijkse gebieden, en daarbinnen niet op
+								de dijken die behouden blijven. Bebouwing die maar deels in het overblijvende vlak valt
+								blijft eveneens staan. De rest van het ruimtebeslag gaat daarmee van regime Slopen naar
+								NietBouwen: geen nieuwbouw meer, maar de bestaande bebouwing blijft. Dat regime staat in
+								Templates/VariantData_T bij Bouwregime/Bron/Landschap/Rivieren.
+								Let op dat het model langs een tweede weg sloopt. Waar exogeen natuur wordt opgelegd
+								wordt de stand geleegd, want een cel kan niet tegelijk nieuwe natuur en woningen dragen,
+								en die weg loopt buiten dit masker om. Daarom haalt Gespaard de oplegging weg op de
+								behouden dijken en onder de randbebouwing, langs dezelfde lijn als #641 dat voor bestaand
+								bebouwd gebied doet. Zonder die stap zou de natuurkaart de bebouwing daar alsnog
+								wegslopen en had de hele aanscherping geen effect."
+					{
+						parameter<bool> DijkenSparen := TRUE
+						, Descr = "Vallen de behouden dijken buiten het sloopgebied? Staat aan, want dat is de vraag uit #620. Uitzetten geeft het beeld van voor die levering terug.";
+
+						parameter<bool> RandbebouwingSparen := TRUE
+						, Descr = "Blijft bebouwing staan die maar deels in het sloopvlak valt? Staat aan, conform de levering. De toets loopt per pand over de cellen waar het pand aan bijdraagt: raakt een pand het sloopvlak en ligt het er niet helemaal in, dan vallen al zijn cellen buiten het sloopgebied. Dat is grover dan een toets op de pandcontour zelf, want een cel van 25 bij 25 meter steekt buiten het pand uit, en die grofheid werkt naar sparen toe. Dat is de richting die de levering vraagt.";
+
+						parameter<bool> AlleenNieuweUiterwaard := TRUE
+						, Descr = "Beperkt de sloop zich tot de 36 binnendijkse gebieden, de nieuwe uiterwaarden? Staat aan, want dat is wat de levering van 28 augustus 2026 letterlijk zegt: slopen is uiterwaarden_nieuw_genuanc_02 min dijken_behouden2.
+									Uitzetten neemt het hele ruimtebeslag weer als sloopgebied, dus inclusief de 23 riviertrajecten, zoals tot #620 het geval was. Dit is het punt waarop de aanscherping het meest verschilt van wat er stond en het is niet met zekerheid wat er bedoeld is: de riviertrajecten zijn de bestaande uiterwaarden en het zomerbed, en de eerste opdracht in #620 rekende die er wel toe. De vraag ligt terug bij Deltares.";
+
+						attribute<bool> IsDijk (AdminDomain) := DijkenSparen && IsDefined(Src/DijkenBehouden/Per_AdminDomain)
+						, Descr = "Cel waarvan het middelpunt in een behouden dijk valt. Op 25m levert dat 566 ha op, gelijk aan het vectorareaal: de stroken zijn dertig tot vijftig meter breed en vallen dus ruwweg samen met een rij cellen.";
+
+						attribute<bool> IsNieuweUiterwaard (AdminDomain) := MakeDefined(IsBinnendijks[Gebied_rel], FALSE)
+						, Descr = "De 36 binnendijkse gebieden uit de levering. Die zijn geometrisch gelijk aan de shape uiterwaarden_nieuw_genuanc_02 waar #620 naar verwijst; dat is bij het inlezen van die shape nagemeten, symmetrisch verschil nul.";
+
+						attribute<bool> Vlak (AdminDomain) := (AlleenNieuweUiterwaard ? IsNieuweUiterwaard : IsRivierIngreep) && !IsDijk
+						, Descr = "Het sloopvlak zoals de levering het formuleert: de nieuwe uiterwaarden min de behouden dijken. Hier gaat de bebouwingstoets nog overheen.";
+
+						unit<uint32> PandCel := ='/SourceData/Vastgoed/BAG/PerJaar/Y' + string(/ModelParameters/Model_StartYear) + '/pand/ToedelingsMatrix'
+						, Descr = "De kruistabel pand maal cel uit de BAG van het basisjaar: per pand de cellen waar het aan bijdraagt. Dezelfde tabel die de stand over de cellen uitsmeert, dus dezelfde bebouwing waar de sloop op aangrijpt."
+						{
+							attribute<bool> LigtInVlak := Vlak[AdminDomain_rel], Descr = "Ligt dit stuk van het pand in het sloopvlak.";
+						}
+
+						unit<uint32> Pand := ='/SourceData/Vastgoed/BAG/PerJaar/Y' + string(/ModelParameters/Model_StartYear) + '/pand'
+						, Descr = "De pandenset van het basisjaar, de voorraad volgens de CBS-definitie. Alle panden tellen mee en niet alleen de woonpanden: de levering spreekt over bebouwing, en de sloopregel raakt naast woningen ook arbeidsplaatsen.";
+
+						attribute<bool> Pand_RaaktVlak    (Pand) := any(PandCel/LigtInVlak, PandCel/Pand_rel), Descr = "Het pand draagt aan minstens een cel binnen het sloopvlak bij.";
+						attribute<bool> Pand_GeheelInVlak (Pand) := all(PandCel/LigtInVlak, PandCel/Pand_rel), Descr = "Alle cellen waar het pand aan bijdraagt liggen binnen het sloopvlak.";
+						attribute<bool> Pand_DeelsBuiten  (Pand) := Pand_RaaktVlak && !Pand_GeheelInVlak, Descr = "De bebouwing die volgens de levering blijft staan: ze valt slechts deels in het overblijvende vlak.";
+
+						attribute<bool> Randbebouwing (AdminDomain) := RandbebouwingSparen && MakeDefined(any(Pand_DeelsBuiten[PandCel/Pand_rel], PandCel/AdminDomain_rel), FALSE)
+						, Descr = "Cel die bijdraagt aan een pand dat maar deels in het sloopvlak valt. Dat is de vertaling van de regel naar het raster: sloop gaat per cel en niet per pand, dus een cel met een stuk randbebouwing erin wordt in zijn geheel gespaard.";
+
+						attribute<bool> Slopen (AdminDomain) := Vlak && !Randbebouwing
+						, Descr = "Het antwoord: hier wijkt de bestaande bebouwing. Wordt opgepakt in Templates/VariantData_T bij Bouwregime/Bron/Landschap/Rivieren, dat deze cellen regime Slopen geeft en de rest van het ruimtebeslag NietBouwen.";
+
+						attribute<bool> GeenOplegging (AdminDomain) := IsRivierIngreep && IsDijk
+						, Descr = "De behouden dijken binnen het ruimtebeslag, 400 ha op 25m. Hier legt het model geen natuur of water op, zie Natuur en Water hierboven: een dijk die blijft liggen wordt geen uiterwaardnatuur. Deltares is hiermee akkoord op 28 augustus 2026.
+									De randbebouwing zit hier bewust niet in. Die cellen vallen wel buiten het sloopgebied, maar de bebouwing die er staat mag volgens dezelfde afstemming met de natuur samengaan, dus de oplegging blijft er staan. Zie ModelParameters/SloopVolgtExogeneOplegging.";
+					}
+
+					container Controle
+					: Descr = "Vergelijkt het gerasterde areaal per ecotoop met het areaal dat rechtstreeks uit de levering volgt. Vangt twee dingen af: een rangschikking die scheef loopt, en de valkuil van geneste polygonen waar bij het rasteren de verkeerde wint."
+					{
+						attribute<Ha> opp_gebied (Src/Levering/gebied) := area(Src/Levering/gebied/geometry, meter2_f64)[Ha];
+
+						attribute<float32> Fractie_Totaal (Src/Levering/gebied) := CumFractie/CumFr_BebouwdVerhard
+						, IntegrityCheck = "all(abs(this - 1f) < 0.001f)"
+						, Descr = "De laatste cumulatieve grens, en dus de som van de vijftien aandelen per gebied. Die moet op 1 uitkomen, anders klopt de toedeling niet.";
+
+						unit<uint8> PerEcotoop := NbSRivieren/RivierEcotoop
+						{
+							attribute<string> Label := NbSRivieren/RivierEcotoop/Label, DialogType = "LabelText";
+
+							attribute<Ha> Vector := ='union_data(., ' + AsItemList('sum(Src/Levering/gebied/Fr_' + NbSRivieren/RivierEcotoop/name + '[float32] * Controle/opp_gebied * float32(IsMeegenomen))') + ')'
+							, Descr = "Areaal per ecotoop rechtstreeks uit de levering: aandeel maal polygoonoppervlak, opgeteld over de meegenomen gebieden.";
+
+							attribute<Ha> Raster := ='union_data(., ' + AsItemList('sum(Ecotoop_rel_AD == NbSRivieren/RivierEcotoop/V/' + NbSRivieren/RivierEcotoop/name + ' ? 1f : 0f) * AdminDomain/NrHaPerCell') + ')'
+							, Descr = "Areaal per ecotoop zoals het model het op de kaart heeft staan.";
+
+							attribute<float32> Ratio := Raster / Vector
+							, IntegrityCheck = "all(IsNull(this) || abs(this - 1f) < 0.05f)"
+							, Descr = "Het raster mag hooguit 5 procent van de levering afwijken. Null voor bebouwd, dat in deze levering overal op nul staat. De rangschikking telt cellen en drempelt niet, dus de afwijking hoort binnen een cel per ecotoop per gebied te blijven; loopt het verder weg, dan is er iets mis met het rasteren of met de volgorde in de SqlString.";
+						}
+
+						parameter<Ha> Areaal_Buitendijks   := sum(MakeDefined(IsBuitendijks[Gebied_rel], FALSE) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. In de levering 64.462 ha over 23 riviertrajecten, op 25m 64.438 ha.";
+						parameter<Ha> Areaal_Binnendijks   := sum(MakeDefined( IsBinnendijks[Gebied_rel], FALSE) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. In de levering 23.886 ha over 36 gebieden, op 25m 23.877 ha, en nul als NeemBinnendijksMee uit staat.";
+						parameter<Ha> Areaal_Totaal        := sum(IsRivierIngreep ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal over de hele levering: 88.348 ha, op 25m 88.315 ha.";
+						parameter<Ha> Areaal_ExoNatuur     := sum(IsDefined(Natuur) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. Uit de levering volgt 58.649 ha terrestrische natuur; op 25m staat er 57.816 ha, na aftrek van de 259 ha die #620 op de behouden dijken en onder de randbebouwing weghaalt.";
+						parameter<Ha> Areaal_ExoWater      := sum(IsDefined(Water)  ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. Uit de levering volgt 21.132 ha water; op 25m staat er 21.011 ha, na aftrek van de 23,5 ha uit #620.";
+						parameter<Ha> Areaal_Agrarisch     := sum(MakeDefined(NbSRivieren/RivierEcotoop/IsAgrarisch[Ecotoop_rel_AD], FALSE) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal. Uit de levering volgt 8.566 ha die agrarisch blijft, verdeeld over vijf binnendijkse gebieden.";
+						parameter<Ha> Areaal_ZonderDiepte  := sum(float32(!IsDefined(Diepte_Cel))) * AdminDomain/NrHaPerCell, Descr = "Hoeveel van het ruimtebeslag geen dieptewaarde heeft en dus als droogst in de rangorde komt. Loopt dit op, dan wordt de zonering in die gebieden door de ruis bepaald in plaats van door de hoogte.";
+
+						parameter<Ha> Areaal_Dijken        := sum(Sloopgebied/IsDijk ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal bij #620. De shape meet 566 ha; op 25m hoort daar hetzelfde uit te komen, want de stroken zijn breder dan een cel.";
+						parameter<Ha> Areaal_DijkInLevering := sum(Sloopgebied/IsDijk && IsRivierIngreep ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het deel van de dijken dat binnen het ruimtebeslag valt en dus werkelijk iets afsnijdt. In de shape 383 ha, waarvan 231 ha binnendijks; op 25m 400 ha, want een cel telt heel mee zodra haar middelpunt in de dijk valt en de dijk loopt hier langs de rand van de gebieden.";
+						parameter<Ha> Areaal_Sloopvlak     := sum(Sloopgebied/Vlak ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het sloopvlak voor de bebouwingstoets: nieuwe uiterwaarden min behouden dijken.";
+						parameter<Ha> Areaal_Randbebouwing := sum(Sloopgebied/Randbebouwing ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel oppervlak de bebouwingstoets uit het sloopvlak haalt: de cellen van panden die er maar deels in vallen.";
+						parameter<Ha> Areaal_Slopen        := sum(Sloopgebied/Slopen ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het uiteindelijke sloopgebied. Vergelijk met Areaal_Totaal: dat was tot #620 het sloopgebied.";
+						parameter<Ha> Areaal_GeenOplegging := sum(Sloopgebied/GeenOplegging ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waar binnen het ruimtebeslag de oplegging vervalt omdat de dijk blijft liggen. Dit is het areaal natuur en water dat #620 kost ten opzichte van #621.";
+
+						parameter<uint32> Panden_RaaktVlak    := sum_uint32(Sloopgebied/Pand_RaaktVlak),    Descr = "Hoeveel panden uit het basisjaar het sloopvlak raken. Controle op de bebouwingstoets: dit getal hoort in de orde van duizenden te liggen, niet in de miljoenen en niet op nul.";
+						parameter<uint32> Panden_DeelsBuiten  := sum_uint32(Sloopgebied/Pand_DeelsBuiten),  Descr = "Daarvan het deel dat er maar half in ligt en dus blijft staan. Dit hoort een kleine minderheid te zijn; wordt het de meerderheid, dan sluit de toets te ruim aan en spaart hij het hele gebied.";
+
+						parameter<Ha> Areaal_NatuurVervallen := sum(Sloopgebied/GeenOplegging && MakeDefined(NbSRivieren/RivierEcotoop/IsNatuurlijkTerrestrisch[Ecotoop_rel_AD], FALSE) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het deel van Areaal_GeenOplegging dat zonder #620 natuur was geworden. Dit is precies wat de aanscherping de natuuropgave kost.";
+						parameter<Ha> Areaal_WaterVervallen  := sum(Sloopgebied/GeenOplegging && MakeDefined(NbSRivieren/RivierEcotoop/IsWater[Ecotoop_rel_AD], FALSE) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Idem voor de waterstroom. Die wordt alleen opgelegd als VariantK/ExogeenWaterOpleggen aanstaat.";
+
+						parameter<String> Uitdraai_Sloopgebied :=
+							  'areaal_totaal;'           + string(Areaal_Totaal)
+							+ '|areaal_binnendijks;'     + string(Areaal_Binnendijks)
+							+ '|areaal_buitendijks;'     + string(Areaal_Buitendijks)
+							+ '|areaal_dijken;'          + string(Areaal_Dijken)
+							+ '|areaal_dijk_in_levering;'+ string(Areaal_DijkInLevering)
+							+ '|areaal_sloopvlak;'       + string(Areaal_Sloopvlak)
+							+ '|areaal_randbebouwing;'   + string(Areaal_Randbebouwing)
+							+ '|areaal_slopen;'          + string(Areaal_Slopen)
+							+ '|areaal_geen_oplegging;'  + string(Areaal_GeenOplegging)
+							+ '|areaal_exonatuur;'       + string(Areaal_ExoNatuur)
+							+ '|areaal_exowater;'        + string(Areaal_ExoWater)
+							+ '|areaal_natuur_vervallen;'+ string(Areaal_NatuurVervallen)
+							+ '|areaal_water_vervallen;' + string(Areaal_WaterVervallen)
+							+ '|panden_raakt_vlak;'      + string(Panden_RaaktVlak)
+							+ '|panden_deels_buiten;'    + string(Panden_DeelsBuiten)
+						, StorageName = "='%LocalDataProjDir%/Diagnose/Rivieren_Sloopgebied.txt'"
+						, StorageType = "str"
+						, Descr = "De arealen van #620 in een keer, zodat de afbakening zonder allocatierun na te rekenen is. Sleutel en waarde gescheiden door een puntkomma, regels door een verticale streep.";
+					}
+				}
+			}
+
+			attribute<INL_Beheertype> Natuur_Totaal (AdminDomain) := MakeDefined(MakeDefined(MakeDefined(Landschap/Veen/Natuur, Landschap/Kust/Natuur), Landschap/Zand/Natuur), Landschap/Rivieren/Natuur)
+			, Descr = "De vier leveringen samen. Volgorde veen, kust, zand, rivieren: waar twee elkaar raken wint de eerste. Onderling overlappen ze 10.202 ha, waarvan 9.410 ha beekdal dat ook in het veengebied ligt.";
+			attribute<INL_Beheertype> Water_Totaal  (AdminDomain) := MakeDefined(MakeDefined(Landschap/Veen/Water, Landschap/Kust/Water), Landschap/Rivieren/Water)
+			, Descr = "Zand levert geen water. Kust ook niet zolang Landschap/Kust/VoorlandAlsNatuur aanstaat, maar de tak staat er wel in: zet die schakelaar uit, dan hoort het buitendijkse voorland in de waterstroom terecht te komen en niet nergens.";
+			attribute<INL_Beheertype> Natuur_Nieuw  (AdminDomain) := !Basisjaar/IsNatuur ? Natuur_Totaal : null_b[INL_Beheertype];
+			attribute<INL_Beheertype> Water_Nieuw   (AdminDomain) := !Basisjaar/IsWater  ? Water_Totaal  : null_b[INL_Beheertype];
+		}
+	}
+
+
+	// Wat VariantData/ExogeenOpleggen ophaalt: per variant alleen de nieuwe natuur en het nieuwe water.
+	attribute<INL_Beheertype> ExoNatuur_BAU1                  (AdminDomain) := Varianten/BAU/Natuur_Nieuw;
+	attribute<INL_Beheertype> ExoNatuur_BAU2                  (AdminDomain) := Varianten/BAU2/Natuur_Nieuw;
+	attribute<INL_Beheertype> ExoNatuur_NbSMax                (AdminDomain) := Varianten/NbSMax/Natuur_Nieuw;
+	attribute<INL_Beheertype> ExoNatuur_NbSGenuanceerd        (AdminDomain) := Varianten/NbSGenuanceerd/Natuur_Nieuw;
+
+	attribute<INL_Beheertype> ExoWater_BAU1                   (AdminDomain) := Varianten/BAU/Water_Nieuw;
+	attribute<INL_Beheertype> ExoWater_BAU2                   (AdminDomain) := Varianten/BAU2/Water_Nieuw;
+	attribute<INL_Beheertype> ExoWater_NbSMax                 (AdminDomain) := Varianten/NbSMax/Water_Nieuw;
+	attribute<INL_Beheertype> ExoWater_NbSGenuanceerd         (AdminDomain) := Varianten/NbSGenuanceerd/Water_Nieuw;
+
+}
+

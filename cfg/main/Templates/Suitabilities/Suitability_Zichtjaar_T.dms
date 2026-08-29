@@ -39,18 +39,18 @@ Template Suitability_Zichtjaar_T
 	container Werken :=
 		for_each_nedv(
 			Actor/Jobs6/name
-			, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Werken/ProbabilityMap_perSector/'+Actor/Jobs6/name+'/exponentiated)'
+			, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Werken/ProbabilityMap_perSector/'+Actor/Jobs6/name+'/exponentiated)'
 			, CompactedAdminDomain
 			, float32
 		), Descr = "Geschiktheid voor werken per sector";
 	
 	container Verblijfsrecreatie
 	{
-		attribute<Float32> Totaal (CompactedAdminDomain):= collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Suitabilities/Verblijfsrecreatie/ProbabilityMap_Verblijfsrecreatie/Variant_Dist_1000m_Neighbourhood/exponentiated), Descr = "Geschiktheid voor verblijfsrecreatie in compacted alloc dommain. Obv probability map uit studie VU.";
+		attribute<Float32> Totaal (CompactedAdminDomain):= collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Verblijfsrecreatie/ProbabilityMap_Verblijfsrecreatie/Variant_Dist_1000m_Neighbourhood/exponentiated), Descr = "Geschiktheid voor verblijfsrecreatie in compacted alloc dommain. Obv probability map uit studie VU.";
 	}
 	
 	container Waterberging
-	: Descr = "Geschiktheid voor waterberging: de variant-onafhankelijke criteria uit BaseData/Suitabilities/Waterberging worden hier per variant gewogen tot een totaal."
+	: Descr = "Geschiktheid voor waterberging: de variant-onafhankelijke criteria uit /BaseData/Suitabilities/Waterberging worden hier per variant gewogen tot een totaal."
 	{
 		attribute<Float32> Depth_Norm        (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/Depth_Norm),        Descr = "Genormaliseerde waterdiepte in compacted domain.";
 		attribute<Float32> InvUAI_Norm       (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/InvUAI_Norm),       Descr = "Inverse urban attractivity index in compacted domain.";
@@ -60,7 +60,7 @@ Template Suitability_Zichtjaar_T
 		attribute<Float32> Wegzijging_Norm   (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/Wegzijging_Norm),   Descr = "Genormaliseerde wegzijging in compacted domain; telt negatief mee.";
 		attribute<Bool>    IsDiepGenoeg      (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/IsDiepGenoeg),      Descr = "Voldoet de waterschijf aan ModelParameters/Waterberging/Minimum_Waterschijf?";
 
-		attribute<Float32> Totaal (CompactedAdminDomain) :=
+		attribute<Float32> Totaal_PerCel (CompactedAdminDomain) :=
 			IsDiepGenoeg
 			?	    Depth_Norm        * /VariantParameters/VariantK/Weight_Depth_Waterberging     [Variant_rel]
 				  + InvUAI_Norm       * /VariantParameters/VariantK/Weight_UAI_Waterberging       [Variant_rel]
@@ -69,17 +69,31 @@ Template Suitability_Zichtjaar_T
 				  + Kwel_Norm         * /VariantParameters/VariantK/Weight_Kwel_Waterberging      [Variant_rel]
 				  - Wegzijging_Norm   * /VariantParameters/VariantK/Weight_Wegzijging_Waterberging[Variant_rel]
 			:	0f
-		, Descr = "Geschiktheid voor waterberging in compacted admindomain. Gewichten per variant (VariantK/Weight_*_Waterberging); wegzijging telt negatief; locaties met een waterschijf kleiner dan ModelParameters/Waterberging/Minimum_Waterschijf krijgen geschiktheid 0.";
+		, Descr = "Geschiktheid van de losse cel. Gewichten per variant (VariantK/Weight_*_Waterberging); wegzijging telt negatief; locaties met een waterschijf kleiner dan ModelParameters/Waterberging/Minimum_Waterschijf krijgen geschiktheid 0.";
+
+		attribute<Float32> Totaal_PerCel_AdminDomain (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, Totaal_PerCel), 0f)
+		, Descr = "Dezelfde geschiktheid op het volle grid, want potential werkt op een grid en niet op het compacted domain. Cellen buiten het compacted domain tellen als 0 mee in het gemiddelde, zodat een plek aan de rand van het gebied niet kunstmatig hoog scoort.";
+
+		attribute<Float32> Totaal_Geclusterd (AdminDomain) :=
+			='potential(Totaal_PerCel_AdminDomain, /Geography/Distmatrices/Impl_25m/pot'+/ModelParameters/Waterberging/ClusterPotentiaal+'/PotRange/Flat2) 
+				/ /Geography/Distmatrices/Impl_25m/pot'+/ModelParameters/Waterberging/ClusterPotentiaal+'/PotRange/oppervlakte'
+		, Descr = "Gemiddelde geschiktheid over een schijf met straal ClusterPotentiaal. Hiermee rangschikt de allocatie op de kwaliteit van de omgeving in plaats van die van de losse cel, en komen er aaneengesloten gebieden boven de zaaglijn uit in plaats van losse toppen.";
+
+		attribute<Float32> Totaal (CompactedAdminDomain) :=
+			= /ModelParameters/Waterberging/GeschiktheidGeclusterd
+				? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Totaal_Geclusterd)'
+				: 'Totaal_PerCel'
+		, Descr = "Geschiktheid voor waterberging in compacted admindomain. Welke van de twee er gebruikt wordt bepaalt ModelParameters/Waterberging/GeschiktheidGeclusterd.";
 	}
 	
 	container Wind
 	{
-		attribute<Float32> Totaal (CompactedAllocDomain):= collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, SourceData/Diversen/Per_AllocDomain/BelevingLandschap/Inverse), Descr = "Geschiktheid voor wind op basis van beleving landschap. Inverse, dus hoe lager de beleving hoe hoger de geschiktheid.";
+		attribute<Float32> Totaal (CompactedAllocDomain):= collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, /SourceData/Diversen/Per_AllocDomain/BelevingLandschap/Inverse), Descr = "Geschiktheid voor wind op basis van beleving landschap. Inverse, dus hoe lager de beleving hoe hoger de geschiktheid.";
 	}
 	
 	container Zon
 	{
-		attribute<Float32> Totaal (CompactedAllocDomain):= collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, SourceData/Diversen/Per_AllocDomain/BelevingLandschap/Inverse), Descr = "Geschiktheid voor zon op basis van beleving landschap. Inverse, dus hoe lager de beleving hoe hoger de geschiktheid.";
+		attribute<Float32> Totaal (CompactedAllocDomain):= collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, /SourceData/Diversen/Per_AllocDomain/BelevingLandschap/Inverse), Descr = "Geschiktheid voor zon op basis van beleving landschap. Inverse, dus hoe lager de beleving hoe hoger de geschiktheid.";
 	}
 	
 	container Landbouw := ='Templates/Landbouw/Suitability_T('+quote(name)+', /VariantParameters/VariantK/Waterbeheeroptie[Variant_rel])', Descr = "Bepaal de geschiktheid voor landbouw in de zichtjaren";

@@ -216,10 +216,38 @@ Template SectorAllocRegio_T
 																				? 'Buffer_Logistiek/proximity_res'
 																				: 'const(FALSE, CompactedAdminDomain)';
 	
-		container Buffer_Nijverheid := Templates/Buffer_gridcel_T(Gealloceerd_Nijverheid,  /ModelParameters/Wonen/MilieuCat/Buffer_rond_Nijverheid[float64]);
-		container Buffer_Logistiek  := Templates/Buffer_gridcel_T(Gealloceerd_Logistiek, /ModelParameters/Wonen/MilieuCat/Buffer_rond_Logistiek[float64]);
-		
+		container Buffer_Nijverheid := Templates/Allocatie/Buffer_gridcel_T(Gealloceerd_Nijverheid,  /ModelParameters/Wonen/MilieuCat/Buffer_rond_Nijverheid[float64]);
+		container Buffer_Logistiek  := Templates/Allocatie/Buffer_gridcel_T(Gealloceerd_Logistiek, /ModelParameters/Wonen/MilieuCat/Buffer_rond_Logistiek[float64]);
+
 		attribute<Bool> IsNietToegestaan              (CompactedAdminDomain) := Gealloceerd_Nijverheid_buffer || Gealloceerd_Logistiek_buffer;
+
+		//Omgekeerde toets (symmetrie): nieuw vervuilend werk moet zelf ook afstand houden tot wonen. Bron: de woningvoorraad aan het begin van het zichtjaar plus wat er in eerdere stappen van dit zichtjaar aan wonen is gealloceerd (SubSector_rel). Zonder deze toets kon het model, doordat wonen binnen het zichtjaar voor werken gaat, nieuwe nijverheid direct naast net gealloceerde woningen zetten.
+		attribute<Bool> IsWonenSubsector_perX (Sector/xSubsector)   := lowercase(Sector/xSubsector/Sector_name) == lowercase('Wonen');
+		attribute<Bool> HeeftWonen            (CompactedAdminDomain) := MakeDefined(Context/ThisZichtjaar/StateVoorAllocatie/Wonen/Totaal > 0[Woning], FALSE) || MakeDefined(IsWonenSubsector_perX[StateVoorAllocatie/SubSector_rel], FALSE);
+
+		//Aaneengesloten woongebied (#669): een enkele woning in het buitengebied legde dezelfde buffer op als een woonwijk, waarmee de toets meer dan de helft van het studiegebied afsloot voor nieuwe nijverheid. Een wooncel telt nu pas mee als het aandeel wooncellen in de omgeving boven de drempel ligt. De uitkomst is altijd een deelverzameling van HeeftWonen, dus de toets kan hier alleen soepeler van worden.
+		container WoonAandeel := Templates/Allocatie/Buurtaandeel_gridcel_T(HeeftWonen, /ModelParameters/Werken/OmgekeerdeMilieuzonering/WoongebiedStraal[float64]);
+		attribute<Bool> HeeftWoongebied       (CompactedAdminDomain) := HeeftWonen && WoonAandeel/aandeel_res >= /ModelParameters/Werken/OmgekeerdeMilieuzonering/WoongebiedAandeel;
+		attribute<Bool> TeBufferenWonen       (CompactedAdminDomain) := = /ModelParameters/Werken/OmgekeerdeMilieuzonering/AlleenRondWoongebied ? 'HeeftWoongebied' : 'HeeftWonen';
+
+		container Buffer_Wonen_Nijverheid := Templates/Allocatie/Buffer_gridcel_T(TeBufferenWonen, /ModelParameters/Wonen/MilieuCat/Buffer_omgekeerd_Nijverheid[float64]);
+		container Buffer_Wonen_Logistiek  := Templates/Allocatie/Buffer_gridcel_T(TeBufferenWonen, /ModelParameters/Wonen/MilieuCat/Buffer_omgekeerd_Logistiek[float64]);
+
+		//Bestaand werkterrein (#669): de VNG-richtafstanden gelden niet tegen bestaande vergunde bedrijvigheid, dus verdichting en herstructurering van een bestaand terrein blijven mogelijk ook al ligt het terrein in de woonbuffer. Naast de IBIS-terreinen telt een cel mee die zelf al banen in de betreffende subsector heeft, want IBIS registreert alleen terreinen vanaf een hectare.
+		attribute<Bool> OpBestaandWerkterrein (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Grondgebruik/IBIS/Result/IsBedrijfsmatigTerrein);
+		attribute<Bool> Vrijgesteld_Nijverheid (CompactedAdminDomain) := = /ModelParameters/Werken/OmgekeerdeMilieuzonering/NietOpBestaandWerkterrein
+																		? /ModelParameters/Werken/OmgekeerdeMilieuzonering/BestaandeBanenTellenMee
+																			? 'OpBestaandWerkterrein || MakeDefined(StateVoorAllocatie/Werken/Nijverheid > 0[Job], FALSE)'
+																			: 'OpBestaandWerkterrein'
+																		: 'const(FALSE, CompactedAdminDomain)';
+		attribute<Bool> Vrijgesteld_Logistiek  (CompactedAdminDomain) := = /ModelParameters/Werken/OmgekeerdeMilieuzonering/NietOpBestaandWerkterrein
+																		? /ModelParameters/Werken/OmgekeerdeMilieuzonering/BestaandeBanenTellenMee
+																			? 'OpBestaandWerkterrein || MakeDefined(StateVoorAllocatie/Werken/Logistiek > 0[Job], FALSE)'
+																			: 'OpBestaandWerkterrein'
+																		: 'const(FALSE, CompactedAdminDomain)';
+
+		attribute<Bool> NietToegestaanVoorNijverheid  (CompactedAdminDomain) := = ExtraRestrictieDoorWerkAllocatieNodig ? 'Buffer_Wonen_Nijverheid/proximity_res && !Vrijgesteld_Nijverheid' : 'const(FALSE, CompactedAdminDomain)';
+		attribute<Bool> NietToegestaanVoorLogistiek   (CompactedAdminDomain) := = ExtraRestrictieDoorWerkAllocatieNodig ? 'Buffer_Wonen_Logistiek/proximity_res && !Vrijgesteld_Logistiek'   : 'const(FALSE, CompactedAdminDomain)';
 	}
 	
 	container StateNaAllocatie0 := ='Iters/LastIter/StateNaAllocatie', IntegrityCheck = "Iters/HasEnoughIteraties"

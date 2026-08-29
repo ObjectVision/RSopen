@@ -8,38 +8,46 @@
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
 // Kosten/waarde-indicatoren rond wonen:
-//  - Woningwaarde  (#482): marktwaarde van de gealloceerde nieuwbouw per cel, uit de wonen-suitability.
-//  - Uitkoopkosten (#520): vastgoedwaarde van de woningen die gesloopt worden door exogeen opgelegde nieuwe natuur (#519).
-//  - Sloopkosten   (#549): sloopkosten van diezelfde woningen.
+//  - Woningwaarde  (#482): marktwaarde van de gealloceerde nieuwbouw per cel, uit de wonen-suitability. Dat is de
+//    marktwaarde bij de groen- en waterfracties van het basisjaar, want de suitability bevriest die termen; wat de
+//    groenverandering daar bovenop doet staat apart in WaardeNabijheidGroen. Sinds #678 overlappen die twee niet
+//    meer, dus ze mogen naast elkaar in een batenoverzicht.
+//  - Uitkoopkosten (#520): vastgoedwaarde van de woningen die gesloopt worden. Staat sinds #658 per oorzaak in
+//    SloopAlsGevolgVanNieuweNatuur, SloopAlsGevolgVanWaterbergingVeen en SloopAlsGevolgVanOverigeBouwstenen.
+//  - Sloopkosten   (#549): sloopkosten van diezelfde woningen, in dezelfde drie containers.
+// Elk bedrag heeft naast de nominale versie een _NCW-tegenhanger: de netto contante waarde in het basisjaar (#651).
 // Hergebruikt bestaande bouwstenen: WaardeNabijheidGroen/Nieuwbouw (P_nieuwbouw, cumulatieve nieuwbouw),
-// SloopAlsGevolgVanExogeneOplegging (welke cellen leeggemaakt worden), en de wonen-suitability
+// Sloopmaskers (welke cellen door welke oorzaak leeggemaakt worden), en de wonen-suitability
 // (Verwervingskosten = vastgoedwaarde bestaande voorraad, Sloopkosten = sloopkost bestaande voorraad).
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container Woningwaarde
-: Descr = "Issue #482: marktwaarde (opbrengsten) van de in deze cel gealloceerde nieuwbouw, uit de wonen-suitability (hedonische nieuwbouwprijs per gealloceerde OP maal de cumulatieve nieuwbouw t.o.v. het basisjaar)."
+: Descr = "Issue #482: marktwaarde (opbrengsten) van de in deze cel gealloceerde nieuwbouw, uit de wonen-suitability (hedonische nieuwbouwprijs per gealloceerde OP maal de cumulatieve nieuwbouw t.o.v. het basisjaar). De suitability-prijs bevriest de groen- en watertermen op het basisjaar, dus dit is de marktwaarde bij de basisjaar-nabijheid; wat de groenverandering daar bovenop doet staat in WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen (#678)."
 {
 	attribute<Eur> Nieuwbouw (AdminDomain) := MakeDefined(WaardeNabijheidGroen/Nieuwbouw/P_nieuwbouw * WaardeNabijheidGroen/Nieuwbouw/n_nieuwbouw_cumulatief, 0[Eur])
 		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Woningwaarde_Nieuwbouw_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
 		, StorageType = "gdalwrite.grid"
 		, Descr = "P_nieuwbouw (Eur/woning, gealloceerde OP via Stand/OP_rel) maal cumulatieve nieuwbouw (Stand - basisjaar). Geen aparte herberekening: P_nieuwbouw en n_nieuwbouw_cumulatief komen uit WaardeNabijheidGroen/Nieuwbouw.";
-}
-
-// Kosten van de sloop die volgt uit exogeen opgelegde nieuwe natuur (#519). Beide indicatoren maskeren een bestaande per-cel kostenkaart (uit de wonen-suitability) met de cellen die door de oplegging leeggemaakt worden.
-container UitkoopEnSloopkostenNieuweNatuur
-: Descr = "Issues #520 (uitkoopkosten) en #549 (sloopkosten) van de woningen die gesloopt worden als gevolg van exogeen opgelegde nieuwe natuur (#519)."
-{
-	attribute<Bool> IsExogeneSloopCel (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, SloopAlsGevolgVanExogeneOplegging/NeedsToBeEmptiedDueToExogenousDevelopments), FALSE)
-	, Descr = "Cel die door exogeen opgelegde ontwikkeling (nieuwe natuur) wordt leeggemaakt; bestaande woningen worden daar gesloopt.";
-
-	attribute<Eur>  Uitkoopkosten     (AdminDomain) := IsExogeneSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal, 0[Eur]) : 0[Eur]
-	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Uitkoopkosten_NieuweNatuur_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-	, StorageType = "gdalwrite.grid"
-	, Descr = "Issue #520: vastgoedwaarde (verwervingskosten) van de bestaande woningen in de leeggemaakte cellen.";
-	 
-	attribute<Eur>  Sloopkosten       (AdminDomain) := IsExogeneSloopCel ? MakeDefined(/BaseData/Suitabilities/Wonen/Sloopkosten/Totaal, 0[Eur]) : 0[Eur]
-	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Sloopkosten_NieuweNatuur_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
-	, StorageType = "gdalwrite.grid"
-	, Descr = "Issue #549: sloopkosten (m2 per WP4 maal eenheidskost) van de bestaande woningen in de leeggemaakte cellen.";
+	
+	// #651: de marktwaarde valt bij oplevering, niet in elk volgend zichtjaar opnieuw, terwijl Nieuwbouw hierboven cumulatief is
+	// sinds het basisjaar. De NCW wordt daarom per periode opgebouwd: de woningen die in deze periode zijn gebouwd tegen de prijs
+	// van dit zichtjaar, contant gemaakt met de factor van dit zichtjaar, opgeteld bij de NCW van het vorige zichtjaar.
+	attribute<Woning> n_nieuwbouw_dezePeriode (AdminDomain) := = IsFirstAllocYear
+		? 'WaardeNabijheidGroen/Nieuwbouw/n_nieuwbouw_cumulatief'
+		: 'max_elem(WaardeNabijheidGroen/Nieuwbouw/n_nieuwbouw_cumulatief - PrevIndicatoren/WaardeNabijheidGroen/Nieuwbouw/n_nieuwbouw_cumulatief, 0[Woning])'
+		, Descr = "Woningen die in deze periode zijn bijgekomen. Begrensd op nul, want per saldo gesloopte cellen zijn geen negatieve opbrengst.";
+	
+	attribute<Eur> Nieuwbouw_DezePeriode (AdminDomain) := MakeDefined(WaardeNabijheidGroen/Nieuwbouw/P_nieuwbouw * n_nieuwbouw_dezePeriode, 0[Eur])
+		, Descr = "Marktwaarde van de nieuwbouw uit deze periode, tegen de prijs van dit zichtjaar.";
+	
+	attribute<Eur> Nieuwbouw_NCW (AdminDomain) := = IsFirstAllocYear
+		? 'Nieuwbouw_DezePeriode * Verdiscontering/Factor'
+		: 'Nieuwbouw_DezePeriode * Verdiscontering/Factor + PrevIndicatoren/Woningwaarde/Nieuwbouw_NCW'
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Woningwaarde_Nieuwbouw_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Issue #651: netto contante waarde in het basisjaar van de nieuwbouwwaarde, cumulatief tot en met dit zichtjaar en per periode contant gemaakt.";
+	
+	parameter<Eur> Nieuwbouw_Per_NL     := sum(Nieuwbouw),     Descr = "Landelijk totaal, nominaal ofwel in prijzen van het basisjaar zonder verdiscontering.";
+	parameter<Eur> Nieuwbouw_NCW_Per_NL := sum(Nieuwbouw_NCW), Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
 }

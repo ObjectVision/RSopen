@@ -24,7 +24,7 @@ Template Claims_TargetUnits_T
 	parameter<uint16> UsedTIGRIS_year  := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/UsedTIGRIS_year[id];
 	parameter<String> Zichtjaar_name   := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Zichtjaar_name[id];
 	parameter<String> Sector_name      := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Sector_name[id];
-	unit<UInt8>       AllocRegio       := Classifications/Modellering/AllocRegiosK;
+	unit<UInt8>       AllocRegio       := Classifications/Modellering/AllocRegiosK/TigrisRegios, Descr = "Alleen de landsdekkende indelingen: de waterbergingsregio's zijn niet bedoeld voor TIGRIS-claims, zie AllocRegiosK/IsTigrisRegio.";
 	unit<UInt8>       SectorAllocRegio := ModelParameters/SectorAllocRegio;
 	
 	parameter<String> SrcStr :=
@@ -69,13 +69,20 @@ Template Claims_TargetUnits_T
 		
 		unit<UInt32> RegioUnit := = AllocRegio_path
 		{
-			attribute<rdc_meter> SrcRegio_Centroid    (WonenEnWerken/SrcRegio) := WonenEnWerken/SrcRegio/centroid;
-			attribute<.>         per_TigrisXLSrcRegio (WonenEnWerken/SrcRegio) := point_in_polygon(SrcRegio_centroid, geometry);
-			
+			attribute<rdc_meter> SrcRegio_Centroid           (WonenEnWerken/SrcRegio) := WonenEnWerken/SrcRegio/centroid;
+			attribute<rdc_meter> geometry_buffered           (poly)                   := geos_buffer_multi_polygon(geometry, 2500.0, 4b);
+			attribute<.>         per_TigrisXLSrcRegio_direct (WonenEnWerken/SrcRegio) := point_in_polygon(SrcRegio_Centroid, geometry);
+			attribute<.>         per_TigrisXLSrcRegio        (WonenEnWerken/SrcRegio) := MakeDefined(per_TigrisXLSrcRegio_direct, point_in_polygon(SrcRegio_Centroid, geometry_buffered))
+			,	IntegrityCheck = "all(IsDefined(this))"
+			,	Descr = "Subzones met veel buitenwater kunnen hun zwaartepunt buiten de (uit gemeentegrenzen herbouwde) regiogeometrie hebben; zonder fallback wordt de toewijzing null en laat de sum in CalcStr de claims van zo'n subzone geruisloos uit de regiototalen vallen (pbl-nl/model-RSopen#46: LMS-subzone 517, haven Den Helder, 44 m uit de gegeneraliseerde kustlijn, ca. 5.4k woningen per zichtjaar). De bufferfallback van 2.5 km wijst zulke subzones alsnog aan de nabije regio toe; de IntegrityCheck laat elke toekomstige niet-toewijzing hard falen in plaats van stil claims te verliezen.";
 		}
 		
 		parameter<String> CalcStr         := 'sum('+Zichtjaar_name+'/@X@/'+Scenario_name+'/'+Variant_name+'/Results/@Y@, RegioUnit/per_TigrisXLSrcRegio)';
-		parameter<String> ClaimDir        := '%RSo_DataDir%/Claims/TXL_'+ModelParameters/TIGRIS_filedate;
+		parameter<Bool>   IsClaimBasisjaar := UsedTIGRIS_year == uint16(ModelParameters/Model_StartYear)
+		, Descr = "Is dit het claimbasisjaar en niet een zichtjaar? Dat bepaalt waar de geaggregeerde claim heen wordt geschreven.";
+
+		parameter<String> ClaimDir        := (IsClaimBasisjaar ? '%PrivDataDir%' : '%RSo_DataDir%') + '/Claims/TXL_'+ModelParameters/TIGRIS_filedate
+		, Descr = "De zichtjaren staan in de reguliere brondatamap, waar ze al jaren staan. Het claimbasisjaar gaat naar de niet-publieke map, want de reguliere map synchroniseert naar Nextcloud en daar is een eenmaal weggeschreven bestand niet meer te wijzigen of te verwijderen. Nieuw afgeleid materiaal hoort daarom in de private map.";
 		parameter<String> File_csv_name   := ClaimDir +'/'+Scenario_name+'/'+Variant_name+'/'+Zichtjaar_name+'/'+AllocRegio_name;
 		
 		container Write_Wonen :=

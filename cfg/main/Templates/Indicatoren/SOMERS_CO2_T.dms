@@ -1,0 +1,152 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het registratiesysteem SOMERS (Subsurface Organic Matter Emission RegistRation System) is ontwikkeld om de
+// landelijke CO2-uitstoot reductie in het veenweidegebied jaarlijks bij te houden. Met SOMERS 2.0 zijn
+// rekenregels opgesteld om de toekomstige uitstoot te bepalen onder gestandaardiseerde omstandigheden.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template SOMERS_CO2_T 
+: using = "/Classifications/Landbouw;/SourceData/Landbouw/SOMERS"
+, Descr = "Het registratiesysteem SOMERS (Subsurface Organic Matter Emission RegistRation System) is ontwikkeld om de landelijke CO2-uitstoot reductie in het veenweidegebied jaarlijks bij te houden. Met SOMERS 2.0 zijn rekenregels opgesteld om de toekomstige uitstoot te bepalen onder gestandaardiseerde omstandigheden."
+, URL = "https://www.nobveenweiden.nl/bevindingen-rekenregels/"
+{
+	//
+	parameter<String>  Zichtjaar_name;
+	//
+	
+	parameter<Bool>      IsStartYear         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	parameter<Int16>     PrevZichtjaar_value := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel);
+	parameter<Int16>     Zichtjaar_value     := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
+	parameter<Bool>      IsFirstAllocYear    := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
+	parameter<jaar>      Periode             := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
+	parameter<jaarlijks> Rentevoet           := ModelParameters/Landbouw/Rentevoet;// TO DO: check vooronderstelde waarde
+	
+	container Verdiscontering := Templates/Verdiscontering_T(Zichtjaar_name)
+	, Descr = "Netto contante waarde naar het basisjaar (#651). De emissiekosten zijn een jaarlijkse stroom over de periode sinds het vorige zichtjaar, dus hier telt Verdiscontering/PeriodeFactor: de som van de contantewaardefactoren over de jaren van die periode, elk met de eigen trap van de termijnstructuur.";
+	
+	unit<UInt32> Huidige_Percelen := Veenweide_percelen
+	{
+		parameter<Bool> UseActualDroogleggingDataInThisVariant := VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel] == 'shp';
+
+		// #619: percelen zonder peilvak, en peilvakken zonder dlz_med of dlw_med, leveren geen droogleggingsklasse. Die null maakt
+		// via combine_Data de hele combinatie null, waardoor het perceel als lege cel uit de emissiekaart valt in plaats van een
+		// emissie te krijgen. De terugvalwaarde komt uit VariantK, zodat de aanname in de variantdefinitie staat en niet hier.
+		attribute<ZomerdroogleggingK>    ZomerdroogleggingK_gemeten  := = 'MakeDefined(Veenweide_percelen/ZomerdroogleggingK_rel, const(ZomerdroogleggingK/v/'+/VariantParameters/VariantK/ZomerdroogleggingK_fallback_ref[Variant_rel]+', .))';
+		attribute<WinterdroogleggingK>   WinterdroogleggingK_gemeten := = 'MakeDefined(Veenweide_percelen/WinterdroogleggingK_rel, const(WinterdroogleggingK/v/'+/VariantParameters/VariantK/WinterdroogleggingK_fallback_ref[Variant_rel]+', .))';
+
+		// De drooglegging die deze variant oplegt. In een variant zonder vernatting is dat de gemeten drooglegging zelf.
+		attribute<ZomerdroogleggingK>    ZomerdroogleggingK_variant  := = UseActualDroogleggingDataInThisVariant ? 'ZomerdroogleggingK_gemeten'  : 'const(ZomerdroogleggingK/v/'+/VariantParameters/VariantK/ZomerdroogleggingK_ref[Variant_rel]+', .)';
+		attribute<WinterdroogleggingK>   WinterdroogleggingK_variant := = UseActualDroogleggingDataInThisVariant ? 'WinterdroogleggingK_gemeten' : 'const(WinterdroogleggingK/v/'+/VariantParameters/VariantK/WinterdroogleggingK_ref[Variant_rel]+', .)';
+		parameter<InfiltratieMaatregelK> InfiltratieMaatregelK_variant := = 'InfiltratieMaatregelK/v/'+/VariantParameters/VariantK/InfiltratieMaatregelK_ref[Variant_rel];
+		parameter<InfiltratieMaatregelK> InfiltratieMaatregelK_geen    := InfiltratieMaatregelK/v/Geen_infiltratiemaatregel;
+
+		// #619: voor 86 van de 290 basiscombinaties kent de datasheet geen infiltratiemaatregel, precies de vijf moerige bodemtypen
+		// vWz, Wo, zWp, kWp en iWp. Deltares heeft besloten die percelen buiten de vernatting te laten, omdat de vernatting in deze
+		// varianten op onderwaterdrainage berust en die er niet kan liggen. Ze houden hun gemeten drooglegging en rekenen zonder
+		// maatregel, en krijgen daarmee dezelfde uitstoot als in de variant zonder vernatting. Uit te zetten via VariantK.
+		attribute<Bool> HeeftRekenregelVoorMaatregel := MakeDefined(BasiscombinatieXMaatregelK/HeeftRekenregel[combine_Data(BasiscombinatieXMaatregelK, Veenweide_percelen/BasiscombinatieK_rel, InfiltratieMaatregelK_variant)], TRUE);
+		attribute<Bool> VernattingUitgesloten        := /VariantParameters/VariantK/VernattingUitsluitenZonderWIS[Variant_rel] && not(HeeftRekenregelVoorMaatregel);
+
+		attribute<ZomerdroogleggingK>    ZomerdroogleggingK_rel    := VernattingUitgesloten ? ZomerdroogleggingK_gemeten  : ZomerdroogleggingK_variant;
+		attribute<WinterdroogleggingK>   WinterdroogleggingK_rel   := VernattingUitgesloten ? WinterdroogleggingK_gemeten : WinterdroogleggingK_variant;
+		attribute<InfiltratieMaatregelK> InfiltratieMaatregelK_rel := VernattingUitgesloten ? InfiltratieMaatregelK_geen  : InfiltratieMaatregelK_variant;
+
+		attribute<CombinatieTabel> CombinatieTabel_rel := combine_Data(CombinatieTabel, Veenweide_percelen/BasiscombinatieK_rel, InfiltratieMaatregelK_rel, WinterdroogleggingK_rel, ZomerdroogleggingK_rel);
+
+		attribute<CombinatieTabel> CT_rel_perGrid (AdminDomain) := CombinatieTabel_rel[AdminDomain_rel], IntegrityCheck = "not(all(IsNull(this)))", Descr = "Als deze IntegrityCheck faalt, krijgt geen enkel veenweideperceel een SOMERS-rekenregel. Kijk dan naar NrPercelenZonderRekenregel en NrPercelenZonderPeilvak om te zien welke as de null veroorzaakt.";
+
+		// Issue #619: het wegvallen van percelen uit de lookup gebeurde stil. Deze tellingen maken per variant en zichtjaar
+		// zichtbaar hoeveel percelen geen rekenregel krijgen, zodat Mton-totalen van varianten met een noemer vergeleken worden.
+		attribute<Datasheet> Datasheet_rel                    := rjoin(CombinatieTabel_rel, Datasheet/CombinatieTabel_rel, id(Datasheet)), Descr = "De gevonden SOMERS-rekenregel, undefined waar de combinatie niet in de datasheet voorkomt.";
+		parameter<UInt32>    NrPercelen                       := sum(const(1u, .));
+		parameter<UInt32>    NrPercelenZonderPeilvak          := sum(uint32(IsNull(Veenweide_percelen/Peilvakken_rel))), Descr = "Percelen waarvan het zwaartepunt buiten elk peilvak valt. Deze krijgen de fallback uit VariantK.";
+		parameter<UInt32>    NrPercelenZonderRekenregel       := sum(uint32(IsNull(Datasheet_rel))), Descr = "Percelen zonder rekenregel. Hoort 0 te zijn: elk perceel draagt zijn eigen basiscombinatie, en die bestaat altijd zonder infiltratiemaatregel.";
+		parameter<UInt32>    NrPercelenBuitenVernatting       := sum(uint32(VernattingUitgesloten)), Descr = "Percelen die buiten de vernatting blijven omdat de datasheet er geen infiltratiemaatregel voor kent, de moerige gronden. Nul in varianten zonder vernatting.";
+		parameter<float32>   FractiePercelenZonderRekenregel  := float32(NrPercelenZonderRekenregel) / float32(NrPercelen);
+	}
+	
+	container Emissies := for_each_ne(CO2/EmissieK/name, 'EmissieT('+quote(CO2/EmissieK/name)+')');
+	
+	container Kosten := for_each_ne(CO2/EmissieXPrijsK/name, 'EmissieXPrijsT('+string(id(CO2/EmissieXPrijsK))+'[CO2/EmissieXPrijsK])');
+	
+	Template EmissieT
+	{
+		//
+		parameter<string> Emissie_name;
+		//
+		
+		attribute<kg_ha_jaarlijks> PerHa (AdminDomain) := = 'rjoin(Huidige_Percelen/CT_rel_perGrid, Datasheet/CombinatieTabel_rel, value(Datasheet/'+Emissie_name+', kg_ha_jaarlijks))'
+			, IntegrityCheck = "not(any(IsDefined(Veenweide_percelen/AdminDomain_rel) && IsNull(this)))"
+			, Descr = "Als deze IntegrityCheck faalt, is er een cel met een veenweideperceel zonder emissiewaarde. Dat is precies wat issue #619 heeft opgelost, dus er is dan een nieuwe bron van nulls bijgekomen.";
+
+		attribute<kg_jaarlijks> Jaarlijks (AdminDomain) := PerHa * AdminDomain/NrHaPerCell;
+		parameter<ton_jaarlijks> Totaal_StGebied            := sum(Jaarlijks)[ton_jaarlijks];
+		
+		attribute<kg_jaarlijks> NaLUC (AdminDomain) :=
+			LU_ModelType/IsStedelijk[ThisYear/Landgebruikskaart/Result_SA]
+				? ModelParameters/Landbouw/CO2_Uitstoot_StedelijkGebruik * AdminDomain/NrHaPerCell
+				: ThisYear/Landgebruikskaart/Result_SA == LU_ModelType/V/Water_Totaal
+					? ModelParameters/Landbouw/CO2_Uitstoot_Water * AdminDomain/NrHaPerCell
+					: Jaarlijks;
+		
+		// Voorlopige aanname: de jaarlijkse uitstoot is constant en de veenlaag is oneindig dik. Needs work.
+		attribute<kg> Cumulatief_overZichtjaar  (AdminDomain) := NaLUC * Periode;
+		attribute<kg> Cumulatief_sindsStartyear (AdminDomain) := = IsFirstAllocYear 
+																		? 'Cumulatief_overZichtjaar'
+																		: IsStartYear 
+																			? 'Jaarlijks * 1[jaar]' 
+																			: 'PrevIndicatoren/SOMERS_CO2_Laagveen/Emissies/'+Emissie_name+'/Cumulatief_sindsStartyear + Cumulatief_overZichtjaar';
+		
+		parameter<mton> Cumulatief_sindsStartyear_StGebied := sum(Cumulatief_sindsStartyear)[mton];
+
+		parameter<string> StorageStr := IsStartYear 
+			? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/SOMERS_CO2_Emissies_kg_'+Emissie_name+'_Cumulatief_sindsStartyear_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+			: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/SOMERS_CO2_Emissies_kg_'+Emissie_name+'_Cumulatief_sindsStartyear_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+		
+		attribute<kg>                   Write_Result_SA      (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Cumulatief_sindsStartyear : null_f, StorageName = "=StorageStr", StorageType = "gdalwrite.grid";
+	}
+	
+	Template EmissieXPrijsT
+	{
+		//
+		parameter<CO2/EmissieXPrijsK> id;
+		//
+		
+		parameter<string> Emissie_name := CO2/EmissieXPrijsK/Emissie_name[id];
+		parameter<string> Prijs_name := CO2/EmissieXPrijsK/Prijs_name[id];
+		parameter<Eur_ton> Prijs := CO2/EmissieXPrijsK/Prijs[id];
+		
+		attribute<EUR_jaarlijks> Jaarlijks (AdminDomain) := = 'Emissies/'+Emissie_name+'/NaLUC[ton_jaarlijks] * Prijs';
+		
+		container Kapitalisatie := Templates/Landbouw/Kapitalisatie_T(null_b, Rentevoet, Periode);
+		
+		attribute<EUR> NPV (AdminDomain) := Jaarlijks * Kapitalisatie/Factor, StorageName = "='%LocalDataProjDir%/Indicatoren/SOMERS_CO2_Laagveen/Kosten/'+Casus_name +'/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Emissie_name+'_'+Prijs_name+'.tif'", StorageType = "gdalwrite.grid"
+		, Descr = "Contante waarde van de emissiekosten over deze periode, gerekend op de landbouwrentevoet en gewaardeerd op het BEGIN van de periode, dus niet op het basisjaar. Zo bedoeld: PostAllocAnalyses/PeilOptimalisatie zet deze post tegen de landbouw-NPV af en die staat op dezelfde voet en dezelfde peildatum. Voor rapportage naast de andere kosten-indicatoren is NCW_Cumulatief hieronder de juiste grootheid (#651).";
+		
+		parameter<EUR> NPV_StGebied := sum(NPV);
+		
+		// #651: dezelfde emissiekosten, maar dan als maatschappelijke post: op de MKBA-discontovoeten en contant gemaakt naar het
+		// basisjaar. Een jaarlijkse stroom, dus elk jaar van de periode krijgt zijn eigen factor via PeriodeFactor. Cumulatief
+		// optellen omdat de uitstoot van eerdere perioden niet verdwijnt; NPV hierboven telt alleen de lopende periode.
+		parameter<string> Pad := CO2/EmissieXPrijsK/name[id];
+		
+		attribute<EUR> NCW_DezePeriode (AdminDomain) := Jaarlijks * Verdiscontering/PeriodeFactor, Descr = "Contante waarde in het basisjaar van de emissiekosten over de periode sinds het vorige zichtjaar.";
+		
+		attribute<EUR> NCW_Cumulatief  (AdminDomain) := = IsStartYear || IsFirstAllocYear
+			? 'NCW_DezePeriode'
+			: 'NCW_DezePeriode + PrevIndicatoren/SOMERS_CO2_Laagveen/Kosten/'+Pad+'/NCW_Cumulatief'
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/SOMERS_CO2_Laagveen/Kosten/'+Casus_name +'/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'_'+Emissie_name+'_'+Prijs_name+'_NCW.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Contante waarde in het basisjaar van alle emissiekosten vanaf het basisjaar tot en met dit zichtjaar.";
+		
+		parameter<EUR> NCW_Cumulatief_StGebied := sum(NCW_Cumulatief), Descr = "Landelijk totaal.";
+	}
+}

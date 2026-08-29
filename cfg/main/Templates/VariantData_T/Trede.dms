@@ -1,0 +1,199 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// In deze file wordt per sector x subsector de evt voorkeurslocaties ('treden') beschreven, van hoog naar laag
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Trede
+: Descr = "In deze module wordt per subsector de eventuele voorkeurslocaties ('treden') beschreven, van hoog naar laag. Welke er beschouwd worden is bepaald in de variant parameters in Trede_Variant in VariantK"
+{
+	container SectorxSubsectoren := 
+		for_each_ne(
+			Sector/xSubsector/name
+			, 'Templates/VariantData/Trede_T('+string(id(Sector/xSubsector))+'[Sector/xSubsector], src)'
+		);
+	
+	container src
+	{
+		attribute<Bool> IsSlappebodem                            (AllocDomain) := Modus(/BaseData/Omgeving/IsSlappeBodem, AdminDomain/AllocDomain_rel);
+		attribute<Bool> IsGeenSlappeBodem                        (AllocDomain) := !IsSlappeBodem;
+		
+		attribute<Bool> IsHoogNL                                 (AllocDomain) := Modus(/BaseData/Omgeving/NbSOPToepassingsgebied/Hoog_NL, AdminDomain/AllocDomain_rel);
+		attribute<Bool> IsLaagNL                                 (AllocDomain) := !IsHoogNL;
+		
+		// De vier klassen van BouwregimeK als booleans op AllocDomain, want de trede-combine wil een partitie: precies een
+		// ware per cel. Daarom == en niet >=; de zeef gebruikt juist >= via Bouwregime/MagNietBouwen. De namen moeten
+		// letterlijk gelijk zijn aan BouwregimeK/name, want VariantParameters/Tredes koppelt ze via RefSrc = '@S@'+name.
+		//
+		// Let op: dit leest alleen de overstromingskant en niet de landschapstypen. Dat was al zo en blijft zo. De trede
+		// zou anders van betekenis veranderen op cellen die de zeef toch al heeft weggehaald, en geen enkele trede die
+		// vandaag draait gebruikt deze as: Trede_Variant staat op BAU, BAU, NbSMax en NbSGenuanceerd, en die vier units
+		// kennen BouwregimeK niet.
+		attribute<Classifications/Modellering/BouwregimeK> Regime (AllocDomain) := MakeDefined(Modus(ThisVariant/Bouwregime/Bron/Overstromingsgevaarzone, CompactedAdminDomain/AllocDomain_rel), Classifications/Modellering/BouwregimeK/V/Bouwen);
+		attribute<Bool> Slopen                                   (AllocDomain):= Regime == Classifications/Modellering/BouwregimeK/V/Slopen;               //Komt uit de gevaarzones nooit voor: daar is Slopen verboden, zie de IntegrityCheck bij VariantK/GevaarRegimeZone0
+		attribute<Bool> NietBouwen                               (AllocDomain):= Regime == Classifications/Modellering/BouwregimeK/V/NietBouwen;           //Te gevaarlijk
+		attribute<Bool> BouwenMetMaatregelen                     (AllocDomain):= Regime == Classifications/Modellering/BouwregimeK/V/BouwenMetMaatregelen; //Minder gevaarlijk en betaalbare gebouwmaatregelen
+		attribute<Bool> Bouwen                                   (AllocDomain):= Regime == Classifications/Modellering/BouwregimeK/V/Bouwen;               //Gewoon bouwen
+		
+		// container Zonneladder := for_each_nedv(VariantParameters/Tredes/Zon/LadderTreden/name, '/BaseData/Zonneladder/PerAllocDomain/Result/'+VariantParameters/Tredes/Zon/LadderTreden/name, AllocDomain, bool);
+		
+		attribute<Bool> BinnenStimuliWonen                              (AllocDomain) := = 'Modus(Stimuli/Wonen/Result, AdminDomain/AllocDomain_rel)';
+		attribute<Bool> BinnenStimuliWerken                             (AllocDomain) := = 'Modus(Stimuli/Werken/Result, AdminDomain/AllocDomain_rel)';
+		// attribute<Bool> BinnenStimuliVerblijfsrecreatie                 (AllocDomain) := = 'Modus(Stimuli/Verblijfsrecreatie/Result, AdminDomain/AllocDomain_rel)';
+		// attribute<Bool> BinnenStimuliWind                               (AllocDomain) := = 'Modus(Stimuli/Wind/Result, AdminDomain/AllocDomain_rel)';
+		// attribute<Bool> BinnenStimuliZon                                (AllocDomain) := = 'Modus(Stimuli/Zon/Result, AdminDomain/AllocDomain_rel)';
+		attribute<Bool> BuitenStimuliWonen                              (AllocDomain) := !BinnenStimuliWonen;
+		attribute<Bool> BuitenStimuliWerken                             (AllocDomain) := !BinnenStimuliWerken;
+		// attribute<Bool> BuitenStimuliVerblijfsrecreatie                 (AllocDomain) := !BinnenStimuliVerblijfsrecreatie;
+		// attribute<Bool> BuitenStimuliWind                               (AllocDomain) := !BinnenStimuliWind;
+		// attribute<Bool> BuitenStimuliZon                                (AllocDomain) := !BinnenStimuliZon;
+		
+		attribute<Bool> NabijWoonOfKom_25m                              (AdminDomain) := = '/BaseData/Omgeving/BBGSamengesteld || potential(float32(/BaseData/StartState/Grondgebruik/Per_AdminDomain/IsWoonlocatie), /Geography/Distmatrices_25m/pot'+string(/ModelParameters/Werken/VerzorgendWoongebiedStraal)+'m/Flat2) > 0f', Descr = "Hulplaag op 25 m: binnen bestaand bebouwd gebied, of binnen de woongebiedschijf (VerzorgendWoongebiedStraal) rond bestaand woongebied.";
+		attribute<Bool> BinnenWoongebiedOfKom                           (AllocDomain) := = /ModelParameters/Werken/VerzorgendVolgtWoongebied ? 'sum(uint32(NabijWoonOfKom_25m), AdminDomain/AllocDomain_rel) > 0' : 'const(FALSE, AllocDomain)', Descr = "Hoogste trede-as voor de verzorgende werksubsectoren: binnen de kom of de wijkrand eerst, kaal buitengebied alleen als overloop. Met de schakelaar uit is geen enkele cel Binnen en valt de ordening terug op die van Overigen.";
+		attribute<Bool> BuitenWoongebiedOfKom                           (AllocDomain) := !BinnenWoongebiedOfKom;
+		attribute<Bool> BinnenBestaandKantoor                           (AllocDomain) := = /ModelParameters/Werken/KantoorVerdikkingInBestaand ? '/BaseData/Omgeving/KantoorDominantie/IsKantoorDominant' : 'const(FALSE, AllocDomain)', Descr = "Cel waar kantoor in het basisjaar de werkstand domineert (#668). Hoogste trede-as voor zakelijke dienstverlening, zodat de zaaglijn de bestaande kantoorcellen eet voordat greenfield aan de beurt komt. Met de schakelaar uit is geen enkele cel Binnen en valt de trede-ordening terug op die van voor deze ingreep.";
+		attribute<Bool> BuitenBestaandKantoor                           (AllocDomain) := !BinnenBestaandKantoor;
+		attribute<Bool> BinnenHardePlancapaciteitWonen                  (AllocDomain) := /SourceData/Plancapaciteit/Read/Wonen/Hard/Per_AllocDomain;
+		attribute<Bool> BinnenZachtePlancapaciteitWonen                 (AllocDomain) := /SourceData/Plancapaciteit/Read/Wonen/Zacht/Per_AllocDomain;
+		attribute<Bool> BinnenPlancapaciteitWonen                       (AllocDomain) := BinnenHardePlancapaciteitWonen || BinnenZachtePlancapaciteitWonen;
+		attribute<Bool> BuitenPlancapaciteitWonen                       (AllocDomain) := !BinnenPlancapaciteitWonen;
+		attribute<Bool> BuitenHardePlancapaciteitWonen                  (AllocDomain) := !BinnenHardePlancapaciteitWonen;
+		attribute<Bool> BuitenZachtePlancapaciteitWonen                 (AllocDomain) := !BinnenZachtePlancapaciteitWonen;
+		
+		attribute<Bool> BinnenHardePlancapaciteitWerken                 (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_AllocDomain;
+		attribute<Bool> BinnenZachtePlancapaciteitWerken                (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_AllocDomain;
+		attribute<Bool> BinnenPlancapaciteitWerken                      (AllocDomain) := BinnenHardePlancapaciteitWerken || BinnenZachtePlancapaciteitWerken;
+		attribute<Bool> BuitenPlancapaciteitWerken                      (AllocDomain) := !BinnenPlancapaciteitWerken;
+		attribute<Bool> BuitenHardePlancapaciteitWerken                 (AllocDomain) := !BinnenHardePlancapaciteitWerken;
+		attribute<Bool> BuitenZachtePlancapaciteitWerken                (AllocDomain) := !BinnenZachtePlancapaciteitWerken;
+
+		//Per Jobs6-subsector, KanOp-gefilterd (KanOpIndustrieterrein/KanOpKantoor/KanOpAlgemeneBedrijfslocatie): alleen de plancapaciteit van locatietypen waar de subsector mag landen geeft trede-voorrang.
+		//Gebruikt door de _PerSubsector-varianten in VariantParameters/Tredes/Plancapaciteit_Varianten.dms via het @SS@-token in Trede_T.
+		attribute<Bool> BinnenHardePlancapaciteitWerken_Nijverheid              (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_Subsector_AllocDomain/Nijverheid;
+		attribute<Bool> BinnenZachtePlancapaciteitWerken_Nijverheid             (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_Subsector_AllocDomain/Nijverheid;
+		attribute<Bool> BuitenHardePlancapaciteitWerken_Nijverheid              (AllocDomain) := !BinnenHardePlancapaciteitWerken_Nijverheid;
+		attribute<Bool> BuitenZachtePlancapaciteitWerken_Nijverheid             (AllocDomain) := !BinnenZachtePlancapaciteitWerken_Nijverheid;
+		attribute<Bool> BuitenPlancapaciteitWerken_Nijverheid                   (AllocDomain) := !(BinnenHardePlancapaciteitWerken_Nijverheid || BinnenZachtePlancapaciteitWerken_Nijverheid);
+
+		attribute<Bool> BinnenHardePlancapaciteitWerken_Logistiek               (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_Subsector_AllocDomain/Logistiek;
+		attribute<Bool> BinnenZachtePlancapaciteitWerken_Logistiek              (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_Subsector_AllocDomain/Logistiek;
+		attribute<Bool> BuitenHardePlancapaciteitWerken_Logistiek               (AllocDomain) := !BinnenHardePlancapaciteitWerken_Logistiek;
+		attribute<Bool> BuitenZachtePlancapaciteitWerken_Logistiek              (AllocDomain) := !BinnenZachtePlancapaciteitWerken_Logistiek;
+		attribute<Bool> BuitenPlancapaciteitWerken_Logistiek                    (AllocDomain) := !(BinnenHardePlancapaciteitWerken_Logistiek || BinnenZachtePlancapaciteitWerken_Logistiek);
+
+		attribute<Bool> BinnenHardePlancapaciteitWerken_Detailhandel            (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_Subsector_AllocDomain/Detailhandel;
+		attribute<Bool> BinnenZachtePlancapaciteitWerken_Detailhandel           (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_Subsector_AllocDomain/Detailhandel;
+		attribute<Bool> BuitenHardePlancapaciteitWerken_Detailhandel            (AllocDomain) := !BinnenHardePlancapaciteitWerken_Detailhandel;
+		attribute<Bool> BuitenZachtePlancapaciteitWerken_Detailhandel           (AllocDomain) := !BinnenZachtePlancapaciteitWerken_Detailhandel;
+		attribute<Bool> BuitenPlancapaciteitWerken_Detailhandel                 (AllocDomain) := !(BinnenHardePlancapaciteitWerken_Detailhandel || BinnenZachtePlancapaciteitWerken_Detailhandel);
+
+		attribute<Bool> BinnenHardePlancapaciteitWerken_Ov_consumentendiensten  (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_Subsector_AllocDomain/Ov_consumentendiensten;
+		attribute<Bool> BinnenZachtePlancapaciteitWerken_Ov_consumentendiensten (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_Subsector_AllocDomain/Ov_consumentendiensten;
+		attribute<Bool> BuitenHardePlancapaciteitWerken_Ov_consumentendiensten  (AllocDomain) := !BinnenHardePlancapaciteitWerken_Ov_consumentendiensten;
+		attribute<Bool> BuitenZachtePlancapaciteitWerken_Ov_consumentendiensten (AllocDomain) := !BinnenZachtePlancapaciteitWerken_Ov_consumentendiensten;
+		attribute<Bool> BuitenPlancapaciteitWerken_Ov_consumentendiensten       (AllocDomain) := !(BinnenHardePlancapaciteitWerken_Ov_consumentendiensten || BinnenZachtePlancapaciteitWerken_Ov_consumentendiensten);
+
+		attribute<Bool> BinnenHardePlancapaciteitWerken_Zak_dienstverlening     (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_Subsector_AllocDomain/Zak_dienstverlening;
+		attribute<Bool> BinnenZachtePlancapaciteitWerken_Zak_dienstverlening    (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_Subsector_AllocDomain/Zak_dienstverlening;
+		attribute<Bool> BuitenHardePlancapaciteitWerken_Zak_dienstverlening     (AllocDomain) := !BinnenHardePlancapaciteitWerken_Zak_dienstverlening;
+		attribute<Bool> BuitenZachtePlancapaciteitWerken_Zak_dienstverlening    (AllocDomain) := !BinnenZachtePlancapaciteitWerken_Zak_dienstverlening;
+		attribute<Bool> BuitenPlancapaciteitWerken_Zak_dienstverlening          (AllocDomain) := !(BinnenHardePlancapaciteitWerken_Zak_dienstverlening || BinnenZachtePlancapaciteitWerken_Zak_dienstverlening);
+
+		attribute<Bool> BinnenHardePlancapaciteitWerken_Overheid_kw_diensten    (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_Subsector_AllocDomain/Overheid_kw_diensten;
+		attribute<Bool> BinnenZachtePlancapaciteitWerken_Overheid_kw_diensten   (AllocDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_Subsector_AllocDomain/Overheid_kw_diensten;
+		attribute<Bool> BuitenHardePlancapaciteitWerken_Overheid_kw_diensten    (AllocDomain) := !BinnenHardePlancapaciteitWerken_Overheid_kw_diensten;
+		attribute<Bool> BuitenZachtePlancapaciteitWerken_Overheid_kw_diensten   (AllocDomain) := !BinnenZachtePlancapaciteitWerken_Overheid_kw_diensten;
+		attribute<Bool> BuitenPlancapaciteitWerken_Overheid_kw_diensten         (AllocDomain) := !(BinnenHardePlancapaciteitWerken_Overheid_kw_diensten || BinnenZachtePlancapaciteitWerken_Overheid_kw_diensten);
+		
+		// attribute<Bool> BinnenHardePlancapaciteitVerblijfsrecreatie     (AllocDomain) := /SourceData/Plancapaciteit/Read/Verblijfsrecreatie/Hard/Per_AllocDomain;
+		// attribute<Bool> BinnenZachtePlancapaciteitVerblijfsrecreatie    (AllocDomain) := /SourceData/Plancapaciteit/Read/Verblijfsrecreatie/Zacht/Per_AllocDomain;
+		// attribute<Bool> BinnenPlancapaciteitVerblijfsrecreatie          (AllocDomain) := BinnenHardePlancapaciteitVerblijfsrecreatie || BinnenZachtePlancapaciteitVerblijfsrecreatie;
+		// attribute<Bool> BuitenPlancapaciteitVerblijfsrecreatie          (AllocDomain) := !BinnenPlancapaciteitVerblijfsrecreatie;
+		// attribute<Bool> BuitenHardePlancapaciteitVerblijfsrecreatie     (AllocDomain) := !BinnenHardePlancapaciteitVerblijfsrecreatie;
+		// attribute<Bool> BuitenZachtePlancapaciteitVerblijfsrecreatie    (AllocDomain) := !BinnenZachtePlancapaciteitVerblijfsrecreatie;
+		
+		// attribute<Bool> BinnenHardePlancapaciteitWind                   (AllocDomain) := /SourceData/Plancapaciteit/Read/Wind/Hard/Per_AllocDomain;
+		// attribute<Bool> BinnenZachtePlancapaciteitWind                  (AllocDomain) := /SourceData/Plancapaciteit/Read/Wind/Zacht/Per_AllocDomain;
+		// attribute<Bool> BinnenPlancapaciteitWind                        (AllocDomain) := BinnenHardePlancapaciteitWind || BinnenZachtePlancapaciteitWind;
+		// attribute<Bool> BuitenPlancapaciteitWind                        (AllocDomain) := !BinnenPlancapaciteitWind;
+		// attribute<Bool> BuitenHardePlancapaciteitWind                   (AllocDomain) := !BinnenHardePlancapaciteitWind;
+		
+		// attribute<Bool> BinnenHardePlancapaciteitZon                    (AllocDomain) := /SourceData/Plancapaciteit/Read/Zon/Hard/Per_AllocDomain;
+		// attribute<Bool> BinnenZachtePlancapaciteitZon                   (AllocDomain) := /SourceData/Plancapaciteit/Read/Zon/Zacht/Per_AllocDomain;
+		// attribute<Bool> BinnenPlancapaciteitZon                         (AllocDomain) := BinnenHardePlancapaciteitZon || BinnenZachtePlancapaciteitZon;
+		// attribute<Bool> BuitenPlancapaciteitZon                         (AllocDomain) := !BinnenPlancapaciteitZon;
+		
+		attribute<Bool> OntwikkelendePartij                             (AllocDomain) := Classifications/Actor/EigendomK/IsOntwikkelendePartij[/BaseData/StartState/Eigendom/Per_AllocDomain];
+		attribute<Bool> OntwikkelendePartijEnMaatschappelijk            (AllocDomain) := Classifications/Actor/EigendomK/IsOntwikkelendePartijEnMaatschappelijk[/BaseData/StartState/Eigendom/Per_AllocDomain];
+		attribute<Bool> OntwikkelendePartijEnCommercieel                (AllocDomain) := Classifications/Actor/EigendomK/IsOntwikkelendePartijEnCommercieel[/BaseData/StartState/Eigendom/Per_AllocDomain];
+		attribute<Bool> NietOntwikkelendePartij                         (AllocDomain) := !OntwikkelendePartij;
+		
+		attribute<Bool> IsOntwikkelendePartijEnMaatschappelijkEnBinnenBBG                                   (AllocDomain) := /BaseData/StartState/Eigendom/IsOntwikkelendePartijEnMaatschappelijkEnBinnenBBG;
+		attribute<Bool> IsOntwikkelendePartijEnMaatschappelijkEnBinnenBBGOfOntwikkelendePartijEnCommercieel (AllocDomain) := IsOntwikkelendePartijEnMaatschappelijkEnBinnenBBG || OntwikkelendePartijEnCommercieel;
+		
+		attribute<Bool> BBG                                             (AllocDomain) := /BaseData/Omgeving/BBG;
+		attribute<Bool> Geen_BBG                                        (AllocDomain) := !BBG;
+		
+		attribute<Bool> KansrijkWoningbouw                              (AllocDomain) := /BaseData/Omgeving/KansrijkWoningbouw_Rivieren_NbSgenuanceerd/IsGebied, Descr = "Zoekgebieden waar woningbouw in het landschapstype Rivieren kansrijk is, 56.702 ha op 25m, waarvan 24.113 ha werkelijk stuurt (#620). Wordt alleen aangeroepen door de trede van NbSGenuanceerd, via BBGPlusKansrijkWoningbouw; de andere trede-varianten raken deze kaart niet aan.";
+		
+		// attribute<Bool> Pampus                                          (AllocDomain) := /BaseData/Omgeving/Pampus;
+		// attribute<Bool> GeenPampus                                      (AllocDomain) := !Pampus;
+		
+		// attribute<Bool> RondBevolkingskern50kPlus                       (AllocDomain) := /BaseData/Omgeving/RondBevolkingskern/Is50kPlus;
+		attribute<Bool> RondBevolkingskern20kPlus                       (AllocDomain) := /BaseData/Omgeving/RondBevolkingskern/Is20kPlus;
+		attribute<Bool> RondBevolkingskern20kMin                        (AllocDomain) := /BaseData/Omgeving/RondBevolkingskern/Is20kMin;
+		
+		// attribute<Bool> RondBevolkingskern5_20k                         (AllocDomain) := RondBevolkingskern20kMin  && /BaseData/Omgeving/RondBevolkingskern/Is5kPlus;
+		// attribute<Bool> RondBevolkingskern20k_50k                       (AllocDomain) := RondBevolkingskern20kPlus && /BaseData/Omgeving/RondBevolkingskern/Is50kMin;
+		
+		attribute<Bool> RondBevolkingskern20kMinBelevingLandschapIsHoog (AllocDomain) := RondBevolkingskern20kMin && BelevingLandschapIsHoog;
+		
+		attribute<Bool> ZeerNabijOV                                     (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/ZeerNabijOV;
+		attribute<Bool> NabijOV                                         (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NabijOV;
+		attribute<Bool> BeperktNabijOV                                  (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/BeperktNabijOV;
+		attribute<Bool> NietNabijOV                                     (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NietNabijOV;
+		
+		// attribute<Bool> ZeerNabijOVRondKern50kPlus                      (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/ZeerNabijOVRondKern50kPlus;
+		// attribute<Bool> NabijOVRondKern50kPlus                          (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NabijOVRondKern50kPlus;
+		attribute<Bool> ZeerNabijOVRondKern20kPlus                      (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/ZeerNabijOVRondKern20kPlus;
+		attribute<Bool> NabijOVRondKern20kPlus                          (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NabijOVRondKern20kPlus;
+		
+		// attribute<Bool> NietNabijOVRondKern300kPlus                     (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NietNabijOVRondKern300kPlus;
+		attribute<Bool> NietNabijOVRondKern100kPlus                     (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NietNabijOVRondKern100kPlus;
+		// attribute<Bool> NietNabijOVRondKern50kPlus                      (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NietNabijOVRondKern50kPlus;
+		// attribute<Bool> NietNabijOVRondKern50kMin                       (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NietNabijOVRondKern50kMin;
+		attribute<Bool> NietNabijOVRondKern20kPlus                      (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NietNabijOVRondKern20kPlus;
+		attribute<Bool> NietNabijOVRondKern20kMin                       (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NietNabijOVRondKern20kMin;
+		// attribute<Bool> NietNabijOVRondKern5kPlus                       (AllocDomain) := /BaseData/Omgeving/OV_Reistijd/NietNabijOVRondKern5kPlus;
+	
+		// attribute<Bool> LangsRijksWegen                                 (AllocDomain) := /SourceData/Infrastructuur/Rijkswegen;
+		attribute<Bool> LangsPrimaireWaterkeringen                      (AllocDomain) := /SourceData/Water/PrimaireWaterkeringen;
+		attribute<Bool> LangsRijkswegenOfPrimaireWaterkeringen          (AllocDomain) := /SourceData/Water/PrimaireWaterkeringen;
+		
+		attribute<Bool> IsBouwterrein                                   (AllocDomain) := /BaseData/Startstate/Grondgebruik/Per_AllocDomain/IsBouwterrein;
+		
+		attribute<Bool> BinnenN2K1000mBuffer                            (AllocDomain) := Modus(/BaseData/Omgeving/N2K1000mBuffer, AdminDomain/AllocDomain_rel);
+		attribute<Bool> BuitenN2K1000mBuffer                            (AllocDomain) := !BinnenN2K1000mBuffer;
+		
+		// attribute<Bool> BinnenNationaalPark                             (AllocDomain) := /SourceData/Natuur/Nationale_parken_van_wereldklasse/IsNationaalParkWereldklasse || /SourceData/Natuur/VanGoghNationaalPark/IsVanGoghNationaalPark;
+		// attribute<Bool> BuitenNationaalPark                             (AllocDomain) := !BinnenNationaalPark;
+		
+		attribute<Bool> WelWindInBasisjaar                              (AllocDomain) := sum(/BaseData/StartState/StateBasisjaar/State/Wind/Totaal, AdminDomain/AllocDomain_rel) > 0[MW];
+		attribute<Bool> GeenWindInBasisjaar                             (AllocDomain) := !WelWindInBasisjaar;
+		
+		attribute<Bool> BelevingLandschapIsZeerZeerHoog                 (AllocDomain) := /BaseData/Omgeving/BelevingLandschap/IsZeerZeerHoog;
+		attribute<Bool> BelevingLandschapIsZeerHoog                     (AllocDomain) := /BaseData/Omgeving/BelevingLandschap/IsZeerHoog;
+		attribute<Bool> BelevingLandschapIsHoog                         (AllocDomain) := /BaseData/Omgeving/BelevingLandschap/IsHoog;
+		attribute<Bool> BelevingLandschapIsLaag                         (AllocDomain) := /BaseData/Omgeving/BelevingLandschap/IsLaag;
+		attribute<Bool> BelevingLandschapIsZeerLaag                     (AllocDomain) := /BaseData/Omgeving/BelevingLandschap/IsZeerLaag;
+		
+		attribute<Bool> Totaal (AllocDomain) := const(1[bool], AllocDomain);
+	}
+}

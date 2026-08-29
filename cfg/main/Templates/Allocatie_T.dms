@@ -1,0 +1,108 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het instapsjabloon van de allocatie: hiervan bestaat een instantie per casus (scenario x variant). Het wordt
+// aangeroepen vanuit container Allocatie in Allocatie.dms. De sjablonen voor de niveaus daaronder (zichtjaar,
+// sequentie, sectorallocregio, iteratie) staan in Templates/Allocatie. Laadt via #include:
+// StartState_metBAGnieuwbouw.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Allocatie_T
+: using = "Classifications/Actor;Classifications/modellering;Geography"
+{
+	parameter<Modellering/AllCases>       Case_id;
+	///
+	parameter<Modellering/ScenarioK>      Scenario_rel := Modellering/AllCases/scenario_rel[case_id];
+	parameter<VariantParameters/VariantK> Variant_rel  := Modellering/AllCases/Variant_rel[case_id];
+	
+	parameter<string> Scenario_name := Modellering/ScenarioK/name[Scenario_rel];
+	parameter<string> Variant_name  := VariantParameters/VariantK/name[Variant_rel];
+	parameter<string> Casus_name    := Modellering/AllCases/label[Case_id];
+	
+	container ThisCasus                  := .;
+	container ThisVariantData            := ='/VariantData/'+Variant_name;
+	container ThisVariantClassifications := ='CaseClassifications/'+Variant_name;
+	
+	unit<UInt8> OP := ThisVariantClassifications/Vastgoed/OP;
+	
+	//debug
+	// container FirstIter := ThisCasus/Zichtjaren/Y2030/Sequences/Seq_0/SectorAllocRegios/NVM_Wonen/Iters_Normaal/Iter_0;
+	container FirstIter_Wonen := ='ThisCasus/Zichtjaren/'+first(Time/Zichtjaar/name)+'/Sequences/Seq_0/SectorAllocRegios/NVM_Wonen/Iters_Normaal/Iter_0';
+	// container FirstIter_Landbouw := ='ThisCasus/Zichtjaren/'+first(Time/Zichtjaar/name)+'/Sequences/Seq_0/SectorAllocRegios/Provincie_Landbouw/Iters_Landbouw/Iter_0';
+	// container Allocatie_prep_Landbouw := /Allocatie/Zichtjaren/Y2050/Sequences/Seq_0/SectorAllocRegios/Landbouw_Provincie/Iters_Landbouw/Iter_0/Allocatie_Prep;
+	// container Suitabilities_Landbouw := /Allocatie/Zichtjaren/Y2050/Sequences/Seq_0/SectorAllocRegios/Landbouw_Provincie/Iters_Landbouw/Iter_0/Allocatie_Prep/Suitabilities;
+	// container MinClaims_Landbouw := /Allocatie/Zichtjaren/Y2050/Sequences/Seq_0/SectorAllocRegios/Landbouw_Provincie/Iters_Landbouw/Iter_0/Allocatie_Prep/claims/MinClaims;
+	// container FirstIter_wonen    := ='Allocatie/Zichtjaren/'+first(Time/Zichtjaar/name)+'/Sequences/Seq_0/SectorAllocRegios/Wonen_NVM/Iters_Normaal/Iter_0';
+	
+	container StartState := ThisVariantData/StateBasisjaar
+	, Descr = "Deze container verwijst naar de StateBasisjaar uit de VariantData plus een aantal attributen die hier geinitialiseerd worden later geupdatet worden."
+	{
+		attribute<Actor/Sector/xSubsector> SubSector_rel                  (CompactedAdminDomain) := const(value(0/0, Actor/Sector/xSubsector), CompactedAdminDomain);
+		attribute<OP>                      OP_rel                         (CompactedAdminDomain) := const(0b/0b, CompactedAdminDomain, OP);
+		attribute<Float32>                 Max                            (CompactedAdminDomain) := = 'Max_Elem('+asItemList(Sector/xSubsector/name+'[float32]')+')';
+		attribute<Bool>                    MaxIsNul                       (CompactedAdminDomain) := Max == 0f;
+		attribute<Sector/xSubsector>       SubSector_rel_dominant_landuse (CompactedAdminDomain) := = '(ArgMax('+asItemList(Sector/xSubsector/name+'[float32]')+') / uint32(!MaxIsNul))[Sector/xSubsector]';
+	}
+	
+	#include<StartState_metBAGnieuwbouw.dms>
+	
+	container Zichtjaren := 
+		for_each_ne(
+			Time/Zichtjaar/name
+			,'Templates/Allocatie/Zichtjaar_T('
+				+quote(Time/Zichtjaar/name)+
+				','+Time/Zichtjaar/PrevState+
+				',Impl'
+			')'
+		), Descr = "Via dit template wordt het daadwerkelijke allocatie proces per zichtjaar aangeroepen.";
+
+	container Impl
+	: Descr = "Hier worden een aantal string expressies gedefinieerd die in het allocatie proces worden aangeroepen om cellen per subsector te updaten." 
+	{
+		parameter<String> Generate_LastZichtjaar := ='Zichtjaren/'+last(Time/Zichtjaar/name)+'/Impl/Generate'
+		, Descr = "De aanroep waarmee de hele casus wordt doorgerekend. Alleen het laatste zichtjaar wordt gevraagd; de padafhankelijkheid trekt de eerdere zichtjaren binnen hetzelfde proces vanzelf mee.
+					Hiermee hoeft de batch de zichtjaren niet te kennen: die volgen uit ModelParameters/Model_FinalYear en AlleenEindjaar en worden hier met last() opgezocht.";
+
+		parameter<String> Update_Expr   := 'float32(!ThisIter/IsNuGealloceerd) * ThisIter/StateVoorAllocatie/@S@/@SS@'                       // waar geen subsector is gealloceerd van betreffende sector (bijv werken) houden we tav alle subsectoren (ook van andere sectoren) de state vóór alloc aan
+												'+ float32( ThisIter/Allocatie/per_SectorxSubsector == Sector/xSubsector/V/@S@_@SS@)'        // waar betreffende subsector wel is gealloceerd (bijv Detailhandel)  nemen we de PotStateNaAlloc van betreffende subsector over
+												'* Subsectoren/@SS@/CompactedAdminDomain/PotentieleStateNaAllocatie';                        // als een andere subsector (bijv Nijverheid en Logistiek) dan betreffende subsector is gealloceerd dan wordt betreffende subsector gesloopt. 
+		parameter<String> Update_Expr_DiscrAlloc   := 'float32( ThisIter/Allocatie/per_SectorxSubsector == Sector/xSubsector/V/@S@_@SS@)'    // waar betreffende subsector wel is gealloceerd (bijv Detailhandel)  nemen we de PotStateNaAlloc van betreffende subsector over
+														'* const(CompactedAdminDomain/NrHaPerCell, CompactedAdminDomain )';                  // als een andere subsector (bijv Nijverheid en Logistiek) dan betreffende subsector is gealloceerd dan wordt betreffende subsector gesloopt. 
+		parameter<String> Behoud_Expr   := 'Context/ThisIter/StateVoorAllocatie/@S@/@SS@'                                                   // zelfde als Verdring_Expr, maar zonder de nulzetting op de gealloceerde cellen: de stand blijft staan of er nu een andere sector overheen komt of niet.
+		, Descr = "Tegenhanger van Verdring_Expr voor het geval dat een andere sector de cel wint zonder dat wat er stond verdwijnt. Gebruikt voor de verzorgende werksubsectoren wanneer wonen de cel overneemt, achter ModelParameters/Werken/VerzorgendBlijftBijWoningbouw (#710): de hoofdfunctie van de cel wordt wonen, de buurtvoorzieningen blijven eronder staan. Zowel de stand (StatePrep_T) als de pandvoetafdruk (Iter_T) lopen hierlangs, want banen zonder voetafdruk zouden de vierkante meters per baan en daarmee de verharding vervuilen.";
+		parameter<String> Verdring_Expr := 'float32(!Context/ThisIter/IsNuGealloceerd) * Context/ThisIter/StateVoorAllocatie/@S@/@SS@';      // waar geen subsector van de andere sector gealloceerd is (bijv wonen) houden we tav alle subsectoren van betreffende sector de state vóór alloc aan.
+																																			 // Waar wel een subsector vd andere sector gealloceerd is worden alle eenheden van betreffende secorx subsectoren gesloopt.
+		parameter<String> VerzorgendInOP_Kern := 'value(float32(Context/ThisIter/IsNuGealloceerd) * MakeDefined(ThisVariantClassifications/Vastgoed/OP/Dichtheid[Context/ThisIter/Allocatie/per_OP][float32], 0f) * /BaseData/StartState/VerzorgendBijWonen/Banen_perWoning/@SS@ * (AdminDomain/NrHaPerCell / 1[ha]), ValuesUnit)'
+		, Descr = "De verzorgende werkgelegenheid die een woonontwikkelpakket zelf meebrengt: de woningdichtheid van het gekozen pakket maal de waargenomen banen per woning uit BaseData/StartState/VerzorgendBijWonen, maal het aantal hectare in de cel. Achter ModelParameters/Werken/VerzorgendInWoonOP (#710). Geen zelfstandige expressie maar een term die in de twee expressies hieronder als ondergrens naast de bestaande stand wordt gezet: het pakket brengt voorzieningen mee, maar haalt nooit weg wat er al meer stond.
+
+					Deze banen krijgen bewust geen eigen pandvoetafdruk. Ze zitten in de plint van het ontwikkelpakket en dus al in de gebouwvoetafdruk die het OP oplegt; een eigen voetafdruk zou de verharding dubbel tellen. Update_PandFootprint_Expr en de behoudtak in Iter_T volgen daarom alleen de stand die er al stond.";
+		parameter<String> BehoudPlusOP_Expr   := 'max_elem(MakeDefined('+Behoud_Expr+', 0[ValuesUnit]), '+VerzorgendInOP_Kern+')'
+		, Descr = "Beide maatregelen van #710 tegelijk: wat er stond blijft staan, en het ontwikkelpakket legt daar zijn eigen verzorgende bezetting als ondergrens naast.
+
+					De MakeDefined om de bestaande stand heen is nodig omdat max_elem een null niet als kleinste behandelt maar meeneemt. Zonder die afscherming zou een null in de stand de pakketbezetting op diezelfde cel stil wegvegen, en dat is precies de klasse fout die op 2026-08-28 in Update_PandFootprint_Expr hierboven is gevonden. Alleen binnen max_elem afgeschermd en niet in Behoud_Expr zelf: die moet ongemoeid doorgeven wat er stond.";
+		parameter<String> VerdringPlusOP_Expr := 'max_elem(MakeDefined('+Verdring_Expr+', 0[ValuesUnit]), '+VerzorgendInOP_Kern+')'
+		, Descr = "Alleen de pakketbezetting, zonder behoud: wat er stond wordt gesloopt zoals gebruikelijk, maar het ontwikkelpakket zet er zijn eigen verzorgende bezetting voor terug. Zelfde afscherming tegen een null in de stand als hierboven.";
+		
+		parameter<String> Update_PandFootprint_Expr :=
+			'float32(!Context/ThisIter/IsNuGealloceerd) * Context/ThisIter/StateVoorAllocatie/PandFootprint/@SS@'
+			'+ float32(Context/ThisIter/Allocatie/per_SectorxSubsector == Sector/xSubsector/V/Werken_@SS@)'
+				'* MakeDefined(ThisVariantData/Density/Per_CompactedAllocDomain/@Y@/src/Werken/PandFootprint_perJob/Subsectoren/@SS@[CompactedAdminDomain/CompactedAllocDomain_rel], 0[m2PandFootprint_job])'
+				'* Werken/@SS@/Result'
+		, Descr = "De pandvoetafdruk per werksubsector, per iteratie: de eerste term draagt de stand door waar niet is gealloceerd, de tweede zet de nieuwe voetafdruk neer waar deze subsector wint.
+
+				De MakeDefined om de dichtheidsopzoeking heen is een reparatie van 2026-08-28 en geen cosmetica. BaseData/PandFootprint_baan/Smoothed zet de potentiaal bewust op (0f/0f) buiten de CBS-buurtkaart, en die opzoeking staat hier in een term die op elke cel wordt uitgerekend, ook waar deze subsector niet wint. Omdat float32(FALSE) maal null in GeoDMS null oplevert en geen nul, werd de hele som daar null, en dat propageerde door alle circa 135 iteratielagen heen. Gemeten in Y2040 van WLO_hoog_BAU: 67.024 cellen per subsector, waarvan er 631 een echte voetafdruk droegen van maximaal 604 m2, die stil op null werd gezet. De zusjes van deze dichtheid in DichtheidZichtjaar_T, Banen_perHa en Job_Perm2PandFootprint, waren al op dezelfde manier afgeschermd; deze was de enige die dat niet was.
+
+				Let op wat de nul betekent op een cel waar deze subsector wel wint terwijl de dichtheid onbekend is: de voetafdruk wordt daar nul in plaats van null. Dat volgt de conventie van de zusjes en is beter dan de hele reeks wissen, maar het blijft een aanname over cellen buiten de buurtkaart.";
+				
+		parameter<String> Update_WoonFootprint_Expr :=
+			'float32(NOT(Context/ThisIter/IsNuGealloceerd)) * Context/ThisIter/StateVoorAllocatie/Wonen/Footprint' //als er niet is gealloceerd, neem dan de StateVoorAlloc situatie, i.e. 1 * StartSituatie. Is er wel gealloceerd wordt deze dus 0. 
+			'+ MakeDefined(ThisVariantClassifications/Vastgoed/OP_buurt/Terreinoppervlakte/Uitgeefbaar/GebouwVoetafdruk[Context/ThisIter/Allocatie/per_OP] /  1[Terreinoppervlak] * AdminDomain/NrHaPerCell /  1[ha] * 1[m2PandFootprint], 0[m2PandFootprint])'; //is er wel gealloceerd, neem dan OP-pandfootprint. Is er niet gealloceerd, dan is er geen OP-rel en wordt dit 0.
+	}
+}

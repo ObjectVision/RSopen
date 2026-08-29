@@ -1,0 +1,61 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Tweede landgebruikskaart naast Landgebruikskaart, met landbouw samengevoegd en natuur uitgesplitst. Zie #633.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classifications/Grondgebruik"
+, Descr = "Leidt een tweede landgebruikskaart af uit de gewone landgebruikskaart van hetzelfde jaar. Twee verschillen, allebei gevraagd vanuit Deltares in #633: de twaalf landbouwklassen worden een klasse, en natuur wordt uitgesplitst naar de beheertypen van INL_Beheertype.
+
+			Bewust afgeleid van Landgebruikskaart/Result_SA en niet ernaast opnieuw opgebouwd. Alle dominantielogica, de exogene oplegging en de groepsfilters staan daarmee op een plek en de twee kaarten kunnen niet uit elkaar lopen."
+{
+	//
+	parameter<String> Zichtjaar_name;
+	container         SrcLandgebruikskaart;
+	//
+
+	parameter<Bool> IsStartJaar := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+
+	attribute<LU_ModelType> LU (AdminDomain) := SrcLandgebruikskaart/Result_SA, Descr = "De gewone landgebruikskaart van dit jaar, meegegeven als sjabloonparameter. Rechtstreeks naar Landgebruikskaart verwijzen kan niet: dit sjabloon staat zelf in een container met die naam, en die schermt de naam op de aanroepplek af.";
+
+	attribute<INL_Beheertype> BT_Exogeen (AdminDomain) := =IsStartJaar
+		? 'const(null_b, AdminDomain, INL_Beheertype)'
+		: 'ThisVariantData/ExogeenOpleggen/Natuur_BT'
+	, Descr = "Het beheertype van exogeen opgelegde natuur, per variant. In het basisjaar leeg: daar wordt nog niets opgelegd, precies zoals in de gewone landgebruikskaart.";
+
+	attribute<INL_Beheertype> BT_Basisjaar (AdminDomain) := /SourceData/Grondgebruik/Natuur/Basisjaar/INL_Beheertype_rel_AD
+	, Descr = "Het beheertype van natuur die er al is en niet exogeen wordt opgelegd, uit de basisjaarkaart. Hier stond tot 26 augustus 2026 de MNP-planpotentieelkaart met een schakelaar ernaast. Die schakelaar is weg en de bron is scherper geworden: de basisjaarkaart is dezelfde MNP-kaart, maar alleen daar waar het landgebruik in het basisjaar ook echt natuur is. Cellen die volgens het plan natuur worden maar het nog niet zijn, krijgen hier dus geen beheertype meer, en dat is juist: die horen bij de oplegging van de variant en niet bij de bestaande natuur.";
+
+	attribute<INL_Beheertype> BT (AdminDomain) := MakeDefined(BT_Exogeen, BT_Basisjaar)
+	, Descr = "Het beheertype per cel. Eerst de exogene oplegging van de variant, dan de terugval voor bestaande natuur. Waar allebei leeg zijn valt de cel in de restklasse Natuur_Onbekend.
+
+				Geen doorgifte per zichtjaar nodig: de exogene oplegging is voor alle zichtjaren dezelfde kaart, dus wat in een zichtjaar natuur wordt houdt in latere zichtjaren hetzelfde beheertype.";
+
+	attribute<LU_NL2120> Result (AdminDomain) := switch(
+		 case(IsNull(LU)                 , null_b[LU_NL2120])
+		,case(LU_ModelType/IsLandbouw[LU], LU_NL2120/V/Landbouw)
+		,case(LU_ModelType/IsNatuur[LU]  , MakeDefined(rlookup(BT, LU_NL2120/INL_Beheertype_rel), LU_NL2120/V/Natuur_Onbekend))
+		, rlookup(LU, LU_NL2120/LU_ModelType_rel)
+	), Descr = "Landbouw naar de ene landbouwklasse, natuur naar het beheertype, de rest een op een over uit LU_ModelType.";
+
+	parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/LandgebruikNL2120/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+
+	attribute<LU_NL2120> Write_Result_SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Result : null_b
+	, StorageName = "=StorageStr"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Wegschrijven alleen, zonder lees-terug-schakelaar. Deze kaart is een afgeleide van de gewone landgebruikskaart en wordt dus altijd opnieuw uitgerekend; er komt geen ontkoppeld bestand bij dat een fingerprint zou moeten bijhouden.";
+
+	parameter<Ha> Areaal_Natuur           := sum(LU_ModelType/IsNatuur[LU]             ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: alle natuur in dit jaar volgens de gewone landgebruikskaart.";
+	parameter<Ha> Areaal_Natuur_MetType   := sum(LU_ModelType/IsNatuur[LU] && IsDefined(BT) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: de natuur waarvoor een beheertype bekend is.";
+	parameter<Ha> Areaal_Natuur_Onbekend  := Areaal_Natuur - Areaal_Natuur_MetType, Descr = "Controlegetal: de natuur die in de restklasse valt. Loopt dit op, dan zegt de kaart wel waar natuur ligt maar niet welke.";
+	parameter<Ha> Areaal_Landbouw         := sum(LU_ModelType/IsLandbouw[LU]           ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: de twaalf landbouwklassen samen.";
+	
+	parameter<UInt32> AantalBeheertypenInBeeld := sum_uint32(pcount(BT)[uint32] > 0[uint32]), Descr = "Controlegetal: hoeveel van de 84 beheertypen daadwerkelijk voorkomen. Handig om te zien of de legenda in te korten valt.";
+}

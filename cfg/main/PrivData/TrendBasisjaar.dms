@@ -1,0 +1,76 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De waargenomen banentrend per gemeente in het claimbasisjaar. Zie #667.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container TrendBasisjaar
+: Descr = "De waargenomen banentrend per gemeente in het claimbasisjaar, per werksubsector.
+
+			Hiermee kan de claim geankerd worden op wat er in een regio feitelijk gebeurt in plaats van op het niveau dat TIGRIS voor dat jaar geeft. Zie ModelParameters/ClaimBasisjaar voor de onderbouwing.
+
+			Het bestand is per gemeente en niet per allocatieregio, met opzet: dan aggregeert het model zelf naar NVM, COROP, Provincie of NL, precies zoals het de claim ook aggregeert, en zit er geen handmatige regiokoppeling tussen die bij een herindeling of een andere regioversie stil kan verschuiven.
+
+			Afleiding: per gemeente en per subsector een lineaire trend op de LISA-jaargangen 2012 tot en met 2022, doorgetrokken naar het basisjaar. De reeks staat op de gemeentegrenzen van 2023 en is dus over de tijd vergelijkbaar. Het venster stopt bij 2022 zodat het basisjaar zelf de schatting niet meebepaalt; dat jaar is een conjuncturele piek en ligt landelijk 3,0 procent boven de eigen trend. Bij een nieuwe LISA-jaargang of een ander Model_StartYear moet het bestand opnieuw worden afgeleid."
+{
+	parameter<String> Bestand := '%PrivDataDir%/LISA/Trend/LISA_trend_2012_2022_naar_2023_pergemeente_v1.csv'
+	, Descr = "Staat in de niet-publieke map en niet in de reguliere brondatamap: die laatste synchroniseert direct naar Nextcloud, en een bestand dat daar eenmaal in staat is niet meer te wijzigen of te verwijderen.
+
+			De naam draagt de vintage van de invoer, dus het trendvenster en het doeljaar, plus een versienummer dat bij de afleidingsregel hoort. Verandert het venster, de trendvorm of de omgang met herindelingen, dan komt er een bestand met een hoger nummer naast te staan en wijst deze parameter daarheen. Overschrijven gebeurt niet, ook niet in de niet-publieke map.";
+
+	unit<UInt32> Read
+	:	StorageName     = "=Bestand"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "TRUE"
+	,	Descr           = "Een rij per gemeente, met het gemeentenummer en de trendwaarde per werksubsector in banen."
+	{
+		attribute<UInt32> gemnr;
+	}
+
+	container Waarde :=
+		for_each_nedv(
+			Classifications/Actor/Jobs6/name
+			, 'value(Read/'+Classifications/Actor/Jobs6/name+', Units/Job)'
+			, Read
+			, Units/Job
+		), Descr = "De trendwaarden als banen, per gemeente.";
+
+	unit<UInt32> Gemeente := SourceData/RegioIndelingen/CBS/Last/Gemeente
+	, Descr = "De gemeente-indeling van het model, gekoppeld aan het bestand op gemeentenummer."
+	{
+		attribute<Read>      Trend_rel := rlookup(gem_nr, Read/gemnr)
+		, Descr = "Null wanneer een gemeente niet in het bestand staat, bijvoorbeeld na een herindeling die na de LISA-jaargang is ingegaan. Zo'n gemeente draagt niets bij aan de regiosom en de bewaking hieronder telt hem.";
+
+		attribute<rdc_meter> Zwaartepunt := centroid_or_mid(geometry);
+	}
+
+	parameter<Float32> AandeelGekoppeld := sum(float32(IsDefined(Gemeente/Trend_rel))) / float32(#Gemeente)
+	,	IntegrityCheck = "this > 0.98f"
+	,	Descr = "Welk deel van de gemeenten een trendrij heeft. Onder de 98 procent klopt de jaargang van het bestand niet meer bij de gemeente-indeling van het model en moet het opnieuw worden afgeleid.";
+
+	Template PerRegio_T
+	:	Descr = "De trend opgeteld naar een willekeurige regio-indeling, op dezelfde manier waarop de claim naar die indeling wordt geaggregeerd."
+	{
+		//
+		unit<UInt32> RegioUnit;
+		//
+
+		attribute<RegioUnit> Gemeente_rel (Gemeente) := point_in_polygon(Gemeente/Zwaartepunt, RegioUnit/geometry)
+		, Descr = "Elke gemeente naar de regio waar haar zwaartepunt in valt. Dezelfde toewijzing die de NVM-indeling zelf gebruikt om uit gemeenten te worden opgebouwd.";
+
+		container Trend :=
+			for_each_nedv(
+				Classifications/Actor/Jobs6/name
+				, 'sum(MakeDefined(Waarde/'+Classifications/Actor/Jobs6/name+'[Gemeente/Trend_rel], 0[Units/Job]), Gemeente_rel)'
+				, RegioUnit
+				, Units/Job
+			), Descr = "De waargenomen trendwaarde per regio en per werksubsector.";
+	}
+}
