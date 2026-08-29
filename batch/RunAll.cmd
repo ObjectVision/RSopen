@@ -16,9 +16,12 @@ REM
 REM ================================================================================
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms19.1.0
-REM set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
-set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
+REM De geinstalleerde GeoDMS, niet de build uit Visual Studio. Die laatste is een bewegend doel:
+REM hij wordt opnieuw gecompileerd zonder dat de configuratie verandert, en een run kan dan
+REM halverwege op een andere engine draaien dan waarmee hij begon.
+set geodmsversion=GeoDms20.17.0.m
+set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
+REM set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
 set LocalDataProjDir=C:\LocalData\RSopen
