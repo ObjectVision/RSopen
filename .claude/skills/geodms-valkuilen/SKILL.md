@@ -96,6 +96,21 @@ De CalcCache, de persistente schijfcache met automatische invalidatie, is verdwe
 
 De huidige praktijk is strategisch ontkoppelen: stabiele tussenresultaten expliciet wegschrijven naar in de configuratie gedeclareerde storages en in een latere run teruglezen. Er is geen automatische invalidatie; het verversen na een wijziging bovenstrooms is een bewuste stap. Zie de skill rs-fingerprints.
 
+## Een uitgeschakelde sector breekt een naamexpansie
+
+De sectorlijst in `ModelParameters/SectorAllocRegio/Elements/Text` bepaalt welke sectoren meedoen. Staat een sector uitgecommentarieerd, dan bestaan zijn afgeleide namen niet: geen `LU_ModelType/V/Verblijfsrecreatie_Totaal`, geen `Subsector/v/Verblijfsrecreatie_Totaal`. Elke `=`-expansie die zo'n naam uit een sectornaam opbouwt valt dan om op Unknown identifier.
+
+Het model vangt dat af met een schakelaar per sector, `Uq_Sectors/Has<Sector>Sector`, in de vorm
+
+	attribute<Bool> IsLU_Verblijfsrecreatie (AdminDomain) :=
+		=/ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector
+			? 'gg_prev == LU_ModelType/V/Verblijfsrecreatie_Totaal'
+			: 'const(FALSE, AdminDomain)';
+
+Drie dingen om te weten. Het is een metadata-fout, geen rekenfout, dus hij komt niet boven bij een run die het item niet aanraakt; op 2026-08-29 stond hij in de basisjaar-landgebruikskaart terwijl die kaart al maanden goed werd geexporteerd. Een template kent de schakelaar niet, dus een aanroep die alleen de sectornaam als string doorgeeft ontsnapt aan de guard en moet de schakelaar zelf meekrijgen als parameter. En de guard hoort op elke tussenstap te staan, niet alleen op de uitkomst: `Verharding.dms` had hem wel op zijn resultaten maar niet op `Verhard0` en `Verhard`, en die worden via `Per_NL` en `Per_Regio` wel bereikt.
+
+Zoek ze met een grep op de sectornaam in `=`-expansies, en toets met de sector uit, want met de sector aan is de guard onzichtbaar.
+
 ## Een template kan op vier manieren aangeroepen worden
 
 Zoek je uit of een template nog gebruikt wordt, dan zijn letterlijke treffers niet genoeg. Een template kan rechtstreeks worden aangeroepen, via de stringvorm in `for_each_ne`, via een uit stukken opgebouwde naam (`Dairy_T` en `Akkerbouw_T` komen uit `LandbouwKlasses/Templatetype`), en zonder haakjes als `container X : = Vergridding_T { ... }`. Die laatste twee hebben nul letterlijke treffers en draaien wel degelijk.

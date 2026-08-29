@@ -13,7 +13,7 @@ Vier trappen, van goedkoop naar duur. Klim niet hoger dan de vraag vereist. Een 
 & "C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "C:\ProjDir\RSopen_NL2120\cfg\main.dms" "/pad/naar/item"
 ```
 
-Of via het meegeleverde script, dat de nieuwste build kiest, de tijd meet en de foutregels filtert:
+Of via het meegeleverde script, dat de projectversie kiest, de tijd meet en de foutregels filtert:
 
 ```powershell
 .\.claude\skills\rs-draaien\scripts\run-item.ps1 -Item "/Indicatoren/WLO_hoog_BAU/Zichtjaren/Y2030/Stand/Aantal_Woningen_Totaal"
@@ -22,6 +22,32 @@ Of via het meegeleverde script, dat de nieuwste build kiest, de tijd meet en de 
 Draai dit uit PowerShell, niet uit de Bash-tool. Die zet `/L` en `/pad/naar/item` om naar Windows-paden en dan faalt de aanroep.
 
 Exitcodes: 0 is goed, 1 is een rekenfout of een gefaalde IntegrityCheck, 2 is een parse- of laadfout. Foutregels staan in het log met `[E]`.
+
+Maar exit 0 is niet genoeg om een stap goed te keuren. Een ontbrekend bronbestand kan met exit 0 aflopen terwijl de fout alleen in het log staat. Gemeten op 2026-08-27 met een claim-CSV die niet bestond: `[E] GDAL Error: cannot open dataset ... No such file or directory`, exitcode 0, en de gevraagde statistiek kwam leeg terug. Toets in een batch dus altijd het log op `[E]` naast de exitcode, anders draait een lange run door op invoer die er niet is.
+
+## Welke GeoDMS
+
+Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.17.0.m`. Niet op de build uit Visual Studio in `C:\dev\GeoDms_2026\bin\Release\x64`. Die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie. Op 2026-08-29 meldde Object Vision bovendien dat die build op dat moment niet stabiel was.
+
+De versie staat op vier plekken: `geodmsversion` in `batch/RunAll.cmd`, de default van `-Version` in `run-item.ps1`, en `-Exe` in `Run2120.ps1` en `RunIndicatoren.ps1`. Controleer ze alle vier voordat je een lange run start, want een run die halverwege van engine wisselt is niet meer te toetsen.
+
+## Nooit op procesnaam opruimen
+
+Op OVSRV08 draaien regelmatig meerdere sessies tegelijk, en een productierun kan uren beslaan. Ruim GeoDmsRun daarom nooit op naam op:
+
+```powershell
+Get-Process -Name GeoDmsRun | Stop-Process -Force   # FOUT
+```
+
+Dat raakt elk GeoDmsRun-proces op de machine, ongeacht welke werkkopie eronder draait. Op 2026-08-27 om 17:30 kostte dat de productierun van #658 een zichtjaar en een herstart. Gebruik het PID, of filter op het configuratiepad zodat de productiekopie buiten schot blijft:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='GeoDmsRun.exe'" |
+  Where-Object { $_.CommandLine -notmatch 'RSopen_NL2120_productie' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+Zelfde reden om een lus met GeoDmsRun-aanroepen niet tegen een tijdslimiet aan te laten lopen: wordt zo'n aanroep afgekapt, dan ruimt de harness de procesboom op. Draai lange lussen in de achtergrond of met een ruime timeout.
 
 De grens van deze trap: exit 0 op een groot attribuut zonder IntegrityCheck bewijst alleen parse, naamresolutie en domeincheck, dus UpdateMetaInfo. Een keten over negen miljoen cellen die in 0,002 s klaar is, is niet gematerialiseerd. Kijk altijd naar de rekentijd voordat je conclusies trekt. TIFFOpen-fouten op ontkoppelde bestanden vuren wel al bij UpdateMetaInfo, want die lezen de header.
 
