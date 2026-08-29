@@ -576,8 +576,11 @@ container Natuur
 					attribute<float32>              Fr_Bouwsteen_Rest       (AdminDomain) := 1f - Fr_Bouwsteen_Totaal, Descr = "Het deel van het peilvak dat niet is aangeleverd: bouwsteen 0 bestaande natuur en grasland zonder vernatting, bouwsteen 1 grasland met een grondwaterstand rond 40 cm, en bouwsteen 10 bestaand dicht bebouwd gebied. Die drie hebben geen natuurbeheertype en veranderen dus niet van grondgebruik. Dit is de vraag uit #660 over de resterende fractie: hij heeft nu een naam, en Fr_BlijftZoalsHetIs telt hem samen met de niet-natuurdelen van de wel aangeleverde bouwstenen.";
 
 					attribute<float32>              Fr_Natuur_Totaal        (AdminDomain) := ='add('+AsItemList('Fr_perNatuurtype/'+NbSVeen/NbSNatuurtype/InGebruik/name)+')', Descr = "Som over alle natuurbeheertypen. Blijft onder het aandeel N-typen van de bouwstenen zolang 3b en 4b geen verdeling hebben.";
-					attribute<float32>              Fr_Water_Totaal         (AdminDomain) := Fr_perLandgebruik/OppervlakteWater, Descr = "Het aandeel open water dat de levering vraagt: 0,75 in bouwsteen 9a nieuw open water voor waterbuffering en 9b bestaand open water met extra buffercapaciteit, en nul in de rest. Tot #660 werd deze kolom nergens gelezen en liep de enige plek waar de veenlevering iets over open water zegt dood. Hij gaat nu als eigen type de allocatie in, zie VeenType.";
-					attribute<float32>              Fr_Opgelegd             (AdminDomain) := Fr_Natuur_Totaal + Fr_Water_Totaal, Descr = "Het deel van de cel dat volgens de levering van grondgebruik verandert, en daarmee de opgave die de allocatie over het peilvak moet verdelen.";
+					attribute<float32>              Fr_Water_Totaal         (AdminDomain) := Fr_perLandgebruik/OppervlakteWater, Descr = "Het aandeel open water dat de levering vraagt: 0,75 in bouwsteen 9a nieuw open water voor waterbuffering en 9b bestaand open water met extra buffercapaciteit, en nul in de rest. Tot #660 werd deze kolom nergens gelezen en liep de enige plek waar de veenlevering iets over open water zegt dood. Hij staat sindsdien als eigen type in VeenType, maar wordt sinds het antwoord in #664 niet meer gealloceerd: zie WaterbufferingAlloceren.";
+					attribute<float32>              Fr_Opgelegd             (AdminDomain) := = WaterbufferingAlloceren
+																								? 'Fr_Natuur_Totaal + Fr_Water_Totaal'
+																								: 'Fr_Natuur_Totaal'
+					, Descr = "Het deel van de cel dat volgens de levering van grondgebruik verandert, en daarmee de opgave die de allocatie over het peilvak moet verdelen. Het open water telt hier alleen mee zolang WaterbufferingAlloceren aanstaat; staat die uit, dan hoort die fractie bij Fr_BlijftZoalsHetIs, want het model doet er niets mee.";
 					attribute<float32>              Fr_BlijftZoalsHetIs     (AdminDomain) := 1f - Fr_Opgelegd
 					, IntegrityCheck = "all(IsNull(this) || this > -0.02f)"
 					, Descr = "Het deel van de cel dat zijn huidige grondgebruik houdt: de niet aangeleverde bouwstenen uit Fr_Bouwsteen_Rest plus het grasland, de natte teelt en het bebouwde deel binnen de wel aangeleverde bouwstenen. In de allocatie is dit het type Rest van NatuurAlloc_T, dat geen beheertype heeft en dus vanzelf uit de oplegging valt.";
@@ -629,6 +632,15 @@ container Natuur
 
 								N04 staat in NatuurType als water te boek, dus dit deel gaat via ExoWater de oplegging in en niet via ExoNatuur. Of die stroom ook werkelijk wordt opgelegd hangt aan VariantK/ExogeenWaterOpleggen, die vandaag overal uit staat.";
 
+					parameter<bool> WaterbufferingAlloceren := FALSE
+					, Descr = "Alloceert het model het open water uit kolom OppervlakteWater, dus de waterbuffering van bouwsteen 9a en 9b?
+
+								Staat uit sinds 28 augustus 2026, op het antwoord van Deltares in #664. Bouwsteen 9a, nieuw open water voor waterbuffering, hoort niet als levering te worden opgelegd maar door RuimteScanner zelf bepaald te worden: de sector Waterberging alloceert die opgave al, op de aangeleverde watertekortgetallen per deelgebied uit #575. De aangeleverde 9a-vlakken zijn de gebieden die Deltares vanuit de systeemanalyse logisch acht, en dus geen voorschrift. Bouwsteen 9b is bestaand open water, waarvan alleen de extra buffercapaciteit nieuw is, en die zit in RS niet als ruimtelijke ingreep maar hooguit als peilopzet in de aangeleverde opgave; het ruimtebeslag blijft vanzelf bestaan, want het is al water en Zeef_Natuur landt er niet op.
+
+								Zolang deze schakelaar uit staat is de opgave voor dit type nul en verbruikt het geen kandidaatcellen meer, zodat de terrestrische typen de ruimte in die peilgebieden krijgen. Het scheelt 45.084 ha op een opgave van 258.748 ha.
+
+								Let op wat hier niet onder valt: het natuurtypedeel van bouwsteen 9a en 9b, dat 0,20 van hun oppervlak beslaat en vrijwel helemaal uit N04.01 en N04.02 bestaat, wordt nog wel gealloceerd. Dat loopt via Fr_perNatuurtype en niet via deze kolom. Of ook dat deel moet vervallen als bouwsteen 9a in zijn geheel wordt genegeerd, staat als vraag open in #664.";
+
 					unit<uint8> VeenType := range(uint8, 0b, uint8(#(NbSVeen/NbSNatuurtype/InGebruik)) + 1b)
 					, Descr = "De typen die over het peilvak verdeeld worden: de achttien natuurbeheertypen die in de bouwstenentabel voorkomen, met achteraan het open water uit kolom OppervlakteWater.
 
@@ -651,6 +663,9 @@ container Natuur
 
 						attribute<NatuurType> NatuurType_rel := INL_Beheertype/NatuurType_rel[INL_Beheertype_rel];
 
+						attribute<bool> WordtGealloceerd := !IsOppervlakteWater || WaterbufferingAlloceren
+						, Descr = "Doet dit type mee in de allocatie? Alleen het oppervlaktewater kan eruit vallen, via WaterbufferingAlloceren. Een type dat niet meedoet krijgt opgave nul, aan beide kanten van het controlegetal in Controle/PerType, zodat de rasteringstoets niet op een bewuste nul struikelt.";
+
 						attribute<bool> IsWaterstroom := MakeDefined(NatuurType/IsExogeenOpTeLeggen_Water[NatuurType_rel], FALSE)
 						, Descr = "Gaat dit type als water de oplegging in? Dat zijn N04.01 en N04.02 uit de bouwstenentabel plus het oppervlaktewater. Dezelfde vlag die NatuurAlloc_T gebruikt om ExoNatuur en ExoWater te scheiden, hier alvast nodig om de juiste zeef en de juiste aanhakingsterm te kiezen.";
 
@@ -660,8 +675,15 @@ container Natuur
 						attribute<string> FractiePad := IsOppervlakteWater ? 'NbSVeen/NbSBouwsteen/Fr_OppervlakteWater' : 'NbSVeen/Fracties_vd_Bouwsteen/' + Typenaam
 						, Descr = "Waar staat het aandeel van dit type per bouwsteen. Alleen voor het controlegetal in Controle/PerType.";
 
-						attribute<string> ClaimExpr := 'sum(' + FrPad + '[VeenCel/AdminDomain_rel], Peilvak_rel_Cel) * AdminDomain/NrHaPerCell'
-						, Descr = "De opgave per peilvak: de fractie maal het gerasterde peilvakoppervlak. Omdat de fractie binnen een peilvak overal gelijk is komt dit neer op fractie maal Opp_Peilvak, alleen dan zonder afrondingsverschil.";
+						attribute<string> ClaimExpr := WordtGealloceerd
+														? 'sum(' + FrPad + '[VeenCel/AdminDomain_rel], Peilvak_rel_Cel) * AdminDomain/NrHaPerCell'
+														: 'const(0[Ha], Peilvak)'
+						, Descr = "De opgave per peilvak: de fractie maal het gerasterde peilvakoppervlak. Omdat de fractie binnen een peilvak overal gelijk is komt dit neer op fractie maal Opp_Peilvak, alleen dan zonder afrondingsverschil. Nul voor een type dat niet meedoet, en dan verbruikt het ook geen kandidaatcellen.";
+
+						attribute<string> VectorExpr := WordtGealloceerd
+														? 'sum(Controle/PerBouwsteen/Vector * ' + FractiePad + '[NbSVeen/NbSBouwsteen/MetBrondata/org_rel])'
+														: '0[Ha]'
+						, Descr = "Het geleverde areaal per type voor het controlegetal in Controle/PerType. Volgt dezelfde vlag als ClaimExpr: bij een type dat bewust niet wordt gealloceerd staan beide kanten op nul, zodat de toets het rasteren blijft bewaken en niet de keuze om het type over te slaan.";
 
 						attribute<string> ZeefPad     := IsWaterstroom ? 'Zeef_Water'          : 'Zeef_Natuur';
 						attribute<string> AanhakenPad := IsWaterstroom ? 'Aanhaken_Water_100m' : 'Aanhaken_Natuur_100m';
@@ -682,12 +704,23 @@ container Natuur
 
 								Blijkt een peilvak te krap voor zijn opgave, dan is dit de eerste knop om aan te draaien: de twee toetsen samen halen meer uit de zeef dan elk apart. Het tekort staat per peilvak in Alloc/Controle/Krapte en het verlies door de pandentoets in Alloc/Controle/Areaal_Verlies_Pandentoets.";
 
-					parameter<bool> OntzieBestaandeNatuur := TRUE
+					parameter<bool> OntzieBestaandeNatuur := FALSE
 					, Descr = "Sluit de zeef de cellen uit die in het basisjaar al natuur zijn?
 
-								Staat aan, en dat volgt uit de opbouw van de levering. Bouwsteen 0a is bestaande natuur op veen en is niet aangeleverd; die valt dus in Fr_Bouwsteen_Rest. De aangeleverde percentages gaan over de rest van het peilvak, en nieuwe natuur op een cel die al natuur is zou de opgave stilzwijgend missen, want Varianten/NbSGenuanceerd/Natuur_Nieuw haalt bestaande natuur er naderhand toch uit.
+								Staat uit sinds 28 augustus 2026, op het antwoord van Deltares in #660: de aangeleverde natuur komt in de plaats van de bestaande natuur in het peilgebied en niet erbovenop. De percentages beschrijven dus een eindtoestand, en een peilgebied dat al natuur heeft hoeft dat deel niet nog eens te maken. De allocatie mag daarom op bestaande natuur landen, waarna Varianten/NbSGenuanceerd/Natuur_Nieuw die cel uit de oplegging houdt: het beheertype dat er ligt blijft staan, de opgave is gehaald en er wordt niets geleegd.
 
-								Voor de waterstroom geldt het omgekeerd voor bestaand water: bouwsteen 9b heet bestaand open water met extra buffercapaciteit, dus daar hoort de allocatie juist op te landen. Zie Zeef_Water.";
+								Stond tot dan aan, op de redenering dat bouwsteen 0a bestaande natuur op veen niet is aangeleverd en de percentages dus over de rest van het peilgebied zouden gaan. Dat is met dat antwoord achterhaald.
+
+								Let op wat dit met de controlegetallen doet. De opgave verandert niet, want die is nog steeds de fractie maal het gerasterde peilgebiedoppervlak, maar een deel ervan wordt nu gehaald door cellen die al natuur zijn. Tekort_Totaal daalt daardoor. Areaal_ExoNatuur blijft ongeveer gelijk, want dat telt de allocatie en niet de oplegging; wat krimpt is wat er na Varianten/NbSGenuanceerd/Natuur_Nieuw overblijft, dus de nieuwe natuur op de kaart. Areaal_OpBestaandeNatuur hieronder meet precies dat verschil.
+
+								Voor de waterstroom gold dit al: bouwsteen 9b heet bestaand open water met extra buffercapaciteit, dus daar hoort de allocatie juist op te landen. Zie Zeef_Water.";
+
+					parameter<bool> OntzieBestaandWater := TRUE
+					, Descr = "Sluit de zeef de cellen uit die in het basisjaar al open water zijn, voor de terrestrische natuur?
+
+								Staat aan. Een terrestrisch natuurbeheertype op de bodem van een bestaande plas is geen ingreep die de levering bedoelt; het open water uit de bouwstenen loopt via de waterstroom en Zeef_Water.
+
+								Deze toets zat tot 28 augustus 2026 in OntzieBestaandeNatuur, in dezelfde haakjes. Bij het antwoord uit #660 is zij eruit gehaald en apart gezet, want dat antwoord gaat over bestaande natuur en zegt niets over bestaand water.";
 
 					parameter<bool> OntzieZoalsHuidig     := TRUE
 					, Descr = "Houdt de categorie zoals huidig nieuwe natuur uit de zeef? Van de drie is dit de categorie waarvoor het meeste te zeggen valt: de levering zegt er dat er niets verandert, dus natuur opleggen spreekt haar het duidelijkst tegen.";
@@ -695,7 +728,7 @@ container Natuur
 					parameter<bool> OntzieAangepastBouwen := FALSE
 					, Descr = "Houdt de categorie aangepast bouwen nieuwe natuur uit de zeef? Deze staat het wankelst van de drie. De categorie komt uit op bouwregime BouwenMetMaatregelen en zegt dus iets over hoe er gebouwd mag worden, niet dat het huidige grondgebruik blijft: opgehoogd bouwen of bouwen op palen verandert niets aan wat er nu ligt. Het fijnmazige sparen van bestaande bebouwing doen de pandentoets uit #661 en het opleggingsmasker uit #641 al, per cel in plaats van per peilgebied.
 
-								Staat op FALSE sinds 27 augustus 2026, na afweging: het regime gaat over de bouwwijze en niet over het grondgebruik, en de pandentoets en het opleggingsmasker doen het sparen per cel al. Gemeten wat dat doet, ten opzichte van alleen wonen op water uit: het tekort gaat van 44.507 naar 27.906 ha, de te krappe peilvakken van 4.192 naar 1.177, en het opgelegde natuurareaal stijgt met 16.385 ha. De prijs is sloop: Sloop/Verschil/Woningen_ZonderMasker_InVeenlevering gaat van 0,25 naar 61,8 woningen. Deze categorie is de enige van de drie die de opgelegde kaart werkelijk verzet, en of dat mag ligt bij PBL en Deltares.";
+								Staat op FALSE sinds 27 augustus 2026, en Deltares heeft die lezing op 28 augustus in #660 bevestigd: aangepast bouwen gaat over de bouwwijze en niet over het huidige grondgebruik. Datzelfde antwoord geldt voor wonen op water, zie de schakelaar hieronder. De pandentoets en het opleggingsmasker doen het sparen per cel. Gemeten wat dat doet, ten opzichte van alleen wonen op water uit: het tekort gaat van 44.507 naar 27.906 ha, de te krappe peilvakken van 4.192 naar 1.177, en het opgelegde natuurareaal stijgt met 16.385 ha. De prijs is sloop: Sloop/Verschil/Woningen_ZonderMasker_InVeenlevering gaat van 0,25 naar 61,8 woningen. Deze categorie is de enige van de drie die de opgelegde kaart werkelijk verzet.";
 
 					parameter<bool> OntzieWonenOpWater    := FALSE
 					, Descr = "Houdt de categorie wonen op water nieuwe natuur uit de zeef? Deze is aantoonbaar in strijd met de andere levering. De twee kaarten delen de sleutel GPGIDENT, en gekruist blijkt dat alle 307 peilgebieden met wonen op water bouwsteen 9a of 9b dragen, gemiddeld 96,6 procent van het peilgebied, tegenover 91 van de 3.957 peilgebieden met slopen en op slot. De categorie markeert dus exact de polders die de bouwstenenkaart onder water zet, en uitsluiten maakt de wateropgave onmogelijk in precies de gebieden waarvoor zij bedoeld is.
@@ -724,11 +757,13 @@ container Natuur
 
 								Die pandentoets geldt sinds deze wijziging ook voor veen, want veen is nu een allocatie en geen levering meer. Dat is de bedoeling: een allocatie kan uitwijken naar een onbebouwde cel binnen hetzelfde peilvak, terwijl een levering die afweging al gemaakt had. Zie BaseData/Omgeving/Opleggingsmasker voor dat onderscheid.";
 
-					attribute<bool> Zeef_Natuur (AdminDomain) := Zeef_Basis && !(OntzieBestaandeNatuur && (Basisjaar/IsNatuur || Basisjaar/IsWater))
-					, Descr = "Waar mag terrestrische natuur landen: in het veengebied, niet op bestaande natuur en niet op bestaand open water.";
+					attribute<bool> Zeef_Natuur (AdminDomain) := Zeef_Basis && !(OntzieBestaandeNatuur && Basisjaar/IsNatuur) && !(OntzieBestaandWater && Basisjaar/IsWater)
+					, Descr = "Waar mag terrestrische natuur landen: in het veengebied en niet op bestaand open water. Sinds #660 wel op bestaande natuur, want de aangeleverde natuur komt daarvoor in de plaats. De twee toetsen staan los omdat ze op een verschillend antwoord berusten; zie de twee schakelaars hierboven.";
 
 					attribute<bool> Zeef_Water (AdminDomain) := Zeef_Basis && !(OntzieBestaandeNatuur && Basisjaar/IsNatuur)
-					, Descr = "Waar mag het water landen: idem, maar bestaand open water telt hier wel mee. Bouwsteen 9b is immers bestaand open water met extra buffercapaciteit, en die hectares horen daar te landen; Varianten/NbSGenuanceerd/Water_Nieuw haalt ze er daarna weer uit, zodat alleen het nieuwe water wordt opgelegd.";
+					, Descr = "Waar mag het water landen. Bestaand open water telt hier wel mee, anders dan bij Zeef_Natuur: bouwsteen 9b is bestaand open water met extra buffercapaciteit, en die hectares horen daar te landen. Varianten/NbSGenuanceerd/Water_Nieuw haalt ze er daarna weer uit, zodat alleen het nieuwe water wordt opgelegd.
+
+								Sinds OntzieBestaandeNatuur op FALSE staat mag het water ook op bestaande natuur landen. Dat volgt uit hetzelfde antwoord in #660: de levering beschrijft de eindtoestand van het peilgebied, dus een peilgebied dat voor 75 procent open water moet worden mag dat deel ook uit bestaande natuur halen.";
 
 					// ---- de geschiktheid: aanhaken plus ruis, net als bij zand ----
 
@@ -839,15 +874,17 @@ container Natuur
 						{
 							attribute<string> Label := VeenType/Label, DialogType = "LabelText";
 
-							attribute<Ha> Vector := ='union_data(., '+AsItemList('sum(Controle/PerBouwsteen/Vector * '+VeenType/FractiePad+'[NbSVeen/NbSBouwsteen/MetBrondata/org_rel])')+')'
-							, Descr = "Geleverd areaal per type: het polygoonareaal per bouwsteen maal het aandeel van dit type in die bouwsteen, opgeteld over de bouwstenen.";
+							attribute<Ha> Vector := ='union_data(., '+AsItemList(VeenType/VectorExpr)+')'
+							, Descr = "Geleverd areaal per type: het polygoonareaal per bouwsteen maal het aandeel van dit type in die bouwsteen, opgeteld over de bouwstenen. Nul voor een type dat volgens VeenType/WordtGealloceerd niet meedoet, net als de opgave zelf.";
 
 							attribute<Ha> Raster := ='union_data(., '+AsItemList('sum(Claim/'+VeenType/name+')')+')'
 							, Descr = "Hetzelfde areaal zoals het model het gerasterd heeft, en daarmee precies de opgave die de allocatie meekrijgt. Loopt over VeenCel en dus over het studiegebied, waar PerBouwsteen/Raster over het hele raster loopt; met studiegebied Nederland scheelt dat niets.";
 
-							attribute<float32> Ratio := Raster / Vector
+							attribute<float32> Ratio := VeenType/WordtGealloceerd ? Raster / Vector : 1f
 							, IntegrityCheck = "all(abs(this - 1f) < 0.05f)"
-							, Descr = "Dezelfde tolerantie en dezelfde oorzaken als bij PerBouwsteen: de fracties per type zijn een vaste combinatie van de fracties per bouwsteen, dus een afwijking hier komt van het rasteren en niet van de tabel.";
+							, Descr = "Dezelfde tolerantie en dezelfde oorzaken als bij PerBouwsteen: de fracties per type zijn een vaste combinatie van de fracties per bouwsteen, dus een afwijking hier komt van het rasteren en niet van de tabel.
+
+										Een type dat bewust niet wordt gealloceerd staat op 1 en niet op nul gedeeld door nul. Die deling geeft een null, en een null valt door de IntegrityCheck heen als onwaar, dus dan zou een bewuste keuze als een rasteringsfout binnenkomen.";
 
 							attribute<Ha> Gerealiseerd := ='union_data(., '+AsItemList('sum(Alloc/Controle/Gerealiseerd/'+VeenType/name+')')+')'
 							, Descr = "Wat de allocatie er landelijk van neerzet.";
@@ -877,7 +914,10 @@ container Natuur
 
 						parameter<Ha> Verlies_Pandentoets    := Alloc/Controle/Verlies_Pandentoets_NL, Descr = "Hoeveel ruimte de pandentoets uit #661 de veenzeef kost. Leg dit naast Tekort_Totaal: pas als het verlies een peilvak over de streep duwt gaat de opgave er werkelijk aan onderdoor.";
 
-						parameter<Ha> Areaal_ExoNatuur       := sum(IsDefined(Natuur) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat er als natuur wordt opgelegd. Tot #660 was dit het hele veengebied op de bebouwde cellen na, want de ArgMax kende geen drempel.";
+						parameter<Ha> Areaal_ExoNatuur       := sum(IsDefined(Natuur) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat er als natuur wordt opgelegd. Tot #660 was dit het hele veengebied op de bebouwde cellen na, want de ArgMax kende geen drempel.
+
+																			Dit is de allocatie en nog niet de oplegging: Varianten/NbSGenuanceerd/Natuur_Nieuw haalt er daarna de cellen uit die in het basisjaar al natuur waren. Sinds OntzieBestaandeNatuur op FALSE staat is dat een echt verschil geworden, en Areaal_OpBestaandeNatuur hieronder is precies dat deel.";
+						parameter<Ha> Areaal_OpBestaandeNatuur := sum(IsDefined(Natuur) && Basisjaar/IsNatuur ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel van de opgave wordt gehaald door cellen die in het basisjaar al natuur waren. Dat is de omvang van het antwoord uit #660, dat de aangeleverde natuur in de plaats komt van de bestaande natuur en er niet bovenop: deze hectares tellen mee voor de opgave, maar er verandert niets op de kaart en er wordt niets geleegd. Nul zolang OntzieBestaandeNatuur aanstaat.";
 						parameter<Ha> Areaal_ExoWater        := sum(IsDefined(Water)  ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat er als water wordt opgelegd. Gaat pas de oplegging in als VariantK/ExogeenWaterOpleggen aanstaat.";
 					}
 				}
