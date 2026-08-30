@@ -31,6 +31,19 @@ Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit m
 
 De versie staat op vier plekken: `geodmsversion` in `batch/RunAll.cmd`, de default van `-Version` in `run-item.ps1`, en `-Exe` in `Run2120.ps1` en `RunIndicatoren.ps1`. Controleer ze alle vier voordat je een lange run start, want een run die halverwege van engine wisselt is niet meer te toetsen.
 
+## Wis het log voor elke stap
+
+`GeoDmsRun` schrijft met `/L<pad>` naar een bestaand logbestand zonder het eerst leeg te maken. Een script dat na afloop op `[E]` grept vindt dan ook de fouten van de vorige run met datzelfde logpad, en meldt een geslaagde stap als mislukt. Dat kost zoekwerk, en erger: het maakt een echte fout onzichtbaar tussen de oude.
+
+Wis het log dus aan het begin van elke stap:
+
+```powershell
+if (Test-Path $l) { Remove-Item -LiteralPath $l -Force }
+& $Exe "/L$l" '/S1' '/S2' '/S3' $Cfg $Item 2>&1 | Out-Null
+```
+
+Toets daarnaast altijd op `[E]` en niet alleen op de exitcode; zie de memory over een GDAL-fout die exit 0 gaf.
+
 ## Nooit op procesnaam opruimen
 
 Op OVSRV08 draaien regelmatig meerdere sessies tegelijk, en een productierun kan uren beslaan. Ruim GeoDmsRun daarom nooit op naam op:
