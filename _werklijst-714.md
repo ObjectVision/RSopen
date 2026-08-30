@@ -11,7 +11,7 @@ Bijgewerkt: 30 augustus, na de verse equivalentietoets.
 | # | wijziging | oordeel | waarop het rust |
 |---|---|---|---|
 | 1 | 529e40a4 Seq_1 op vijf iteraties | geslaagd, met nuance | A/B 5 tegen 15: 3.897 woningen op 9,5 miljoen, 0,041 procent. Regionale spreiding tot op zeven decimalen identiek, dus de extra iteraties helpen de tekortregio's niet. Geen meetbare tijdwinst, dus de wijziging levert ook niets op |
-| 2 | ccb31b4c voetafdruk langs einde-jaars afleiding | geslaagd na reparatie, met restwaarde | Eerste toets gaf 3.295, 4.490 en 13.565 m2 verschil voor detailhandel, overige consumentendiensten en overheid, 1,77 procent absoluut en 0,74 procent netto. Oorzaak: de werkentak hing aan een sectorneutrale vlag terwijl #710 sinds 29 augustus verzorgende banen met het woonpakket laat meekomen. Gerepareerd in ce457501 en opnieuw getoetst: het maximumverschil staat nu op 625 m2 bij dezelfde drie subsectoren en op nul bij de andere drie en bij wonen. Die 625 is exact het celoppervlak op 25 meter en past bij de klemasymmetrie die #716 beschrijft, niet meer bij #710. De geleverde standen van 30 augustus zijn nog met de oude code gedraaid; dat is een bewuste keuze, met de richting per indicator benoemd in het opleveringsrapport |
+| 2 | ccb31b4c voetafdruk langs einde-jaars afleiding | geslaagd na reparatie, met restwaarde | Eerste toets gaf 3.295, 4.490 en 13.565 m2 verschil voor detailhandel, overige consumentendiensten en overheid, 1,77 procent absoluut en 0,74 procent netto. Oorzaak: de werkentak hing aan een sectorneutrale vlag terwijl #710 sinds 29 augustus verzorgende banen met het woonpakket laat meekomen. Gerepareerd in ce457501 en opnieuw getoetst. Het aantal afwijkende cellen ging van 372.590 naar 20.117 en het absolute verschil van 7,37 naar 3,01 miljoen m2, dus 95 procent van de cellen en 59 procent van de omvang is weg. Maar de rest is niet verwaarloosbaar: 3,01 miljoen m2 is nog altijd 0,72 procent van het ketentotaal van 416,3 miljoen, en hij zit geconcentreerd. Het gemiddelde verschil per afwijkende cel ging juist omhoog, van 19,8 naar 149,6 m2, met een maximum van exact 625, het celoppervlak. Dat is een tweede en andere fout dan de gerepareerde, en hij is groot genoeg om apart te behandelen; zie #716. De geleverde standen van 30 augustus zijn nog met de oude code gedraaid; dat is een bewuste keuze, met de richting per indicator benoemd in het opleveringsrapport |
 | 3 | d410d3cd sorteerhoist werkgeschiktheid | geslaagd | A/B met de hunks omgekeerd: nul verschil op alle 48 controles, inclusief de regiolijsten. Exact gedragsneutraal |
 | 4 | 991031df tie-break IJburg2 | geslaagd | 3.584 cellen, 55,6 woningen in het basisjaar en 5.604,2 in Y2040, dus 5.548 nieuwe woningen op 224 ha. De zone valt niet uit de allocatie, wat de tie-break moest voorkomen |
 | 5 | fe9b7f15 vijftien ketens ontkoppeld naar BaseData | geslaagd, met steekproef | Alle 33 fingerprints vers geschreven in deze ronde, dus geen verouderd bestand heeft meegedaan. Zes van de 33 inhoudelijk bekeken: ze dragen naast bronvintage en studiegebied ook de inhoudelijke drempels, zoals buffer_wonen_m, milieucat_count en vol_fraction. Zeven BGT-afgeleiden hebben geen fingerprint; die zijn geldig omdat bgt.dms sinds 20 augustus onveranderd is, maar dat moest met de hand tegen git |
@@ -97,7 +97,7 @@ Van de achtendertig wijzigingen staan er zevenendertig op geslaagd en een op dee
 | geslaagd, met nuance | 2 | klopt, maar de wijziging levert minder op dan gedacht (#1) of de vergelijking is niet zuiver (#24) |
 | geslaagd, met steekproef | 1 | 6 van de 33 fingerprints inhoudelijk bekeken, de rest op vers-zijn getoetst |
 | geslaagd, op een codeargument | 1 | redenering en geen meting, want de twee vormen zijn aantoonbaar equivalent (#8) |
-| geslaagd na reparatie, met restwaarde | 1 | gezakt, gerepareerd, hertoetst; er blijft 625 m2 over die bij #716 hoort |
+| geslaagd na reparatie, met restwaarde | 1 | gezakt, gerepareerd, hertoetst; 95 procent van de afwijkende cellen weg, maar er blijft 0,72 procent over als tweede fout, zie #716 |
 | geslaagd op de structurele toets, omvang onverklaard | 1 | de vorm klopt, het niveau wijkt af van de referentie zonder dat dat is nagelopen (#18) |
 | deels | 1 | vijf van de veertien parameters hebben gedragsgewicht, twee daarvan zijn doorgemeten (#32) |
 
@@ -105,7 +105,7 @@ Er staan geen open punten meer. De zes die er waren zijn gesloten door meetpunte
 
 Wat er als vraag overblijft, niet als onopgeloste toets:
 
-- De 625 m2 restwaarde bij de voetafdrukafleiding. Hypothese is de klemasymmetrie uit #716, niet aangetoond.
+- De restwaarde bij de voetafdrukafleiding: 20.117 cellen, 3,01 miljoen m2, maximum exact een celoppervlak. Dat is een tweede fout naast de gerepareerde en geen afrondingsrest. Hypothese is de klemasymmetrie uit #716, niet aangetoond. De meting die daar uitsluitsel over geeft: splits het verschil naar teken en naar de winnende sector, dan is te zien of de afleiding te hoog of te laag zit en of het om wonen- of om werkencellen gaat.
 - Het niveauverschil bij #678, 17,3 tegen de 22,2 miljard uit de commit. Waarschijnlijk een verouderde referentie, niet aangetoond.
 - De 41.902 cellen die bij #674 op het kental terugvallen tegen de circa 34.000 uit de commit.
 - De dichtheidsfactoren uit 52f4565b, die als vraag in #715 staan.
