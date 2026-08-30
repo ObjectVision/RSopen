@@ -54,7 +54,12 @@ $NietUitleverenKolommen = @(
     'BereikbaarheidGroen_BBG_Tot300m_DrukteCorr_PerWoning'
 )
 
+# De fractiegebaseerde opvolger heet BereikbaarheidGroen_Fractie en bevat dus de string waarop
+# hierboven wordt uitgesloten. Die moet er juist wel in, dus laat alles met _Fractie expliciet door.
+$TochUitleveren = @('_Fractie')
+
 function Uitgesloten([string]$Naam) {
+    foreach ($t in $TochUitleveren) { if ($Naam -like "*$t*") { return $false } }
     foreach ($p in $NietUitleveren) { if ($Naam -like "*$p*") { return $true } }
     return $false
 }
