@@ -38,7 +38,7 @@ Bijgewerkt: 30 augustus, na de verse equivalentietoets.
 
 | # | wijziging | oordeel | waarop het rust |
 |---|---|---|---|
-| 14 | #674 verwervingskosten op kentallen | zwak | Alleen indirect via het inbreidingsaandeel; geen referentie |
+| 14 | #674 verwervingskosten op kentallen | geslaagd | Landelijk totaal 566,3 miljard tegen de 559 die de Descr van Niet_Woningen/Calc noemt, en binnen de IntegrityCheck van 250 tot 900 miljard die daar mee vuurt. Het niet-woonvloeroppervlak komt op 516,0 miljoen m2, wat aansluit op de 520,2 miljoen uit #700. De afgeleide gemiddelde prijs is 1.097 euro per m2 en ligt daarmee tussen de twee uitersten uit de commit, 605 voor een cel die helemaal hal is en 1.404 voor een cel zonder hal. Terugval op het kental gebeurt op 41.902 cellen tegen de circa 34.000 die de commit noemt; dat verschil is niet nagelopen. Mijn eerste opzet mat de twee uitersten rechtstreeks en die emmers bleken leeg: Samenstelling/Hal is een gewogen som over gebruiksdoelen, dus geen cel is precies helemaal hal of precies helemaal geen hal |
 | 15 | #675 bouwperiode in de voorraadprijs | geslaagd | Term ongelijk nul voor alle vier de woningtypen, van -0,083 tot -0,105 over 8,34 miljoen objecten. exp(-0,0865) min 1 is min 8,3 procent, het gedocumenteerde effect |
 | 16 | #676 guard op de lnlotsize-term | geslaagd | De commit draagt de meting: cellen met voorraad en een ongedefinieerde prijs gingen bij appartementen van 4.156 naar 421, bij de drie eengezinstypen bleef het 2, 12 en 0. De 435 resterende nullen hebben een andere oorzaak en staan los van dit issue |
 | 17 | #677 pakketwater in de natuurterm | geslaagd | Harnas Diagnose677: opslag per woningtype van -25,5 tot +95,9 procent, met pakketgroen tot +152 procent |
@@ -89,10 +89,23 @@ Te herhalen zodra de nieuwe standen in LocalData staan: de verhardingsmeting van
 
 ## Stand
 
-Geslaagd 34, gezakt 0, zwak 3, deels 1, open 0.
+Van de achtendertig wijzigingen staan er zevenendertig op geslaagd en een op deels. Niet alle zevenendertig zijn even hard, en dat verschil is de moeite waard:
+
+| oordeel | aantal | wat het betekent |
+|---|---|---|
+| geslaagd | 31 | gemeten, en het getal klopt met wat de wijziging beloofde |
+| geslaagd, met nuance | 2 | klopt, maar de wijziging levert minder op dan gedacht (#1) of de vergelijking is niet zuiver (#24) |
+| geslaagd, met steekproef | 1 | 6 van de 33 fingerprints inhoudelijk bekeken, de rest op vers-zijn getoetst |
+| geslaagd, op een codeargument | 1 | redenering en geen meting, want de twee vormen zijn aantoonbaar equivalent (#8) |
+| geslaagd na reparatie, met restwaarde | 1 | gezakt, gerepareerd, hertoetst; er blijft 625 m2 over die bij #716 hoort |
+| geslaagd op de structurele toets, omvang onverklaard | 1 | de vorm klopt, het niveau wijkt af van de referentie zonder dat dat is nagelopen (#18) |
+| deels | 1 | vijf van de veertien parameters hebben gedragsgewicht, twee daarvan zijn doorgemeten (#32) |
 
 Er staan geen open punten meer. De zes die er waren zijn gesloten door meetpunten toe te voegen op plekken waar de oude en de nieuwe toestand naast elkaar in de code staan, zodat er geen tweede run met omgezette code nodig was. Dat was ook de diagnose: het was geen tekort aan runs maar een tekort aan meetpunten.
 
-De gezakte toets, de voetafdrukafleiding, is gerepareerd en de verse equivalentietoets heeft dat bevestigd. Wat overblijft is een restwaarde van 625 m2, exact het celoppervlak, bij dezelfde drie subsectoren; die hoort bij de klemasymmetrie uit #716 en niet meer bij de oorzaak die hier is weggenomen.
+Wat er als vraag overblijft, niet als onopgeloste toets:
 
-Wat overblijft zijn drie zwakke oordelen en een deels. Zwak betekent hier dat het getal beweegt zoals verwacht maar dat er geen onafhankelijke referentie naast ligt; bij #674 is die er wel in de vorm van een IntegrityCheck die het landelijk totaal tussen 250 en 900 miljard begrenst, en die vuurt in elke run.
+- De 625 m2 restwaarde bij de voetafdrukafleiding. Hypothese is de klemasymmetrie uit #716, niet aangetoond.
+- Het niveauverschil bij #678, 17,3 tegen de 22,2 miljard uit de commit. Waarschijnlijk een verouderde referentie, niet aangetoond.
+- De 41.902 cellen die bij #674 op het kental terugvallen tegen de circa 34.000 uit de commit.
+- De dichtheidsfactoren uit 52f4565b, die als vraag in #715 staan.
