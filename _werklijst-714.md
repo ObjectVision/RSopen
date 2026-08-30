@@ -4,7 +4,7 @@ Achtendertig wijzigingen tussen commit 9d0b0f08 (27 augustus, de stand die in #6
 
 Oordelen: **geslaagd** is gemeten en het getal klopt met wat de wijziging beloofde. **gezakt** is gemeten en het klopt niet. **zwak** is wel een getal maar zonder referentie om het tegen af te zetten. **deels** is een van de twee helften getoetst. **open** is niet gemeten.
 
-Bijgewerkt: 30 augustus, na de sorteerhoist-A/B en de IJburg2-meting.
+Bijgewerkt: 30 augustus, na het meetpunt in de omgekeerde milieuzonering.
 
 ## Rekenkern en rekenpad
 
@@ -31,8 +31,8 @@ Bijgewerkt: 30 augustus, na de sorteerhoist-A/B en de IJburg2-meting.
 | 9 | #710 verzorgend werken volgt wonen | geslaagd | Aandeel in bebouwd gebied van 14 tot 32 procent naar 39,6 tot 48,1 procent. Verlies aan verzorgende banen van 135.924 naar 31.220 |
 | 10 | #713 sloopwacht op hetzelfde deeloppervlak | geslaagd | Zelfde meting; alle zes de subsectoren binnen de band 0,98 tot 1,05 |
 | 11 | #670 MinimumSubsectorShare uit de zeef | open, nulmeting | Basisjaarzeef per subsector nu meetbaar: nijverheid 1.743.391 ha, logistiek 1.745.991, de vier overige alle vier 1.627.149. Maar #670 werkt op de zichtjaarzeef, dus dit is nog geen toets |
-| 12 | #669 omgekeerde milieuzonering begrensd | open, nulmeting | Idem: de basisjaarzeef is gemeten, de zichtjaarzeef waar de zonering werkt nog niet |
-| 13 | #668 thuiswerkverdikking op de ruimtevraag | open | Geen controle in de configuratie |
+| 12 | #669 omgekeerde milieuzonering begrensd | geslaagd | Meetpunt in de allocatie zelf, waar de oude en de nieuwe toestand naast elkaar staan, dus zonder A/B. Bufferbron 4.487.408 wooncellen tegen 3.948.086 cellen aaneengesloten woongebied, dus 12,0 procent eraf. Bestaand werkterrein 1.268.033 cellen, met de banenregel 1.820.507 en 1.734.853. Blijft dicht: 30,7 procent van het studiegebied voor nijverheid en 15,8 procent voor logistiek, tegen de 29,1 procent die de parametertoelichting op de basisjaarstand noemt |
+| 13 | #668 thuiswerkverdikking op de ruimtevraag | geslaagd | De pathologie die de schakelaar veroorzaakte is weg: zakelijke dienstverlening staat in Y2040 op 2.047.812 banen tegen een claim van 2.069.520, en 27 van de 76 NVM-regio's hebben nog restclaim. Met de schakelaar aan was dat 2.437.320 tegen 2.018.666 en nul regio's. De bedoelde route klopt rekenkundig: kantoorcoefficient 17,5 tegen 20 in het basisjaar geeft groeifactor min 0,125, dus voetafdruk per kantoorbaan maal 0,875 en banen per m2 maal 1,1429 |
 
 ## Wonen: prijs, kosten en zeef
 
@@ -40,7 +40,7 @@ Bijgewerkt: 30 augustus, na de sorteerhoist-A/B en de IJburg2-meting.
 |---|---|---|---|
 | 14 | #674 verwervingskosten op kentallen | zwak | Alleen indirect via het inbreidingsaandeel; geen referentie |
 | 15 | #675 bouwperiode in de voorraadprijs | geslaagd | Term ongelijk nul voor alle vier de woningtypen, van -0,083 tot -0,105 over 8,34 miljoen objecten. exp(-0,0865) min 1 is min 8,3 procent, het gedocumenteerde effect |
-| 16 | #676 guard op de lnlotsize-term | open | Geen controle |
+| 16 | #676 guard op de lnlotsize-term | geslaagd | De commit draagt de meting: cellen met voorraad en een ongedefinieerde prijs gingen bij appartementen van 4.156 naar 421, bij de drie eengezinstypen bleef het 2, 12 en 0. De 435 resterende nullen hebben een andere oorzaak en staan los van dit issue |
 | 17 | #677 pakketwater in de natuurterm | geslaagd | Harnas Diagnose677: opslag per woningtype van -25,5 tot +95,9 procent, met pakketgroen tot +152 procent |
 | 18 | #678 groenwaarde als verandering | zwak | Getal beweegt, maar de referentie uit #639 is door de zichtjaarwissel niet meer vergelijkbaar |
 | 19 | #700 vbo-bovengrens alleen voor wonen | geslaagd | Oude regel hield 180,4 van 520,2 miljoen m2 over. Afgeleide bouwlagen 1,13 logistiek tot 2,29 zakelijke dienstverlening |
@@ -81,6 +81,6 @@ Bijgewerkt: 30 augustus, na de sorteerhoist-A/B en de IJburg2-meting.
 
 ## Stand
 
-Geslaagd 25, gezakt 1, zwak 3, deels 1, open 8.
+Geslaagd 27, gezakt 1, zwak 3, deels 1, open 6.
 
 De acht open punten hebben een gemeenschappelijke oorzaak: er bestaat geen enkele controle voor. Dat is geen tekort aan runs maar een tekort aan meetpunten, en de enige route is een check toevoegen of een A/B draaien.
