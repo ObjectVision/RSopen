@@ -39,6 +39,30 @@ Een wijziging in een SqlString kan de volgorde stil veranderen: een window funct
 
 En let op de plaats in de regel: eigenschappen komen NA de expressie, achter een komma, niet tussen de domeinaanduiding en de `:=`. `attribute<X> Y (D) : ExplicitSuppliers = "Z" := expr` geeft "item terminator ';' expected after item definition"; `attribute<X> Y (D) := expr, ExplicitSuppliers = "Z";` is goed.
 
+## De foutregel wijst niet naar de oorzaak
+
+Twee parsefouten waar de melding een regel verderop wijst dan waar het misging.
+
+Een puntkomma na de Descr van een container die daarna nog een blok opent:
+
+```
+container X
+: Descr = "..." ;     // FOUT: deze puntkomma sluit de container af
+{ ... }
+```
+
+Dat geeft `item definition or block terminator '}' expected` met de accolade als foutregel, terwijl de puntkomma de oorzaak is. Bij een container met een `for_each` plus een eigen subcontainer komt dezelfde melding.
+
+En een eigenschap voor de toekenning in plaats van erna geeft `item terminator ';' expected after item definition`, met de hele regel als foutregel. Zie de kop over ExplicitSuppliers hierboven.
+
+Parseer daarom na elke handmatige ingreep in een dms-bestand, voordat je een lange reeks start:
+
+```powershell
+& $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg '/ModelParameters/StudyArea'
+```
+
+Dat kost seconden. Een configuratie die halverwege een reeks stukgaat kost de hele reeks.
+
 ## PropValue geeft de expressietekst
 
 `PropValue(item, 'StorageName')` geeft de expressietekst terug, niet de uitkomst. Dat werkt als je hem meteen weer als StorageName gebruikt, maar niet als invoer voor iets dat een echt pad verwacht, zoals `ExistingFile`. Zet het pad dan als eigen `parameter<String>` neer en verwijs daar vanuit beide kanten naar.
