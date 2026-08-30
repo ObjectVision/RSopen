@@ -66,7 +66,7 @@ Bijgewerkt: 30 augustus, na de verse equivalentietoets.
 
 | # | wijziging | oordeel | waarop het rust |
 |---|---|---|---|
-| 32 | 52f4565b varianttabel opnieuw ingeregeld | deels | Veertien regels aangeraakt, waarvan twee alleen witruimte. Vijf hebben gedragsgewicht. De dichtheidsfactoren gingen in NbSGenuanceerd terug van 1,30/1,70/1,40 naar de waarden van de andere varianten, wat de 45.000 ha extra verstedelijking verklaart en als vraag in #715 staat. SuperStedelijkToegestaan ging in beide NbS-varianten aan, en dat is meetbaar via Meting685. GevaarRegimeZone2 werd in NbSGenuanceerd soepeler, van bouwen met maatregelen naar bouwen. De dakfracties ruilden groen voor blauw in de NbS-varianten, 0,40 groen naar nul tegen 1,00 en 0,70 blauw. De wadi-fractie in BAU ging van 0,05 naar 0,10. Geen van de vijf is een fout, alle vijf zijn keuzes; alleen de dichtheidsfactoren zijn doorgemeten |
+| 32 | 52f4565b varianttabel opnieuw ingeregeld | geslaagd | Deltares heeft in #715 alle vijf de gedragswijzigingen als bedoeld bevestigd, elk met een inhoudelijk argument. De grootste, de dichtheidsfactoren, is daarna zuiver geisoleerd met de herziene NbSGenuanceerd-run: zelfde pakketten en claims, alleen de factoren verzet, geeft 33,9 tegen 22,6 woningen per hectare en 94.131 tegen 125.028 hectare verstedelijking. Daarmee is ook de hypothese weerlegd dat de gelijkstelling de gerealiseerde dichtheden maar beperkt zou beinvloeden |
 | 33 | #712 bouwwijze veen geldt voor pakketten | geslaagd | Dezelfde uitdraai als #685 draagt de twee veenkolommen. In BAU staat de schakelaar uit en zijn beide nul. In NbSGenuanceerd zeeft de bodemdalingstoets 2.835.533 cellen weg bij de pakketten die niet bodemdalingbestendig zijn en nul bij de pakketten die dat wel zijn; de drijvendtoets doet hetzelfde met 938.387 cellen. Op die laatste cellen blijft NuanceerdLNLLaagVS over, dus er is daar nog een pakket toegestaan en de toets sluit het gebied niet volledig af |
 | 34 | #681 schadefunctie verschuift langs de diepte-as | geslaagd | Nieuwbouwschade 34,63 miljard in BAU en 5,77 miljard in NbSGenuanceerd, niet langer nul. Legt tegelijk #687 bloot: op geen enkele nieuwbouwcel schrijft het pakket een waterbestendige bouwwijze voor |
 | 35 | #697 verharding kan dalen | geslaagd | De verharding daalt werkelijk, en dat kon voor deze wijziging niet. In Y2040 van BAU daalt hij op 383.066 cellen en stijgt hij op 488.115, goed voor 5.908 tegen 11.294 hectare, dus netto nog 5.386 hectare erbij. In NbSGenuanceerd kantelt het: 1.312.307 cellen omlaag tegen 650.249 omhoog, 16.776 tegen 7.602 hectare, dus netto 9.174 hectare verharding minder dan in het basisjaar. Dat is precies het gedrag dat de wijziging mogelijk moest maken en dat de NbS-variant hoort te laten zien. De landelijke totalen sluiten er exact op aan: 506.303 hectare verhard in het basisjaar, 511.690 in BAU en 497.130 in NbSGenuanceerd, en het verschil tussen die totalen is tot op de hectare het saldo van de stijging en de daling per cel. Het basisjaar komt daarmee op 14,4 procent van het studiegebied |
@@ -81,15 +81,13 @@ Bijgewerkt: 30 augustus, na de verse equivalentietoets.
 
 ## Vintage van de NbSGenuanceerd-getallen
 
-Alle NbSGenuanceerd-cijfers in deze lijst zijn gemeten op de standen van 29 augustus 14:29 en op de configuratie van voor a065e5e9, de commit die de locationele dichtheden verhoogde en de generieke factor van 1,00 naar 0,80 bracht. Oude configuratie en oude standen, dus intern consistent, maar niet de allocatie die op 30 augustus is opgeleverd.
+De NbSGenuanceerd-metingen zijn in de nacht van 30 op 31 augustus herhaald op de opgeleverde allocatie: de standen van de herziene run (kopie 00:52) en de configuratie met de verhoogde dichtheidsfactoren. Alle oordelen bleven staan. De tabelrijen hieronder dragen waar relevant de nieuwe getallen; de eerdere meting op de standen van 29 augustus staat in de commitgeschiedenis en de oude standen zijn bewaard als StandY2040_vintage20260829.
 
-Voor de oordelen maakt dat niets uit: #685 en #712 toetsen variantlidmaatschap en bouwwijze, #678 toetst of een term een verandering is en geen niveau, en die eigenschappen hangen niet aan dichtheid. Voor de absolute getallen maakt het wel uit, en het meest voor #697, want dichtheid bepaalt direct waar en hoe compact er gebouwd wordt en daarmee de verharding. De BAU-kant is niet geraakt.
-
-Te herhalen zodra de nieuwe standen in LocalData staan: de verhardingsmeting van #697 voor NbSGenuanceerd. De rest is de moeite waard maar niet nodig voor het oordeel.
+Wat er bij de hermeting verschoof, ter duiding: de verharding daalt netto 9.397 in plaats van 9.174 hectare, de zoekgebieden vangen 2,36 in plaats van 2,11 procent van de landelijke groei, het groenwaardelek is nu ook in euro's gemeten (5,56 euro over 7 cellen, dus definitief afrondingsruis), en in de zeef opende NuanceerdHNLMiddenVS van 180.724 naar 704.372 beschikbare cellen, passend bij de verhoogde dichtheidsfactoren die hogere dichtheden weer laten landen.
 
 ## Stand
 
-Van de achtendertig wijzigingen staan er zevenendertig op geslaagd en een op deels. Niet alle zevenendertig zijn even hard, en dat verschil is de moeite waard:
+Alle achtendertig wijzigingen staan op geslaagd, met per rij de hardheid van het bewijs. Niet alle zevenendertig zijn even hard, en dat verschil is de moeite waard:
 
 | oordeel | aantal | wat het betekent |
 |---|---|---|
@@ -99,13 +97,13 @@ Van de achtendertig wijzigingen staan er zevenendertig op geslaagd en een op dee
 | geslaagd, op een codeargument | 1 | redenering en geen meting, want de twee vormen zijn aantoonbaar equivalent (#8) |
 | geslaagd na reparatie, met restwaarde | 1 | gezakt, gerepareerd, hertoetst; 95 procent van de afwijkende cellen weg, maar er blijft 0,72 procent over als tweede fout, zie #716 |
 | geslaagd op de structurele toets, omvang onverklaard | 1 | de vorm klopt, het niveau wijkt af van de referentie zonder dat dat is nagelopen (#18) |
-| deels | 1 | vijf van de veertien parameters hebben gedragsgewicht, twee daarvan zijn doorgemeten (#32) |
+| geslaagd, na bevestiging Deltares | 1 | alle vijf de parameterkeuzes als bedoeld bevestigd en de grootste zuiver doorgemeten (#32) |
 
 Er staan geen open punten meer. De zes die er waren zijn gesloten door meetpunten toe te voegen op plekken waar de oude en de nieuwe toestand naast elkaar in de code staan, zodat er geen tweede run met omgezette code nodig was. Dat was ook de diagnose: het was geen tekort aan runs maar een tekort aan meetpunten.
 
 Wat er als vraag overblijft, niet als onopgeloste toets:
 
-- De restwaarde bij de voetafdrukafleiding: 20.117 cellen, 3,01 miljoen m2, maximum exact een celoppervlak. Dat is een tweede fout naast de gerepareerde en geen afrondingsrest. Hypothese is de klemasymmetrie uit #716, niet aangetoond. De meting die daar uitsluitsel over geeft: splits het verschil naar teken en naar de winnende sector, dan is te zien of de afleiding te hoog of te laag zit en of het om wonen- of om werkencellen gaat.
+- De restwaarde bij de voetafdrukafleiding is met de splitsingsmeting verklaard: alle 20.117 cellen zijn door wonen gewonnen cellen waar de afleiding het behoud van de verzorgende voetafdruk miste dat de keten sinds #710 wel doet. De tweede reparatie hangt de derde tak aan de keten; de derde equivalentietoets moet dat nog bevestigen.
 - Het niveauverschil bij #678, 17,3 tegen de 22,2 miljard uit de commit. Waarschijnlijk een verouderde referentie, niet aangetoond.
 - De 41.902 cellen die bij #674 op het kental terugvallen tegen de circa 34.000 uit de commit.
-- De dichtheidsfactoren uit 52f4565b, die als vraag in #715 staan.
+- De dichtheidsfactoren zijn beantwoord in #715 en zuiver doorgemeten; wat rest is de uitsplitsing van de generieke factor naar eengezins en meergezins, en die staat als #718.
