@@ -66,11 +66,11 @@ Bijgewerkt: 30 augustus, na het meetpunt in de omgekeerde milieuzonering.
 
 | # | wijziging | oordeel | waarop het rust |
 |---|---|---|---|
-| 32 | 52f4565b varianttabel opnieuw ingeregeld | deels | Veertien parameters veranderd. De dichtheidsfactoren zijn als oorzaak van 45.000 ha extra verstedelijking in beeld en staan als vraag in #715. De rest niet getoetst |
+| 32 | 52f4565b varianttabel opnieuw ingeregeld | deels | Veertien regels aangeraakt, waarvan twee alleen witruimte. Vijf hebben gedragsgewicht. De dichtheidsfactoren gingen in NbSGenuanceerd terug van 1,30/1,70/1,40 naar de waarden van de andere varianten, wat de 45.000 ha extra verstedelijking verklaart en als vraag in #715 staat. SuperStedelijkToegestaan ging in beide NbS-varianten aan, en dat is meetbaar via Meting685. GevaarRegimeZone2 werd in NbSGenuanceerd soepeler, van bouwen met maatregelen naar bouwen. De dakfracties ruilden groen voor blauw in de NbS-varianten, 0,40 groen naar nul tegen 1,00 en 0,70 blauw. De wadi-fractie in BAU ging van 0,05 naar 0,10. Geen van de vijf is een fout, alle vijf zijn keuzes; alleen de dichtheidsfactoren zijn doorgemeten |
 | 33 | #712 bouwwijze veen geldt voor pakketten | open | Geen controle |
 | 34 | #681 schadefunctie verschuift langs de diepte-as | geslaagd | Nieuwbouwschade 34,63 miljard in BAU en 5,77 miljard in NbSGenuanceerd, niet langer nul. Legt tegelijk #687 bloot: op geen enkele nieuwbouwcel schrijft het pakket een waterbestendige bouwwijze voor |
 | 35 | #697 verharding kan dalen | zwak | Getal beweegt de goede kant op maar zonder referentie |
-| 36 | #665 bouwmethode en dieptevermogen als twee assen | open | Geen controle |
+| 36 | #665 bouwmethode en dieptevermogen als twee assen | geslaagd | De commit draagt zijn eigen gouden waarden: BouwwijzeK/Controle/Origineel legt de vier afgeleide kolommen naast de literalen van voor de splitsing, met vijf IntegrityChecks. Dat item gedraaid: exitcode 0, geen fout, dus alle vijf houden stand en de splitsing is gedragsneutraal |
 
 ## Export en diagnose
 
@@ -81,6 +81,6 @@ Bijgewerkt: 30 augustus, na het meetpunt in de omgekeerde milieuzonering.
 
 ## Stand
 
-Geslaagd 27, gezakt 1, zwak 3, deels 1, open 6.
+Geslaagd 28, gezakt 1, zwak 3, deels 1, open 5.
 
 De acht open punten hebben een gemeenschappelijke oorzaak: er bestaat geen enkele controle voor. Dat is geen tekort aan runs maar een tekort aan meetpunten, en de enige route is een check toevoegen of een A/B draaien.
