@@ -4,14 +4,14 @@ Achtendertig wijzigingen tussen commit 9d0b0f08 (27 augustus, de stand die in #6
 
 Oordelen: **geslaagd** is gemeten en het getal klopt met wat de wijziging beloofde. **gezakt** is gemeten en het klopt niet. **zwak** is wel een getal maar zonder referentie om het tegen af te zetten. **deels** is een van de twee helften getoetst. **open** is niet gemeten.
 
-Bijgewerkt: 30 augustus, na de meetronde die de laatste zes open punten sloot.
+Bijgewerkt: 30 augustus, na de verse equivalentietoets.
 
 ## Rekenkern en rekenpad
 
 | # | wijziging | oordeel | waarop het rust |
 |---|---|---|---|
 | 1 | 529e40a4 Seq_1 op vijf iteraties | geslaagd, met nuance | A/B 5 tegen 15: 3.897 woningen op 9,5 miljoen, 0,041 procent. Regionale spreiding tot op zeven decimalen identiek, dus de extra iteraties helpen de tekortregio's niet. Geen meetbare tijdwinst, dus de wijziging levert ook niets op |
-| 2 | ccb31b4c voetafdruk langs einde-jaars afleiding | gezakt | Equivalentietoets geeft 3.295, 4.490 en 13.565 m2 verschil voor detailhandel, overige consumentendiensten en overheid. 1,77 procent absoluut, 0,74 procent netto. Oorzaak aanwijsbaar, zie #714 en #716 |
+| 2 | ccb31b4c voetafdruk langs einde-jaars afleiding | geslaagd na reparatie, met restwaarde | Eerste toets gaf 3.295, 4.490 en 13.565 m2 verschil voor detailhandel, overige consumentendiensten en overheid, 1,77 procent absoluut en 0,74 procent netto. Oorzaak: de werkentak hing aan een sectorneutrale vlag terwijl #710 sinds 29 augustus verzorgende banen met het woonpakket laat meekomen. Gerepareerd in ce457501 en opnieuw getoetst: het maximumverschil staat nu op 625 m2 bij dezelfde drie subsectoren en op nul bij de andere drie en bij wonen. Die 625 is exact het celoppervlak op 25 meter en past bij de klemasymmetrie die #716 beschrijft, niet meer bij #710. De geleverde standen van 30 augustus zijn nog met de oude code gedraaid; dat is een bewuste keuze, met de richting per indicator benoemd in het opleveringsrapport |
 | 3 | d410d3cd sorteerhoist werkgeschiktheid | geslaagd | A/B met de hunks omgekeerd: nul verschil op alle 48 controles, inclusief de regiolijsten. Exact gedragsneutraal |
 | 4 | 991031df tie-break IJburg2 | geslaagd | 3.584 cellen, 55,6 woningen in het basisjaar en 5.604,2 in Y2040, dus 5.548 nieuwe woningen op 224 ha. De zone valt niet uit de allocatie, wat de tie-break moest voorkomen |
 | 5 | fe9b7f15 vijftien ketens ontkoppeld naar BaseData | geslaagd, met steekproef | Alle 33 fingerprints vers geschreven in deze ronde, dus geen verouderd bestand heeft meegedaan. Zes van de 33 inhoudelijk bekeken: ze dragen naast bronvintage en studiegebied ook de inhoudelijke drempels, zoals buffer_wonen_m, milieucat_count en vol_fraction. Zeven BGT-afgeleiden hebben geen fingerprint; die zijn geldig omdat bgt.dms sinds 20 augustus onveranderd is, maar dat moest met de hand tegen git |
@@ -81,10 +81,10 @@ Bijgewerkt: 30 augustus, na de meetronde die de laatste zes open punten sloot.
 
 ## Stand
 
-Geslaagd 33, gezakt 1, zwak 3, deels 1, open 0.
+Geslaagd 34, gezakt 0, zwak 3, deels 1, open 0.
 
 Er staan geen open punten meer. De zes die er waren zijn gesloten door meetpunten toe te voegen op plekken waar de oude en de nieuwe toestand naast elkaar in de code staan, zodat er geen tweede run met omgezette code nodig was. Dat was ook de diagnose: het was geen tekort aan runs maar een tekort aan meetpunten.
 
-De gezakte toets, de voetafdrukafleiding, is inmiddels gerepareerd. De verse equivalentietoets moet dat oordeel nog omzetten.
+De gezakte toets, de voetafdrukafleiding, is gerepareerd en de verse equivalentietoets heeft dat bevestigd. Wat overblijft is een restwaarde van 625 m2, exact het celoppervlak, bij dezelfde drie subsectoren; die hoort bij de klemasymmetrie uit #716 en niet meer bij de oorzaak die hier is weggenomen.
 
 Wat overblijft zijn drie zwakke oordelen en een deels. Zwak betekent hier dat het getal beweegt zoals verwacht maar dat er geen onafhankelijke referentie naast ligt; bij #674 is die er wel in de vorm van een IntegrityCheck die het landelijk totaal tussen 250 en 900 miljard begrenst, en die vuurt in elke run.
