@@ -39,6 +39,19 @@ Een wijziging in een SqlString kan de volgorde stil veranderen: een window funct
 
 En let op de plaats in de regel. Heeft het item een expressie, dan komen de eigenschappen NA die expressie, achter een komma. `attribute<X> Y (D) : ExplicitSuppliers = "Z" := expr` geeft "item terminator ';' expected after item definition"; `attribute<X> Y (D) := expr, ExplicitSuppliers = "Z";` is goed. Verwar dit niet met een item zonder expressie, zoals een attribuut dat zijn waarde uit een storage haalt: `attribute<X> Y (D) : StorageName = "...", StorageReadOnly = "True";` is de normale vorm en daar staat de dubbele punt wel meteen achter het domein.
 
+## Eenheidsliteralen werken niet overal
+
+`0[Eur]`, `0[Woning]`, `0[meter2]` en `0[Eur_m2]` lossen alleen op waar de eenheidscontainer in scope is, via een `using` op het bestand of via de plek in de boom. In `Diagnose.dms` is dat niet zo: die container heeft geen `using` en hangt niet onder de eenheden. Een meetexpressie die daar een eenheidsliteraal gebruikt faalt met `Unknown identifier 'Eur'`, en dat blijkt pas als je het item opvraagt, niet bij het parsen.
+
+Cast in meetcode daarom naar `float32` en reken met kale getallen:
+
+```
+sum(float64(float32(pad/naar/item)))          // in plaats van sum(pad/naar/item)
+MakeDefined(float32(pad/naar/opp), 0f) > 0f   // in plaats van MakeDefined(pad/naar/opp, 0[meter2]) > 0[meter2]
+```
+
+Je verliest de eenheidscontrole, maar in een uitdraai die toch naar tekst gaat levert die niets op. Zet de eenheid in de kolomnaam, zoals `nietwoon_totaal_mld`.
+
 ## De foutregel wijst niet naar de oorzaak
 
 Twee parsefouten waar de melding een regel verderop wijst dan waar het misging.
