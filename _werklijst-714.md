@@ -79,6 +79,14 @@ Bijgewerkt: 30 augustus, na de verse equivalentietoets.
 | 37 | #651 elf NCW-varianten in de exportlijst | geslaagd | Alle NCW-kaarten bewegen tegengesteld aan hun nominale tweeling, dus de verdiscontering werkt |
 | 38 | #692 casus en jaar in de bestandsnaam | geslaagd | Alle losse uitdraaien dragen het voorvoegsel; mijn toetsscript moest erop aangepast worden |
 
+## Vintage van de NbSGenuanceerd-getallen
+
+Alle NbSGenuanceerd-cijfers in deze lijst zijn gemeten op de standen van 29 augustus 14:29 en op de configuratie van voor a065e5e9, de commit die de locationele dichtheden verhoogde en de generieke factor van 1,00 naar 0,80 bracht. Oude configuratie en oude standen, dus intern consistent, maar niet de allocatie die op 30 augustus is opgeleverd.
+
+Voor de oordelen maakt dat niets uit: #685 en #712 toetsen variantlidmaatschap en bouwwijze, #678 toetst of een term een verandering is en geen niveau, en die eigenschappen hangen niet aan dichtheid. Voor de absolute getallen maakt het wel uit, en het meest voor #697, want dichtheid bepaalt direct waar en hoe compact er gebouwd wordt en daarmee de verharding. De BAU-kant is niet geraakt.
+
+Te herhalen zodra de nieuwe standen in LocalData staan: de verhardingsmeting van #697 voor NbSGenuanceerd. De rest is de moeite waard maar niet nodig voor het oordeel.
+
 ## Stand
 
 Geslaagd 34, gezakt 0, zwak 3, deels 1, open 0.
