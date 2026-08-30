@@ -96,6 +96,10 @@ function Invoke-Stap {
 function Get-Zichtjaren {
     # Haalt de zichtjaren uit de configuratie in plaats van ze hier te herhalen. Zie de memory-notitie
     # over RunZichtjaren.cmd, dat jaartallen bij naam noemde en daardoor stil een zichtjaar oversloeg.
+    # Let op: vast logpad, geen tijdstempel. GeoDmsRun leegt een bestaand logbestand niet, dus dit
+    # bestand groeit bij elke aanroep. Onschadelijk zolang deze functie de stdout leest en de
+    # exitcode toetst; wie hier ooit een grep op [E] aan toevoegt vindt ook de fouten van vorige
+    # runs. Zet er dan eerst een tijdstempel in, zoals Invoke-Stap hierboven doet.
     $log = Join-Path $LogDir 'zichtjaren.log'
     $uit = & $Exe "/L$log" $Cfg '@statistics' '/Classifications/Time/Zichtjaar/YearRange_rel' 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Kon de zichtjaren niet uit de configuratie lezen, zie $log" }

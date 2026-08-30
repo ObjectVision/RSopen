@@ -14,7 +14,8 @@
 [CmdletBinding()]
 param(
     [string] $Bron      = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren',
-    [string] $Doel      = 'C:\LocalData\RSopen_NL2120_productie\Oplevering_658_2120',
+    # Standaard naar de gedeelde projectmap, zodat de levering meteen bij het team staat.
+    [string] $Doel      = 'C:\Users\JipClaassens\Objectvision\Object Vision - General\LocalData\RSOpen_NL2120\Productierun_20260829\Indicatoren',
     [string] $Zichtjaar = 'Y2120',
     [string] $Commit    = ''
 )
@@ -23,16 +24,46 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $Bron)) { throw "Bronmap niet gevonden: $Bron" }
 if (Test-Path $Doel) { throw "Doelmap bestaat al, verwijder of hernoem hem eerst: $Doel" }
 
-$varianten = [ordered]@{ 'WLO_hoog_BAU' = 'BAU1'; 'WLO_hoog_BAU2' = 'BAU2' }
+$varianten = [ordered]@{
+    'WLO_hoog_BAU'            = 'BAU1'
+    'WLO_hoog_BAU2'           = 'BAU2'
+    'WLO_hoog_NbSGenuanceerd' = 'NbSGenuanceerd'
+    'WLO_hoog_NbSMax'         = 'NbSMax'
+}
 
 function Schoon([string]$Naam) {
     # Haalt de modelstaart uit de naam: _Nederland_SS-11 of _Nederland vlak voor de extensie.
-    ($Naam -replace '_Nederland_SS-11(?=\.)', '') -replace '_Nederland(?=\.)', ''
+    $kaal = ($Naam -replace '_Nederland_SS-11(?=\.)', '') -replace '_Nederland(?=\.)', ''
+    # De landelijke claimtabel heet ClaimRealisatie_Nederland_Nederland_SS-11 en verliest daardoor
+    # twee keer een Nederland: eerst het studiegebied, dan het schaalniveau. Wat overblijft leest
+    # als de hoofdtabel terwijl het het landelijke totaal is. Geef dat niveau terug.
+    if ($kaal.StartsWith("ClaimRealisatie.")) { $kaal = "ClaimRealisatie_NL." + $kaal.Substring(16) }
+    return $kaal
+}
+
+# Op verzoek van Deltares (#717) blijft de bestaande bereikbaarheid-groen-indicator buiten de
+# levering. Die telt de landgebruiksklasse van een hele cel en kent geen groenfractie, waardoor
+# het groen binnen ontwikkelpakketten er per constructie onzichtbaar voor is; de indicator
+# spreekt het NbS-verhaal daardoor tegen in plaats van het te ondersteunen. Er komt een
+# fractiegebaseerde opvolger. De bestanden blijven wel gewoon in LocalData staan.
+$NietUitleveren = @('BereikbaarheidGroen')
+$NietUitleverenKolommen = @(
+    'BereikbaarheidGroen_BBG_Tot300m_ExAgr_Groenaanbod_over_woning'
+    'BereikbaarheidGroen_BBG_Tot300m_Groenaanbod_over_woning'
+    'BereikbaarheidGroen_BBG_Tot300m_ExAgr_DrukteCorr_PerWoning'
+    'BereikbaarheidGroen_BBG_Tot300m_DrukteCorr_PerWoning'
+)
+
+function Uitgesloten([string]$Naam) {
+    foreach ($p in $NietUitleveren) { if ($Naam -like "*$p*") { return $true } }
+    return $false
 }
 
 function Kopieer {
     # Kopieert een tif plus zijn .tfw en .xml naar de doelmap, onder een opgeschoonde naam.
     param([System.IO.FileInfo]$Tif, [string]$NaarMap, [string]$Voorvoegsel = '')
+
+    if (Uitgesloten $Tif.Name) { return 0 }
 
     if (-not (Test-Path $NaarMap)) { New-Item -ItemType Directory -Path $NaarMap -Force | Out-Null }
     $nieuw = $Voorvoegsel + (Schoon $Tif.Name)
@@ -62,9 +93,25 @@ foreach ($casus in $varianten.Keys) {
     # tabellen: de csv's plus hun xml, uit de Stand-map
     New-Item -ItemType Directory -Path $tab -Force | Out-Null
     Get-ChildItem "$src\Stand$Zichtjaar" -Filter '*.csv' -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item $_.FullName (Join-Path $tab (Schoon $_.Name)) -Force
+        $uit = Join-Path $tab (Schoon $_.Name)
+        # RegionaleIndicatoren draagt de uitgesloten kolommen. Die worden hier weggelaten en niet
+        # in de configuratie, want dit is een leverkeuze en geen modelwijziging.
+        $kop = Get-Content $_.FullName -TotalCount 1
+        if ($NietUitleverenKolommen | Where-Object { $kop -like "*$_*" }) {
+            Import-Csv $_.FullName | Select-Object -Property * -ExcludeProperty $NietUitleverenKolommen |
+                Export-Csv $uit -NoTypeInformation -Encoding UTF8
+        } else {
+            Copy-Item $_.FullName $uit -Force
+        }
         $x = [IO.Path]::ChangeExtension($_.FullName, '.xml')
         if (Test-Path $x) { Copy-Item $x (Join-Path $tab (Schoon ([IO.Path]::GetFileName($x)))) -Force }
+        $n.tabellen++
+    }
+
+    # de gpkg met de bereikbaarheid van banen, per buurt en per provincie; die hoort bij de
+    # tabellen en niet bij de kaarten, want het is een vectorbestand met attribuuttabellen
+    Get-ChildItem $src -File -Filter '*.gpkg' -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $tab (Schoon $_.Name)) -Force
         $n.tabellen++
     }
 
@@ -109,8 +156,9 @@ $regels += "Zichtjaar $Zichtjaar, varianten BAU1 en BAU2."
 if ($Commit) { $regels += "Configuratie: commit $Commit op branch oplevering-658-20260828." }
 $regels += ""
 $regels += "INDELING"
-$regels += "  <variant>/tabellen/            csv-tabellen: RegionaleIndicatoren (een regel, NL) en"
-$regels += "                                 de arealen per landgebruiksklasse"
+$regels += "  <variant>/tabellen/            RegionaleIndicatoren (een regel, heel Nederland), de arealen"
+$regels += "                                 per landgebruiksklasse, de claimrealisatie per schaalniveau"
+$regels += "                                 en de bereikbaarheid van banen als gpkg"
 $regels += "  <variant>/kaarten_$Zichtjaar/       de kaarten van het zichtjaar zelf"
 $regels += "  <variant>/kaarten_tijdreeks/   dezelfde indicatoren voor 2040 tot en met 2110, voor"
 $regels += "                                 de indicatoren die hun hele reeks wegschrijven"
@@ -120,6 +168,11 @@ $regels += ""
 $regels += "BESTANDEN"
 $regels += "  Elke kaart is een GeoTIFF in RD-coordinaten (EPSG:28992), met een .tfw world file"
 $regels += "  en een .xml met het GeoDMS-itempad en de buildversie waarmee hij is gemaakt."
+$regels += ""
+$regels += "  ClaimRealisatie_<niveau>.csv geeft per regio de gerealiseerde stand gedeeld door de"
+$regels += "  claim. Het verschil tussen de niveaus maakt overflow zichtbaar: staat een regio op NVM"
+$regels += "  boven de 1 terwijl COROP eromheen op 1 uitkomt, dan is de claim binnen die grotere regio"
+$regels += "  verschoven en niet landelijk overschreden."
 $regels += ""
 $regels += "LET OP BIJ HET LEZEN"
 $regels += "  De sloopindicatoren zijn geen tijdreeks. Ze worden geteld uit de stand in het"
