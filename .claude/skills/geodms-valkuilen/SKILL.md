@@ -37,7 +37,7 @@ Een wijziging in een SqlString kan de volgorde stil veranderen: een window funct
 
 `ExplicitSuppliers` op een CONTAINER lift niet mee wanneer je een los kind opvraagt. Bij `for_each`-containers kun je een schrijfactie dus niet aan de container hangen en erop rekenen dat hij meekomt.
 
-En let op de plaats in de regel: eigenschappen komen NA de expressie, achter een komma, niet tussen de domeinaanduiding en de `:=`. `attribute<X> Y (D) : ExplicitSuppliers = "Z" := expr` geeft "item terminator ';' expected after item definition"; `attribute<X> Y (D) := expr, ExplicitSuppliers = "Z";` is goed.
+En let op de plaats in de regel. Heeft het item een expressie, dan komen de eigenschappen NA die expressie, achter een komma. `attribute<X> Y (D) : ExplicitSuppliers = "Z" := expr` geeft "item terminator ';' expected after item definition"; `attribute<X> Y (D) := expr, ExplicitSuppliers = "Z";` is goed. Verwar dit niet met een item zonder expressie, zoals een attribuut dat zijn waarde uit een storage haalt: `attribute<X> Y (D) : StorageName = "...", StorageReadOnly = "True";` is de normale vorm en daar staat de dubbele punt wel meteen achter het domein.
 
 ## De foutregel wijst niet naar de oorzaak
 
