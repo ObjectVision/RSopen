@@ -17,20 +17,77 @@ container Bouwkosten
 	container perOP := for_each_nedv(
 		  OP/name
 		, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, MakeDefined(BaseValues/'+OP/VSSH_name+', mean(BaseValues/'+OP/VSSH_name+')))' // prijs per m2 bvo; nodata (buiten landsdeel-polygonen) krijgt het landelijk gemiddelde i.p.v. 1 eur/m2 (#595)
-				'* OP/Dichtheid['+string(id(OP))+'[OP]] * OP/BVOPerWoning['+string(id(OP))+'[OP]]' // totale bvo in OP per Terreinoppervlakte (e.g. 1 ha)
-				'* AdminDomain/NrHaPerCell'                                                                                    // Aantal ha in cell
-				'* BouwwijzeOpslag_perOP['+string(id(OP))+'[OP]]'                                                              // opslagfactor van de bouwwijze van dit OP (#505); 1,0 zolang de kentallen ontbreken
+				+ '* OP/Dichtheid['+string(id(OP))+'[OP]] * OP/BVOPerWoning['+string(id(OP))+'[OP]]' // totale bvo in OP per Terreinoppervlakte (e.g. 1 ha)
+				+ '* AdminDomain/NrHaPerCell'                                                                                    // Aantal ha in cell
+				+ (/ModelParameters/Wonen/BouwwijzeOpslagInBouwkosten ? '* BouwwijzeOpslag/'+OP/name+'/Keuze/GekozenKostenopslag' : '') // opslagfactor van de gekozen bouwwijze per cel (#505, #723); op FALSE staat er geen factor in de formule
+				+ '* WoningtypeOpslag_perOP['+string(id(OP))+'[OP]]'                                                             // relatieve bouwkosten van het woningtype van dit OP (#673); genormaliseerd, dus mix-neutraal
+				+ '* BouwlaagOpslag_perOP['+string(id(OP))+'[OP]]'                                                               // relatieve bouwkosten van de bouwlaagklasse (#673); 1,0 zolang de schakelaar uit staat
 		, CompactedAdminDomain
 		, Eur
 	);
 	
-	attribute<Float32> BouwwijzeOpslag_perOP (OP) := = /ModelParameters/Wonen/BouwwijzeOpslagInBouwkosten
-		? '/Classifications/Modellering/BouwwijzeK/Kostenopslag[OP/Bouwwijze]'
+	container BouwwijzeInput
+	: Descr = "De pakketonafhankelijke invoer voor de bouwwijzekeuze (#723): wat de plek eist. Dezelfde eisen als de zeef leest, zodat de opslag hoort bij de bouwwijze die daar ook gekozen wordt."
+	{
+		attribute<meter> Waterdiepte (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsdiepte);
+
+		parameter<Bool> VeenGeldt := ='VariantParameters/VariantK/BouwwijzeVeenGeldtVoorOPs[VariantParameters/VariantK/V/'+Variant_name+']';
+
+		attribute<Bool> EisBodemdalingbestendig (CompactedAdminDomain) := VeenGeldt ? BouwwijzeEis/Bodemdalingbestendig : const(FALSE, CompactedAdminDomain);
+		attribute<Bool> EisDrijvend             (CompactedAdminDomain) := VeenGeldt ? BouwwijzeEis/Drijvend             : const(FALSE, CompactedAdminDomain);
+	}
+
+	Template BouwwijzeOpslag_perOP_T
+	: Descr = "De bouwwijzekeuze en daarmee de kostenopslag per cel voor een ontwikkelpakket (#505, #723). Tot #723 was de opslag een vast kenmerk van het pakket; nu hoort hij bij de bouwwijze die op de cel gekozen wordt, uit hetzelfde sjabloon waarmee de zeef toetst."
+	{
+		parameter<OP> OP_rel;
+		//
+
+		container Toegestaan :=
+			for_each_nedv(
+				  /Classifications/Modellering/BouwwijzeK/name
+				, 'const(OP/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[OP_rel], CompactedAdminDomain)'
+				, CompactedAdminDomain
+				, bool
+			);
+
+		container Keuze := Templates/Beschikbaarheden/Bouwwijzekeuze_T(
+			  Toegestaan
+			, BouwwijzeEis/Overstromingsbestendig
+			, BouwwijzeInput/EisBodemdalingbestendig
+			, BouwwijzeInput/EisDrijvend
+			, BouwwijzeInput/Waterdiepte
+		);
+	}
+
+	container BouwwijzeOpslag := = /ModelParameters/Wonen/BouwwijzeOpslagInBouwkosten
+		? 'for_each_ne(OP/name, ' + quote('BouwwijzeOpslag_perOP_T(') + ' + string(id(OP)) + ' + quote('[OP])') + ')'
+		: 'for_each_nedv(OP/name, ' + quote('1f') + ', void, Float32)'
+	, Descr = "Per ontwikkelpakket de bouwwijzekeuze per cel, alleen opgebouwd als de schakelaar aanstaat. Op FALSE staat hier een rij losse parameters die nergens gelezen worden, want de formule in perOP laat de factor dan helemaal weg: dat is dezelfde uitkomst als het vermenigvuldigen met exact 1,0 van voor #723, zonder het werk.";
+	
+	attribute<Float32> WoningtypeOpslag_perOP (OP) :=
+		  /ModelParameters/Wonen/Bouwkosten_Woningtype/Index_perWP4[OP/WP4_rel]
+		/ /ModelParameters/Wonen/Bouwkosten_Woningtype/Normalisator_perVSSH[OP/VSSH_rel]
+	, IntegrityCheck = "all(this > 0f)"
+	, Descr = "De relatieve bouwkosten per m2 bvo van het woningtype van dit ontwikkelpakket, gedeeld door het gemiddelde van diezelfde verhouding binnen de huursector (#673). Tot #673 kreeg elk van de 53 pakketten hetzelfde landsdeelkental, dus kostte een appartementengebouw per m2 bvo evenveel als een vrijstaande woning.
+
+				Geen schakelaar, want dit is een verbetering en geen open aanname: vijf onafhankelijke gemeentelijke kengetallenlijsten geven dezelfde ordening. De kentallen en de volledige onderbouwing staan in ModelParameters/Wonen/Bouwkosten_Woningtype.
+
+				Waarom er wordt gedeeld. Zonder die deling zou de differentiatie boven op het CBS-kental komen en het landelijke kostenniveau optillen, en zou bovendien de type-mix die al in de CBS-as huur tegen koop zit een tweede keer worden geteld.
+
+				De IntegrityCheck vangt de stille null af. OP/WP4_rel is een rlookup op de tekstkolom van de pakkettentabel; een typefout daar geeft zonder deze check een null die zich door de vermenigvuldiging in perOP heen voortplant, waarna de hele bouwkostenkaart van dat pakket null wordt en het pakket zonder foutmelding uit de ArgMax valt. Sinds #673 staat er daarom ook een check op WP4_rel zelf.";
+
+	attribute<Float32> BouwlaagOpslag_perOP (OP) := = /ModelParameters/Wonen/BouwlaagOpslagInBouwkosten
+		? 'OP/WP2_rel == /Classifications/Vastgoed/WP2/V/meergezins
+			? /Classifications/Modellering/BouwlaagK/Kostenopslag[classify(OP/Bouwlagen, /Classifications/Modellering/BouwlaagK/ClassBreaks)]
+			: 1f'
 		: 'const(1f, OP)'
 	, IntegrityCheck = "all(this > 0f)"
-	, Descr = "De kostenopslag van de bouwwijze die bij dit ontwikkelpakket hoort. De bouwwijze hangt aan het OP en niet aan de cel, dus de opslag werkt per ontwikkelpakket en niet per locatie: dezelfde as die de zeef leest in Zeef_Wonen_perOP_T.
+	, Descr = "De relatieve bouwkosten van de bouwlaagklasse van dit ontwikkelpakket, alleen bij gestapelde bouw en alleen als de schakelaar aanstaat (#673). De keuze staat in een metascript-conditie en niet in een ternair over data, zodat er op FALSE letterlijk const(1f, OP) in de boom staat en de andere tak niet wordt uitgerekend.
 
-				Met de schakelaar uit staat hier overal een 1 en verandert de vermenigvuldiging in perOP niets, want vermenigvuldigen met exact 1,0 is in drijvende komma een identiteit. De keuze staat in een metascript-conditie en niet in een ternair over data, zodat er op FALSE letterlijk const(1f, OP) in de boom staat en de andere tak niet wordt uitgerekend.";
-	
+				De klassen en de onderbouwing staan op Classifications/Modellering/BouwlaagK. Kort samengevat: binnen het bereik van deze pakkettentabel, 1,00 tot 7,00 lagen, meten de bronnen geen stijging maar een vlakke tot licht dalende reeks, en het enige verschil dat kan optreden is 2,5 procent tussen een tweelaags en een vijflaags appartementengebouw.
+
+				Geen dubbeltelling met de vormfactor. VormfactorHoogbouw van 0,65 maakt hoogbouw al ongunstiger, maar dat werkt uitsluitend op de opbrengstenkant, via een lagere dichtheid. De bouwkostenpost per hectare is vormfactor-invariant, want Dichtheid maal BVOPerWoning is per definitie FSI maal Terreinoppervlakte.";
+
 	unit<UInt32> BaseValues := ModelParameters/Wonen/Bouwkosten;
 }
