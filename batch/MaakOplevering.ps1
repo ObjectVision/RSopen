@@ -46,17 +46,20 @@ function Schoon([string]$Naam) {
 # het groen binnen ontwikkelpakketten er per constructie onzichtbaar voor is; de indicator
 # spreekt het NbS-verhaal daardoor tegen in plaats van het te ondersteunen. Er komt een
 # fractiegebaseerde opvolger. De bestanden blijven wel gewoon in LocalData staan.
-$NietUitleveren = @('BereikbaarheidGroen')
+# Ook de losse per-itemkaarten (naamvorm Bereikbaarheid_Groen_...) vallen onder de uitsluiting;
+# op verzoek van Deltares (#717) gaat alleen de niet-druktegecorrigeerde fractiemaat mee.
+$NietUitleveren = @('BereikbaarheidGroen', 'Bereikbaarheid_Groen_')
 $NietUitleverenKolommen = @(
     'BereikbaarheidGroen_BBG_Tot300m_ExAgr_Groenaanbod_over_woning'
     'BereikbaarheidGroen_BBG_Tot300m_Groenaanbod_over_woning'
     'BereikbaarheidGroen_BBG_Tot300m_ExAgr_DrukteCorr_PerWoning'
     'BereikbaarheidGroen_BBG_Tot300m_DrukteCorr_PerWoning'
+    'BereikbaarheidGroen_Fractie_Tot300m_DrukteCorr_PerWoning'
 )
 
 # De fractiegebaseerde opvolger heet BereikbaarheidGroen_Fractie en bevat dus de string waarop
 # hierboven wordt uitgesloten. Die moet er juist wel in, dus laat alles met _Fractie expliciet door.
-$TochUitleveren = @('_Fractie')
+$TochUitleveren = @('_Fractie_Cumulatief', 'BereikbaarheidGroen_Fractie.')
 
 function Uitgesloten([string]$Naam) {
     foreach ($t in $TochUitleveren) { if ($Naam -like "*$t*") { return $false } }
