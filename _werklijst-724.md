@@ -33,6 +33,23 @@ Deze vier gaan niet over een issue maar over het vermogen om iets te toetsen. Ze
 | 10d | dezelfde schakelaar, rivierendeel | gezakt | Voor het veen is er een tweede route, want de sector Waterberging alloceert daar. Voor de rivieren niet: het zomerbed, stromend en stagnant water uit die levering zit in geen enkele claim van die sector, dus die hectares komen nergens op de landgebruikskaart terecht en zetten de cel ook niet op slot. `Natuur.dms:1634` benoemt het zelf: "Let op dat ExogeenOpleggen/Totaal in VariantData op dit moment alleen de natuurstroom neemt en de waterstroom laat liggen", en `Zeef_T.dms:53` herhaalt het aan de zeefkant. Omvang, gemeten door een parallelle sessie op codestand 53d44232 met sleutel `opp_bron_riv`: van de 36.131,6 ha nieuw water in NbSGenuanceerd komt 32.961,9 ha uit de veenlevering en 3.169,8 ha uit de rivieren. Alleen dat laatste deel is een gat, en ook daarvan telt alleen het nieuwe water: de rivierenlevering wijst 21.013 ha als water aan, maar 17.843 ha daarvan is bestaand zomerbed en bestaande geulen die al als water te boek staan, dus daar verandert de oplegging niets aan. Op woningen: op het nieuwe veenwater staan 84 woningen die geen van alle wijken, op het nieuwe rivierenwater 331 waarvan er 119 wijken. Een eerdere opgave van 21.013 ha voor dit gat was te hoog en is hier gecorrigeerd. Dat het op twee plekken als openstaand is opgeschreven maakt het geen kleiner probleem, alleen een bekend probleem |
 | 10c | koolstofklasse van een gealloceerde waterbergingscel | gezakt, hoort bij #657 | `CarbonStorageSequestration_T.dms:207` bepaalt de klasse als `IsStedelijk ? Dichtbebouwd : MakeDefined(CC_Exogeen, vorige klasse)`, en `CC_Exogeen` op regel 198 is `ExogeenOpleggen/carbonclass_rel`, dus alleen de natuurstroom. Een gealloceerde waterbergingscel is niet stedelijk en krijgt geen exogene oplegging, dus hij houdt zijn oude koolstofklasse terwijl er water ligt. Aangedragen door een parallelle sessie en door mij in de code bevestigd. Dit is het punt dat de eerste doorlichting van #657 als open achterliet en dat er nog steeds staat; het maakt het methaancijfer voor NbSGenuanceerd een ondergrens |
 
+### Een structureel punt dat onder meerdere rijen ligt
+
+`ExogeenOpleggen/Totaal` wordt door zes plekken gelezen die er elk iets anders mee bedoelen, en dat verklaart drie van de bevindingen hierboven als een patroon in plaats van als losse gevallen.
+
+| lezer | wat die ermee bedoelt |
+|---|---|
+| `Templates/Indicatoren/Landgebruikskaart/Make_Landgebruikskaart_Basisjaar_T.dms` | wat er op de kaart komt te staan |
+| `Templates/Beschikbaarheden/Zeef_T.dms` | wat op slot staat voor nieuwe allocatie |
+| `Templates/Allocatie/Iter_Landbouw_T.dms:58` | wat onbeschikbaar is, via `Beschikbaar := IsNull(Totaal)` |
+| `Templates/VariantData_T.dms:369` | of er werkelijk een nieuw landgebruik landt, de sloopkoppeling van #684 |
+| `Templates/Claims/ZichtjaarXScenarioxAllocRegios.dms` | wat van de claim af moet |
+| `Templates/Allocatie/Zichtjaar_T.dms` | wat het model oplegt en met de zeef vrijhoudt |
+
+Zolang die zes vragen door een item worden beantwoord, is elke stroom die erbij komt voor minstens een van hen fout. Op 31 augustus is dat aantoonbaar gebeurd: een parallelle sessie voegde een landbouwstroom toe voor natte teelt en vernat grasland, waarna `Iter_Landbouw_T` 207.947 hectare aan de landbouwallocatie onttrok omdat opgelegd daar onbeschikbaar betekent. Voor natuur klopt die lezing, voor landbouw niet, want dat is zelf landbouw. De schakelaar is daarop teruggezet op FALSE in `c755860c`, dus de stand van vanavond is ongewijzigd.
+
+Ditzelfde mechanisme zit onder rij 10b, waar de waterstroom er juist niet in zit en de sloopkoppeling daardoor een omzetting naar open water niet als verandering ziet, en onder rij 10c, waar de koolstofindicator `ExogeenOpleggen/Totaal` helemaal niet leest maar een eigen stroom. Het is dus geen kwestie van drie losse omissies maar van een item dat te veel vragen tegelijk beantwoordt.
+
 ## Zeef en plancapaciteit
 
 | # | wijziging | oordeel | waarop het rust |
