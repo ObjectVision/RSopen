@@ -60,6 +60,16 @@ git diff --cached <bestand>           # controleer dat er niets van een ander in
 
 Controleer na de commit met `git status` dat het werk van de andere sessie nog als working copy overeind staat.
 
+Belangrijker nog: de index is gedeeld, net als de bestanden. `git add` gevolgd door `git commit` is dus niet atomair. Staat er tussen die twee opdrachten iets van een ander gestaged, dan pakt jouw commit dat mee, want een kale `git commit` neemt de hele index. Commit daarom met een expliciete padlijst achter twee streepjes:
+
+```
+git commit -- cfg/main/MijnBestand.dms cfg/main.dms
+```
+
+Die vorm commit alleen de genoemde paden en laat de rest van de index met rust. Gebeurd op 2026-08-31, twee keer op een avond en in beide richtingen: een commit voor #724 nam drie gestagede bestanden van de #705-sessie mee, en die sessie zag daarna "nothing to commit" en dacht even dat haar werk verdampt was. Terug te vinden via de reflog, en met `git reset --soft HEAD~1` te herstellen zolang er niet gepusht is, maar dat is een schrik die je niemand gunt.
+
+Controleer dus voor je commit niet alleen `git status` maar ook of de index leeg is van andermans werk, en gebruik hoe dan ook de padvorm.
+
 Let op de blinde vlek bij untracked bestanden: `git diff` geeft daar niets, en een lege diff leest als schoon terwijl het hele bestand meegaat bij `git add`. In een gedeeld diagnosebestand kan dan werk van een andere sessie in je commit belanden; dat is op 2026-08-28 gebeurd met de container D703 in Diagnose667.dms. Bekijk voor een nieuw bestand dus altijd de volledige inhoud, of `git diff --cached` na het stagen, voordat je commit.
 
 Commit of push alleen wanneer daarom gevraagd is.
