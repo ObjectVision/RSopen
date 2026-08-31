@@ -61,7 +61,12 @@ function Write-Regel([string]$Tekst) {
 }
 
 function Invoke-Stap {
-    param([string]$Stap, [string]$Item)
+    # NietFataal is voor stappen die meten en niets produceren waar een latere stap op leunt.
+    # Een omvallende meting hoort een reeks van zeventien uur niet te stoppen: de allocatie van het
+    # volgende zichtjaar hangt van de stand af en niet van de diagnose-uitdraai. De stap wordt wel
+    # als mislukt in status.tsv gezet en op het scherm gemeld, zodat er achteraf geen stilte staat
+    # waar een meting hoorde te staan.
+    param([string]$Stap, [string]$Item, [switch]$NietFataal)
 
     if ($script:Overgeslagen) {
         if ($Stap -eq $StartBij) { $script:Overgeslagen = $false }
@@ -91,6 +96,10 @@ function Invoke-Stap {
         Write-Regel "MISLUKT   : $Stap ($reden, $sec s)"
         Write-Regel "log       : $log"
         $fouten | Select-Object -First 20 | ForEach-Object { Write-Host "   $($_.Line)" }
+        if ($NietFataal) {
+            Write-Regel "doorgaan  : $Stap was een meting, dus de reeks loopt door. Dit zichtjaar mist zijn uitdraai."
+            return
+        }
         throw "Stap '$Stap' mislukt: $reden"
     }
 
@@ -201,7 +210,7 @@ foreach ($v in $Varianten) {
         if ($DiagnoseNaZichtjaar -contains $y) {
             $env:DiagCasus = "${Scenario}_$v"
             $env:DiagJaar  = "'$y'"
-            Invoke-Stap "diagnose-$v-$y" '/Diagnose/GenerateAll'
+            Invoke-Stap "diagnose-$v-$y" '/Diagnose/GenerateAll' -NietFataal
         }
     }
 }
