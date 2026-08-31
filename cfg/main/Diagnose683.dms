@@ -1,0 +1,75 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #683, verwijderen zodra de getallen in het issue staan.
+//
+// Meet wat het landschapsmasker met de plancapaciteit doet. Het masker komt uit de vier landschapstoekomstbeelden
+// (veen #614, kust #654, zand #630, rivieren #621), wordt in VariantData/Bouwregime samengevoegd tot OpSlotDoorLandschap
+// en sloot tot #683 wonen en werken ook binnen plancapaciteit uit.
+//
+// vrijgekomen_ha is de kern: het areaal dat na #683 beschikbaar is en in het masker ligt. Met de twee schakelaars aan kan
+// zo'n cel alleen beschikbaar zijn doordat er een plan op ligt, dus dat is precies wat de uitzondering oplevert.
+// Zet HardePlannenGaanVoorOpLandschapsregime en ZachtePlannenGaanVoorOpLandschapsregime uit en deze maat hoort nul te zijn.
+//
+// Draait op het basisjaar, dus zonder allocatie. Aansturing via DiagCasus, net als de rest van het diagnoseharnas.
+// Alleen NbSGenuanceerd heeft een masker; in BAU, BAU2 en NbSMax horen alle maskermaten nul te zijn.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose683
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #683: het landschapsmasker tegenover de plancapaciteit wonen en werken."
+{
+	parameter<String> Variant := /Diagnose/Variant, Descr = "Dezelfde variant als de rest van het diagnoseharnas, aangestuurd via de omgevingsvariabele DiagCasus.";
+	parameter<ha>     Cel     := AdminDomain/NrHaPerCell;
+
+	attribute<bool>   Masker      (AdminDomain) := ='recollect_by_cond(AdminDomain/IsCompactedDomain, /VariantData/'+Variant+'/Bouwregime/OpSlotDoorLandschap, FALSE)'
+	, Descr = "Het samengevoegde landschapsmasker: regime NietBouwen of Slopen uit een van de vier landschapstypen. Dit is de kaart die de zeef leest, terug op het volle AdminDomain gezet zodat hij met de plankaarten te kruisen is.";
+
+	attribute<bool>   Oplegging   (AdminDomain) := ='IsDefined(/VariantData/'+Variant+'/ExogeenOpleggen/Totaal)'
+	, Descr = "De exogene oplegging van hetzelfde landschapspakket. De kruistabel van masker en oplegging is de check die het issue mist: hoeveel gaat er op slot zonder dat er een nieuw landgebruik voor terugkomt.";
+
+	attribute<bool>   Gespaard    (AdminDomain) := ='/VariantData/'+Variant+'/ExogeenOpleggen/IsGespaardInBebouwdGebied'
+	, Descr = "Cel waar de levering wel een landgebruik wilde opleggen en het model die oplegging heeft laten vallen, omdat de cel in bestaand bebouwd gebied ligt of exogeen grondgebruik draagt (#641). Nodig om masker_zonder_oplegging eerlijk te lezen: daar komt bewust niets, in de rest komt er niets terwijl er ook niets was bedoeld.";
+
+	attribute<bool>   HardPlan    (AdminDomain) := /SourceData/Plancapaciteit/Read/Wonen/Hard/Per_AdminDomain;
+	attribute<bool>   ZachtPlan   (AdminDomain) := /SourceData/Plancapaciteit/Read/Wonen/Zacht/Per_AdminDomain;
+	attribute<bool>   HardPlan_W  (AdminDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_Subsector_AdminDomain/Nijverheid;
+	attribute<bool>   ZachtPlan_W (AdminDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_Subsector_AdminDomain/Nijverheid;
+	attribute<bool>   HardPlan_WA (AdminDomain) := /SourceData/Plancapaciteit/Read/Werken/Hard/Per_AdminDomain
+	, Descr = "Alle werkplannen samen, over de drie terreintypen. De zeef kijkt per subsector naar Per_Subsector_AdminDomain; deze vereniging is er alleen om het totaalbeslag te tonen.";
+	attribute<bool>   ZachtPlan_WA (AdminDomain) := /SourceData/Plancapaciteit/Read/Werken/Zacht/Per_AdminDomain;
+
+	attribute<Woning> Woningen    (AdminDomain) := /BaseData/StartState/StateBasisjaar/Read/Wonen/Aantal_Woningen_Totaal;
+
+	attribute<bool>   Beschikbaar   (AdminDomain) := ='/VariantData/'+Variant+'/Zeef/Basisjaar/Wonen/eengezins_VrijeSector/IsBeschikbaar_AdminDomain'
+	, Descr = "De basisjaarzeef van een van de vier woonsubsectoren. De vier verschillen alleen in de sloopbescherming via het energielabel, niet in het landschapsregime, dus voor deze telling maakt de keuze niet uit.";
+	attribute<bool>   Beschikbaar_W (AdminDomain) := ='/VariantData/'+Variant+'/Zeef/Basisjaar/Werken/Nijverheid/IsBeschikbaar_AdminDomain'
+	, Descr = "De basisjaarzeef van nijverheid. De zes werksubsectoren verschillen onderling in de milieuzonering en in welke terreintypen ze aankunnen, dus de vrijgekomen hectares hieronder gelden voor nijverheid en niet voor werken als geheel.";
+
+	parameter<String> uitdraai :=
+		  'maat;waarde'
+		+ '|masker_ha;'                      + string(sum(float32(Masker) * Cel))
+		+ '|oplegging_ha;'                   + string(sum(float32(Oplegging) * Cel))
+		+ '|masker_met_oplegging_ha;'        + string(sum(float32(Masker && Oplegging) * Cel))
+		+ '|masker_zonder_oplegging_ha;'     + string(sum(float32(Masker && !Oplegging) * Cel))
+		+ '|masker_zonder_opl_gespaard_ha;'  + string(sum(float32(Masker && !Oplegging &&  Gespaard) * Cel))
+		+ '|masker_zonder_opl_rest_ha;'      + string(sum(float32(Masker && !Oplegging && !Gespaard) * Cel))
+		+ '|masker_woningen;'                + string(sum(Woningen * float32(Masker)))
+		+ '|wonen_hardplan_ha;'              + string(sum(float32(HardPlan) * Cel))
+		+ '|wonen_hardplan_in_masker_ha;'    + string(sum(float32(HardPlan && Masker) * Cel))
+		+ '|wonen_zachtplan_in_masker_ha;'   + string(sum(float32(ZachtPlan && !HardPlan && Masker) * Cel))
+		+ '|wonen_beschikbaar_ha;'           + string(sum(float32(Beschikbaar) * Cel))
+		+ '|wonen_vrijgekomen_ha;'           + string(sum(float32(Beschikbaar && Masker) * Cel))
+		+ '|wonen_vrijgekomen_hard_ha;'      + string(sum(float32(Beschikbaar && Masker && HardPlan) * Cel))
+		+ '|wonen_vrijgekomen_zacht_ha;'     + string(sum(float32(Beschikbaar && Masker && !HardPlan) * Cel))
+		+ '|wonen_vrijgekomen_netto_ha;'     + string(sum(float32(Beschikbaar && Masker && !Oplegging) * Cel))
+		+ '|werken_hardplan_in_masker_ha;'   + string(sum(float32(HardPlan_WA && Masker) * Cel))
+		+ '|werken_zachtplan_in_masker_ha;'  + string(sum(float32(ZachtPlan_WA && !HardPlan_WA && Masker) * Cel))
+		+ '|werken_beschikbaar_ha;'          + string(sum(float32(Beschikbaar_W) * Cel))
+		+ '|werken_vrijgekomen_ha;'          + string(sum(float32(Beschikbaar_W && Masker) * Cel))
+		+ '|werken_vrijgekomen_hard_ha;'     + string(sum(float32(Beschikbaar_W && Masker && HardPlan_W) * Cel))
+		+ '|werken_vrijgekomen_zacht_ha;'    + string(sum(float32(Beschikbaar_W && Masker && !HardPlan_W) * Cel))
+		+ '|werken_vrijgekomen_netto_ha;'    + string(sum(float32(Beschikbaar_W && Masker && !Oplegging) * Cel))
+	, StorageName = "='%LocalDataProjDir%/Diagnose/landschapsmasker_683_'+/Diagnose/Casus+'.txt'", StorageType = "str"
+	, Descr = "De maskermaten in hectare. vrijgekomen_ha is wat de uitzondering van #683 oplevert in de basisjaarzeef; de uitsplitsing naar hard en zacht laat zien welke van de twee schakelaars het doet. vrijgekomen_netto_ha trekt daar de cellen af die de zichtjaarzeef alsnog sluit omdat er een ander landgebruik wordt opgelegd, want die route uit Zeef_T/IsRestrictief_DoorExogeenopleggen geldt voor alle sectoren en staat los van deze schakelaars. masker_zonder_oplegging_ha is de check die het issue mist: het deel dat op slot gaat zonder dat er een ander landgebruik voor in de plaats komt.";
+}
