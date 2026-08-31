@@ -147,3 +147,27 @@ Wat je niet in de tag zet is wat je niet hebt gecontroleerd. Draaien er meerdere
 Draai `git status` en kijk naar de mtime van de bestanden die je gaat wijzigen, vlak voordat je schrijft. In deze werkkopie draaien regelmatig meerdere sessies tegelijk, geen aparte worktrees. Commit alleen je eigen bestanden met een expliciete `git add`.
 
 In een worktree resolvet `%LocalDataProjDir%` naar `C:/LocalData/<naam van de map boven cfg>`, waar de ontkoppelde data van het hoofdproject niet staat. End-to-end-tests op dataniveau kunnen daar dus niet. Leg geen junction naar `C:/LocalData/RSopen_NL2120` zonder dat expliciet af te stemmen: dat geeft schrijfrisico in de echte ontkoppelde data.
+
+## Toetsen terwijl een ander draait: een losse kopie van cfg
+
+Op deze werkkopie draaien vaak meerdere sessies. Schrijven in `cfg/` botst dan met elke lopende reeks GeoDmsRun-stappen, want elke stap parseert de configuratie opnieuw. Wachten op een schrijfvenster hoeft niet: de configuratie is 4,5 MB en alle databronnen hangen aan `%sourceDataDir%`, dus een kopie doet het net zo goed.
+
+```bash
+cp -r cfg Data git.txt /pad/naar/scratchpad/RSopen_NL2120/
+```
+
+`Data` en `git.txt` moeten mee omdat niet alle bronnen aan `%sourceDataDir%` hangen. Vier hangen aan `%ProjDir%/Data`: de SOMERS-datasheet, de CBS-kerncijfers per wijk en buurt, en twee classificatietabellen. Samen 3,4 MB. Zonder die map parseert de kopie schoon met exit 0 en valt hij pas om zodra een keten de csv opent, met 49 foutregels op `cannot open dataset`. Dat is hetzelfde patroon als bij een verkeerde mapnaam hieronder, alleen bouwt een andere variabele het pad op.
+
+De mapnaam boven `cfg` moet gelijk zijn aan die van het project. `%LocalDataProjDir%` resolvet naar `C:/LocalData/<naam van de map boven cfg>`, en onder een andere naam vindt de configuratie de ontkoppelde bestanden niet. Dat valt niet op bij het parsen maar pas als een keten er een leest: op 2026-08-31 viel de grootwatervlag om op `BBG2022_25m_Modus_Nederland.tif` in een map die niet bestond.
+
+Met de goede naam leest de kopie dezelfde ontkoppelde bestanden als de werkkopie. Dat is veilig zolang je alleen items zonder storage opvraagt. Wil je een uitdraai zien, zet de `StorageName` van dat ene item dan om naar de scratchpad, zodat er niets in de gedeelde `LocalData/Diagnose` belandt terwijl een ander daar schrijft.
+
+De winst is dat de kopie ook een plek is om schakelaars om te zetten die in de werkkopie van iemand anders zijn. Een meting met `IndicatorRegio_ref` op een andere indeling kan zo zonder aan de gedeelde `ModelParameters/Advanced.dms` te komen.
+
+Wat het oplevert: op 2026-08-31 vond een sessie er drie fouten mee die anders in het schrijfvenster hadden gezeten, waaronder een `AsList` die de padnamen samenvoegde in plaats van de waarden. Die had exit 0 gegeven en een tabel met tien regels padnaam.
+
+## De processenlijst zegt niet of de baan vrij is
+
+Een reeks diagnosestappen draait elk item als een eigen GeoDmsRun-proces. Tussen twee items zit een gat van een paar seconden waarin er niets draait. Wie op dat moment kijkt ziet een lege lijst en concludeert dat de machine vrij is.
+
+Kijk dus naar de mtime van het logbestand van de ander, of vraag het gewoon. Op 2026-08-31 scheelde die vraag het onderbreken van een reeks die op vijftien van de twintig items stond.
