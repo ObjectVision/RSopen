@@ -1,0 +1,132 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #657, verwijderen zodra de getallen in het issue staan.
+//
+// Meet het veen dat buiten de SOMERS-veenweidepercelen ligt en waar RSopen dus geen oxidatie boekt. Deltares heeft op
+// 31 augustus 2026 emissiefactoren voor laag Nederland aangeleverd (EF_low_nl_2025.csv) met de kanttekening dat de
+// factoren voor hoog Nederland nog niet representatief zijn. De vraag die dit harnas beantwoordt is dus hoeveel van
+// dat veen die factoren uberhaupt kunnen dekken.
+//
+// De splitsing is drieledig: veengrond tegen moerige grond, want de factor verschilt (10,59 tegen 11,96 ton CO2 per
+// hectare per jaar); binnen tegen buiten de SOMERS-percelen; en laag tegen hoog Nederland volgens de fysisch-
+// geografische lezing uit #698. Daarnaast wordt het deel apart geteld dat volgens de aangeleverde tabel of volgens
+// onze eigen aanname toch op nul blijft: open water en bebouwd gebied.
+//
+// De indeling hangt niet aan een casus of zichtjaar, dus DiagCasus en DiagJaar spelen hier geen rol.
+// Draai het item Tabel.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose657
+: using = "Geography"
+, Descr = "Tijdelijk meetharnas voor #657: het veen buiten de SOMERS-percelen, gesplitst naar bodem, naar laag en hoog Nederland en naar landgebruik."
+{
+	parameter<float32> CelHa := AdminDomain/NrHaPerCell[float32];
+
+	attribute<bool> IsVeen   (AdminDomain) := MakeDefined(/SourceData/Bodem/BOFEK/IsVeen_grid, FALSE);
+	attribute<bool> IsVeenOfMoerig (AdminDomain) := MakeDefined(/SourceData/Bodem/BOFEK/IsVeenOfMoerig_grid, FALSE);
+	attribute<bool> IsMoerig (AdminDomain) := IsVeenOfMoerig && !IsVeen, Descr = "Moerige grond is cluster 20 van BOFEK2020: een dunne organische laag op zand of klei. De aangeleverde emissiefactor ligt daar hoger dan op veengrond.";
+
+	attribute<bool> InSOMERS (AdminDomain) := IsDefined(/SourceData/Landbouw/SOMERS/Veenweide_percelen/AdminDomain_rel), Descr = "Cel valt binnen een veenweideperceel waarop SOMERS een rekenregel geeft.";
+	attribute<bool> Hoog_NL  (AdminDomain) := /BaseData/Omgeving/HogeGronden, Descr = "De pleistocene helft van de Basiskaart Natuurlijk Systeem Nederland, de definitie sinds #698.";
+
+	// Landgebruik van het basisjaar langs dezelfde weg als de koolstofindicator: LGN naar koolstofklasse. Zo is de
+	// uitsplitsing hier vergelijkbaar met wat de indicator zelf ziet, zonder dat er een casus of zichtjaar bij hoeft.
+	attribute</Classifications/Grondgebruik/CarbonClass> CC (AdminDomain) := /Classifications/Grondgebruik/CarbonClass_rel[/SourceData/Grondgebruik/LGN/m25];
+	attribute<uint8> CC_code (AdminDomain) := /Classifications/Grondgebruik/CarbonClass/code[CC];
+
+	attribute<bool> IsWater     (AdminDomain) := MakeDefined(CC_code == 16b || CC_code == 17b || CC_code == 19b, FALSE), Descr = "Grote zoetwaterlichamen, kleine zoetwateren en kust- of estuariumwater. De aangeleverde tabel zet grote wateren op nul en geeft sloten alleen methaan.";
+	attribute<bool> IsStedelijk (AdminDomain) := MakeDefined(CC_code <= 15b && CC_code != 8b, FALSE), Descr = "De klassen van de bebouwde omgeving: wegen, bebouwing, glastuinbouw, en de kale, gras- en bosklassen in bebouwd gebied. Zonneparken (8) vallen erbuiten. De aangeleverde tabel geeft deze lagen op veen wel een emissie, maar in RSopen staat stedelijk gebied op nul en die aanname blijft staan tot Deltares iets anders zegt; zie #657.";
+	attribute<bool> IsOverig    (AdminDomain) := !IsWater && !IsStedelijk, Descr = "Alles wat overblijft: landbouw, natuur, bos. Dit is het areaal waarop een emissiefactor werkelijk zou landen.";
+
+	parameter<float32> ha_veen_totaal     := sum(float32(IsVeen) * CelHa);
+	parameter<float32> ha_moerig_totaal   := sum(float32(IsMoerig) * CelHa);
+	parameter<float32> ha_somers          := sum(float32(InSOMERS) * CelHa), Descr = "Alle cellen met een veenweideperceel, ook waar BOFEK geen veen of moerige grond aanwijst.";
+	parameter<float32> ha_somers_opveen   := sum(float32(InSOMERS && IsVeenOfMoerig) * CelHa);
+
+	parameter<float32> ha_buiten_veen     := sum(float32(IsVeen   && !InSOMERS) * CelHa);
+	parameter<float32> ha_buiten_moerig   := sum(float32(IsMoerig && !InSOMERS) * CelHa);
+
+	parameter<float32> ha_buiten_laag     := sum(float32(IsVeenOfMoerig && !InSOMERS && !Hoog_NL) * CelHa);
+	parameter<float32> ha_buiten_hoog     := sum(float32(IsVeenOfMoerig && !InSOMERS &&  Hoog_NL) * CelHa);
+
+	parameter<float32> ha_buiten_veen_laag     := sum(float32(IsVeen   && !InSOMERS && !Hoog_NL) * CelHa);
+	parameter<float32> ha_buiten_veen_hoog     := sum(float32(IsVeen   && !InSOMERS &&  Hoog_NL) * CelHa);
+	parameter<float32> ha_buiten_moerig_laag   := sum(float32(IsMoerig && !InSOMERS && !Hoog_NL) * CelHa);
+	parameter<float32> ha_buiten_moerig_hoog   := sum(float32(IsMoerig && !InSOMERS &&  Hoog_NL) * CelHa);
+
+	parameter<float32> ha_buiten_laag_water     := sum(float32(IsVeenOfMoerig && !InSOMERS && !Hoog_NL && IsWater)     * CelHa);
+	parameter<float32> ha_buiten_laag_stedelijk := sum(float32(IsVeenOfMoerig && !InSOMERS && !Hoog_NL && IsStedelijk) * CelHa);
+	parameter<float32> ha_buiten_laag_overig    := sum(float32(IsVeenOfMoerig && !InSOMERS && !Hoog_NL && IsOverig)    * CelHa);
+	parameter<float32> ha_buiten_hoog_overig    := sum(float32(IsVeenOfMoerig && !InSOMERS &&  Hoog_NL && IsOverig)    * CelHa);
+
+	// Wat de aangeleverde factoren op dat areaal zouden opleveren, in kton CO2 per jaar. Alleen op het overige
+	// landgebruik, dus zonder water en zonder bebouwd gebied.
+	parameter<float32> EF_veen_ton_ha_jaar   := 10.59f, Descr = "1,059 kg CO2 per m2 per jaar uit EF_low_nl_2025.csv, maal 10 naar ton per hectare. Geldt daar voor alle landlagen behalve grote wateren en sloten.";
+	parameter<float32> EF_moerig_ton_ha_jaar := 11.96f, Descr = "Idem voor de moerige gronden, 1,196 kg CO2 per m2 per jaar.";
+
+	parameter<float32> kton_laag := ( sum(float32(IsVeen   && !InSOMERS && !Hoog_NL && IsOverig) * CelHa) * EF_veen_ton_ha_jaar
+	                                + sum(float32(IsMoerig && !InSOMERS && !Hoog_NL && IsOverig) * CelHa) * EF_moerig_ton_ha_jaar ) / 1000f
+	, Descr = "Wat de laag-Nederlandse factoren buiten de SOMERS-percelen zouden opleveren, in kton CO2 per jaar, alleen op het niet-stedelijke en niet-waterlandgebruik.";
+	parameter<float32> kton_hoog := ( sum(float32(IsVeen   && !InSOMERS && Hoog_NL && IsOverig) * CelHa) * EF_veen_ton_ha_jaar
+	                                + sum(float32(IsMoerig && !InSOMERS && Hoog_NL && IsOverig) * CelHa) * EF_moerig_ton_ha_jaar ) / 1000f
+	, Descr = "Hetzelfde voor hoog Nederland. Dit getal is er om de omvang van de openstaande vraag te tonen en niet om te gebruiken: Deltares heeft laten weten dat de factoren van laag Nederland daar niet representatief zijn.";
+
+	parameter<String> Tabel :=
+		  'post;waarde'
+		+ '|ha_veen_totaal;'            + string(ha_veen_totaal)
+		+ '|ha_moerig_totaal;'          + string(ha_moerig_totaal)
+		+ '|ha_somers_cellen;'          + string(ha_somers)
+		+ '|ha_somers_op_veenofmoerig;' + string(ha_somers_opveen)
+		+ '|ha_buiten_veen;'            + string(ha_buiten_veen)
+		+ '|ha_buiten_moerig;'          + string(ha_buiten_moerig)
+		+ '|ha_buiten_laag;'            + string(ha_buiten_laag)
+		+ '|ha_buiten_hoog;'            + string(ha_buiten_hoog)
+		+ '|ha_buiten_veen_laag;'       + string(ha_buiten_veen_laag)
+		+ '|ha_buiten_veen_hoog;'       + string(ha_buiten_veen_hoog)
+		+ '|ha_buiten_moerig_laag;'     + string(ha_buiten_moerig_laag)
+		+ '|ha_buiten_moerig_hoog;'     + string(ha_buiten_moerig_hoog)
+		+ '|ha_buiten_laag_water;'      + string(ha_buiten_laag_water)
+		+ '|ha_buiten_laag_stedelijk;'  + string(ha_buiten_laag_stedelijk)
+		+ '|ha_buiten_laag_overig;'     + string(ha_buiten_laag_overig)
+		+ '|ha_buiten_hoog_overig;'     + string(ha_buiten_hoog_overig)
+		+ '|kton_co2_jr_laag;'          + string(kton_laag)
+		+ '|kton_co2_jr_hoog;'          + string(kton_hoog)
+	, StorageName = "='%LocalDataProjDir%/Diagnose/657_veen_buiten_somers.txt'"
+	, StorageType = "str"
+	, Descr = "Rijen gescheiden door een verticale streep.";
+
+	container Effect
+	: Descr = "Wat de drie nieuwe schakelaars met de uitkomst doen. Draai dit eerst met alle drie uit en dan met een ervan aan, en leg de uitdraaien naast elkaar; de instellingen staan in de uitdraai zelf, zodat een bestand zonder begeleidende notitie nog te lezen is.
+
+				Casus en zichtjaar komen uit DiagCasus en DiagJaar, net als bij het hoofdharnas. De bestandsnaam draagt beide, zodat vier combinaties naast elkaar kunnen blijven staan.
+
+				Let op dat de methaanpost geen deel is van de koolstofbalans: hij staat er los naast en mag er niet bij opgeteld worden zonder te zeggen dat het om CO2-equivalenten van een ander gas gaat."
+	{
+		container Koolstof := ='/Indicatoren/'+/Diagnose/Casus+'/Zichtjaren/'+/Diagnose/Jaar+'/CarbonStorageSequestration';
+		container Methaan  := ='/Indicatoren/'+/Diagnose/Casus+'/Zichtjaren/'+/Diagnose/Jaar+'/Methaan';
+
+		parameter<String> Uitdraai :=
+			  'post;waarde'
+			+ '|casus;'                       + /Diagnose/Casus
+			+ '|zichtjaar;'                   + /Diagnose/Jaar
+			+ '|sw_veenvastlegging;'          + string(/ModelParameters/Advanced/Koolstof_VeenVastleggingUitBouwstenen)
+			+ '|sw_oxidatie_buiten_somers;'   + string(/ModelParameters/Advanced/Koolstof_OxidatieBuitenSOMERS)
+			+ '|sw_ook_hoognl;'               + string(/ModelParameters/Advanced/Koolstof_OxidatieBuitenSOMERSOokHoogNL)
+			+ '|sw_stedelijk_op_nul;'         + string(/ModelParameters/Advanced/Koolstof_EFStedelijkOpNul)
+			+ '|sw_methaan;'                  + string(/ModelParameters/Advanced/Methaan_Meetellen)
+			+ '|co2_flow_tov_basisjaar_mton;' + string(sum(float64(float32(Koolstof/CO2FlowTovBasisjaar))) / 1000000d)
+			+ '|oxidatie_somers_mtonC;'       + string(float32(Koolstof/Zichtjaar/Carbon/Oxidatie/Vraag_StGebied))
+			+ '|oxidatie_totaal_mtonC;'       + string(float32(Koolstof/Zichtjaar/Carbon/Oxidatie/Vraag_Totaal_StGebied))
+			+ '|oxidatie_buiten_mtonC;'       + string(float32(Koolstof/BuitenSOMERS/Vraag_StGebied))
+			+ '|oxidatie_buiten_ha;'          + string(float32(Koolstof/BuitenSOMERS/Areaal))
+			+ '|ongedekt_mtonC;'              + string(float32(Koolstof/Zichtjaar/Carbon/Stock/Ongedekt_StGebied))
+			+ '|methaan_mton_co2eq_jr;'       + string(float32(Methaan/Jaarlijks_StGebied))
+			+ '|methaan_ha_totaal;'           + string(float32(Methaan/Areaal_MetMethaan))
+			+ '|methaan_ha_uit_klasse;'       + string(float32(Methaan/Areaal_UitKlasse))
+			+ '|methaan_ha_uit_vernatting;'   + string(float32(Methaan/Areaal_UitVernatting))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/657_effect_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'.txt'"
+		, StorageType = "str"
+		, Descr = "De koolstofposten staan in Mton C en de methaanpost in Mton CO2-equivalent, zoals de onderliggende items ze geven. Alleen co2_flow_tov_basisjaar staat in Mton CO2, want dat is de indicator zoals hij naar buiten gaat.";
+	}
+}
