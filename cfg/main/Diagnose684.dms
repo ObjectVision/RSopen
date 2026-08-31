@@ -1,0 +1,168 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #684, verwijderen zodra de getallen in het issue staan en de keuze is gemaakt.
+//
+// De vraag uit #684 en uit de comments van Deltares: waar komt de sloop zonder nieuw landgebruik vandaan, welke
+// levering en welk landschapstype, en welke NbS-bouwstenen liggen onder die hectares. Dat laatste is nodig om ze
+// alsnog exogeen op te kunnen leggen.
+//
+// Alles telt op het compacted domain en op de woningvoorraad in het basisjaar, dezelfde grondslag als
+// VariantData/<variant>/Sloop/Verschil, zodat de getallen naast die uitdraai te leggen zijn. De allocatie hoeft
+// niet te draaien: dit hangt alleen aan VariantData.
+//
+// Vaste variant NbSGenuanceerd, want alleen daar bestaan landschapstypen en dus bouwregime Slopen.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose684
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #684: de sloop zonder nieuw landgebruik, uitgesplitst naar landschapstype en naar NbS-bouwsteen."
+{
+	container VD   := /VariantData/NbSGenuanceerd;
+	container Veen := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Veen;
+	container Btk  := /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc;
+
+	unit<uint8> BS := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata;
+
+	parameter<float32> Cel := AdminDomain/NrHaPerCell[float32];
+
+	attribute<AdminDomain> AD_rel (CompactedAdminDomain) := CompactedAdminDomain/AdminDomain_rel;
+
+	// ---- de maskers uit Sloop/Verschil, hier alleen opgehaald ----
+
+	attribute<bool>    Gesloopt      (CompactedAdminDomain) := VD/Sloop/Totaal;
+	attribute<bool>    ZonderNieuwLU (CompactedAdminDomain) := VD/Sloop/Verschil/OpSlotMaarGeenNatuur;
+	attribute<float32> Won           (CompactedAdminDomain) := VD/StateBasisjaar/wonen/Totaal[float32];
+
+	attribute<bool> Regime_Veen     (CompactedAdminDomain) := VD/Bouwregime/Bron/Landschap/Veen     == /Classifications/Modellering/BouwregimeK/V/Slopen;
+	attribute<bool> Regime_Kust     (CompactedAdminDomain) := VD/Bouwregime/Bron/Landschap/Kust     == /Classifications/Modellering/BouwregimeK/V/Slopen;
+	attribute<bool> Regime_Rivieren (CompactedAdminDomain) := VD/Bouwregime/Bron/Landschap/Rivieren == /Classifications/Modellering/BouwregimeK/V/Slopen;
+
+	// ---- hoe groot is de categorie slopen en op slot zelf, los van de oplegging ----
+
+	attribute<bool> IsSlopenEnOpSlot (CompactedAdminDomain) := Btk/NietBouwen[AD_rel];
+	attribute<bool> MagOpleggen      (CompactedAdminDomain) := VD/Sloop/MagOpleggen;
+
+	parameter<float32> Opp_SlopenEnOpSlot_Ruw      := sum(float32(IsSlopenEnOpSlot))                * Cel, Descr = "Het hele ruimtebeslag van de categorie slopen en op slot uit de bebouwingstypekaart veen, op het compacted domain.";
+	parameter<float32> Opp_SlopenEnOpSlot_NaMasker := sum(float32(IsSlopenEnOpSlot && MagOpleggen)) * Cel, Descr = "Wat daarvan overblijft na de toets op bestaand bebouwd gebied en exogeen grondgebruik (#641). Dat is het veendeel van Sloop/DoorBouwregime.";
+
+	// ---- de driedeling naar landschapstype, in hectare naast de woningen ----
+
+	parameter<float32> Opp_Gesloopt      := sum(float32(Gesloopt))      * Cel;
+	parameter<float32> Opp_ZonderNieuwLU := sum(float32(ZonderNieuwLU)) * Cel;
+
+	parameter<float32> Opp_ZNL_Veen     := sum(float32(ZonderNieuwLU && Regime_Veen))     * Cel;
+	parameter<float32> Opp_ZNL_Kust     := sum(float32(ZonderNieuwLU && Regime_Kust))     * Cel;
+	parameter<float32> Opp_ZNL_Rivieren := sum(float32(ZonderNieuwLU && Regime_Rivieren)) * Cel;
+
+	parameter<float32> Won_Gesloopt      := sum(Won * float32(Gesloopt));
+	parameter<float32> Won_ZonderNieuwLU := sum(Won * float32(ZonderNieuwLU));
+	parameter<float32> Won_ZNL_Veen      := sum(Won * float32(ZonderNieuwLU && Regime_Veen));
+	parameter<float32> Won_ZNL_Kust      := sum(Won * float32(ZonderNieuwLU && Regime_Kust));
+	parameter<float32> Won_ZNL_Rivieren  := sum(Won * float32(ZonderNieuwLU && Regime_Rivieren));
+
+	// ---- de pandentoets uit #661 tegenover de sloop ----
+
+	attribute<bool> HeeftPanden (CompactedAdminDomain) := /BaseData/Omgeving/Opleggingsmasker/HeeftPanden[AD_rel], Descr = "Staat er een BAG-pand in de cel? Dit is de toets waarmee NatuurAlloc_T de cel uit de zeef houdt, dus waar de natuurallocatie per definitie niet landt.";
+	attribute<bool> MetNieuwLU  (CompactedAdminDomain) := Gesloopt && !ZonderNieuwLU, Descr = "De andere helft van de sloop: hier landt wel een oplegging, dus de cel krijgt een nieuw landgebruik.";
+
+	parameter<float32> Opp_ZNLVeen_MetPand    := sum(float32(ZonderNieuwLU && Regime_Veen &&  HeeftPanden)) * Cel;
+	parameter<float32> Opp_ZNLVeen_ZonderPand := sum(float32(ZonderNieuwLU && Regime_Veen && !HeeftPanden)) * Cel;
+	parameter<float32> Won_ZNLVeen_MetPand    := sum(Won * float32(ZonderNieuwLU && Regime_Veen &&  HeeftPanden));
+	parameter<float32> Won_ZNLVeen_ZonderPand := sum(Won * float32(ZonderNieuwLU && Regime_Veen && !HeeftPanden));
+
+	parameter<float32> Opp_MetNieuwLU_Veen := sum(float32(MetNieuwLU && Regime_Veen)) * Cel, Descr = "De helft van het veensloopgebied waar de natuurallocatie wel landt, ter vergelijking met Opp_ZNL_Veen.";
+	parameter<float32> Won_MetNieuwLU_Veen := sum(Won * float32(MetNieuwLU && Regime_Veen));
+
+	// ---- ligt de cel wel in het gebied waar de veenallocatie iets kan neerzetten ----
+
+	attribute<bool> InBouwstenenkaart (CompactedAdminDomain) := MakeDefined(Veen/IsVeengebied[AD_rel], FALSE), Descr = "Valt de cel binnen het ruimtebeslag van de bouwstenenkaart? Daarbuiten kan de veenallocatie per definitie niets neerzetten, hoe hoog de voorrang ook staat, want de cel zit dan in geen enkel peilvak.";
+
+	parameter<float32> Opp_ZNLVeen_BuitenBouwstenen := sum(float32(ZonderNieuwLU && Regime_Veen && !InBouwstenenkaart)) * Cel;
+	parameter<float32> Won_ZNLVeen_BuitenBouwstenen := sum(Won * float32(ZonderNieuwLU && Regime_Veen && !InBouwstenenkaart));
+	parameter<float32> Opp_ZNLVeen_BinnenBouwstenen := sum(float32(ZonderNieuwLU && Regime_Veen &&  InBouwstenenkaart)) * Cel;
+	parameter<float32> Won_ZNLVeen_BinnenBouwstenen := sum(Won * float32(ZonderNieuwLU && Regime_Veen &&  InBouwstenenkaart));
+
+	// ---- wat zegt de veenlevering zelf over die cellen ----
+
+	attribute<float32> Fr_Natuur (CompactedAdminDomain) := MakeDefined(Veen/Fr_Natuur_Totaal[AD_rel],    0f);
+	attribute<float32> Fr_Water  (CompactedAdminDomain) := MakeDefined(Veen/Fr_Water_Totaal[AD_rel],     0f);
+	attribute<float32> Fr_Blijft (CompactedAdminDomain) := MakeDefined(Veen/Fr_BlijftZoalsHetIs[AD_rel], 0f);
+
+	parameter<float32> Opp_ZNLVeen_Natuur := sum(Fr_Natuur * float32(ZonderNieuwLU && Regime_Veen)) * Cel, Descr = "Van het veendeel: hoeveel hectare de bouwstenentabel op deze cellen als natuurbeheertype voorschrijft. Dat is een opgave die ergens binnen hetzelfde peilvak moet landen, niet noodzakelijk hier.";
+	parameter<float32> Opp_ZNLVeen_Water  := sum(Fr_Water  * float32(ZonderNieuwLU && Regime_Veen)) * Cel, Descr = "Idem het open water uit kolom OppervlakteWater, dat sinds #664 niet wordt gealloceerd.";
+	parameter<float32> Opp_ZNLVeen_Blijft := sum(Fr_Blijft * float32(ZonderNieuwLU && Regime_Veen)) * Cel, Descr = "Idem het deel dat volgens de levering zijn huidige grondgebruik houdt: grasland, natte teelt, bebouwing en de niet aangeleverde bouwstenen.";
+
+	// ---- wat de veenallocatie zelf doet, om de prijs van de schakelaar te zien ----
+
+	container Ctl := Veen/Alloc/Controle;
+
+	parameter<float32> Alloc_Claim              := Ctl/Claim_NL[float32];
+	parameter<float32> Alloc_Gerealiseerd       := Ctl/Gerealiseerd_NL[float32];
+	parameter<float32> Alloc_Tekort             := Ctl/Tekort_NL[float32];
+	parameter<float32> Alloc_VerliesPandentoets := Ctl/Verlies_Pandentoets_NL[float32];
+	parameter<float32> Alloc_Aaneengeslotenheid := Ctl/Aaneengeslotenheid;
+	parameter<float32> Alloc_Aaneen_Aselect     := Ctl/Aaneengeslotenheid_Aselect;
+
+	// ---- welke bouwstenen liggen onder de sloop zonder nieuw landgebruik ----
+
+	container Ha_perBouwsteen :=
+		for_each_nedv(
+			BS/name
+			, 'sum(MakeDefined(Veen/Fr_perBouwsteen/' + BS/name + '[AD_rel], 0f) * float32(ZonderNieuwLU)) * Cel'
+			, void
+			, float32
+		), Descr = "Per NbS-bouwsteen het aantal hectare onder de sloop zonder nieuw landgebruik, gewogen met de bouwsteenfractie van de cel. De som blijft onder Opp_ZonderNieuwLU: de niet aangeleverde bouwstenen 0a, 0b, 1 en 10b zitten er niet in en het rivierendeel ligt buiten het veengebied.";
+
+	container Won_perBouwsteen :=
+		for_each_nedv(
+			BS/name
+			, 'sum(MakeDefined(Veen/Fr_perBouwsteen/' + BS/name + '[AD_rel], 0f) * Won * float32(ZonderNieuwLU))'
+			, void
+			, float32
+		), Descr = "Dezelfde weging op de woningvoorraad in het basisjaar.";
+
+	attribute<float32> Ha_BS  (BS) := ='union_data(BS, ' + AsItemList('Ha_perBouwsteen/'  + BS/name) + ')';
+	attribute<float32> Won_BS (BS) := ='union_data(BS, ' + AsItemList('Won_perBouwsteen/' + BS/name) + ')';
+
+	parameter<String> Uitdraai_Bouwsteen := AsList(BS/code + ';' + string(Ha_BS) + ';' + string(Won_BS), '|')
+	, StorageName = "%LocalDataProjDir%/Diagnose/684_bouwstenen.txt"
+	, StorageType = "str"
+	, Descr = "Een regel per bouwsteen: code, hectare, woningen.";
+
+	parameter<String> Uitdraai :=
+		  'opp_slopen_en_op_slot_ruw;'       + string(Opp_SlopenEnOpSlot_Ruw)
+		+ '|opp_slopen_en_op_slot_namasker;' + string(Opp_SlopenEnOpSlot_NaMasker)
+		+ '|opp_gesloopt;'                   + string(Opp_Gesloopt)
+		+ '|opp_zonder_nieuw_lu;'            + string(Opp_ZonderNieuwLU)
+		+ '|opp_znl_veen;'                   + string(Opp_ZNL_Veen)
+		+ '|opp_znl_kust;'                   + string(Opp_ZNL_Kust)
+		+ '|opp_znl_rivieren;'               + string(Opp_ZNL_Rivieren)
+		+ '|won_gesloopt;'                   + string(Won_Gesloopt)
+		+ '|won_zonder_nieuw_lu;'            + string(Won_ZonderNieuwLU)
+		+ '|won_znl_veen;'                   + string(Won_ZNL_Veen)
+		+ '|won_znl_kust;'                   + string(Won_ZNL_Kust)
+		+ '|won_znl_rivieren;'               + string(Won_ZNL_Rivieren)
+		+ '|opp_znlveen_metpand;'            + string(Opp_ZNLVeen_MetPand)
+		+ '|opp_znlveen_zonderpand;'         + string(Opp_ZNLVeen_ZonderPand)
+		+ '|won_znlveen_metpand;'            + string(Won_ZNLVeen_MetPand)
+		+ '|won_znlveen_zonderpand;'         + string(Won_ZNLVeen_ZonderPand)
+		+ '|opp_metnieuwlu_veen;'            + string(Opp_MetNieuwLU_Veen)
+		+ '|won_metnieuwlu_veen;'            + string(Won_MetNieuwLU_Veen)
+		+ '|opp_znlveen_buiten_bouwstenen;'  + string(Opp_ZNLVeen_BuitenBouwstenen)
+		+ '|won_znlveen_buiten_bouwstenen;'  + string(Won_ZNLVeen_BuitenBouwstenen)
+		+ '|opp_znlveen_binnen_bouwstenen;'  + string(Opp_ZNLVeen_BinnenBouwstenen)
+		+ '|won_znlveen_binnen_bouwstenen;'  + string(Won_ZNLVeen_BinnenBouwstenen)
+		+ '|opp_znlveen_natuur_volgens_levering;' + string(Opp_ZNLVeen_Natuur)
+		+ '|opp_znlveen_water_volgens_levering;'  + string(Opp_ZNLVeen_Water)
+		+ '|opp_znlveen_blijft_volgens_levering;' + string(Opp_ZNLVeen_Blijft)
+		+ '|alloc_claim;'                    + string(Alloc_Claim)
+		+ '|alloc_gerealiseerd;'             + string(Alloc_Gerealiseerd)
+		+ '|alloc_tekort;'                   + string(Alloc_Tekort)
+		+ '|alloc_verlies_pandentoets;'      + string(Alloc_VerliesPandentoets)
+		+ '|alloc_aaneengeslotenheid;'       + string(Alloc_Aaneengeslotenheid)
+		+ '|alloc_aaneen_aselect;'           + string(Alloc_Aaneen_Aselect)
+	, StorageName = "%LocalDataProjDir%/Diagnose/684_sloop.txt"
+	, StorageType = "str"
+	, Descr = "De getallen in een keer, zodat ze zonder allocatierun na te rekenen zijn.";
+}

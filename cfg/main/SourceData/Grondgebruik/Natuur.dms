@@ -816,7 +816,7 @@ container Natuur
 						)
 					, Descr = "Een glad ruisoppervlak per type, tussen 0 en 1. De trekking gebeurt per cel van 500 meter en wordt daarna over een schijf van Cluster_Straal gemiddeld; per cel trekken en dat middelen zou honderd trekkingen zo dicht op een half brengen dat er geen relief overblijft.";
 
-					container Geschiktheid :=
+					container Geschiktheid_Basis :=
 						for_each_nedv(
 							VeenType/name
 							, VeenType/ZeefPad + ' ? ((' + VeenType/AanhakenPad + ' + Ruis_Amplitude * Ruis/' + VeenType/name + ') / (1f + Ruis_Amplitude))[AdminDomain/rdc_100m_rel] : null_f'
@@ -824,6 +824,41 @@ container Natuur
 							, float32
 						)
 					, Descr = "Geschiktheid per type: aanhaking bij wat er al ligt plus ruis, en null buiten de zeef. De zeef zit hier in de nullen en niet ernaast, want NatuurAlloc_T verlangt dat: een zeef die pas na de allocatie werkt zou wegknippen wat al gealloceerd is en de opgave stilzwijgend missen.";
+
+					// ---- voorrang voor het sloopgebied, #684 ----
+
+					parameter<bool> SloopgebiedKrijgtDeNatuur := FALSE
+					, Descr = "Landt de nieuwe natuur bij voorrang op de cellen die de bebouwingstypekaart als slopen en op slot aanmerkt?
+
+								Staat uit, dus de allocatie kiest daar niets extra's. Dat is het gedrag waarop #684 is geschreven en het levert een uitkomst op die het model zelf niet kan verantwoorden: het bouwregime leegt het hele sloopgebied, terwijl de natuur op grond van aanhaking en ruis elders binnen hetzelfde peilvak landt. Gemeten in NbSGenuanceerd op 2026-08-31: van de 271.452 ha sloopgebied krijgt 160.298 ha een oplegging en blijft 111.154 ha leeg achter, met 28.084 woningen erop. Die cellen houden hun huidige landgebruiksklasse en staan er voortaan met nul woningen in.
+
+								Aanzetten doet twee dingen tegelijk, want los helpen ze niet. De geschiktheid krijgt binnen het sloopgebied een opslag van Sloopgebied_Voorrang, zodat de opgave van het peilvak daar het eerst landt. En de cel gaat als sloopgebied de zesde ingang van NatuurAlloc_T in, waarmee de pandentoets uit #661 er vervalt; zonder dat blijven juist de bebouwde cellen buiten de zeef, en daar staan 28.019 van die 28.084 woningen.
+
+								Gemeten op 2026-08-31, aan tegenover uit. De sloop zonder nieuw landgebruik gaat van 29.521 naar 10.128 woningen, in het veen van 28.084 naar 8.691. Het tekort van de veenallocatie daalt van 5.096 naar 4.369 ha en het verlies door de pandentoets van 18.715 naar 10.655 ha. De aaneengeslotenheid blijft 0,89 tegen 0,48 aselect, dus de kaart wordt er niet rafeliger van. Het gealloceerde areaal stijgt met 727 ha; de opgave zelf verandert niet.
+
+								Wat de schakelaar niet oplost is het oppervlak: 121.708 ha wordt 120.901 ha. De opgave in het veen is 213.663 ha en het sloopgebied 271.452 ha, dus zelfs met een strikte rangorde is er niet genoeg natuur om het sloopgebied te vullen. Dat is geen modelfout maar wat de bouwstenentabel zegt: bouwsteen 5, 7 en 8 zijn voor 0,30 natte teelt en 3a en 4a voor 0,70 respectievelijk 0,50 vernat grasland, en voor die twee kolommen kent het model geen landgebruiksklasse. Zolang die er niet is blijft dat deel geleegd achter met zijn oude klasse erop. Zie #684.
+
+								De keuze is niet vanzelfsprekend en ligt bij Deltares, zie #684. Twee leveringen van hetzelfde landschapstype zeggen iets anders: de bouwstenenkaart geeft een aandeel per peilvak zonder ligging, de bebouwingstypekaart wijst een sloopgebied aan. Het model kan die twee alleen laten samenvallen door de ene aan de andere te binden, en dat is wat deze schakelaar doet.";
+
+					parameter<float32> Sloopgebied_Voorrang := 1f
+					, Descr = "Hoe zwaar de voorrang weegt ten opzichte van de gewone geschiktheid, die tussen 0 en 1 loopt. Bij 1 is het een strikte rangorde: elke cel in het sloopgebied gaat voor elke cel erbuiten, en binnen elk van beide groepen beslist de aanhaking plus de ruis. Lager maakt er een voorkeur van in plaats van een rangorde. Doet niets zolang SloopgebiedKrijgtDeNatuur uit staat.
+
+								De opslag is voor alle typen gelijk en valt dus weg in de keuze tussen typen; hij bepaalt alleen welke cellen meedoen. Dat is dezelfde taakverdeling als bij de aanhakingsterm, zie Ruis_Amplitude.";
+
+					attribute<bool> IsSloopgebied (AdminDomain) := SloopgebiedKrijgtDeNatuur && MakeDefined(/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/NietBouwen, FALSE)
+					, Descr = "De categorie slopen en op slot uit de bebouwingstypekaart veen, en leeg zolang de schakelaar uit staat. Dit is precies het gebied waar Templates/VariantData_T het bouwregime Slopen geeft en de stand dus hoe dan ook wordt geleegd.";
+
+					parameter<float32> Voorrang := SloopgebiedKrijgtDeNatuur ? Sloopgebied_Voorrang : 0f
+					, Descr = "De opslag zoals de geschiktheid hem gebruikt: nul zolang de schakelaar uit staat, zodat Geschiktheid dan letter voor letter gelijk is aan Geschiktheid_Basis.";
+
+					container Geschiktheid :=
+						for_each_nedv(
+							VeenType/name
+							, '(Geschiktheid_Basis/' + VeenType/name + ' + Voorrang * float32(IsSloopgebied)) / (1f + Voorrang)'
+							, AdminDomain
+							, float32
+						)
+					, Descr = "De geschiktheid die de allocatie ziet: de basis plus de opslag voor het sloopgebied, weer teruggeschaald naar het bereik 0 tot 1 dat NatuurAlloc_T verlangt. De nullen van de zeef blijven staan, want een null propageert door de optelling heen.";
 
 					// ---- de opgave en de allocatie ----
 
@@ -836,7 +871,7 @@ container Natuur
 						)
 					, Descr = "De opgave in hectares per peilvak per type: de aangeleverde fractie maal het gerasterde peilvakoppervlak. Dit is wat #660 vraagt, en het vervangt de ArgMax die van elk peilvak een enkele klasse maakte.";
 
-					container Alloc := /Templates/SourceData/NatuurAlloc_T('Veen NbSGenuanceerd', VeenType, Peilvak, Claim, Geschiktheid)
+					container Alloc := /Templates/SourceData/NatuurAlloc_T('Veen NbSGenuanceerd', VeenType, Peilvak, Claim, Geschiktheid, IsSloopgebied)
 					, Descr = "De allocatie zelf, hetzelfde sjabloon als bij de zandnatuur uit #652. De opgave per peilvak per type is een harde bovengrens en binnen die grens maximaliseert discrete_alloc_sp de som van de geschiktheid. Wat de opgave niet opsoupeert valt in het type Rest en houdt zijn huidige grondgebruik.
 
 								Alleen NbSGenuanceerd heeft een veenlevering, dus deze aanroep staat hier en niet in een sjabloon per variant.";
