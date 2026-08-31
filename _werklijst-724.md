@@ -25,7 +25,7 @@ Deze vier gaan niet over een issue maar over het vermogen om iets te toetsen. Ze
 |---|---|---|---|
 | 5 | #684 sloop vereist een nieuw landgebruik | geslaagd | `Woningen_GeleegdZonderNieuwLandgebruik` 1.436,67 op 10.566,63 ha, precies het rivierensloopgebied, en `Woningen_GespaardDoorKoppeling` 28.079,76 op 94.604,56 ha. Rechtstreeks met `@statistics` gemeten na de commits van #660 en #664, dus vers |
 | 6 | #684 uitzondering voor rivieren | geslaagd, met een randgeval | De uitzondering snijdt op het sloopgebied van rivieren uit #620. Op de overlap met veen wint rivieren, dus 12,88 ha veensloopgebied wordt wel geleegd. De zin dat het veendeel nul is klopt in woningen en niet in oppervlak. Onafhankelijk bevestigd door sessie 8f, die op hetzelfde verschil uitkwam |
-| 7 | #684 pandentoetsreparatie | doel niet gehaald | `SloopgebiedKrijgtDeNatuur` staat op FALSE, dus `IsSloopgebied` is overal onwaar en de zesde ingang van `NatuurAlloc_T` krijgt overal een leeg masker. In de geleverde stand is dit code die niets doet. De pandentoets bepaalt daarmee feitelijk waar in het veen gesloopt wordt |
+| 7 | #684 pandentoetsreparatie | doel niet gehaald op de gemeten stand, sindsdien ingehaald | Op de standen waarop deze lijst rust stond `SloopgebiedKrijgtDeNatuur` op FALSE, was `IsSloopgebied` overal onwaar en deed de zesde ingang van `NatuurAlloc_T` niets; de pandentoets bepaalde daarmee feitelijk waar in het veen werd gesloopt. Op 31 augustus laat op de avond is daar een andere route overheen gekomen: `SloopUitGealloceerdeBouwsteen` staat sinds f1281e10 op TRUE, waarmee het bouwregime, de natuur, het water en een landbouwstroom alle vier uit de gealloceerde bouwsteen volgen. De sloop gaat daarmee van 3.430 naar 28.628 woningen, waarvan 25.444 in het veen. Alle getallen in deze lijst gelden voor de stand daarvoor |
 | 8 | #660 eindtoestand en overloop | geslaagd in constructie, omvang deels gemeten | Trap 1 in NbSGenuanceerd: claim 258.747,5 ha, gerealiseerd 244.495,81, tekort 14.251,69, verlies door de pandentoets 18.714,50, aaneengeslotenheid 0,8995 tegen 0,5506 aselect. Het eerder genoteerde tekort van 5.096 ha hoort bij een claim van 213.663 ha en is achterhaald door #664. Het restant na trap 2 is niet gemeten |
 | 9 | #664 claim nul in de referentievarianten | geslaagd | Op een verse allocatie: `claimreal_Waterberging` komt voor BAU leeg terug, dus geen enkele regio heeft nog een opgave, en `wbcellen_ha` is 0. In NbSGenuanceerd 0,9994 tot 1,0000 over vijf regio's, met 2.872,2 ha waterberging op veen |
 | 10 | #664 9a/9b-water als voorkeurslocatie | open | De voorkeursterm `IsVeenAllocWater` maal `Weight_VeenWater_Waterberging` is gebouwd en `ExogeenWaterOpleggen` staat correct uit, maar of de gealloceerde berging werkelijk in de 9a-vlakken valt is niet gemeten. Daarvoor bestaat geen kruising |
@@ -121,6 +121,12 @@ Die twee resten zijn in hectares vrijwel gelijk terwijl het verlies zelf een fac
 | open | 2 |
 
 Twee reparaties zijn uit deze ronde voortgekomen en gecommit: fe317807 voor de standlegenda en 808639b4 voor de doorlaat in het opleveringsscript. Een derde, de kolomnamen in `Diagnose684`, is door sessie 8f gedaan in 59998b98.
+
+## Wat er na het schrijven van deze lijst is veranderd
+
+De veenkant van NbSGenuanceerd loopt sinds f1281e10 via de gealloceerde bouwsteen. De onderbouwing daarvoor is nagelopen en houdt stand op het punt waar zij over gaat: van de zes lezers van `ExogeenOpleggen/Totaal` zijn de twee die op een nieuwe landbouwstroom zouden breken allebei landbouwgerelateerd, `Iter_Landbouw_T` en de landbouwclaim, en de sector Landbouw staat uitgecommentarieerd in `ModelParameters/SectorAllocRegio/Elements/Text:163`. Die twee draaien dus niet. De andere vier krijgen het bedoelde gedrag.
+
+Wat daarmee niet is beantwoord zijn de twee aannames die eronder liggen en die Deltares niet heeft bevestigd: de landgebruiksklassen voor natte teelt en vernat kruidenrijk grasland, en het uitzetten van de pandentoets in het veen. Beide staan als vraag in #684. Een levering van NbSGenuanceerd op deze stand draagt 28.628 gesloopte woningen tegen 3.430 daarvoor, en dat verschil rust op die twee aannames.
 
 ## Wat er niet is getoetst
 
