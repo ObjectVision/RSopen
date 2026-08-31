@@ -45,6 +45,47 @@ container Bodemdalingkosten
 		,	Descr = "De zes elementen moeten samen het hele terrein beslaan. Faalt zodra iemand een categorie aan de OP-tabel toevoegt zonder hem hier in te delen.";
 	}
 
+	container Eisen
+	: Descr = "De eisen die de plek aan de bouwwijze stelt, in de vorm die Bouwwijzekeuze_T verwacht. Dezelfde drie die Zeef_Wonen_perOP_T en SSM2017_Overstromingsschades/Grondgebruik/Zichtjaar aanleveren, want het moet per constructie dezelfde keuze opleveren als de zeef maakte bij het alloceren."
+	{
+		attribute<meter> Waterdiepte (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsdiepte);
+
+		parameter<Bool> VeenGeldt := VariantParameters/VariantK/BouwwijzeVeenGeldtVoorOPs[Variant_rel];
+
+		attribute<Bool> EisBodemdalingbestendig (CompactedAdminDomain) := VeenGeldt ? BouwwijzeEis/Bodemdalingbestendig : const(FALSE, CompactedAdminDomain);
+		attribute<Bool> EisDrijvend             (CompactedAdminDomain) := VeenGeldt ? BouwwijzeEis/Drijvend             : const(FALSE, CompactedAdminDomain);
+	}
+
+	Template Keuze_T
+	: Descr = "De bouwwijzekeuze voor een enkel ontwikkelpakket, en de schadevrije diepte die daaruit volgt, op AdminDomain zodat de kostenkern hem kan lezen."
+	{
+		//
+		parameter<OP> op_rel;
+		//
+
+		container Toegestaan :=
+			for_each_nedv(
+				  /Classifications/Modellering/BouwwijzeK/name
+				, 'const(OP/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[op_rel], CompactedAdminDomain)'
+				, CompactedAdminDomain
+				, bool
+			);
+
+		container K := Templates/Beschikbaarheden/Bouwwijzekeuze_T(
+			  Toegestaan
+			, BouwwijzeEis/Overstromingsbestendig
+			, Eisen/EisBodemdalingbestendig
+			, Eisen/EisDrijvend
+			, Eisen/Waterdiepte
+		);
+
+		attribute<meter> SchadevrijeDiepte (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, K/GekozenSchadevrijeDiepte, 0[meter])
+		,	Descr = "Hoeveel water houdt de bouwwijze die dit pakket op deze cel zou bouwen buiten de woning? Nul buiten het compacted domain en nul waar geen enkele bouwwijze voldoet; die cellen zeeft de zeef sowieso weg.";
+	}
+
+	container Keuze_perOP := for_each_ne(OP/name, 'Keuze_T(' + string(id(OP)) + '[OP])')
+	,	Descr = "Per ontwikkelpakket de bouwwijze die het op elke cel zou bouwen. Dezelfde keuzeregel en dezelfde invoer als de zeef gebruikt, uit hetzelfde sjabloon, dus kosten en zeef kunnen niet uit elkaar lopen (#723).";
+
 	container Kosten_perOP :=
 		for_each_ne(
 			  OP/name
@@ -54,7 +95,8 @@ container Bodemdalingkosten
 				+ 'const(Vlak/Straat['         +string(id(OP))+'[OP]], AdminDomain),'
 				+ 'const(Vlak/Park['           +string(id(OP))+'[OP]], AdminDomain),'
 				+ 'const(Vlak/OpenbareRuimte[' +string(id(OP))+'[OP]], AdminDomain),'
-				+ 'const(Vlak/Water['          +string(id(OP))+'[OP]], AdminDomain)'
+				+ 'const(Vlak/Water['          +string(id(OP))+'[OP]], AdminDomain),'
+				+ 'Keuze_perOP/'+OP/name+'/SchadevrijeDiepte'
 			  + ')'
 		)
 	,	Descr = "Per ontwikkelpakket de aanlegkosten van alle zes de alternatieven, de goedkoopste daarvan en de meerkosten ten opzichte van de zandgrondreferentie. Alle 53 staan hier naast elkaar omdat de geschiktheid ze vergelijkt.";
@@ -91,6 +133,16 @@ container Bodemdalingkosten
 			  'Variant ' + Variant_name + ', BodemdalingkostenInSaldo = ' + string(VariantParameters/VariantK/BodemdalingkostenInSaldo[Variant_rel]) + '\n'
 			+ 'Ontwikkelpakket ' + OP_ref + ', medianen binnen bebouwd gebied, euro per hectare\n'
 			+ '\n'
+			+ 'ophoging, mediaan binnen BBG, in meter
+'
+			+ '  alleen bodemdaling   ' + string(rth_element(/BaseData/Suitabilities/Wonen/Bodemdalingkosten/Hoeveelheden/Ophoogdikte / float32(BBG), 0.5f)) + '
+'
+			+ '  met overstroming     ' + string(rth_element(K/Ophoging / float32(BBG), 0.5f)) + '
+'
+			+ '  p80 met overstroming ' + string(rth_element(K/Ophoging / float32(BBG), 0.8f)) + '
+'
+			+ '
+'
 			+ 'aanlegkosten per alternatief\n'
 			+ '  A integraal ophogen    ' + string(rth_element(K/Alternatief/A_IntegraalOphogen     / float32(BBG), 0.5f)) + '\n'
 			+ '  B partieel ophogen     ' + string(rth_element(K/Alternatief/B_PartieelOphogen      / float32(BBG), 0.5f)) + '\n'
