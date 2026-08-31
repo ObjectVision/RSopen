@@ -1,0 +1,199 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #620, verwijderen zodra de getallen in het issue staan en de keuze is gemaakt.
+//
+// De vraag uit de comments: waar water is of komt moet sowieso gesloopt worden, en is dat zo gerekend? Twee
+// dingen staan daarvoor los van elkaar. Legt het model de waterstroom van de leveringen werkelijk op, en wordt
+// er gesloopt waar die waterstroom landt. Dit harnas meet allebei.
+//
+// Alles telt op het compacted domain en op de stand in het basisjaar, dezelfde grondslag als
+// VariantData/<variant>/Sloop/Verschil, zodat de getallen naast die uitdraai te leggen zijn. De allocatie hoeft
+// niet te draaien: dit hangt alleen aan VariantData.
+//
+// Vaste variant NbSGenuanceerd, want alleen daar leveren de landschappen een waterstroom en een sloopkaart.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose620
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #620: de exogene waterstroom tegenover de sloop."
+{
+	container VD   := /VariantData/NbSGenuanceerd;
+	container Riv  := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Rivieren;
+	container Veen := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Veen;
+	container Kust := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Kust;
+
+	parameter<float32> Cel := AdminDomain/NrHaPerCell[float32];
+
+	attribute<AdminDomain> AD_rel (CompactedAdminDomain) := CompactedAdminDomain/AdminDomain_rel;
+
+	// ---- de stand in het basisjaar ----
+
+	attribute<float32> Won (CompactedAdminDomain) := VD/StateBasisjaar/wonen/Totaal[float32];
+
+	attribute<float32> Ban (CompactedAdminDomain) :=
+		='add(' + AsItemList('VD/StateBasisjaar/' + /Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/name + '[float32]') + ')'
+	, Descr = "Banen in het basisjaar, over alle werken-subsectoren. Nodig omdat de levering naast slopen ook over uitkopen en het verplaatsen van arbeidsplaatsen spreekt.";
+
+	// ---- de maskers uit VariantData ----
+
+	attribute<bool> Gesloopt    (CompactedAdminDomain) := VD/Sloop/Totaal,      Descr = "Wat het model werkelijk leegt in het eerste zichtjaar.";
+	attribute<bool> MagOpleggen (CompactedAdminDomain) := VD/Sloop/MagOpleggen, Descr = "Het opleggingsmasker uit #641: buiten bestaand bebouwd gebied en niet over exogeen grondgebruik.";
+
+	// ---- de twee stromen van de oplegging, voor en na het masker ----
+
+	attribute<bool> Water_Levering  (CompactedAdminDomain) := IsDefined(VD/ExogeenOpleggen/Water_BT_Levering[AD_rel]), Descr = "Waar de leveringen water aangeven, voor het opleggingsmasker.";
+	attribute<bool> Water_NaMasker  (CompactedAdminDomain) := IsDefined(VD/ExogeenOpleggen/Water_BT[AD_rel]),          Descr = "Wat daarvan het masker overleeft. Of het ook wordt opgelegd hangt aan VariantK/ExogeenWaterOpleggen.";
+	attribute<bool> Natuur_NaMasker (CompactedAdminDomain) := IsDefined(VD/ExogeenOpleggen/Natuur_BT[AD_rel]),         Descr = "Dezelfde stap voor de natuurstroom, ter vergelijking.";
+	attribute<bool> Opgelegd        (CompactedAdminDomain) := IsDefined(VD/ExogeenOpleggen/Totaal[AD_rel]),            Descr = "Wat er werkelijk op de kaart komt. Bevat de waterstroom alleen als NeemWaterMee aanstaat.";
+
+	parameter<float32> Par_NeemWaterMee := float32(VD/ExogeenOpleggen/NeemWaterMee), Descr = "Nul betekent dat de waterstroom niet wordt opgelegd. Dit is de kern van de vraag.";
+
+	// ---- de arealen ----
+
+	parameter<float32> Opp_Water_Levering  := sum(float32(Water_Levering))  * Cel;
+	parameter<float32> Opp_Water_NaMasker  := sum(float32(Water_NaMasker))  * Cel;
+	parameter<float32> Opp_Natuur_NaMasker := sum(float32(Natuur_NaMasker)) * Cel;
+	parameter<float32> Opp_Opgelegd        := sum(float32(Opgelegd))        * Cel;
+
+	// ---- de kernvraag: wordt er gesloopt waar water komt ----
+
+	parameter<float32> Won_Water_Levering := sum(Won * float32(Water_Levering)), Descr = "De hele woningvoorraad in het basisjaar die op een cel staat waar een levering water aangeeft.";
+	parameter<float32> Ban_Water_Levering := sum(Ban * float32(Water_Levering));
+
+	parameter<float32> Won_Water_Gesloopt := sum(Won * float32(Water_Levering &&  Gesloopt)), Descr = "Daarvan het deel dat het model werkelijk leegt. Dat gebeurt langs de sloopkaart van de levering en niet langs de waterstroom.";
+	parameter<float32> Ban_Water_Gesloopt := sum(Ban * float32(Water_Levering &&  Gesloopt));
+	parameter<float32> Won_Water_Blijft   := sum(Won * float32(Water_Levering && !Gesloopt)), Descr = "En het deel dat blijft staan. Dit is het getal waar de vraag van Deltares op aankomt.";
+	parameter<float32> Ban_Water_Blijft   := sum(Ban * float32(Water_Levering && !Gesloopt));
+	parameter<float32> Opp_Water_Blijft   := sum(float32(Water_Levering && !Gesloopt)) * Cel;
+
+	// ---- waarom het blijft staan: het masker, of het ontbreken van een sloopkaart ----
+
+	parameter<float32> Won_Water_Blijft_BuitenMasker := sum(Won * float32(Water_Levering && !Gesloopt && !MagOpleggen)), Descr = "Blijft staan omdat de cel in bestaand bebouwd gebied ligt of exogeen grondgebruik draagt (#641). Deltares is hiermee akkoord.";
+	parameter<float32> Won_Water_Blijft_BinnenMasker := sum(Won * float32(Water_Levering && !Gesloopt &&  MagOpleggen)), Descr = "Blijft staan hoewel het masker de oplegging toestaat: geen enkele levering wijst deze cel als sloopgebied aan. Dit is de openstaande kwestie.";
+	parameter<float32> Ban_Water_Blijft_BuitenMasker := sum(Ban * float32(Water_Levering && !Gesloopt && !MagOpleggen));
+	parameter<float32> Ban_Water_Blijft_BinnenMasker := sum(Ban * float32(Water_Levering && !Gesloopt &&  MagOpleggen));
+	parameter<float32> Opp_Water_Blijft_BinnenMasker := sum(float32(Water_Levering && !Gesloopt && MagOpleggen)) * Cel;
+
+	// ---- rivieren: de nieuwe uiterwaarden tegenover de riviertrajecten ----
+
+	attribute<bool> Riv_Ingreep     (CompactedAdminDomain) := MakeDefined(Riv/IsRivierIngreep[AD_rel], FALSE);
+	attribute<bool> Riv_Binnendijks (CompactedAdminDomain) := MakeDefined(Riv/Sloopgebied/IsNieuweUiterwaard[AD_rel], FALSE), Descr = "De 36 binnendijkse gebieden, oftewel de nieuwe uiterwaarden waar de sloopkaart van #620 op slaat.";
+	attribute<bool> Riv_Buitendijks (CompactedAdminDomain) := Riv_Ingreep && !Riv_Binnendijks, Descr = "De 23 riviertrajecten: het bestaande zomerbed en de bestaande uiterwaarden. Die vallen sinds #620 buiten het sloopgebied.";
+	attribute<bool> Riv_WaterEco    (CompactedAdminDomain) := MakeDefined(/Classifications/Grondgebruik/NbSRivieren/RivierEcotoop/IsWater[Riv/Ecotoop_rel_AD[AD_rel]], FALSE), Descr = "Het ecotoop van de cel is zomerbed, stromend water of stagnant water. Rechtstreeks uit de levering, dus voor elke uitzondering.";
+
+	parameter<float32> Opp_RivWater_Binnen := sum(float32(Riv_WaterEco && Riv_Binnendijks)) * Cel;
+	parameter<float32> Opp_RivWater_Buiten := sum(float32(Riv_WaterEco && Riv_Buitendijks)) * Cel;
+
+	parameter<float32> Won_RivWater_Binnen          := sum(Won * float32(Riv_WaterEco && Riv_Binnendijks));
+	parameter<float32> Won_RivWater_Binnen_Gesloopt := sum(Won * float32(Riv_WaterEco && Riv_Binnendijks &&  Gesloopt));
+	parameter<float32> Won_RivWater_Binnen_Blijft   := sum(Won * float32(Riv_WaterEco && Riv_Binnendijks && !Gesloopt));
+	parameter<float32> Won_RivWater_Buiten          := sum(Won * float32(Riv_WaterEco && Riv_Buitendijks));
+	parameter<float32> Won_RivWater_Buiten_Gesloopt := sum(Won * float32(Riv_WaterEco && Riv_Buitendijks &&  Gesloopt)), Descr = "Hoort nul te zijn: de riviertrajecten vallen sinds #620 buiten de sloopkaart.";
+	parameter<float32> Won_RivWater_Buiten_Blijft   := sum(Won * float32(Riv_WaterEco && Riv_Buitendijks && !Gesloopt));
+	parameter<float32> Ban_RivWater_Buiten_Blijft   := sum(Ban * float32(Riv_WaterEco && Riv_Buitendijks && !Gesloopt));
+
+	parameter<float32> Won_Riv_Buiten_Blijft   := sum(Won * float32(Riv_Buitendijks && !Gesloopt)), Descr = "Alle woningen die in de riviertrajecten blijven staan, dus ook die op de natuurecotopen. Ter vergelijking met het getal van 2.496 uit de eerdere comment.";
+	parameter<float32> Won_Riv_Binnen_Gesloopt := sum(Won * float32(Riv_Binnendijks && Gesloopt)), Descr = "Wat er in de nieuwe uiterwaarden wel wijkt.";
+
+	// ---- veen: het open water van bouwsteen 9a en 9b ----
+
+	attribute<float32> Veen_Fr_Water (CompactedAdminDomain) := MakeDefined(Veen/Fr_Water_Totaal[AD_rel], 0f), Descr = "Het aandeel open water dat de veenlevering per cel vraagt. Een verdeling binnen het peilvak en geen ligging, dus de weging hieronder is een indicatie en geen uitkomst.";
+
+	parameter<float32> Opp_VeenWater          := sum(Veen_Fr_Water) * Cel;
+	parameter<float32> Won_VeenWater          := sum(Won * Veen_Fr_Water);
+	parameter<float32> Won_VeenWater_Gesloopt := sum(Won * Veen_Fr_Water * float32(Gesloopt));
+	parameter<float32> Won_VeenWater_Blijft   := sum(Won * Veen_Fr_Water * float32(!Gesloopt));
+
+	// ---- waar het nieuwe water vandaan komt ----
+	//
+	// Water_Nieuw is MakeDefined(MakeDefined(Veen/Water, Kust/Water), Rivieren/Water), daarna gefilterd op
+	// !Basisjaar/IsWater. De bron van een cel volgt dus dezelfde voorrang: veen wint, dan kust, dan rivieren.
+	// Zand levert geen water. De drie maskers hieronder tellen samen op tot Water_Levering.
+
+	attribute<bool> Bron_Veen (CompactedAdminDomain) := Water_Levering &&  IsDefined(Veen/Water[AD_rel]), Descr = "Het nieuwe open water van veenbouwsteen 9a. Bouwsteen 9b valt hier niet in: dat is bestaand open water en de filter !Basisjaar/IsWater haalt het eruit.";
+	attribute<bool> Bron_Kust (CompactedAdminDomain) := Water_Levering && !IsDefined(Veen/Water[AD_rel]) &&  IsDefined(Kust/Water[AD_rel]), Descr = "Hoort leeg te zijn zolang Landschap/Kust/VoorlandAlsNatuur aanstaat: het buitendijkse voorland gaat dan naar de natuurstroom. Dit is meteen de controle op de driedeling.";
+	attribute<bool> Bron_Riv  (CompactedAdminDomain) := Water_Levering && !IsDefined(Veen/Water[AD_rel]) && !IsDefined(Kust/Water[AD_rel]) && IsDefined(Riv/Water[AD_rel]), Descr = "Zomerbed, stromend water en stagnant water uit de ecotopenkaart, voor zover dat vandaag nog geen water is.";
+
+	parameter<float32> Opp_Bron_Veen := sum(float32(Bron_Veen)) * Cel;
+	parameter<float32> Opp_Bron_Kust := sum(float32(Bron_Kust)) * Cel;
+	parameter<float32> Opp_Bron_Riv  := sum(float32(Bron_Riv))  * Cel;
+	parameter<float32> Opp_Bron_Som  := Opp_Bron_Veen + Opp_Bron_Kust + Opp_Bron_Riv, Descr = "Controlegetal: hoort gelijk te zijn aan Opp_Water_Levering. Loopt het uiteen, dan dekt de driedeling de stroom niet.";
+
+	parameter<float32> Won_Bron_Veen := sum(Won * float32(Bron_Veen));
+	parameter<float32> Won_Bron_Riv  := sum(Won * float32(Bron_Riv));
+	parameter<float32> Ban_Bron_Veen := sum(Ban * float32(Bron_Veen));
+	parameter<float32> Ban_Bron_Riv  := sum(Ban * float32(Bron_Riv));
+
+	parameter<float32> Won_Bron_Veen_Gesloopt := sum(Won * float32(Bron_Veen &&  Gesloopt));
+	parameter<float32> Won_Bron_Veen_Blijft   := sum(Won * float32(Bron_Veen && !Gesloopt));
+	parameter<float32> Won_Bron_Riv_Gesloopt  := sum(Won * float32(Bron_Riv  &&  Gesloopt));
+	parameter<float32> Won_Bron_Riv_Blijft    := sum(Won * float32(Bron_Riv  && !Gesloopt));
+
+	// ---- het deel op veen- of moerige bodem, voor de methaanindicator van #657 ----
+	//
+	// Zelfde afbakening als Templates/Indicatoren/Methaan_T/OpVeenbodem, zodat de getallen daar naast te
+	// leggen zijn: BOFEK2020 cluster 10 en 20 samen, met FALSE buiten het ruimtebeslag van BOFEK. Die
+	// MakeDefined is niet cosmetisch, want het rasteritem zelf is daarbuiten null.
+
+	attribute<bool> OpVeenbodem (CompactedAdminDomain) := MakeDefined(/SourceData/Bodem/BOFEK/IsVeenOfMoerig_grid[AD_rel], FALSE)
+	, Descr = "Veengrond of moerige grond volgens BOFEK2020. Buiten deze bodems boekt de methaanindicator niets, dus alleen dit deel telt voor de ondergrens die in #657 gemeld wordt.";
+
+	parameter<float32> Opp_Veenbodem_Bron_Veen := sum(float32(Bron_Veen && OpVeenbodem)) * Cel, Descr = "Nieuw open water uit de veenlevering dat op veen- of moerige bodem ligt. Deze cellen krijgen nu de klasse van hun huidige grondgebruik in plaats van open water, want de koolstofindicator leest de sectorkant alleen op stedelijkheid.";
+	parameter<float32> Opp_Veenbodem_Bron_Riv  := sum(float32(Bron_Riv  && OpVeenbodem)) * Cel, Descr = "Idem uit de rivierenlevering. Hier is de oorzaak een andere: dit water wordt helemaal niet opgelegd en ook niet door de sector Waterberging gealloceerd.";
+	parameter<float32> Opp_Veenbodem_Bron_Kust := sum(float32(Bron_Kust && OpVeenbodem)) * Cel;
+
+	// ---- de uitdraai ----
+
+	parameter<String> Uitdraai :=
+		  'par_neem_water_mee;'              + string(Par_NeemWaterMee)
+		+ '|opp_water_levering;'             + string(Opp_Water_Levering)
+		+ '|opp_water_na_masker;'            + string(Opp_Water_NaMasker)
+		+ '|opp_natuur_na_masker;'           + string(Opp_Natuur_NaMasker)
+		+ '|opp_opgelegd_totaal;'            + string(Opp_Opgelegd)
+		+ '|won_water_levering;'             + string(Won_Water_Levering)
+		+ '|ban_water_levering;'             + string(Ban_Water_Levering)
+		+ '|won_water_gesloopt;'             + string(Won_Water_Gesloopt)
+		+ '|ban_water_gesloopt;'             + string(Ban_Water_Gesloopt)
+		+ '|won_water_blijft;'               + string(Won_Water_Blijft)
+		+ '|ban_water_blijft;'               + string(Ban_Water_Blijft)
+		+ '|opp_water_blijft;'               + string(Opp_Water_Blijft)
+		+ '|won_water_blijft_buiten_masker;' + string(Won_Water_Blijft_BuitenMasker)
+		+ '|won_water_blijft_binnen_masker;' + string(Won_Water_Blijft_BinnenMasker)
+		+ '|ban_water_blijft_buiten_masker;' + string(Ban_Water_Blijft_BuitenMasker)
+		+ '|ban_water_blijft_binnen_masker;' + string(Ban_Water_Blijft_BinnenMasker)
+		+ '|opp_water_blijft_binnen_masker;' + string(Opp_Water_Blijft_BinnenMasker)
+		+ '|opp_rivwater_binnendijks;'       + string(Opp_RivWater_Binnen)
+		+ '|opp_rivwater_buitendijks;'       + string(Opp_RivWater_Buiten)
+		+ '|won_rivwater_binnen;'            + string(Won_RivWater_Binnen)
+		+ '|won_rivwater_binnen_gesloopt;'   + string(Won_RivWater_Binnen_Gesloopt)
+		+ '|won_rivwater_binnen_blijft;'     + string(Won_RivWater_Binnen_Blijft)
+		+ '|won_rivwater_buiten;'            + string(Won_RivWater_Buiten)
+		+ '|won_rivwater_buiten_gesloopt;'   + string(Won_RivWater_Buiten_Gesloopt)
+		+ '|won_rivwater_buiten_blijft;'     + string(Won_RivWater_Buiten_Blijft)
+		+ '|ban_rivwater_buiten_blijft;'     + string(Ban_RivWater_Buiten_Blijft)
+		+ '|won_riv_buiten_blijft;'          + string(Won_Riv_Buiten_Blijft)
+		+ '|won_riv_binnen_gesloopt;'        + string(Won_Riv_Binnen_Gesloopt)
+		+ '|opp_veenwater;'                  + string(Opp_VeenWater)
+		+ '|won_veenwater;'                  + string(Won_VeenWater)
+		+ '|won_veenwater_gesloopt;'         + string(Won_VeenWater_Gesloopt)
+		+ '|won_veenwater_blijft;'           + string(Won_VeenWater_Blijft)
+		+ '|opp_bron_veen;'                  + string(Opp_Bron_Veen)
+		+ '|opp_bron_kust;'                  + string(Opp_Bron_Kust)
+		+ '|opp_bron_riv;'                   + string(Opp_Bron_Riv)
+		+ '|opp_bron_som;'                   + string(Opp_Bron_Som)
+		+ '|won_bron_veen;'                  + string(Won_Bron_Veen)
+		+ '|won_bron_riv;'                   + string(Won_Bron_Riv)
+		+ '|ban_bron_veen;'                  + string(Ban_Bron_Veen)
+		+ '|ban_bron_riv;'                   + string(Ban_Bron_Riv)
+		+ '|won_bron_veen_gesloopt;'         + string(Won_Bron_Veen_Gesloopt)
+		+ '|won_bron_veen_blijft;'           + string(Won_Bron_Veen_Blijft)
+		+ '|won_bron_riv_gesloopt;'          + string(Won_Bron_Riv_Gesloopt)
+		+ '|won_bron_riv_blijft;'            + string(Won_Bron_Riv_Blijft)
+		+ '|opp_veenbodem_bron_veen;'        + string(Opp_Veenbodem_Bron_Veen)
+		+ '|opp_veenbodem_bron_riv;'         + string(Opp_Veenbodem_Bron_Riv)
+		+ '|opp_veenbodem_bron_kust;'        + string(Opp_Veenbodem_Bron_Kust)
+	, StorageName = "%LocalDataProjDir%/Diagnose/620_water.txt"
+	, StorageType = "str"
+	, Descr = "De getallen in een keer, zodat ze zonder allocatierun na te rekenen zijn.";
+}
