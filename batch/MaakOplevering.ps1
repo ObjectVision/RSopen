@@ -59,11 +59,24 @@ $NietUitleverenKolommen = @(
 
 # De fractiegebaseerde opvolger heet BereikbaarheidGroen_Fractie en bevat dus de string waarop
 # hierboven wordt uitgesloten. Die moet er juist wel in, dus laat alles met _Fractie expliciet door.
-$TochUitleveren = @('_Fractie_Cumulatief', 'BereikbaarheidGroen_Fractie.')
+#
+# Let op de volgorde van de namen. Uitgesloten wordt aangeroepen op de RUWE bestandsnaam, dus voor
+# Schoon de modelstaart eraf haalt. Die naam eindigt altijd op _Nederland of _Nederland_SS-11 voor
+# de extensie. Een doorlaatpatroon dat op een punt eindigt, zoals 'BereikbaarheidGroen_Fractie.',
+# matcht daarom nooit; dat patroon was geschreven voor de opgeschoonde naam en liet in de praktijk
+# juist de hoofdkaart van de fractievariant uit de levering vallen. Patronen hier moeten dus tegen
+# de ruwe naam gelezen worden.
+$TochUitleveren = @('_Fractie_Cumulatief', 'BereikbaarheidGroen_Fractie_', '_Tot300m_Fractie_')
+
+# De druktegecorrigeerde fractiemaat gaat op verzoek van Deltares (#717) niet mee, ook niet als kaart.
+# Die staat als kolom al in $NietUitleverenKolommen; deze lijst doet hetzelfde voor de kaarten en gaat
+# voor op de doorlaat hierboven, want de bestandsnaam draagt zowel _Fractie_ als de druktecorrectie.
+$AltijdUitsluiten = @('_Fractie_Drukte_gecorrigeerd_')
 
 function Uitgesloten([string]$Naam) {
-    foreach ($t in $TochUitleveren) { if ($Naam -like "*$t*") { return $false } }
-    foreach ($p in $NietUitleveren) { if ($Naam -like "*$p*") { return $true } }
+    foreach ($a in $AltijdUitsluiten) { if ($Naam -like "*$a*") { return $true } }
+    foreach ($t in $TochUitleveren)   { if ($Naam -like "*$t*") { return $false } }
+    foreach ($p in $NietUitleveren)   { if ($Naam -like "*$p*") { return $true } }
     return $false
 }
 
