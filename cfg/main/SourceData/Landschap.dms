@@ -43,10 +43,95 @@ container Landschap : using = "Classifications"
 		attribute<rdc_meter>   geometry                    (poly) := geos_union_polygon(BasiskaartNatuurlijkSysteemNederland/geometry, BasiskaartNatuurlijkSysteemNederland/gridcode_rel);
 		attribute<.>           BNSN_rel                           := id(.);
 		attribute<string>      name                               := Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/name;
-		
+
 		attribute<.>           per_AdminDomain      (AdminDomain) := poly2grid(geometry, AdminDomain);
 		attribute<.>           per_AllocDomain      (AllocDomain) := poly2grid(geometry, AllocDomain);
 		attribute<.>           BNSN_rel_AdminDomain (AdminDomain) := id(.)[per_AdminDomain];
 		attribute<.>           BNSN_rel_AllocDomain (AllocDomain) := id(.)[per_AllocDomain];
+	}
+
+	unit<UInt32> LandschapsRegio : NrOfRows = 5
+	, Descr = "De landsdekkende, niet-overlappende regio-indeling voor de landschappen uit #705: kust, rivieren, veen, zand en overig.
+
+				De toedeling per cel staat in Impl en werkt in twee lagen. De basis is het gebiedstypenraster
+				Huidig_GO_BNS_reclass_ZWD; onder de klasse gebouwde omgeving valt hij terug op de hoofdklasse van de
+				Basiskaart Natuurlijk Systeem, zodat ook stadscellen een landschap dragen. De bestaande stad is dus
+				geen eigen regio; wie op de stad wil doorsnijden legt BaseData/Omgeving/BBGSamengesteld ernaast,
+				conform de afbakening bestaande stad in #705. Over de basis heen liggen de gebieden van de vier
+				landschapsteams: hun leveringen en begrenzingen tellen bij het eigen landschap, ook waar de basiskaart
+				iets anders zegt. Bij samenloop geldt de volgorde uit #705: kust, dan rivieren, dan veen, dan zand.
+
+				Landsdekkend betekent hier: elke cel binnen de provinciegrenzen behalve de grote wateren, plus de
+				cellen daarbuiten waar een landschapsteam iets doet, zoals de buitendijkse stroken langs de
+				Westerschelde. Waddenzee, IJsselmeer en Noordzee zonder ingreep dragen geen regio en vallen daarmee
+				buiten elke indicatorentabel, net als het buitenland.
+
+				De indeling staat los van de variant: de leveringen tellen als gebiedsafbakening mee ongeacht welke
+				variant draait, zodat alle varianten in dezelfde tabelregels optellen. Diagnose705 meet de arealen;
+				dit is een van de opties van ModelParameters/Advanced/IndicatorRegio_ref."
+	{
+		attribute<String> label      : ['Kust','Rivieren','Veen','Zand','Overig'];
+		attribute<String> name       := AsItemName(label);
+		attribute<UInt32> BrushColor : [rgb(249,225,19), rgb(65,105,242), rgb(148,227,54), rgb(205,137,102), rgb(200,200,200)];
+
+		container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+
+		container Impl
+		: Descr = "De bouwstenen van de toedeling. De Is-vlaggen mogen elkaar overlappen; de prioriteitsvolgorde in Per_AdminDomain hakt de knoop door."
+		{
+			attribute<..> Regio_perGebiedstype (Classifications/Landschap/Huidig_GO_BNS_reclass_ZWD) := rlookup(Classifications/Landschap/Huidig_GO_BNS_reclass_ZWD/LandschapsRegio_name, ../name)
+			, Descr = "Per gebiedstype de landschapsregio, uit de mappingkolom in Classifications. De gebouwde omgeving heeft daar een lege naam en wordt hier dus null.";
+			attribute<..> Regio_perBNSN        (Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK) := rlookup(Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/LandschapsRegio_name, ../name);
+
+			attribute<..> Basis_Gebiedstype (AdminDomain) := Regio_perGebiedstype[Huidig_GO_BNS_reclass_ZWD/gridcode_rel];
+			attribute<..> Basis_BNSN        (AdminDomain) := Regio_perBNSN[BasiskaartNatuurlijkSysteemNederlandK/per_AdminDomain];
+			attribute<..> Basis             (AdminDomain) := MakeDefined(Basis_Gebiedstype, Basis_BNSN)
+			, Descr = "De fysische basis: het gebiedstypenraster, en onder de gebouwde omgeving de BNSN-hoofdklasse. Null op de grote wateren buiten de Zuidwestelijke delta en buiten Nederland.";
+
+			// -- de gebieden van de vier landschapsteams --
+			attribute<Bool> InKustlevering (AdminDomain) :=
+				   IsDefined(/SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd/Duinen/Per_AdminDomain)
+				|| IsDefined(/SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd/Wadden/Per_AdminDomain)
+				|| IsDefined(/SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd/ZWD/Per_AdminDomain)
+			, Descr = "De drie kustleveringen van #654. Van belang voor de kleipolders langs de Waddenkust en de buitendijkse stroken langs de Westerschelde, die in de basis geen kust zijn.";
+
+			attribute<Bool> InRivierengebied (AdminDomain) :=
+				   IsDefined(poly2grid(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Levering/gebied/geometry, AdminDomain))
+				|| IsDefined(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/DijkenBehouden/Per_AdminDomain)
+			, Descr = "De ecotopenlevering van #621 plus de behouden dijken van #620. Alleen het bereik telt, dus de volgorde van poly2grid doet er hier niet toe.";
+
+			attribute<Bool> InVeengebied (AdminDomain) :=
+				   IsDefined(poly2grid(/SourceData/Grondgebruik/Natuur/Bron/Veen_NbSGenuanceerd/Bron_PerPeilvak/gebied/geometry, AdminDomain))
+				|| IsDefined(poly2grid(/SourceData/Grondgebruik/Natuur/Bron/Veen_NbSGenuanceerd/Bron_ZonderPeilvak/gebied/geometry, AdminDomain))
+			, Descr = "De twee veenleveringen van #613 en #660. Alleen het bereik telt; welke laag bij overlap wint speelt hier niet, dus de tie-break van de leveringsverwerking is hier niet nodig. De acht overloopdeelgebieden van #660 tellen bewust niet mee: dat zijn hullen tot en met de Veluwe, geen landschapsgrens.";
+
+			attribute<Bool> InZandgebied (AdminDomain) :=
+				   IsDefined(poly2grid(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Claimregios_shp/geometry, AdminDomain))
+				|| IsDefined(/SourceData/Grondgebruik/Natuur/Bron/Zand_NbSGenuanceerd/Beekdalherstel/Per_AdminDomain)
+			, Descr = "De eigen begrenzing van team Zand (begrenzing_zand.shp, inclusief het Heuvelland-deel) plus het beekdalherstel van #630. Het beekdal dat in het veengebied ligt verliest daar van veen, conform de volgorde uit #705.";
+
+			attribute<Bool> IsGrootWater (AdminDomain) := MakeDefined(/BaseData/StartState/Grondgebruik/Per_AdminDomain/IsGrootWater, TRUE)
+			, Descr = "Groot water volgens de CBS-kaart. Buiten die kaart geldt de cel ook als groot water, zodat een randcel zonder klasse niet stil als Overig meetelt.";
+
+			attribute<Bool> IsKust     (AdminDomain) := Basis == V/Kust     || InKustlevering;
+			attribute<Bool> IsRivieren (AdminDomain) := Basis == V/Rivieren || InRivierengebied;
+			attribute<Bool> IsVeen     (AdminDomain) := Basis == V/Veen     || InVeengebied;
+			attribute<Bool> IsZand     (AdminDomain) := Basis == V/Zand     || InZandgebied;
+			attribute<Bool> IsOverig   (AdminDomain) := IsDefined(Basis) || (AdminDomain/IsCompactedDomain && !IsGrootWater);
+		}
+
+		attribute<.> Per_AdminDomain (AdminDomain) := switch(
+			  case(Impl/IsKust,     V/Kust)
+			, case(Impl/IsRivieren, V/Rivieren)
+			, case(Impl/IsVeen,     V/Veen)
+			, case(Impl/IsZand,     V/Zand)
+			, case(Impl/IsOverig,   V/Overig)
+			, null_u[.]
+		), Descr = "De regio van de cel, met de volgorde uit #705 als tie-break: kust, dan rivieren, dan veen, dan zand, dan overig. Null op de grote wateren zonder ingreep en buiten Nederland.";
+
+		attribute<.> Per_AllocDomain          (AllocDomain)          := modus(Per_AdminDomain, AdminDomain/AllocDomain_rel)
+		, Descr = "Meest voorkomende regio van de onderliggende cellen. Met modus en niet met een eigen poly2grid, want deze indeling heeft geen vectorgeometrie.";
+		attribute<.> Per_CompactedAdminDomain (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Per_AdminDomain);
+		attribute<.> Per_CompactedAllocDomain (CompactedAllocDomain) := collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, Per_AllocDomain);
 	}
 }
