@@ -1,0 +1,96 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #724, verwijderen zodra de getallen in het issue staan.
+//
+// Twee openstaande toetsen uit de doorlichting die geen tweede allocatierun nodig hebben.
+//
+// D664 kruist de gealloceerde waterberging met het 9a/9b-water van de veenallocatie. Dat was in
+// #664 de enige vraag die op geen enkele manier was gemeten: de voorkeursterm is gebouwd en de
+// claim wordt gehaald, maar of de berging ook werkelijk op die vlakken landt wist niemand. Leest
+// de stand, dus draaien kan pas nadat het zichtjaar is doorgerekend.
+//
+// D673 beantwoordt of de woningtype-as de keuze van het ontwikkelpakket werkelijk kan verzetten.
+// Die vraag is niet met een schakelaar te beantwoorden, want die is er bewust niet, en ook niet
+// met een A/B, want dat zou een tweede allocatie kosten. Hij is wel rekenkundig te beantwoorden:
+// de ArgMax loopt binnen OP_subdomain, dus binnen een WP2xVSSH-combinatie, en daar kan de as
+// alleen iets doen als binnen die combinatie meer dan een woningtype voorkomt. Leest alleen de
+// pakkettentabel, dus draaien kan zonder run.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose724
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor de twee restpunten uit #724 die zonder tweede allocatie te beantwoorden zijn."
+{
+	container D664
+	: Descr = "Landt de gealloceerde waterberging op het 9a/9b-water van de veenallocatie?
+
+				De voorkeursterm uit #664 geeft die cellen een opslag van Weight_VeenWater_Waterberging, en bij een gewicht van 1,0 is dat vrijwel een strikte rangorde omdat de overige termen samen op hoogstens 1 uitkomen. Als de constructie doet wat zij belooft, hoort vrijwel alle gealloceerde berging binnen het 9a/9b-water te vallen zolang daar nog ruimte is.
+
+				Wat het niet kan zijn: alles. Het 9a/9b-water is 45.084 ha en de bergingsopgave is groter, dus een deel landt per definitie elders. De maat die telt is dus het aandeel van de berging dat op dat water valt, en het aandeel van dat water dat berging krijgt.
+
+				Twee dingen kunnen de uitkomst drukken zonder dat de voorkeursterm stuk is. De dieptetoets TeOndiepVoorWaterberging eist een waterschijf van minstens een meter, en de restricties kunnen die cellen alsnog uitsluiten. Vandaar dat de uitdraai die twee apart telt."
+	{
+		attribute<Bool> IsWbCel (AdminDomain) := ='MakeDefined('+/Diagnose/Pad_Z+'Stand/Sector_rel == /Classifications/Actor/Sector/V/Waterberging, FALSE)'
+		, Descr = "Cel die de sector Waterberging in dit zichtjaar heeft gealloceerd, uit de stand.";
+
+		attribute<Bool> IsVeenWater (AdminDomain) :=
+			IsDefined(/SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Veen/Water)
+			&& !/SourceData/Grondgebruik/Natuur/Basisjaar/IsWater
+		, Descr = "Cel waar de veenallocatie het open water van bouwsteen 9a of 9b heeft gelegd en die in het basisjaar nog geen water was. Exact dezelfde uitdrukking als IsVeenAllocWater in Suitability_Zichtjaar_T, zodat deze meting per constructie hetzelfde gebied telt als de voorkeursterm.";
+
+		parameter<Float32> Cel := AdminDomain/NrHaPerCell[Float32];
+
+		parameter<Float32> Ha_Wb          := sum(Float32(IsWbCel)) * Cel;
+		parameter<Float32> Ha_VeenWater   := sum(Float32(IsVeenWater)) * Cel;
+		parameter<Float32> Ha_Beide       := sum(Float32(IsWbCel && IsVeenWater)) * Cel;
+		parameter<Float32> Ha_WbBuiten    := sum(Float32(IsWbCel && !IsVeenWater)) * Cel;
+		parameter<Float32> Ha_WaterZonder := sum(Float32(!IsWbCel && IsVeenWater)) * Cel;
+
+		parameter<String> Uitdraai :=
+			  'maat;waarde'
+			+ '|wb_ha;'                    + string(Ha_Wb)
+			+ '|veenwater_ha;'             + string(Ha_VeenWater)
+			+ '|wb_op_veenwater_ha;'       + string(Ha_Beide)
+			+ '|wb_buiten_veenwater_ha;'   + string(Ha_WbBuiten)
+			+ '|veenwater_zonder_wb_ha;'   + string(Ha_WaterZonder)
+			+ '|aandeel_wb_op_veenwater;'  + string(Ha_Wb        > 0f ? Ha_Beide / Ha_Wb : 0f)
+			+ '|aandeel_veenwater_benut;'  + string(Ha_VeenWater > 0f ? Ha_Beide / Ha_VeenWater : 0f)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/724_waterberging_op_veenwater_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'.txt'"
+		, StorageType = "str"
+		, Descr = "Lees aandeel_wb_op_veenwater als het antwoord op de vraag van #664. Ligt dat hoog, dan stuurt de voorkeursterm zoals bedoeld. Ligt het laag terwijl veenwater_zonder_wb_ha groot is, dan wordt dat water wel aangeboden maar niet gekozen, en zit de oorzaak in de zeef en niet in de geschiktheid.";
+	}
+
+	container D673
+	: Descr = "Kan de woningtype-as de keuze van het ontwikkelpakket verzetten?
+
+				De vraag lijkt op een A/B maar is het niet, want die as heeft bewust geen schakelaar. Hij is wel rekenkundig te beantwoorden. De keuze valt in IterSubsector_T_Wonen met een ArgMax over OP_subdomain, en dat is de set pakketten binnen een WP2xVSSH-combinatie. Verandert de factor binnen zo'n combinatie niet, dan is hij een constante in de ArgMax en kan hij per constructie niets verzetten.
+
+				De uitdraai geeft per combinatie het aantal pakketten, het aantal verschillende woningtypen en de laagste en hoogste factor. Staat er bij meergezins een 1 in de kolom typen, dan is daar bewezen dat de as niets doet; bij eengezins zegt de spreiding hoeveel hij hoogstens kan.
+
+				Wat hij niet zegt is of de keuze in de praktijk kantelt. Daarvoor moet de kostenverandering worden afgezet tegen het verschil in exploitatiesaldo tussen het beste en het op een na beste pakket, en dat saldo hangt aan de opbrengsten en dus aan de locatie. Deze uitdraai geeft de bovengrens van het effect, niet het effect zelf."
+	{
+		parameter<String> Pad_BK := /Diagnose/Pad_V + 'Suitability/src/Wonen/Bouwkosten/';
+		parameter<String> Pad_OP := /Diagnose/Pad_V + 'Suitability/src/Wonen/OP';
+
+		unit<uint8> Combi := /Classifications/Vastgoed/WP2xVSSH
+		, Descr = "De vier combinaties van woningvorm en huursector. Dit is de set waarbinnen de ArgMax loopt, dus de set waarbinnen de factor iets moet kunnen verzetten."
+		{
+			attribute<String> expr :=
+				  quote(name + ';')
+				+ ' + string(#(' + Pad_OP + '/perWP2xVSSH/' + name + '/OP_sub)) + ' + quote(';')
+				+ ' + string(#unique(' + Pad_OP + '/WP4_name[' + Pad_OP + '/perWP2xVSSH/' + name + '/OP_sub/org_rel])) + ' + quote(';')
+				+ ' + string(min(' + Pad_BK + 'WoningtypeOpslag_perOP[' + Pad_OP + '/perWP2xVSSH/' + name + '/OP_sub/org_rel])) + ' + quote(';')
+				+ ' + string(max(' + Pad_BK + 'WoningtypeOpslag_perOP[' + Pad_OP + '/perWP2xVSSH/' + name + '/OP_sub/org_rel]))'
+			, Descr = "Per combinatie: naam, aantal pakketten, aantal verschillende woningtypen, en de laagste en hoogste typefactor binnen die set.";
+		}
+
+		parameter<String> Uitdraai := =(
+			  quote('combinatie;pakketten;woningtypen;factor_min;factor_max|')
+			+ ' + ' + AsList(Combi/expr, ' + ' + quote('|') + ' + ')
+		)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/724_woningtypeas_'+/Diagnose/Casus+'.txt'"
+		, StorageType = "str"
+		, Descr = "Een regel per WP2xVSSH-combinatie. Verwachting vooraf, op grond van de pakkettentabel: bij de twee meergezinscombinaties staat er 1 in de kolom woningtypen en zijn factor_min en factor_max gelijk, want elk meergezinspakket is een appartement. Bij eengezins staan er meer typen en loopt de factor uiteen. Is die verwachting juist, dan is daarmee bewezen dat de as in de helft van de allocatie per constructie niets kan verzetten.";
+	}
+}
