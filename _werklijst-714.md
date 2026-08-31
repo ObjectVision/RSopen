@@ -6,6 +6,8 @@ Oordelen: **geslaagd** is gemeten en het getal klopt met wat de wijziging beloof
 
 Bijgewerkt: 30 augustus, na de verse equivalentietoets.
 
+Let op de vintage. De oordelen hieronder gelden voor de codestand van 30 augustus, tag `oplevering_NL2120_20260830` op commit f9c8d172. Op 31 augustus zijn daar 42 commits overheen gegaan, verdeeld over achttien issuenummers en waarvan elf gedragswijzigend. Twee daarvan raken de conditie waarop meerdere rijen hieronder snijden: #660 legt de oplegging sinds die dag ook over bestaande veennatuur, en #664 laat het 9a/9b-water weer alloceren. Getallen over sloop, oplegging, het veentekort en het landschapsmasker zijn daardoor verschoven. Zie #724 voor de doorlichting van die 42 commits en voor de herziene getallen; deze lijst is daar niet op bijgewerkt.
+
 ## Rekenkern en rekenpad
 
 | # | wijziging | oordeel | waarop het rust |
