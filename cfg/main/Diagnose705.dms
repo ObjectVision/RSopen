@@ -2,13 +2,20 @@
 //
 // TIJDELIJK meetharnas voor #705, verwijderen zodra de getallen in het issue staan.
 //
-// Meet de arealen van de landschapsregio-indeling in SourceData/Landschap/LandschapsRegio: hectares per regio, het
-// restant zonder regio binnen Nederland (de grote wateren en de cellen zonder basisklasse), en per landschapsteam
-// hoeveel van het eigen leverings- of begrenzingsgebied ook in de eigen regio valt. Dat laatste laat zien wat de
-// prioriteitsvolgorde kust, rivieren, veen, zand aan de andere landschappen afstaat.
+// Meet de landschapsregio-indeling in SourceData/Landschap/LandschapsRegio: hectares per regio, het restant zonder
+// regio, en per landschapsteam hoeveel van het eigen gebied ook in de eigen regio valt. Dat laatste laat zien wat de
+// prioriteitsvolgorde aan de andere landschappen afstaat.
 //
-// De indeling hangt niet aan een casus of zichtjaar, dus DiagCasus en DiagJaar spelen hier geen rol.
-// Draai het item Tabel.
+// Sinds de reactie vanuit Deltares meet het harnas twee dingen extra. Reeks draait de vereenvoudiging in tien
+// oplopende stralen, zodat de projectgroep kan zien hoeveel de grenzen door de oogharen schuiven. En Waterberging
+// toetst of de regionale sommen van de waterbergingsindicator nog optellen tot het landelijke totaal; die toets hoort
+// bij de omzetting van poly2grid naar modus in de blokindeling en staat hier omdat #705 die omzetting nodig had.
+//
+// De twee versies van de veen-zandvolgorde draai je door LandschapsRegio/VeenGaatVoorZand om te zetten; het harnas
+// meet steeds de stand die op dat moment in de configuratie staat en zet die in de kop van de uitdraai.
+//
+// Draai het item Tabel. De indeling hangt niet aan een casus of zichtjaar, dus DiagCasus en DiagJaar spelen hier geen
+// rol; alleen de waterbergingstoets leest de basisjaarindicator van WLO_hoog_BAU.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -20,6 +27,17 @@ container Diagnose705
 
 	parameter<float32> CelHa := AdminDomain/NrHaPerCell[float32];
 
+	parameter<String> Stand :=
+		  'basis;'   + LR/Basis_ref
+		+ '|zand;'   + LR/ZandBegrenzing_ref
+		+ '|veen;'   + LR/VeenBegrenzing_ref
+		+ '|veen_voor_zand;' + string(LR/VeenGaatVoorZand)
+		+ '|vereenvoudigen;' + string(LR/Vereenvoudigen)
+		+ '|straal_m;'       + string(LR/Vereenvoudiging_Straal_m)
+	, Descr = "De schakelaarstand waaronder deze uitdraai is gemaakt. Zonder deze regel is een uitdraai achteraf niet te plaatsen, want alle getallen hieronder hangen aan die stand.";
+
+	// ---------------- arealen per regio, huidige schakelaarstand ----------------
+
 	parameter<float64> ha_kust     := sum(float64(float32(LR/Per_AdminDomain == LR/V/Kust)     * CelHa));
 	parameter<float64> ha_rivieren := sum(float64(float32(LR/Per_AdminDomain == LR/V/Rivieren) * CelHa));
 	parameter<float64> ha_veen     := sum(float64(float32(LR/Per_AdminDomain == LR/V/Veen)     * CelHa));
@@ -27,34 +45,96 @@ container Diagnose705
 	parameter<float64> ha_overig   := sum(float64(float32(LR/Per_AdminDomain == LR/V/Overig)   * CelHa));
 
 	parameter<float64> ha_leeg_grootwater_nl := sum(float64(float32(IsNull(LR/Per_AdminDomain) && AdminDomain/IsCompactedDomain && LR/Impl/IsGrootWater) * CelHa))
-	, Descr = "Groot water binnen de provinciegrenzen zonder regio: Waddenzee, IJsselmeer en verwanten. Dit is het deel dat volgens #705 bewust buiten de indeling blijft.";
-	parameter<float64> ha_leeg_overig_nl     := sum(float64(float32(IsNull(LR/Per_AdminDomain) && AdminDomain/IsCompactedDomain && !LR/Impl/IsGrootWater) * CelHa))
-	, Descr = "Cellen binnen de provinciegrenzen zonder regio en zonder grootwatervlag. Hoort nul te zijn: IsOverig vangt elke landcel binnen Nederland.";
-	parameter<float64> ha_basis_null_nl      := sum(float64(float32(IsNull(LR/Impl/Basis) && AdminDomain/IsCompactedDomain && !LR/Impl/IsGrootWater) * CelHa))
-	, Descr = "Landcellen binnen Nederland waar beide basiskaarten geen klasse geven. Die worden Overig of een teamgebied; dit getal zegt hoe groot die terugval is.";
+	, Descr = "Groot water binnen de provinciegrenzen zonder regio. Dit is het deel dat volgens #705 bewust buiten de indeling blijft.";
+	parameter<float64> ha_leeg_overig_nl := sum(float64(float32(IsNull(LR/Per_AdminDomain) && AdminDomain/IsCompactedDomain && !LR/Impl/IsGrootWater) * CelHa))
+	, Descr = "Landcellen binnen de provinciegrenzen zonder regio. Hoort nul te zijn: binnen het indelingsgebied valt alles wat geen landschap claimt naar Overig.";
 
-	parameter<float64> ha_go_viabnsn := sum(float64(float32(IsNull(LR/Impl/Basis_Gebiedstype) && IsDefined(LR/Impl/Basis_BNSN)) * CelHa))
-	, Descr = "Cellen waar het gebiedstypenraster niets zegt, vrijwel alleen de gebouwde omgeving, en de BNSN-terugval wel een landschap geeft. Hoort in de buurt van het GO-areaal van 491.105 ha te liggen; nul betekent dat de terugval niet werkt.";
+	// ---------------- dekking per teamgebied ----------------
 
-	parameter<float64> ha_kustlevering        := sum(float64(float32(LR/Impl/InKustlevering) * CelHa));
-	parameter<float64> ha_kustlevering_eigen  := sum(float64(float32(LR/Impl/InKustlevering && LR/Per_AdminDomain == LR/V/Kust) * CelHa));
-	parameter<float64> ha_rivierengebied      := sum(float64(float32(LR/Impl/InRivierengebied) * CelHa));
-	parameter<float64> ha_rivierengebied_eigen:= sum(float64(float32(LR/Impl/InRivierengebied && LR/Per_AdminDomain == LR/V/Rivieren) * CelHa));
-	parameter<float64> ha_veengebied          := sum(float64(float32(LR/Impl/InVeengebied) * CelHa));
-	parameter<float64> ha_veengebied_eigen    := sum(float64(float32(LR/Impl/InVeengebied && LR/Per_AdminDomain == LR/V/Veen) * CelHa));
-	parameter<float64> ha_zandgebied          := sum(float64(float32(LR/Impl/InZandgebied) * CelHa));
-	parameter<float64> ha_zandgebied_eigen    := sum(float64(float32(LR/Impl/InZandgebied && LR/Per_AdminDomain == LR/V/Zand) * CelHa));
+	parameter<float64> ha_kustgebied         := sum(float64(float32(LR/Impl/Grens_Kust)     * CelHa));
+	parameter<float64> ha_kustgebied_eigen   := sum(float64(float32(LR/Impl/Grens_Kust     && LR/Per_AdminDomain == LR/V/Kust)     * CelHa));
+	parameter<float64> ha_riviergebied       := sum(float64(float32(LR/Impl/Grens_Rivieren) * CelHa));
+	parameter<float64> ha_riviergebied_eigen := sum(float64(float32(LR/Impl/Grens_Rivieren && LR/Per_AdminDomain == LR/V/Rivieren) * CelHa));
+	parameter<float64> ha_veengebied         := sum(float64(float32(LR/Impl/Grens_Veen)     * CelHa));
+	parameter<float64> ha_veengebied_eigen   := sum(float64(float32(LR/Impl/Grens_Veen     && LR/Per_AdminDomain == LR/V/Veen)     * CelHa));
+	parameter<float64> ha_zandgebied         := sum(float64(float32(LR/Impl/Grens_Zand)     * CelHa));
+	parameter<float64> ha_zandgebied_eigen   := sum(float64(float32(LR/Impl/Grens_Zand     && LR/Per_AdminDomain == LR/V/Zand)     * CelHa));
 
-	// waar staan de teamgebieden hun hectares aan af: verdeling over de andere regio's
-	parameter<float64> ha_rivierengebied_kust := sum(float64(float32(LR/Impl/InRivierengebied && LR/Per_AdminDomain == LR/V/Kust) * CelHa));
-	parameter<float64> ha_veengebied_kust     := sum(float64(float32(LR/Impl/InVeengebied && LR/Per_AdminDomain == LR/V/Kust) * CelHa));
-	parameter<float64> ha_veengebied_rivieren := sum(float64(float32(LR/Impl/InVeengebied && LR/Per_AdminDomain == LR/V/Rivieren) * CelHa));
-	parameter<float64> ha_zandgebied_kust     := sum(float64(float32(LR/Impl/InZandgebied && LR/Per_AdminDomain == LR/V/Kust) * CelHa));
-	parameter<float64> ha_zandgebied_rivieren := sum(float64(float32(LR/Impl/InZandgebied && LR/Per_AdminDomain == LR/V/Rivieren) * CelHa));
-	parameter<float64> ha_zandgebied_veen     := sum(float64(float32(LR/Impl/InZandgebied && LR/Per_AdminDomain == LR/V/Veen) * CelHa));
+	parameter<float64> ha_veen_en_zand := sum(float64(float32(LR/Impl/Grens_Veen && LR/Impl/Grens_Zand) * CelHa))
+	, Descr = "Waar het veen- en het zandgebied elkaar overlappen. Dit is de hoeveelheid die van eigenaar wisselt als VeenGaatVoorZand omgaat, en daarmee het getal waar de projectgroep uit moet kiezen.";
+
+	// ---------------- de reeks vereenvoudigingen ----------------
+
+	unit<UInt8> Straal : NrOfRows = 10
+	, Descr = "De tien oplopende stralen waarmee de grenzen door de oogharen worden getekend, conform het verzoek in de reactie. Nul is de kaart op de leveringen zelf, alleen op 100 in plaats van 25 meter."
+	{
+		attribute<UInt32> m    : [0, 250, 500, 700, 1000, 1500, 2000, 2500, 3250, 5000];
+		attribute<String> name := 'S'+string(m);
+	}
+
+	template PerStraal
+	: Descr = "Rekent de vereenvoudiging voor een straal door en telt de arealen. Leest LandschapsRegio/Impl/Ruw, dus de schakelaars voor de begrenzing en de volgorde gelden hier ook."
+	{
+		parameter<UInt32> Straal_m;
+
+		parameter<String> KernelPad := '/Geography/Distmatrices_100m/pot'+string(Straal_m)+'m';
+
+		attribute<Float32> Glad_Kust     (rdc_100m) := ='potential(/SourceData/Landschap/LandschapsRegio/Impl/Aandeel_Kust_100m, '    +KernelPad+'/Flat2) / '+KernelPad+'/oppervlakte';
+		attribute<Float32> Glad_Rivieren (rdc_100m) := ='potential(/SourceData/Landschap/LandschapsRegio/Impl/Aandeel_Rivieren_100m, '+KernelPad+'/Flat2) / '+KernelPad+'/oppervlakte';
+		attribute<Float32> Glad_Veen     (rdc_100m) := ='potential(/SourceData/Landschap/LandschapsRegio/Impl/Aandeel_Veen_100m, '    +KernelPad+'/Flat2) / '+KernelPad+'/oppervlakte';
+		attribute<Float32> Glad_Zand     (rdc_100m) := ='potential(/SourceData/Landschap/LandschapsRegio/Impl/Aandeel_Zand_100m, '    +KernelPad+'/Flat2) / '+KernelPad+'/oppervlakte';
+
+		attribute<Float32> Glad_Max (rdc_100m) := max_elem(Glad_Kust, Glad_Rivieren, Glad_Veen, Glad_Zand);
+
+		attribute</SourceData/Landschap/LandschapsRegio> Toegedeeld_100m (rdc_100m) := = /SourceData/Landschap/LandschapsRegio/VeenGaatVoorZand
+			? 'Glad_Max < /SourceData/Landschap/LandschapsRegio/Vereenvoudiging_Drempel ? null_u[/SourceData/Landschap/LandschapsRegio] : Glad_Kust == Glad_Max ? /SourceData/Landschap/LandschapsRegio/V/Kust : Glad_Veen == Glad_Max ? /SourceData/Landschap/LandschapsRegio/V/Veen : Glad_Zand == Glad_Max ? /SourceData/Landschap/LandschapsRegio/V/Zand : /SourceData/Landschap/LandschapsRegio/V/Rivieren'
+			: 'Glad_Max < /SourceData/Landschap/LandschapsRegio/Vereenvoudiging_Drempel ? null_u[/SourceData/Landschap/LandschapsRegio] : Glad_Kust == Glad_Max ? /SourceData/Landschap/LandschapsRegio/V/Kust : Glad_Zand == Glad_Max ? /SourceData/Landschap/LandschapsRegio/V/Zand : Glad_Veen == Glad_Max ? /SourceData/Landschap/LandschapsRegio/V/Veen : /SourceData/Landschap/LandschapsRegio/V/Rivieren';
+
+		attribute</SourceData/Landschap/LandschapsRegio> Toegedeeld (AdminDomain) := Toegedeeld_100m[AdminDomain/rdc_100m_rel];
+
+		attribute</SourceData/Landschap/LandschapsRegio> Regio (AdminDomain) := /SourceData/Landschap/LandschapsRegio/Impl/IsIndelingsgebied
+			? MakeDefined(Toegedeeld, /SourceData/Landschap/LandschapsRegio/V/Overig)
+			: null_u[/SourceData/Landschap/LandschapsRegio];
+
+		parameter<float32> CelHa := AdminDomain/NrHaPerCell[float32];
+
+		parameter<float64> ha_kust     := sum(float64(float32(Regio == /SourceData/Landschap/LandschapsRegio/V/Kust)     * CelHa));
+		parameter<float64> ha_rivieren := sum(float64(float32(Regio == /SourceData/Landschap/LandschapsRegio/V/Rivieren) * CelHa));
+		parameter<float64> ha_veen     := sum(float64(float32(Regio == /SourceData/Landschap/LandschapsRegio/V/Veen)     * CelHa));
+		parameter<float64> ha_zand     := sum(float64(float32(Regio == /SourceData/Landschap/LandschapsRegio/V/Zand)     * CelHa));
+		parameter<float64> ha_overig   := sum(float64(float32(Regio == /SourceData/Landschap/LandschapsRegio/V/Overig)   * CelHa));
+
+		parameter<float64> ha_verschoven := sum(float64(float32(Regio != /SourceData/Landschap/LandschapsRegio/Impl/Ruw && /SourceData/Landschap/LandschapsRegio/Impl/IsIndelingsgebied) * CelHa))
+		, Descr = "Hoeveel hectare bij deze straal een ander landschap krijgt dan de onvereenvoudigde toedeling. Dit is de maat voor hoe hard de vereenvoudiging ingrijpt.";
+
+		parameter<String> Regel := '|'+string(Straal_m)+';'+string(ha_kust)+';'+string(ha_rivieren)+';'+string(ha_veen)+';'+string(ha_zand)+';'+string(ha_overig)+';'+string(ha_verschoven);
+	}
+
+	container PerStraal_ := for_each_ne(Straal/name, 'PerStraal('+string(Straal/m)+')');
+
+	parameter<String> Reeks := =AsList('PerStraal_/'+Straal/name+'/Regel', '+')
+	, Descr = "De tien regels van de reeks, elk met de straal en de arealen die daarbij horen.";
+
+	// ---------------- de toets op de waterbergingsindicator ----------------
+
+	parameter<float64> wb_som_perregio := sum(float64(/Indicatoren/WLO_hoog_BAU/Basisjaar/Waterberging/PerRegio/Vraag[float32]))
+	, Descr = "De som van de waterbergingsvraag over de regio's. Hoort gelijk te zijn aan het landelijke totaal hieronder.";
+	parameter<float64> wb_per_nl := sum(float64(/Indicatoren/WLO_hoog_BAU/Basisjaar/Waterberging/PerGrid/Vraag[float32]))
+	, Descr = "Het landelijke totaal van diezelfde vraag, gesommeerd over de 500m-blokken zelf en dus buiten de regio-indeling om. De basisjaarvariant van deze indicator heeft geen PerNL, anders dan de zichtjaarvariant.";
+	parameter<float64> wb_verschil := wb_per_nl - wb_som_perregio
+	, Descr = "Het verschil tussen die twee. Hoort nul te zijn. Is het dat niet, dan vallen er 500m-blokken uit de regionale sommen die wel in het landelijke totaal zitten, en dat is precies wat de omzetting van poly2grid naar modus in de blokindeling kan veroorzaken op blokken die grotendeels op groot water liggen. Zie de doorlichting in #724.";
+
+	parameter<float64> wb_vraag_zonder_regio := sum(float64(/Indicatoren/WLO_hoog_BAU/Basisjaar/Waterberging/PerGrid/Vraag[float32]) * float64(float32(IsNull(/Indicatoren/WLO_hoog_BAU/Basisjaar/Waterberging/PerRegio/Regio/Per_Grid))))
+	, Descr = "De waterbergingsvraag in 500m-blokken die geen regio krijgen. Dit is de directe meting van het lek waar wb_verschil alleen een indirecte aanwijzing voor is: wb_verschil is het verschil van twee sommen en draagt daarmee ook de afrondingsfout van de float32-sommatie per regio, deze telt de vraag zelf. Hoort nul te zijn.";
+
+	parameter<float64> wb_blokken_zonder_regio := sum(float64(float32(IsNull(/Indicatoren/WLO_hoog_BAU/Basisjaar/Waterberging/PerRegio/Regio/Per_Grid))))
+	, Descr = "Hoeveel 500m-blokken geen regio krijgen. Dat er veel zijn is normaal, want het grid dekt de hele bounding box inclusief zee en buitenland; het gaat om de vraag die erin zit, en die staat hierboven.";
+
+	// ---------------- de uitdraai ----------------
 
 	parameter<String> Tabel :=
-		  'post;ha'
+		  'stand;'                      + Stand
+		+ '|post;ha'
 		+ '|regio_kust;'                + string(ha_kust)
 		+ '|regio_rivieren;'            + string(ha_rivieren)
 		+ '|regio_veen;'                + string(ha_veen)
@@ -62,23 +142,23 @@ container Diagnose705
 		+ '|regio_overig;'              + string(ha_overig)
 		+ '|leeg_grootwater_nl;'        + string(ha_leeg_grootwater_nl)
 		+ '|leeg_overig_nl;'            + string(ha_leeg_overig_nl)
-		+ '|basis_null_nl;'             + string(ha_basis_null_nl)
-		+ '|go_viabnsn;'                + string(ha_go_viabnsn)
-		+ '|kustlevering;'              + string(ha_kustlevering)
-		+ '|kustlevering_eigen;'        + string(ha_kustlevering_eigen)
-		+ '|rivierengebied;'            + string(ha_rivierengebied)
-		+ '|rivierengebied_eigen;'      + string(ha_rivierengebied_eigen)
+		+ '|kustgebied;'                + string(ha_kustgebied)
+		+ '|kustgebied_eigen;'          + string(ha_kustgebied_eigen)
+		+ '|riviergebied;'              + string(ha_riviergebied)
+		+ '|riviergebied_eigen;'        + string(ha_riviergebied_eigen)
 		+ '|veengebied;'                + string(ha_veengebied)
 		+ '|veengebied_eigen;'          + string(ha_veengebied_eigen)
 		+ '|zandgebied;'                + string(ha_zandgebied)
 		+ '|zandgebied_eigen;'          + string(ha_zandgebied_eigen)
-		+ '|rivierengebied_naar_kust;'  + string(ha_rivierengebied_kust)
-		+ '|veengebied_naar_kust;'      + string(ha_veengebied_kust)
-		+ '|veengebied_naar_rivieren;'  + string(ha_veengebied_rivieren)
-		+ '|zandgebied_naar_kust;'      + string(ha_zandgebied_kust)
-		+ '|zandgebied_naar_rivieren;'  + string(ha_zandgebied_rivieren)
-		+ '|zandgebied_naar_veen;'      + string(ha_zandgebied_veen)
+		+ '|veen_en_zand_overlap;'      + string(ha_veen_en_zand)
+		+ '|wb_som_perregio;'           + string(wb_som_perregio)
+		+ '|wb_per_nl;'                 + string(wb_per_nl)
+		+ '|wb_verschil;'               + string(wb_verschil)
+		+ '|wb_vraag_zonder_regio;'     + string(wb_vraag_zonder_regio)
+		+ '|wb_blokken_zonder_regio;'   + string(wb_blokken_zonder_regio)
+		+ '|reeks;straal_m;kust;rivieren;veen;zand;overig;verschoven'
+		+ Reeks
 	, StorageName = "%LocalDataProjDir%/Diagnose/705_landschapsregio.txt"
 	, StorageType = "str"
-	, Descr = "Een regel per post, puntkomma-gescheiden, regels gescheiden door een liggend streepje.";
+	, Descr = "Een regel per post, puntkomma-gescheiden, regels gescheiden door een liggend streepje. De reeks onderaan heeft zeven kolommen per regel; de kop ervan staat in de regel die met reeks begint.";
 }
