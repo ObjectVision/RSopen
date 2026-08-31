@@ -115,6 +115,18 @@ container Diagnose684
 	parameter<float32> Won_GespaardDoorKoppeling := VD/Sloop/Verschil/Woningen_GespaardDoorKoppeling[float32];
 	parameter<float32> Opp_GespaardDoorKoppeling := VD/Sloop/Verschil/Opp_GespaardDoorKoppeling[float32];
 
+	// ---- begrenzing van het veenlandschap: een laag of twee, vraag vanuit #705 ----
+	//
+	// De veenlevering bestaat uit twee lagen. Begrenzen op alleen de peilvakkenlaag laat de tweede vallen.
+	// Op vol AdminDomain zonder studiegebiedmasker geteld, zodat het naast de arealen van #705 te leggen is.
+
+	attribute<bool> InPeilvakkenlaag (AdminDomain) := IsDefined(Veen/PerPeilvak_rel);
+	attribute<bool> InBeideLagen     (AdminDomain) := Veen/IsVeengebied;
+
+	parameter<float32> Opp_Veen_AlleenPeilvakken := sum(float32(InPeilvakkenlaag)) * Cel;
+	parameter<float32> Opp_Veen_BeideLagen       := sum(float32(InBeideLagen))     * Cel;
+	parameter<float32> Opp_Veen_Verschil         := Opp_Veen_BeideLagen - Opp_Veen_AlleenPeilvakken;
+
 	// ---- toets op de samenvatting van Deltares van 2026-08-31, per landschapstype ----
 
 	attribute<bool> Ruimtebeslag_Kust (CompactedAdminDomain) := MakeDefined(/SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Kust/NietBouwen[AD_rel], FALSE);
@@ -167,6 +179,101 @@ container Diagnose684
 	, StorageType = "str"
 	, Descr = "Een regel per bouwsteen: code, hectare, woningen.";
 
+
+	// ================================================================================================
+	// Toets684: de vier regels van Deltares uit #684 als toetsbare uitspraken.
+	//
+	// Opzet volgens de werkwijze uit #714: de verwachting staat vooraf in de Descr, het oordeel valt
+	// uit de meting. Elk item geeft OK of FOUT, en Uitdraai_Toets zet ze naast elkaar in een bestand.
+	//
+	// Alles hangt aan VariantData en niet aan de allocatie, dus de toets loopt mee in elke run die
+	// VariantData aanraakt, ook in een volledige. Wat een volledige run toevoegt is niet de uitspraak
+	// zelf maar de bevestiging dat de stand en de landgebruikskaart de sloop ook werkelijk volgen; die
+	// twee staan onderaan als NogNietToetsbaar, met het pad erbij waar ze straks aan moeten hangen.
+	// ================================================================================================
+
+	container Toets684
+	: Descr = "De regels die Deltares op 2026-08-31 in #684 formuleerde, per landschapstype, als toetsbare uitspraken. Lees Uitdraai_Toets; alles op OK betekent dat het model doet wat er is afgesproken."
+	{
+		parameter<float32> Marge := 0.5f, Descr = "Hoeveel woningen een uitspraak mag afwijken voordat hij FOUT heet. Een halve woning, dus in de praktijk afrondingsruis.";
+
+		// --- regel 1: kust sloopt nergens ---
+
+		parameter<float32> R1_Gemeten := Won_Gesloopt_InKust;
+		parameter<string>  R1_Oordeel := R1_Gemeten < Marge ? 'OK' : 'FOUT'
+		, Descr = "Kust: nergens sloop, de natuur gaat samen met bestaande woningen. Verwacht nul woningen binnen het kustruimtebeslag. Sinds #707 draagt kust regime NietBouwen, dus dit hoort per constructie te kloppen; het getal bewaakt dat niemand dat terugdraait.";
+
+		// --- regel 2: zand sloopt nergens ---
+
+		attribute<bool> R2_DoorZandZelf (CompactedAdminDomain) := Gesloopt && Ruimtebeslag_Zand && !Regime_Veen && !Regime_Rivieren
+		, Descr = "Cel in het beekdalruimtebeslag die geleegd wordt terwijl geen van de twee landschapstypen die wel mogen slopen daarom vraagt. Alleen dan sloopt zand zelf.";
+
+		parameter<float32> R2_Gemeten      := sum(Won * float32(R2_DoorZandZelf));
+		parameter<float32> R2_Ruw          := Won_Gesloopt_InZand, Descr = "Alle sloop binnen het beekdalruimtebeslag, dus inclusief wat veen en rivieren daar doen. Alleen ter informatie.";
+		parameter<float32> R2_DoorOverlap  := R2_Ruw - R2_Gemeten, Descr = "Het deel dat op rekening van veen of rivieren komt. Zolang dit gelijk is aan R2_Ruw sloopt zand zelf niets.";
+		parameter<string>  R2_Oordeel      := R2_Gemeten < Marge ? 'OK' : 'FOUT'
+		, Descr = "Zand: idem als kust, nergens sloop. Verwacht nul woningen die aan zand zelf toe te rekenen zijn.
+
+					Snijdt de twee landschapstypen eruit die wel mogen slopen, want een cel kan in meerdere ruimtebeslagen liggen. Zonder die aftrek meet deze regel niet wat zij beweert: er stonden op 2026-08-31 48 woningen binnen het beekdal die door veen of rivieren wijken, en die zouden zand ten onrechte FOUT geven. R2_Ruw en R2_DoorOverlap houden dat zichtbaar.";
+
+		// --- regel 3: rivieren sloopt alleen in het sloopgebied ---
+
+		attribute<bool> R3_BuitenSloopgebied (CompactedAdminDomain) := Gesloopt && Ruimtebeslag_Riv && !Regime_Rivieren && !Regime_Veen
+		, Descr = "Cel die binnen het rivierenruimtebeslag wordt geleegd terwijl noch het rivierensloopgebied noch het veen daarom vraagt.";
+
+		parameter<float32> R3_Gemeten := sum(Won * float32(R3_BuitenSloopgebied));
+		parameter<string>  R3_Oordeel := R3_Gemeten < Marge ? 'OK' : 'FOUT'
+		, Descr = "Rivieren: alleen sloop in het sloopgebied uit #620, de nieuwe uiterwaarden min de behouden dijken. Verwacht nul woningen daarbuiten binnen het ruimtebeslag. Snijdt het veendeel eruit, want waar veen en rivieren elkaar overlappen mag veen slopen.";
+
+		// --- regel 4: geen sloop zonder nieuw landgebruik, behalve in het rivierensloopgebied ---
+
+		attribute<bool> R4_Overtreding (CompactedAdminDomain) := VD/Sloop/Verschil/GeleegdZonderNieuwLandgebruik && !Regime_Rivieren
+		, Descr = "Cel die geleegd wordt zonder dat er een landgebruik voor in de plaats komt, buiten het enige landschapstype dat dat mag.";
+
+		parameter<float32> R4_Gemeten_Won := sum(Won * float32(R4_Overtreding));
+		parameter<float32> R4_Gemeten_Ha  := sum(float32(R4_Overtreding)) * Cel;
+		parameter<string>  R4_Oordeel     := R4_Gemeten_Won < Marge ? 'OK' : 'FOUT'
+		, Descr = "De kern van #684. Verwacht nul woningen: overal behalve in het rivierensloopgebied moet de omzetting ook werkelijk landen voordat er gesloopt wordt. Dit is wat ModelParameters/SloopVereistNieuwLandgebruik afdwingt.
+
+					Het areaal staat er ter informatie naast en kwam op 2026-08-31 eveneens op nul uit. Dat is geen toeval maar volgt uit de aftrek: waar veen en rivieren elkaar overlappen wint rivieren, en die cellen vallen door !Regime_Rivieren buiten deze toets. Meet je zonder die aftrek, dan blijft er een strook van ruwweg dertien hectare staan; dat is de overlap en niet een overtreding.";
+
+		// --- regel 5: de bebouwingstypekaart tegenover de gealloceerde bouwsteen ---
+
+		parameter<float32> R5_UitBouwsteen   := float32(Veen/Controle_Bouwsteen/Opp_Slopen_uitBouwsteen);
+		parameter<float32> R5_UitKaart       := float32(Veen/Controle_Bouwsteen/Opp_Slopen_uitKaart);
+		parameter<float32> R5_Overlap        := float32(Veen/Controle_Bouwsteen/Opp_Overlap);
+		parameter<float32> R5_KaartTeveel    := R5_UitKaart - R5_Overlap;
+		parameter<float32> R5_BouwsteenExtra := R5_UitBouwsteen - R5_Overlap
+		, Descr = "Geen oordeel maar een meting, want hier ligt de open vraag. Gemeten op 2026-08-31 in de productiekopie: de kaart wijst 283.436 ha aan, de gealloceerde bouwsteen 249.961 ha, met 246.056 ha overlap. De kaart wijst dus 37.380 ha aan die de bouwsteen niet aanwijst en de bouwsteen 3.905 ha die de kaart niet aanwijst. Dat eerste getal is 13 procent van het kaartareaal en is het antwoord op de vraag of per peilvak toekennen te grof is.";
+
+		parameter<String> Uitdraai_Toets :=
+			  'regel;verwachting;gemeten;oordeel'
+			+ '|kust_sloopt_nergens;0 woningen;'            + string(R1_Gemeten)        + ';' + R1_Oordeel
+			+ '|zand_sloopt_nergens;0 woningen;'            + string(R2_Gemeten)        + ';' + R2_Oordeel
+			+ '|zand_ruw_in_ruimtebeslag;informatief;'      + string(R2_Ruw)            + ';nvt'
+			+ '|zand_daarvan_door_veen_of_rivieren;informatief;' + string(R2_DoorOverlap) + ';nvt'
+			+ '|rivieren_alleen_in_sloopgebied;0 woningen;' + string(R3_Gemeten)        + ';' + R3_Oordeel
+			+ '|geen_sloop_zonder_nieuw_lu;0 woningen;'     + string(R4_Gemeten_Won)    + ';' + R4_Oordeel
+			+ '|geen_sloop_zonder_nieuw_lu_ha;informatief;' + string(R4_Gemeten_Ha)     + ';nvt'
+			+ '|sloop_uit_bouwsteen_ha;meting;'             + string(R5_UitBouwsteen)   + ';nvt'
+			+ '|sloop_uit_kaart_ha;meting;'                 + string(R5_UitKaart)       + ';nvt'
+			+ '|overlap_ha;meting;'                         + string(R5_Overlap)        + ';nvt'
+			+ '|kaart_wijst_teveel_aan_ha;meting;'          + string(R5_KaartTeveel)    + ';nvt'
+			+ '|bouwsteen_wijst_extra_aan_ha;meting;'       + string(R5_BouwsteenExtra) + ';nvt'
+		, StorageName = "%LocalDataProjDir%/Diagnose/684_toets.txt"
+		, StorageType = "str"
+		, Descr = "De toets in een bestand: per regel de verwachting, de meting en het oordeel. Dit is wat er na een volledige run afgelezen moet worden.";
+
+		container NogNietToetsbaar
+		: Descr = "Twee uitspraken die pas na een volledige run te toetsen zijn, want ze gaan over de stand en de landgebruikskaart aan het eind van een zichtjaar en niet over de maskers die VariantData maakt.
+
+					Ten eerste: op elke cel die Sloop/Totaal aanwijst hoort de woningstand in het eerste zichtjaar nul te zijn. Dat is te meten tegen Indicatoren/<casus>/Zichtjaren/<jaar>/Stand.
+
+					Ten tweede, en dat is de bekende open kwestie uit de Descr bij container Sloop: een geleegde cel die geen oplegging krijgt houdt op de landgebruikskaart zijn huidige klasse en staat er met nul woningen in. Met de koppeling uit #684 gebeurt dat alleen nog in het rivierensloopgebied, dus daar moet die kaart nagekeken worden zodra Deltares zegt welk landgebruik daar voor in de plaats komt.
+
+					Ze staan hier als tekst en niet als item, omdat een pad naar de indicatorenkant nu niet parseert zonder een weggeschreven zichtjaar; zie de legendabewaking uit #721.";
+	}
+
 	parameter<String> Uitdraai :=
 		  'opp_slopen_en_op_slot_ruw;'       + string(Opp_SlopenEnOpSlot_Ruw)
 		+ '|opp_slopen_en_op_slot_namasker;' + string(Opp_SlopenEnOpSlot_NaMasker)
@@ -193,6 +300,9 @@ container Diagnose684
 		+ '|opp_znlveen_natuur_volgens_levering;' + string(Opp_OpSlotGeenNatuurVeen_Natuur)
 		+ '|opp_znlveen_water_volgens_levering;'  + string(Opp_OpSlotGeenNatuurVeen_Water)
 		+ '|opp_znlveen_blijft_volgens_levering;' + string(Opp_OpSlotGeenNatuurVeen_Blijft)
+		+ '|opp_veen_alleen_peilvakken;'     + string(Opp_Veen_AlleenPeilvakken)
+		+ '|opp_veen_beide_lagen;'           + string(Opp_Veen_BeideLagen)
+		+ '|opp_veen_verschil;'              + string(Opp_Veen_Verschil)
 		+ '|won_geleegd_zonder_nieuw_lu;'    + string(Won_GeleegdZonderNieuwLU)
 		+ '|opp_geleegd_zonder_nieuw_lu;'    + string(Opp_GeleegdZonderNieuwLU)
 		+ '|won_gespaard_door_koppeling;'    + string(Won_GespaardDoorKoppeling)

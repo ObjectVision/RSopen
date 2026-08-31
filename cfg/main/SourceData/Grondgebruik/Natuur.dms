@@ -923,6 +923,112 @@ container Natuur
 					container Alloc_Overloop := /Templates/SourceData/NatuurAlloc_T('Veen NbSGenuanceerd overloop', VeenType, Deelgebied, Claim_Overloop, Geschiktheid_Overloop, IsSloopgebied)
 					, Descr = "De tweede trap, hetzelfde sjabloon met het deelgebied als claimregio. Wat ook hier niet past is het eindtekort, en dat is de onderrealisatie die aan team Veen wordt teruggekoppeld; zie Controle en Diagnose/VeenNatuur.";
 
+					// ---- trap 1: welke bouwsteen komt waar, #684 ----
+
+					parameter<bool> SloopUitGealloceerdeBouwsteen := FALSE
+					, Descr = "Volgt het bouwregime in het veen uit de bouwsteen die op de cel is gealloceerd, in plaats van uit de bebouwingstypekaart?
+
+								Staat uit, dus het regime komt nog uit BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd. Aanzetten is de regel die Deltares op 31 augustus 2026 in #684 formuleerde: eerst de bouwstenen alloceren en daarna afleiden welke cellen slopen en op slot worden.
+
+								De aanleiding is dat de bebouwingstypekaart geen eigen informatie draagt. Haar vier categorieen zijn letterlijk kolom J van de bouwstenentabel, zie Classifications/Grondgebruik/NbSBouwsteen/Bebouwingstype, en zij kent die per peilvak toe terwijl de bouwstenen binnen een peilvak juist gemengd liggen. Elke cel in het peilvak krijgt daarmee dezelfde klasse, ook waar een heel andere bouwsteen ligt.
+
+								Wat dit niet oplost: bouwsteen 5, 7 en 8 zijn voor 0,30 natte teelt en 3a en 4a voor 0,70 respectievelijk 0,50 vernat grasland, en voor die twee kolommen kent het model geen landgebruiksklasse. Op die cellen wordt dus wel gesloopt en komt nog steeds niets terug, tenzij ModelParameters/SloopVereistNieuwLandgebruik dat tegenhoudt. Dat is trap 2 van de opzet en die wacht op een antwoord uit #684.";
+
+					parameter<bool> PandentoetsInVeen := FALSE
+					, Descr = "Houdt de pandentoets uit #661 de veenallocatie weg van cellen met een BAG-pand?
+
+								Staat uit. Die toets is gemaakt voor zand, waar de levering de bestaande bebouwing juist wil sparen (#630). In het veen zegt de levering het omgekeerde: bouwsteen 5, 6, 7 en 8 vragen dat de bebouwing wijkt. Blijft de toets aan, dan landt een sloopbouwsteen nooit op een bebouwde cel en wordt er dus nooit gesloopt, waarmee de hele regel uit #684 leeg loopt. Gemeten op de oude opzet: 29.450 van de 29.521 woningen stonden op een cel met een pand.
+
+								Dit is een aanname en geen bevestigde keuze; de vraag ligt in #684 bij Deltares. Aanzetten geeft het gedrag van #661 terug, ook in het veen.";
+
+					unit<uint8> BouwsteenType := NbSVeen/NbSBouwsteen/MetBrondata
+					, Descr = "De twaalf bouwstenen waarover trap 1 alloceert. Erft name, code, Bebouwingstype en BouwregimeK_rel van de classificatie; NatuurAlloc_T verlangt daarnaast een INL_Beheertype_rel, en die is hier leeg omdat een bouwsteen geen beheertype is. Gevolg is dat ExoNatuur en ExoWater uit die allocatie leeg blijven, wat klopt: trap 1 legt niets op, hij deelt alleen de bouwstenen uit."
+					{
+						attribute<INL_Beheertype> INL_Beheertype_rel := const(null_b, ., INL_Beheertype)
+						, Descr = "Bewust overal null. Een bouwsteen is geen beheertype; welk beheertype er binnen de bouwsteen komt is trap 2.";
+					}
+
+					parameter<string> Cluster_Straal_Bouwsteen := '1000m'
+					, Descr = "Over welke straal de geschiktheid van trap 1 wordt uitgesmeerd, en daarmee hoe groot de bouwsteenvlekken worden. Ruimer dan de 500 m van de typenallocatie, met opzet: een veenkoepellandschap of een doorstroommoerasbos is een landschap en hoort een aaneengesloten gebied te zijn, met daarbinnen een fijner mozaiek van beheertypen. Zouden beide trappen dezelfde straal krijgen, dan hebben de bouwsteenvlekken en de typevlekken dezelfde korrel en is het onderscheid tussen de twee trappen zinloos.";
+
+					parameter<uint32> Seed_Bouwsteen := 6840
+					, Descr = "Eigen seed voor trap 1, zodat de bouwsteentrekking niet samenvalt met die van de typen in Ruis. Per bouwsteen een eigen trekking, seed plus het rijnummer in BouwsteenType.";
+
+					container Ruis_Bouwsteen :=
+						for_each_nedv(
+							BouwsteenType/name
+							, 'potential(rnd_uniform(' + string(Seed_Bouwsteen + uint32(id(BouwsteenType))) + ', rdc_500m, range(float32, 0f, 1f))[rdc_100m/rdc_500m_rel], /Geography/Distmatrices_100m/pot' + Cluster_Straal_Bouwsteen + '/Flat2)
+									/ /Geography/Distmatrices_100m/pot' + Cluster_Straal_Bouwsteen + '/oppervlakte'
+							, rdc_100m
+							, float32
+						)
+					, Descr = "Een glad ruisoppervlak per bouwsteen, tussen 0 en 1. Zelfde constructie als Ruis bij de typen, alleen met een eigen seed en een ruimere straal.";
+
+					attribute<bool> Zeef_Bouwsteen (AdminDomain) := IsVeenCel
+					, Descr = "Waar mag een bouwsteen landen: overal in het veengebied binnen het studiegebied. Bewust zonder de toetsen die Zeef_Natuur wel heeft.
+
+								Geen OntzieBebouwingsklassen, want dat is de bebouwingstypekaart en die is nu juist wat deze allocatie vervangt; hem hier lezen zou de zeef laten afhangen van de kaart die eruit moet. Geen OntzieBestaandeNatuur, conform het antwoord in #660 dat de levering een eindtoestand beschrijft. Geen OntzieBestaandWater, want die toets hoort bij de keuze tussen terrestrische typen en water, en dat is trap 2. En de pandentoets loopt via PandentoetsInVeen hierboven.
+
+								Het opleggingsmasker uit #641 zit er wel in, maar niet hier: NatuurAlloc_T past dat zelf toe op elke allocatie.";
+
+					container Geschiktheid_Bouwsteen :=
+						for_each_nedv(
+							BouwsteenType/name
+							, 'Zeef_Bouwsteen ? ((Aanhaken_Natuur_100m + Ruis_Amplitude * Ruis_Bouwsteen/' + BouwsteenType/name + ') / (1f + Ruis_Amplitude))[AdminDomain/rdc_100m_rel] : null_f'
+							, AdminDomain
+							, float32
+						)
+					, Descr = "Geschiktheid per bouwsteen: dezelfde vorm als bij de typen, aanhaking plus ruis, en null buiten de zeef. De aanhakingsterm is voor alle bouwstenen gelijk en valt dus weg in de keuze tussen bouwstenen; hij bepaalt alleen welke cellen het eerst aan de beurt zijn. Welke bouwsteen een cel wordt hangt uitsluitend af van de ruis, en die is per bouwsteen glad, zodat ze als vlekken naast elkaar komen te liggen.";
+
+					container Claim_Bouwsteen :=
+						for_each_nedv(
+							BouwsteenType/name
+							, 'sum(Fr_perBouwsteen/' + BouwsteenType/name + '[VeenCel/AdminDomain_rel], Peilvak_rel_Cel) * AdminDomain/NrHaPerCell'
+							, Peilvak
+							, Ha
+						)
+					, Descr = "De opgave per peilvak per bouwsteen: de aangeleverde fractie maal het gerasterde peilvakoppervlak. Dit is de levering zelf, zonder tussenstap; de omweg via de natuurbeheertypen die de typenallocatie maakt is hier niet nodig.
+
+								De som blijft onder het peilvakoppervlak, want bouwsteen 0, 1 en 10 zijn niet aangeleverd. Dat verschil valt in het type Rest van NatuurAlloc_T en houdt zijn huidige grondgebruik, zie Fr_Bouwsteen_Rest.";
+
+					attribute<bool> SloopgebiedVoorPandentoets (AdminDomain) := !PandentoetsInVeen && IsVeengebied
+					, Descr = "Wat trap 1 als sloopgebied aan NatuurAlloc_T meegeeft, en dus waar de pandentoets daar vervalt. Het hele veengebied zolang PandentoetsInVeen uit staat, en leeg zodra hij aan gaat. Zie de toelichting bij die schakelaar.";
+
+					container Alloc_Bouwsteen := /Templates/SourceData/NatuurAlloc_T('Veen bouwstenen NbSGenuanceerd', BouwsteenType, Peilvak, Claim_Bouwsteen, Geschiktheid_Bouwsteen, SloopgebiedVoorPandentoets)
+					, Descr = "Trap 1 van de opzet bij #684. Hetzelfde sjabloon als de typenallocatie, alleen met de bouwstenen als typen en zonder beheertype, dus het legt niets op. Wat eruit komt is Bouwsteen_rel hieronder.";
+
+					attribute<BouwsteenType> Bouwsteen_rel (AdminDomain) := Alloc_Bouwsteen/Type/Src_rel[Alloc_Bouwsteen/Type_rel]
+					, Descr = "Welke bouwsteen is hier gealloceerd, null waar de cel in het type Rest valt of buiten het veengebied ligt. Dit is het item dat #684 vraagt: hieruit volgt via kolom J van de bouwstenentabel of er gesloopt wordt.";
+
+					attribute<Classifications/Modellering/BouwregimeK> Bouwregime_uitBouwsteen (AdminDomain) :=
+						MakeDefined(BouwsteenType/BouwregimeK_rel[Bouwsteen_rel], Classifications/Modellering/BouwregimeK/V/Bouwen)
+					, Descr = "Het bouwregime volgens de gealloceerde bouwsteen. Slopen waar bouwsteen 5, 6, 7 of 8 landt, BouwenMetMaatregelen bij 1 tot en met 4b en bij 9a en 9b, en Bouwen bij de rest en buiten het veengebied. De vertaling staat in Classifications/Grondgebruik/NbSBouwsteen/BouwregimeK_rel en nergens anders.
+
+								Dit is het alternatief voor BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/Bouwregime. Welke van de twee VariantData leest hangt aan SloopUitGealloceerdeBouwsteen.";
+
+					attribute<bool> MoetSlopen_uitBouwsteen (AdminDomain) := MakeDefined(BouwsteenType/MoetSlopen[Bouwsteen_rel], FALSE)
+					, Descr = "Alleen de sloopkant, voor de diagnose.";
+
+					container Controle_Bouwsteen
+					: Descr = "Legt trap 1 naast de bebouwingstypekaart die hij vervangt. Alle getallen op het volle AdminDomain binnen het studiegebied."
+					{
+						parameter<Ha> Opp_Slopen_uitBouwsteen := sum(float32(MoetSlopen_uitBouwsteen) * AdminDomain/NrHaPerCell[float32])[Ha]
+						, Descr = "Hoeveel hectare regime Slopen krijgt volgens de gealloceerde bouwsteen.";
+
+						parameter<Ha> Opp_Slopen_uitKaart := sum(float32(MakeDefined(/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/SlopenEnOpSlot, FALSE)) * AdminDomain/NrHaPerCell[float32])[Ha]
+						, Descr = "Hetzelfde volgens de bebouwingstypekaart, ter vergelijking. Gemeten op 2026-08-31 was dat 283.426 ha op het compacted domain.";
+
+						parameter<Ha> Opp_Overlap := sum(float32(MoetSlopen_uitBouwsteen && MakeDefined(/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/SlopenEnOpSlot, FALSE)) * AdminDomain/NrHaPerCell[float32])[Ha]
+						, Descr = "Waar de twee het eens zijn. Het verschil met de twee getallen hierboven zegt hoeveel de fijnere toekenning verschuift; dat is de kern van de vraag of de kaart te grof is.";
+
+						parameter<String> Uitdraai :=
+							  'opp_slopen_uit_bouwsteen;' + string(Opp_Slopen_uitBouwsteen)
+							+ '|opp_slopen_uit_kaart;'    + string(Opp_Slopen_uitKaart)
+							+ '|opp_overlap;'             + string(Opp_Overlap)
+						, StorageName = "%LocalDataProjDir%/Diagnose/684_bouwsteenregime.txt"
+						, StorageType = "str";
+					}
+
 					// ---- kaartbeelden van de levering zelf, niet de oplegging ----
 
 					attribute<NbSVeen/NbSBouwsteen> DominanteBouwsteen (AdminDomain) := ='NbSVeen/NbSBouwsteen/MetBrondata/org_rel[ArgMax_ifdefined('+AsItemList('Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name+' > 0f ? Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name+' : null_f')+')[NbSVeen/NbSBouwsteen/MetBrondata]]', Descr = "De bouwsteen met de grootste fractie in de cel, product 1 uit #613. Alleen bedoeld voor kaartweergave: bij een gelijke stand wint de eerste, en minderheidsbouwstenen binnen een peilvak verdwijnen. Reken met Fr_perBouwsteen.";
