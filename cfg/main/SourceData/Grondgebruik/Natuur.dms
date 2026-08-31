@@ -1009,6 +1009,161 @@ container Natuur
 					attribute<bool> MoetSlopen_uitBouwsteen (AdminDomain) := MakeDefined(BouwsteenType/MoetSlopen[Bouwsteen_rel], FALSE)
 					, Descr = "Alleen de sloopkant, voor de diagnose.";
 
+
+					// ---- trap 2: de samenstelling van de bouwsteen binnen zijn eigen cellen, #684 ----
+					//
+					// Trap 1 zegt welke bouwsteen waar ligt. Trap 2 verdeelt binnen die cellen wat de bouwsteen volgens
+					// de brontabel is: de natuurbeheertypen, de natte teelt, het grasland, het water en het bebouwde deel.
+					//
+					// Geen tweede allocator maar de rangordemethode die de rivierenlevering al gebruikt: sorteer de cellen
+					// binnen hun regio op een gladde grootheid, zet ze op een empirische verdelingsfunctie tussen 0 en 1,
+					// en knip die met de cumulatieve aandelen. De arealen kloppen dan per constructie en het kost een
+					// sortering in plaats van een allocatie. De regio is hier het peilvak maal de bouwsteen, want de
+					// samenstelling geldt per bouwsteen en de opgave per peilvak.
+
+					unit<uint32> UitkomstType := union_unit(NbSVeen/NbSLandgebruik, NbSVeen/NbSNatuurtype/InGebruik)
+					, Descr = "Waar een cel binnen zijn bouwsteen op uit kan komen: de zes hoofdtypen landgebruik uit kolommen X:AC gevolgd door de achttien natuurbeheertypen die in de tabel voorkomen. Samen tellen hun aandelen per bouwsteen op tot 1, want dat is kolom BA.
+
+								De volgorde bepaalt welke band van de verdelingsfunctie een type krijgt, en daarmee waar de vlekken liggen ten opzichte van elkaar. Nu staan de hoofdtypen voorop en de natuur achteraan, zodat de natuur binnen een bouwsteen aaneengesloten komt te liggen. Wie de zonering anders wil, verandert de volgorde hier."
+					{
+						parameter<uint32> Offset_Natuur := uint32(#NbSVeen/NbSLandgebruik);
+
+						attribute<bool>   IsNatuurtype := uint32(id(.)) >= Offset_Natuur;
+						attribute<string> Typenaam     := union_data(., NbSVeen/NbSLandgebruik/name, NbSVeen/NbSNatuurtype/InGebruik/name)
+						, Descr = "De naam onder een eigen sleutel en niet als kale name, want binnen een unit levert een kale name de naam van de unit zelf op. Zie de skill geodms-valkuilen.";
+
+						attribute<string> name  := Typenaam;
+						attribute<string> Label := union_data(., NbSVeen/NbSLandgebruik/Label, NbSVeen/NbSNatuurtype/InGebruik/Label), DialogType = "LabelText";
+
+						attribute<string> FractiePad := IsNatuurtype
+							? 'NbSVeen/Fracties_vd_Bouwsteen/' + Typenaam
+							: 'NbSVeen/NbSBouwsteen/Fr_' + Typenaam
+						, Descr = "Waar het aandeel van dit type per bouwsteen staat. De twee blokken staan in de brontabel naast elkaar en dus ook in de configuratie.";
+
+						attribute<INL_Beheertype> INL_Beheertype_rel :=
+							  IsNatuurtype
+								? NbSVeen/NbSNatuurtype/InGebruik/INL_Beheertype_rel[value(uint32(id(.)) - Offset_Natuur, NbSVeen/NbSNatuurtype/InGebruik)]
+								: (Typenaam == 'OppervlakteWater' ? rlookup(Beheertypecode_OpenWater, INL_Beheertype/code) : null_b[INL_Beheertype])
+						, Descr = "Het beheertype waar dit type op uitkomt. De achttien natuurtypen dragen dat zelf; van de zes hoofdtypen krijgt alleen oppervlaktewater er een, N04.02, zodat het net als bouwsteen 9a en 9b in de waterstroom valt. De rest is null en gaat langs LU_ModelType_rel hieronder of nergens langs.";
+
+						attribute<Actor/LU_ModelType> LU_ModelType_rel := IsNatuurtype
+							? null_b[Actor/LU_ModelType]
+							: NbSVeen/NbSLandgebruik/LU_ModelType_rel[value(uint32(id(.)), NbSVeen/NbSLandgebruik)]
+						, Descr = "Alleen voor de hoofdtypen die een landbouwklasse krijgen: natte teelt, en vernat grasland in twee smaken. Zie NbSLandgebruik/LU_ModelType_name voor de keuze en het voorbehoud.";
+
+						attribute<bool>   IsEerste   := uint32(id(.)) == 0u;
+						attribute<string> VorigeNaam := IsEerste ? '' : Typenaam[value(max_elem(uint32(id(.)), 1u) - 1u, .)]
+						, Descr = "De naam van het vorige type, voor de cumulatieve reeks. Bij de eerste leeg; de max_elem houdt de index op het eerste element in plaats van onder nul te duiken.";
+					}
+
+					parameter<string> Cluster_Straal_Uitkomst := '250m'
+					, Descr = "Over welke straal de ordening van trap 2 wordt uitgesmeerd. Fijner dan de 1000 m van trap 1, met opzet: binnen een bouwsteen horen de beheertypen een mozaiek te vormen en niet nog eens hetzelfde grove patroon.";
+
+					parameter<uint32> Seed_Uitkomst := 6842, Descr = "Eigen seed, los van die van trap 1 en van de typenallocatie.";
+
+					attribute<float32> Ordening_100m (rdc_100m) :=
+						='potential(rnd_uniform(' + string(Seed_Uitkomst) + ', rdc_500m, range(float32, 0f, 1f))[rdc_100m/rdc_500m_rel], /Geography/Distmatrices_100m/pot' + Cluster_Straal_Uitkomst + '/Flat2)
+								/ /Geography/Distmatrices_100m/pot' + Cluster_Straal_Uitkomst + '/oppervlakte'
+					, Descr = "De grootheid waarop binnen de regio gesorteerd wordt: een glad ruisoppervlak. Er is binnen een bouwsteen geen natuurlijke gradient zoals de natheid bij rivieren, dus de ruis doet het werk; door hem eerst uit te smeren komen de typen als vlekken naast elkaar en niet als spikkels door elkaar.";
+
+					attribute<bool> HeeftBouwsteen (AdminDomain) := IsDefined(Bouwsteen_rel);
+
+					unit<uint64> BouwsteenCel := select_with_org_rel(HeeftBouwsteen)
+					, Descr = "De cellen die in trap 1 een bouwsteen hebben gekregen. Cellen in het type Rest vallen hierbuiten en houden hun huidige grondgebruik."
+					{
+						attribute<AdminDomain> AdminDomain_rel               := org_rel;
+						attribute<.>           Per_AdminDomain (AdminDomain) := invert(org_rel);
+					}
+
+					attribute<BouwsteenType> Bouwsteen_Cel (BouwsteenCel) := Bouwsteen_rel[BouwsteenCel/AdminDomain_rel];
+					attribute<Peilvak>       Peilvak_Cel   (BouwsteenCel) := Peilvak/Per_AdminDomain[BouwsteenCel/AdminDomain_rel];
+
+					unit<uint32> Regio := range(uint32, 0u, uint32(#Peilvak) * uint32(#BouwsteenType))
+					, Descr = "De regio van trap 2: het peilvak maal de bouwsteen. De samenstelling geldt per bouwsteen en de opgave per peilvak, dus de verdeling moet binnen die combinatie kloppen. Als vlak bereik en niet met combine, zodat het rijnummer rechtstreeks uit te rekenen is.";
+
+					attribute<Regio> Regio_Cel (BouwsteenCel) := value(uint32(Peilvak_Cel) * uint32(#BouwsteenType) + uint32(Bouwsteen_Cel), Regio);
+
+					attribute<float32> Ordening_Cel (BouwsteenCel) := Ordening_100m[AdminDomain/rdc_100m_rel[BouwsteenCel/AdminDomain_rel]];
+
+					parameter<float32> Ordening_Max    := max(Ordening_Cel);
+					parameter<float32> Ordening_Bereik := Ordening_Max - min(Ordening_Cel) + 1f;
+
+					attribute<float64> Sleutel (BouwsteenCel) := float64(uint32(Regio_Cel)) + float64((Ordening_Max - Ordening_Cel) / Ordening_Bereik)
+					, Descr = "Sorteersleutel: het regionummer als geheel deel en de omgekeerde ordening als breukdeel, strikt kleiner dan 1. Oplopend sorteren geeft daarmee per regio een aaneengesloten blok. Zelfde constructie als bij de rivierenlevering, want GeoDMS kent geen rangschikking per groep.";
+
+					attribute<uint64> Rang_Globaal   (BouwsteenCel) := invert(index(Sleutel))[uint64];
+					attribute<uint64> Aantal_Cellen  (Regio)        := pcount(Regio_Cel);
+					attribute<uint64> Startpositie   (Regio)        := cumulate(Aantal_Cellen) - Aantal_Cellen;
+
+					attribute<float32> Positie (BouwsteenCel) := (float32(Rang_Globaal - Startpositie[Regio_Cel]) + 0.5f) / float32(Aantal_Cellen[Regio_Cel])
+					, IntegrityCheck = "all(this > 0f && this < 1f)"
+					, Descr = "De empirische verdelingsfunctie binnen de regio, tussen 0 en 1. Per regio gelijkmatig verdeeld, en daarom kloppen de arealen op een halve cel na.";
+
+					container Fr_perUitkomst :=
+						for_each_nedv(
+							UitkomstType/name
+							, UitkomstType/FractiePad + '[NbSVeen/NbSBouwsteen/MetBrondata/org_rel]'
+							, BouwsteenType
+							, float32
+						)
+					, Descr = "Het aandeel van elk uitkomsttype per bouwsteen, opgehaald uit de twee blokken van de brontabel en op BouwsteenType gezet zodat de cumulatieve reeks hieronder er rechtstreeks mee kan rekenen.";
+
+					container CumFractie :=
+						for_each_nedv(
+							'CumFr_' + UitkomstType/name
+							, UitkomstType/IsEerste
+								? 'Fr_perUitkomst/' + UitkomstType/name
+								: 'CumFr_' + UitkomstType/VorigeNaam + ' + Fr_perUitkomst/' + UitkomstType/name
+							, BouwsteenType
+							, float32
+						)
+					, Descr = "Cumulatieve aandelen per bouwsteen, in de volgorde van UitkomstType. De laatste hoort per bouwsteen op 1 uit te komen; Controle_Uitkomst bewaakt dat.";
+
+					attribute<UitkomstType> Uitkomst_Cel (BouwsteenCel) :=
+						='min_elem(' + AsList('uint32(Positie >= CumFractie/CumFr_' + UitkomstType/name + '[Bouwsteen_Cel])', ' + ') + ', ' + string(uint32(#UitkomstType) - 1u) + 'u)[UitkomstType]'
+					, Descr = "Het uitkomsttype van de cel: het aantal cumulatieve grenzen dat onder Positie ligt. De min_elem vangt af dat de laatste grens door afronding net onder 1 kan uitkomen.";
+
+					attribute<UitkomstType> Uitkomst_rel (AdminDomain) := Uitkomst_Cel[BouwsteenCel/Per_AdminDomain]
+					, Descr = "Het uitkomsttype per cel, null buiten de bouwstenen. Hier hangt de hele oplegging van trap 2 aan.";
+
+					// ---- wat trap 2 oplegt ----
+
+					attribute<INL_Beheertype> Natuur_uitBouwsteen (AdminDomain) :=
+						NatuurType/IsExogeenOpTeLeggen_Natuur[INL_Beheertype/NatuurType_rel[UitkomstType/INL_Beheertype_rel[Uitkomst_rel]]]
+							? UitkomstType/INL_Beheertype_rel[Uitkomst_rel] : null_b[INL_Beheertype]
+					, Descr = "De terrestrische natuur uit trap 2, in dezelfde vorm als ExoNatuur van de typenallocatie.";
+
+					attribute<INL_Beheertype> Water_uitBouwsteen (AdminDomain) :=
+						NatuurType/IsExogeenOpTeLeggen_Water[INL_Beheertype/NatuurType_rel[UitkomstType/INL_Beheertype_rel[Uitkomst_rel]]]
+							? UitkomstType/INL_Beheertype_rel[Uitkomst_rel] : null_b[INL_Beheertype]
+					, Descr = "Idem de waterstroom: de N04-typen plus het oppervlaktewater uit kolom AB. Of dit ook werkelijk wordt opgelegd hangt aan VariantK/ExogeenWaterOpleggen.";
+
+					attribute<Actor/LU_ModelType> Landbouw_uitBouwsteen (AdminDomain) := UitkomstType/LU_ModelType_rel[Uitkomst_rel]
+					, Descr = "De derde stroom, en die is nieuw met #684: de cellen die volgens de bouwsteen natte teelt of vernat grasland worden. Zonder deze stroom bleef een geleegde cel in bouwsteen 5, 7 of 8 zonder landgebruik achter, want alleen het natuurtypedeel werd opgelegd. Zie VariantData_T/ExogeenOpleggen/Landbouw voor waar hij binnenkomt.";
+
+					container Controle_Uitkomst
+					: Descr = "Twee toetsen op trap 2. De eerste bewaakt de cumulatieve reeks, de tweede legt het gerealiseerde areaal per type naast de opgave."
+					{
+						attribute<float32> Cum_Laatste (BouwsteenType) := ='CumFractie/CumFr_' + last(UitkomstType/name)
+						, IntegrityCheck = "all(abs(this - 1f) < 0.01f)"
+						, Descr = "De laatste cumulatieve grens per bouwsteen. Hoort op 1 uit te komen, want dat is kolom BA van de brontabel. Faalt deze, dan mist er een kolom in UitkomstType of klopt de brontabel niet.";
+
+						parameter<Ha> Opp_NatteTeelt := sum(float32(Uitkomst_rel == rlookup('NatteTeelt', UitkomstType/name)) * AdminDomain/NrHaPerCell[float32])[Ha];
+						parameter<Ha> Opp_VernatGrasland := sum(float32(Uitkomst_rel == rlookup('VernatGrasland_Kruidenrijk', UitkomstType/name) || Uitkomst_rel == rlookup('VernatGrasland_Productie', UitkomstType/name)) * AdminDomain/NrHaPerCell[float32])[Ha];
+						parameter<Ha> Opp_Natuur     := sum(float32(IsDefined(Natuur_uitBouwsteen)) * AdminDomain/NrHaPerCell[float32])[Ha];
+						parameter<Ha> Opp_Water      := sum(float32(IsDefined(Water_uitBouwsteen))  * AdminDomain/NrHaPerCell[float32])[Ha];
+						parameter<Ha> Opp_Landbouw   := sum(float32(IsDefined(Landbouw_uitBouwsteen)) * AdminDomain/NrHaPerCell[float32])[Ha];
+
+						parameter<String> Uitdraai :=
+							  'opp_natteteelt;'      + string(Opp_NatteTeelt)
+							+ '|opp_vernatgrasland;' + string(Opp_VernatGrasland)
+							+ '|opp_landbouw_totaal;'+ string(Opp_Landbouw)
+							+ '|opp_natuur;'         + string(Opp_Natuur)
+							+ '|opp_water;'          + string(Opp_Water)
+						, StorageName = "%LocalDataProjDir%/Diagnose/684_trap2.txt"
+						, StorageType = "str";
+					}
+
 					container Controle_Bouwsteen
 					: Descr = "Legt trap 1 naast de bebouwingstypekaart die hij vervangt. Alle getallen op het volle AdminDomain binnen het studiegebied."
 					{
