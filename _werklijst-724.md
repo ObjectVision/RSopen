@@ -126,7 +126,13 @@ Twee reparaties zijn uit deze ronde voortgekomen en gecommit: fe317807 voor de s
 
 De veenkant van NbSGenuanceerd loopt sinds f1281e10 via de gealloceerde bouwsteen. De onderbouwing daarvoor is nagelopen en houdt stand op het punt waar zij over gaat: van de zes lezers van `ExogeenOpleggen/Totaal` zijn de twee die op een nieuwe landbouwstroom zouden breken allebei landbouwgerelateerd, `Iter_Landbouw_T` en de landbouwclaim, en de sector Landbouw staat uitgecommentarieerd in `ModelParameters/SectorAllocRegio/Elements/Text:163`. Die twee draaien dus niet. De andere vier krijgen het bedoelde gedrag.
 
-Wat daarmee niet is beantwoord zijn de twee aannames die eronder liggen en die Deltares niet heeft bevestigd: de landgebruiksklassen voor natte teelt en vernat kruidenrijk grasland, en het uitzetten van de pandentoets in het veen. Beide staan als vraag in #684. Een levering van NbSGenuanceerd op deze stand draagt 28.628 gesloopte woningen tegen 3.430 daarvoor, en dat verschil rust op die twee aannames.
+Onder die route lagen twee aannames die Deltares niet heeft bevestigd: de landgebruiksklassen voor natte teelt en vernat kruidenrijk grasland, en het uitzetten van de pandentoets in het veen. Beide staan als vraag in #684.
+
+De tweede is diezelfde avond teruggedraaid in ddcfd9b7, op de constatering dat 28.628 gesloopte woningen niet plausibel is. Waar die woningen stonden was het argument: 28.019 van de 28.080 stonden op 8.049,9 hectare cellen met een BAG-pand en op de 86.567,6 hectare zonder pand stonden er 60,7, dus 99,8 procent van de woningen op 8,5 procent van het oppervlak, met 3,5 woningen per hectare. Dat is het veenweidelint en geen verspreide bebouwing; bestaand bebouwd gebied viel er al buiten via `MagOpleggen`.
+
+Gemeten na het terugdraaien, in NbSGenuanceerd Y2040: opgelegde sloop 3.461,45 woningen waarvan 277,21 in het veen, en 1.436,67 woningen op 10.545,13 hectare geleegd zonder nieuw landgebruik, precies het rivierensloopgebied. De winst van de bouwstenenroute blijft wel staan: het veendeel dat op slot gaat zonder dat er natuur landt zakt van 94.617 naar 4.822 hectare, en het veenoppervlak dat wel een nieuw landgebruik krijgt stijgt van 176.834 naar 237.562 hectare. Dat was de aanleiding van #684 en dat probleem is daarmee vrijwel weg.
+
+De eerste aanname staat nog. Wat er in deze lijst aan koolstof, groen en verharding voor NbSGenuanceerd staat is gemeten op de stand van voor de bouwstenenroute en geldt dus niet voor een levering op de huidige stand.
 
 ## Wat er niet is getoetst
 
