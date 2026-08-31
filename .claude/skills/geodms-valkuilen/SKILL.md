@@ -137,6 +137,23 @@ De huidige praktijk is strategisch ontkoppelen: stabiele tussenresultaten explic
 
 De praktische consequentie voor het toetsen: twee items uit dezelfde dure container kosten twee volledige berekeningen. Vraag ze in een aanroep op, met beide paden achter elkaar op de commandoregel, in plaats van in twee stappen na elkaar. Een allocatie van een uur wordt anders een allocatie van twee uur voor twee getallen uit dezelfde container.
 
+## De stand beschrijft niet het bestaande gebruik
+
+De sectorkant van de stand zegt wat er in DIT zichtjaar is gealloceerd, niet wat een cel is. Bestaande bebouwing die niet opnieuw wordt gealloceerd draagt geen sector, terwijl haar landgebruiks- en koolstofklasse wel bebouwd zeggen.
+
+Wil je weten wat een cel is, lees dan de landgebruiks- of koolstofklasse. Wil je weten wat er dit jaar mee is gebeurd, lees dan de sector. Wie de tweede vraag stelt om de eerste te beantwoorden krijgt een antwoord dat er plausibel uitziet.
+
+Het venijn is dat de fout twee kanten op valt en er allebei goed uitziet, zonder foutmelding:
+
+```
+IsDefined(Stand/Subsector_rel)                      // te ruim: elke gealloceerde cel, ook waterberging
+Sector/IsStedelijk[Stand/Sector_rel]                // te krap: alleen wat dit jaar is gealloceerd
+```
+
+Beide zijn in #657 langsgekomen, in dezelfde indicator, binnen een week. De eerste zette in Y2030 15.542 waterbergingscellen op dichtbebouwd. De tweede liet een emissiefactor op ruim 28.000 ha bestaand stedelijk veen landen, waar juist was afgesproken dat stedelijk gebied op nul blijft. De reparatie is een vlag op de klasse, met een IntegrityCheck op de coderange zodat hij niet meeschuift als er een rij in de tabel bij komt, en een toets op klasse OF sector wanneer je zowel het bestaande als het nieuwe wilt vangen.
+
+Zo vang je hem: bouw de meting twee keer langs verschillende wegen en leg de arealen naast elkaar. Hier voorspelde een losse telling uit BOFEK en het basisjaarlandgebruik 44.417 ha terwijl de indicator 72.741 ha gebruikte. Dat gat was het hele bewijs; zonder de tweede weg was er niets geweest om tegenaan te kijken.
+
 ## Een uitgeschakelde sector breekt een naamexpansie
 
 De sectorlijst in `ModelParameters/SectorAllocRegio/Elements/Text` bepaalt welke sectoren meedoen. Staat een sector uitgecommentarieerd, dan bestaan zijn afgeleide namen niet: geen `LU_ModelType/V/Verblijfsrecreatie_Totaal`, geen `Subsector/v/Verblijfsrecreatie_Totaal`. Elke `=`-expansie die zo'n naam uit een sectornaam opbouwt valt dan om op Unknown identifier.
