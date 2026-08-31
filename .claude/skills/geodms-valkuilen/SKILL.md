@@ -39,6 +39,26 @@ Een wijziging in een SqlString kan de volgorde stil veranderen: een window funct
 
 En let op de plaats in de regel. Heeft het item een expressie, dan komen de eigenschappen NA die expressie, achter een komma. `attribute<X> Y (D) : ExplicitSuppliers = "Z" := expr` geeft "item terminator ';' expected after item definition"; `attribute<X> Y (D) := expr, ExplicitSuppliers = "Z";` is goed. Verwar dit niet met een item zonder expressie, zoals een attribuut dat zijn waarde uit een storage haalt: `attribute<X> Y (D) : StorageName = "...", StorageReadOnly = "True";` is de normale vorm en daar staat de dubbele punt wel meteen achter het domein.
 
+## Een StorageName die niemand opvraagt schrijft niets
+
+GeoDmsRun rekent alleen door wat wordt opgevraagd en naar een storage gaat. Een item met een `StorageName` dat in geen enkele `Generate`-lijst voorkomt bestaat dus wel in de boom, maar het bestand ontstaat nooit. Er komt geen waarschuwing, want er is niets mis: niemand heeft erom gevraagd.
+
+Dat is anders dan de valkuil hierboven. Daar staat het kind onder een container die wel wordt opgevraagd en lift de eigenschap niet mee; hier staat het kind helemaal niet in de lijst.
+
+Gebeurd bij `#721`. `WriteStand/Legenda` schreef het zijbestand met de standlegenda en was correct gedefinieerd, maar `Impl/Generate` had `ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+Extra_str"`, en `Legenda` is geen StandVar en zat ook niet in `Extra_str`. Gevolg: over twintig standmappen nul zijbestanden, terwijl de leeskant een stand zonder kloppend zijbestand hard weigert. Het eerste zichtjaar schreef nog, het tweede brak, en de hele ontkoppelde indicatorenkant lag stil.
+
+De controle is goedkoop en hoort bij elke nieuwe `StorageName`: grep of het itempad ergens in een `ExplicitSuppliers` of een `Generate` voorkomt. Staat het er niet, dan schrijft het nooit. En de kanarie achteraf is simpeler nog: kijk of het bestand na een run werkelijk op schijf staat.
+
+## Een uitdraai die niet meedraait blijft stil staan
+
+Hetzelfde mechanisme, maar dan verraderlijker, want hier is er wel een bestand: alleen een oud.
+
+`/Diagnose/GenerateAll` heeft `ExplicitSuppliers = "=AsList('Resultaten/'+Checks/name+'/Waarde', ';')"` en dwingt dus alleen de regels uit de tabel `Checks` af. De losse parameters in datzelfde bestand vallen erbuiten. Ze schrijven naar dezelfde map, dragen sinds `#692` wel de casus en het zichtjaar in de naam maar geen tijdstempel, en blijven na een verse ronde gewoon staan zoals ze waren.
+
+Op 31 augustus 2026 ging dat twee keer bijna mis. `grondbalans_bestemmingen` gaf 437,5 ha waterberging op vruchtbare landbouwgrond terwijl de verse uitdraai op nul stond, en `waterberging_perregio` toonde voor BAU een opgave van 28,7 miljoen m3 die `#664` net had afgeschaft. Beide bestanden waren uren oud en van een andere codestand. Wie ze naast de verse getallen legt vindt een tegenspraak die er niet is, of concludeert dat een wijziging niet werkt terwijl hij wel werkt.
+
+Controleer daarom bij elke aflezing de mtime tegen het tijdstip van je eigen run, ook als de rest van de map er vers uitziet.
+
 ## Eenheidsliteralen werken niet overal
 
 `0[Eur]`, `0[Woning]`, `0[meter2]` en `0[Eur_m2]` lossen alleen op waar de eenheidscontainer in scope is, via een `using` op het bestand of via de plek in de boom. In `Diagnose.dms` is dat niet zo: die container heeft geen `using` en hangt niet onder de eenheden. Een meetexpressie die daar een eenheidsliteraal gebruikt faalt met `Unknown identifier 'Eur'`, en dat blijkt pas als je het item opvraagt, niet bij het parsen.
@@ -136,6 +156,23 @@ De CalcCache, de persistente schijfcache met automatische invalidatie, is verdwe
 De huidige praktijk is strategisch ontkoppelen: stabiele tussenresultaten expliciet wegschrijven naar in de configuratie gedeclareerde storages en in een latere run teruglezen. Er is geen automatische invalidatie; het verversen na een wijziging bovenstrooms is een bewuste stap. Zie de skill rs-fingerprints.
 
 De praktische consequentie voor het toetsen: twee items uit dezelfde dure container kosten twee volledige berekeningen. Vraag ze in een aanroep op, met beide paden achter elkaar op de commandoregel, in plaats van in twee stappen na elkaar. Een allocatie van een uur wordt anders een allocatie van twee uur voor twee getallen uit dezelfde container.
+
+## De stand beschrijft niet het bestaande gebruik
+
+De sectorkant van de stand zegt wat er in DIT zichtjaar is gealloceerd, niet wat een cel is. Bestaande bebouwing die niet opnieuw wordt gealloceerd draagt geen sector, terwijl haar landgebruiks- en koolstofklasse wel bebouwd zeggen.
+
+Wil je weten wat een cel is, lees dan de landgebruiks- of koolstofklasse. Wil je weten wat er dit jaar mee is gebeurd, lees dan de sector. Wie de tweede vraag stelt om de eerste te beantwoorden krijgt een antwoord dat er plausibel uitziet.
+
+Het venijn is dat de fout twee kanten op valt en er allebei goed uitziet, zonder foutmelding:
+
+```
+IsDefined(Stand/Subsector_rel)                      // te ruim: elke gealloceerde cel, ook waterberging
+Sector/IsStedelijk[Stand/Sector_rel]                // te krap: alleen wat dit jaar is gealloceerd
+```
+
+Beide zijn in #657 langsgekomen, in dezelfde indicator, binnen een week. De eerste zette in Y2030 15.542 waterbergingscellen op dichtbebouwd. De tweede liet een emissiefactor op ruim 28.000 ha bestaand stedelijk veen landen, waar juist was afgesproken dat stedelijk gebied op nul blijft. De reparatie is een vlag op de klasse, met een IntegrityCheck op de coderange zodat hij niet meeschuift als er een rij in de tabel bij komt, en een toets op klasse OF sector wanneer je zowel het bestaande als het nieuwe wilt vangen.
+
+Zo vang je hem: bouw de meting twee keer langs verschillende wegen en leg de arealen naast elkaar. Hier voorspelde een losse telling uit BOFEK en het basisjaarlandgebruik 44.417 ha terwijl de indicator 72.741 ha gebruikte. Dat gat was het hele bewijs; zonder de tweede weg was er niets geweest om tegenaan te kijken.
 
 ## Een uitgeschakelde sector breekt een naamexpansie
 

@@ -14,7 +14,12 @@
 
 container NettoBuurt
 {
+	parameter<UInt32> nrAttr := 31
+	, Descr = "Het aantal tekstvelden per rij in de OP-brontabellen. Een keer gedefinieerd, gelezen door OPTabel_T en door de Range van elk bronblok; bij een nieuwe kolom schuift alles hier tegelijk.";
+
+	#include<OPTabel_T.dms>
 	#include<Default_src.dms>
+	#include<PerVariant_src.dms>
 	
 	container PerVariant := 
 		for_each_ne(
@@ -22,18 +27,30 @@ container NettoBuurt
 			, 'PerVariant_T('+quote(VariantK/name)+')'
 		);
 		
-	Template PerVariant_T: Descr = "Hier voeren we variant-specifieke factoren door op de default"
+	Template PerVariant_T: Descr = "De OP-set van een variant plus de variant-specifieke factoren daarop. Sinds #721 is de set de default plus de eigen rijen van de variant: VariantK/OP_Aanvulling noemt het bronblok uit PerVariant_src.dms dat achter de 27 default-rijen wordt gevoegd, of geen. De union gebeurt op de tekstvelden, zodat OPTabel_T alle kolommen en controles maar een keer hoeft te kennen. BAU en BAU2 wijzen direct naar Default, dus daar is de set per constructie de default."
 	{
 		//
 		parameter<String> Variant_name;
 		//
 		
 		parameter<VariantK> Variant_rel := rlookup(variant_name, VariantK/name);
-		unit<UInt8> OP := = VariantK/OntwikkelPakketVariant[Variant_rel];
-		
-		unit<UInt8> InUitgeefbaarExPandfootprint  := Default/InUitgeefbaarExPandfootprint
+		parameter<String>   Aanvulling  := VariantK/OP_Aanvulling[Variant_rel];
+
+		unit<UInt32> ElementsSamen := ='union_unit(DefaultElements, '+Aanvulling+'Elements)'
+		, Descr = "De tekstvelden van de default-rijen met de eigen rijen van deze variant erachter. Voor OP_Aanvulling geen is dit de union met het lege blok; die tak leest niemand, want OP wijst dan direct naar Default."
 		{
-			unit<uint8> src := Default/InUitgeefbaarExPandfootprint;
+			attribute<String> Text := ='union_data(., DefaultElements/Text, '+Aanvulling+'Elements/Text)';
+		}
+
+		container EigenTabel := OPTabel_T(ElementsSamen)
+		, Descr = "De geparste set van deze variant. De eigen rijen nummeren aansluitend op de default-rijen; zie de rijnummer-waarschuwing in PerVariant_src.dms.";
+
+		unit<UInt8> OP := = Aanvulling == 'geen' ? 'Default' : 'EigenTabel/OP'
+		, Descr = "De OP-set van deze variant: exact Default waar niets wordt aangevuld, anders default plus eigen rijen.";
+		
+		unit<UInt8> InUitgeefbaarExPandfootprint  := OP/InUitgeefbaarExPandfootprint
+		{
+			unit<uint8> src := OP/InUitgeefbaarExPandfootprint;
 			
 			attribute<Float32> Verhard              := = 'min_elem(src/Verhard * VariantK/VerhardingTovDefault[VariantK/V/'+Variant_name+'], 1f)';
 			attribute<Float32> GroenEnWaterEnBruin  := 1f - Verhard;
@@ -46,9 +63,9 @@ container NettoBuurt
 			attribute<Float32> Boom                 := MakeDefined(Src/Boom   / Src/Groen * Groen, 0f);
 		}
 		
-		unit<UInt8> InOpenbaar := Default/InOpenbaar
+		unit<UInt8> InOpenbaar := OP/InOpenbaar
 		{
-			unit<uint8> src := Default/InOpenbaar;
+			unit<uint8> src := OP/InOpenbaar;
 			
 			attribute<Float32> Verhard              := = 'min_elem(src/Verhard * VariantK/VerhardingTovDefault[VariantK/V/'+Variant_name+'], 1f)';
 			attribute<Float32> GroenEnWaterEnBruin  := 1f - Verhard;
@@ -61,11 +78,11 @@ container NettoBuurt
 			attribute<Float32> Boom                 := MakeDefined(Src/Boom   / Src/Groen * Groen, 0f);
 		}
 		
-		container InNettoBuurt := InNettoBuurt_T(Default, InUitgeefbaarExPandfootprint, InOpenbaar);
-		container InDezeBuurt  := InNettoBuurt;
+		container Buurt := Buurt_T(OP, InUitgeefbaarExPandfootprint, InOpenbaar)
+		, Descr = "De inrichting van de netto buurt in vierkante meters, per pakket van deze variant. Heette tot #722 InDezeBuurt met daaronder InNettoBuurt: die tussenlaag bestond voor de keuze tussen netto en bruto buurt, en met het uitfaseren van BrutoBuurt is de keuze en dus de laag vervallen.";
 	}
 	
-	Template InNettoBuurt_T: Descr = "Hier zetten we de fracties om in meter2"
+	Template Buurt_T: Descr = "Hier zetten we de fracties om in meter2"
 	{
 		//
 		unit<UInt8> SrcUnit;
@@ -124,7 +141,7 @@ container NettoBuurt
 		
 		container PerWoning
 		{
-			container Src := InNettoBuurt;
+			container Src := Buurt;
 			
 			attribute<m2_Woning> Terreinoppervlakte (SrcUnit) := Src/Terreinoppervlakte[meter2] / (SrcUnit/Dichtheid * 1[ha])
 			{
@@ -213,8 +230,19 @@ container NettoBuurt
 			attribute<Bool>          IsNbSOP            := OP/IsNbSOP[org_rel];
 			attribute<Bool>          IsNbSMaxOP         := OP/IsNbSMaxOP[org_rel];
 			attribute<Bool>          IsNbSGenuanceerdOP := OP/IsNbSGenuanceerdOP[org_rel];
-			attribute<Classifications/Modellering/BouwwijzeK> Bouwwijze := OP/Bouwwijze[org_rel];
 			attribute<string>        NbSOPToepassingsgebied_ref := OP/NbSOPToepassingsgebied_ref[org_rel];
+
+			container Bouwwijze
+			: Descr = "Doorgifte van de toegestane bouwwijzen uit de OP-tabel naar deze subset, zodat de zeef er per pakket een parameter uit kan lezen (#723)."
+			{
+				container Toegestaan :=
+					for_each_nedv(
+						  /Classifications/Modellering/BouwwijzeK/name
+						, 'OP/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[org_rel]'
+						, ..
+						, bool
+					);
+			}
 			
 			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
 		}

@@ -25,6 +25,10 @@ param(
     # Leeg laten: dan haalt het script de zichtjaren uit de configuratie zelf, zodat de lijst hier nooit
     # uit de pas kan lopen met Model_FirstZichtjaar en Model_FinalYear.
     [string[]] $Zichtjaren = @(),
+    # Na welke zichtjaren draait het diagnoseharnas mee, zodat de run zijn eigen bewijs achterlaat.
+    # Leeg is geen enkele, en dan is er achteraf niets te beoordelen zonder opnieuw te rekenen.
+    # Kost ongeveer acht minuten per zichtjaar per variant.
+    [string[]] $DiagnoseNaZichtjaar = @(),
     [switch]   $SkipBasedata,
     [switch]   $SkipVariantData,
     [string]   $StartBij   = '',
@@ -185,6 +189,20 @@ if (-not $SkipVariantData) {
 foreach ($v in $Varianten) {
     foreach ($y in $Zichtjaren) {
         Invoke-Stap "allocatie-$v-$y" "/Allocatie/${Scenario}_$v/Zichtjaren/$y/Impl/Generate"
+
+        # Het diagnoseharnas achter de gekozen zichtjaren aan, zodat de uitkomst achteraf te
+        # beoordelen is zonder opnieuw te rekenen. Wat er tijdens de run niet is weggeschreven
+        # kun je naderhand niet meer nakijken; zie ObjectVision/RSopen#724.
+        #
+        # Kost ongeveer acht minuten per zichtjaar per variant. Draai hem daarom niet overal:
+        # het eerste zichtjaar vangt een systematische fout na een uur in plaats van na zeven,
+        # en het laatste is het zichtjaar dat wordt opgeleverd. Beoordelen doe je met
+        # ToetsOplevering.ps1, die deze uitdraaien leest.
+        if ($DiagnoseNaZichtjaar -contains $y) {
+            $env:DiagCasus = "${Scenario}_$v"
+            $env:DiagJaar  = "'$y'"
+            Invoke-Stap "diagnose-$v-$y" '/Diagnose/GenerateAll'
+        }
     }
 }
 

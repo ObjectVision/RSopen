@@ -346,13 +346,20 @@ Template Zichtjaar_T
 	
 	container Impl := Impl0
 	{
-		parameter<String>  Generate   := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+Extra_str", Descr = "Generate parameter to trigger generation of the stand files for this zichtjaar";
+		parameter<String>  Generate   := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+';WriteStand/Legenda'+Extra_str", Descr = "Generate parameter to trigger generation of the stand files for this zichtjaar.
+
+					WriteStand/Legenda staat er onvoorwaardelijk bij en niet in Extra_str, want die is voor het voorwaardelijke geval en de legenda hangt niet aan een sector. Het pad wijst naar het kind zelf en niet naar de container: ExplicitSuppliers op een container lift niet mee wanneer je een los kind opvraagt.
+
+					Zonder deze regel werd het zijbestand nooit geschreven, want GeoDmsRun rekent alleen door wat wordt opgevraagd en naar een storage gaat. De leeskant weigert sinds #721 een stand zonder kloppend zijbestand, dus het eerste zichtjaar schreef nog wel en het tweede brak. Gemeten op 2026-08-31: nul .params.txt-bestanden over twintig standmappen, en /Indicatoren/<casus>/Zichtjaren/<jaar>/Impl/Stand/OP_rel gaf exit 1 met 'LegendaKlopt' is not true.";
 		
 		parameter<string>  Extra_str  := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';WriteStand/wonen/Footprint' : '';
 		parameter<Bool>    Ontkoppeld := ='ModelParameters/StandAllocatieOntkoppeld', Descr = "Of de stand allocatie ontkoppeld is van de sector allocatie. Als dat zo is, worden de stand bestanden eerst ingelezen, gecompacteerd, en na de sector allocatie weer teruggeschreven. Als dat niet zo is, worden de stand bestanden direct overschreven.";
 		
 		unit<UInt8>       StandVar          := ='ThisVariantClassifications/StandVar';
 		parameter<string> AllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', Casus_name, '@JAAR@', name, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
+		parameter<string> LegendaFileName   := replace(AllocatieFileName, '@STANDPATH@', 'OP_rel') + '.params.txt', Descr = "Het zijbestand naast de OP_rel-tif met de legenda van de positionele standkolommen, zie WriteStand/Legenda.";
+		parameter<String> LegendaVerwacht   := 'op_set=' + AsList(ThisVariantClassifications/Vastgoed/OP/name, ',') + ';subsector_set=' + AsList(/Classifications/Actor/Sector/xSubsector/name, ',')
+		, Descr = "De legenda van de twee positionele standkolommen (#721): welke namen er achter de nummers van OP_rel en SubSector_rel zitten, in setvolgorde. Wordt naast de OP_rel-tif geschreven en bij het inlezen vergeleken met de dan geldende sets, zodat een stand met een andere setindeling hard faalt in plaats van stil naar de verkeerde pakketten te wijzen. De aanleiding is #721: de NbSGenuanceerd-rijen verschoven daar van nummer 41-52 naar 27-38, en zonder dit anker leest een oude tif gewoon door.";
 		
 		container ReadStand_UNCHECKED :=
 			for_each_ndvna(
@@ -373,12 +380,17 @@ Template Zichtjaar_T
 			for_each_neidvn(
 				 StandVar/path
 				, 'ReadStand_UNCHECKED/'+StandVar/path
-				, StandVar/IsLandbouw || (NOT(/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
+				, StandVar/IsLandbouw || (NOT(/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'OP_rel' || StandVar/name == 'SubSector_rel' ? ' && LegendaKlopt' : '')
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
 			), StorageReadOnly = "True"
 		{
+			parameter<String> LegendaGelezen: StorageName = "=ExistingFile('%projDir%/cfg/no_fingerprint.txt', LegendaFileName)", StorageType = "str", StorageReadOnly = "True"
+			, Descr = "De legenda zoals die naast de ingelezen OP_rel-tif staat. Ontbreekt het zijbestand, dan valt dit terug op cfg/no_fingerprint.txt en klopt de vergelijking nooit; een stand van voor #721 faalt dus hard in plaats van stil verkeerd te wijzen.";
+			parameter<Bool>   LegendaKlopt := LegendaGelezen == LegendaVerwacht
+			, Descr = "Wijzen de nummers in de ingelezen stand naar dezelfde sets als de lopende configuratie? Getoetst via de IntegrityCheck op OP_rel en SubSector_rel hierboven.";
+
 			container wonen
 			{
 				attribute<Woning>          Aantal_Woningen_Totaal (AdminDomain) := = 'add('+asItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
@@ -592,6 +604,10 @@ Template Zichtjaar_T
 				, 'gdalwrite.grid'
 			), Descr = "Write the calculated stand file back to a tif file, but only if the stand file is not completely empty or undefined."
 		{
+			parameter<String> Legenda := LegendaVerwacht
+			, StorageName = "=LegendaFileName", StorageType = "str"
+			, Descr = "Schrijft de legenda van de positionele standkolommen naast de OP_rel-tif, zie LegendaVerwacht. Hoort bij elke WriteStand-aanroep mee te gaan; de leeskant weigert een stand zonder kloppend zijbestand.";
+
 			container wonen
 			{
 				attribute<m2PandFootprint> Footprint  (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? 'CalcStand/Wonen/Footprint' : 'const(null_f, AdminDomain, m2PandFootprint)', StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Wonen/Footprint')", StorageType = "gdalwrite.grid";

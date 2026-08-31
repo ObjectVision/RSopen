@@ -48,17 +48,44 @@ Template Groenfracties_T
 	attribute<float32> WaterCel_Basisjaar  (AdminDomain) := /SourceData/Grondgebruik/LGN/Groenfracties/water[AdminDomain/rdc_25m_rel];
 
 	// Inrichting van de gealloceerde ontwikkelpakketten, als fractie van de buurt (#566). Delen door
-	// Terreinoppervlakte/Totaal en niet door 10000: bij OPScaleRef = BrutoBuurt is de buurt geen hectare.
+	// Terreinoppervlakte/Totaal en niet door 10000, zodat de deling ook klopt als een OP-set ooit een andere buurtmaat dan een hectare krijgt (#722).
 	attribute<bool>    GroenTeltAlsNatuur  (OP) := = ModelParameters/Wonen/OPGroenAlsNatuur_ref == 'Alle' ? 'const(TRUE, OP)' : ModelParameters/Wonen/OPGroenAlsNatuur_ref == 'NbS' ? 'OP/IsNbSOP' : 'const(FALSE, OP)', Descr = "Telt het groen van dit ontwikkelpakket mee als natuur? Zie ModelParameters/Wonen/OPGroenAlsNatuur_ref, waar de afweging uit #677 staat. Default zijn dat de NbS-pakketten, want die zijn geen woonwijk met bermen maar een landschap met woningen erin.";
 	attribute<bool>    WaterTeltAlsWater   (OP) := = ModelParameters/Wonen/OPWaterAlsWater_ref  == 'Alle' ? 'const(TRUE, OP)' : ModelParameters/Wonen/OPWaterAlsWater_ref  == 'NbS' ? 'OP/IsNbSOP' : 'const(FALSE, OP)', Descr = "Telt het water van dit ontwikkelpakket mee als open water? Zie ModelParameters/Wonen/OPWaterAlsWater_ref: die staat op 'Alle', want anders dan bij het groen gaat het hier wel om dezelfde grootheid als waarop de coefficient is geschat. Tot #677 was deze kant helemaal niet schakelbaar.";
 
 	attribute<float32> fr_natuur_OP        (OP) := GroenTeltAlsNatuur ? OP_Buurt/Terreinoppervlakte/Totaal/Groen[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32] : 0f, Descr = "Aandeel van de buurt dat als groen wordt ingericht (gras, boom en struik, uitgeefbaar plus openbaar) en hedonisch als natuur telt. Al het groen en niet alleen het openbare, conform de afspraak met Deltares 2026-08-20 in #566. De overlap met de lnlotsize-term is verwaarloosbaar: een cel is 0,08% van de 500m-schijf en 0,003% van de 2500m-schijf, dus de fractie gaat over de omgeving en niet over het eigen perceel.";
 	attribute<float32> fr_water_OP         (OP) := WaterTeltAlsWater  ? OP_Buurt/Terreinoppervlakte/Totaal/Water[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32] : 0f, Descr = "Aandeel van de buurt dat als water wordt ingericht (uitgeefbaar plus openbaar); de natste NbS-pakketten komen tot ~0,65. Sinds #677 schakelbaar via OPWaterAlsWater_ref, die op 'Alle' staat.";
 
-	attribute<bool>    IsDrijvend_OP         (OP) := /Classifications/Modellering/BouwwijzeK/IsDrijvend[OP/Bouwwijze], Descr = "Bouwt dit ontwikkelpakket drijvend? Zelfde OP-kolom en dezelfde vlag die de zeef leest in Zeef_Wonen_perOP_T (#505, #614). Lees de vlag en niet het klassenummer: BouwwijzeK is sinds #665 een combinatietabel van een methode-as en een diepte-as die achteraan mag aangroeien, dus een toets op id zou stil verschuiven.";
-	attribute<float32> WaterBehoudFractie_OP (OP) := IsDrijvend_OP ? /ModelParameters/Wonen/DrijvendBehoudtWaterFractie : 0f, IntegrityCheck = "all(this >= 0f && this <= 1f)", Descr = "Welk deel van het bestaande wateroppervlak dit pakket laat staan. Nul voor elk niet-drijvend pakket, en zolang DrijvendBehoudtWaterFractie op 0f staat ook voor de drijvende.";
+	container BouwwijzeInput
+	: Descr = "De invoer voor de bouwwijzekeuze van deze stand (#723): wat het gealloceerde pakket toelaat, en wat de plek eist. Dezelfde eisen als de zeef las bij het alloceren."
+	{
+		attribute<OP>    OP_rel_cad  (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Bron/OP_rel);
+		attribute<meter> Waterdiepte (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsdiepte);
 
-	attribute<float32> WaterBehoudCel (AdminDomain) := Bron/IsOPCel ? (MakeDefined(WaterBehoudFractie_OP[Bron/OP_rel], 0f) * WaterCel_Basisjaar) : 0f, Descr = "Het deel van de cel dat onder een drijvend ontwikkelpakket water blijft: de behoudfractie van het pakket maal het water dat er in het basisjaar lag. De toets op Bron/IsOPCel staat er omdat OP_rel ook gevuld is waar geen pakket is ingericht: de BAG-nieuwbouwcellen uit #550 dragen een gematchte OP_rel terwijl IsOPCel expliciet FALSE is.";
+		parameter<Bool> VeenGeldt := ='VariantParameters/VariantK/BouwwijzeVeenGeldtVoorOPs[VariantParameters/VariantK/V/'+Variant_name+']';
+
+		attribute<Bool> EisBodemdalingbestendig (CompactedAdminDomain) := VeenGeldt ? ThisVariantData/BouwwijzeEis/Bodemdalingbestendig : const(FALSE, CompactedAdminDomain);
+		attribute<Bool> EisDrijvend             (CompactedAdminDomain) := VeenGeldt ? ThisVariantData/BouwwijzeEis/Drijvend             : const(FALSE, CompactedAdminDomain);
+
+		container Toegestaan :=
+			for_each_nedv(
+				  /Classifications/Modellering/BouwwijzeK/name
+				, 'MakeDefined(OP/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[OP_rel_cad], FALSE)'
+				, CompactedAdminDomain
+				, bool
+			);
+	}
+
+	container Bouwwijzekeuze := Templates/Beschikbaarheden/Bouwwijzekeuze_T(
+		  BouwwijzeInput/Toegestaan
+		, ThisVariantData/BouwwijzeEis/Overstromingsbestendig
+		, BouwwijzeInput/EisBodemdalingbestendig
+		, BouwwijzeInput/EisDrijvend
+		, BouwwijzeInput/Waterdiepte
+	), Descr = "Welke bouwwijze is er op elke standcel gebouwd (#723). Zelfde sjabloon en zelfde invoer als de zeef, dus per constructie consistent daarmee. Zolang DrijvendBehoudtWaterFractie op 0f staat wordt hij nooit opgevraagd en dus nooit gerekend.";
+
+	attribute<bool>    IsDrijvendCel (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, Bouwwijzekeuze/GekozenIsDrijvend), FALSE), Descr = "Wordt er in deze cel drijvend gebouwd? Sinds #723 de gekozen bouwwijze per cel en niet langer een vast kenmerk van het pakket: een pakket dat drijvend toelaat bouwt alleen drijvend waar de plek dat eist of niets lichters kan. Lees de vlag en niet het klassenummer: BouwwijzeK mag achteraan aangroeien, dus een toets op id zou stil verschuiven (#505, #614).";
+
+	attribute<float32> WaterBehoudCel (AdminDomain) := Bron/IsOPCel ? (IsDrijvendCel ? /ModelParameters/Wonen/DrijvendBehoudtWaterFractie : 0f) * WaterCel_Basisjaar : 0f, IntegrityCheck = "all(this >= 0f && this <= 1f)", Descr = "Het deel van de cel dat onder een drijvend ontwikkelpakket water blijft: de behoudfractie maal het water dat er in het basisjaar lag. De toets op Bron/IsOPCel staat er omdat OP_rel ook gevuld is waar geen pakket is ingericht: de BAG-nieuwbouwcellen uit #550 dragen een gematchte OP_rel terwijl IsOPCel expliciet FALSE is.";
 
 	attribute<bool>    IsLandbouwMutatie   (AdminDomain) := MakeDefined(LU/IsLandbouw[Bron/LU_Mutatie], FALSE), Descr = "Is de mutatie een landbouwklasse? De landbouwallocatie wisselt elk zichtjaar gewassen over vrijwel het hele landelijk gebied, en dat is in hedonische zin geen verandering van de landsdekking. Een gewaswissel mag de LGN-basisjaarwaarde daarom niet verlagen; alleen de expliciet natte klassen (riet, moerasbomen) tellen als winst. Zie #637.";
 	attribute<float32> NatuurCel_Mutatie   (AdminDomain) := float32(LU/IsNatuur_hedonisch[Bron/LU_Mutatie]);

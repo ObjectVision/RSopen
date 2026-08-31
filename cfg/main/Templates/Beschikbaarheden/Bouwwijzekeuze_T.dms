@@ -1,0 +1,70 @@
+﻿////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Welke bouwwijze wordt er op deze cel gebouwd, gegeven wat het ontwikkelpakket toelaat en wat de plek eist.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Bouwwijzekeuze_T
+: Descr = "De bouwwijzekeuze per cel: van de bouwwijzen die het ontwikkelpakket toelaat, de lichtste die aan alle eisen van de plek voldoet.
+
+			Dit is de ene plek waar de keuzeregel staat. De zeef leest GeenEnkeleVoldoet om een pakket te weren waar geen van zijn bouwwijzen kan; de overstromingsschade, de groenfracties en de bouwkosten lezen de Gekozen-items om te weten wat er dan werkelijk gebouwd wordt. Tot #723 bestond deze vraag niet: de bouwwijze lag als een enkel nummer vast per pakket, en dat bundelde een woningproduct met een aanpassing aan de ondergrond.
+
+			De regel is de lichtste toereikende: van de toegestane bouwwijzen die aan alle eisen voldoen, die met de kleinste MaxOverstromingsdiepte. Dat is welgedefinieerd zonder kostenkentallen, en het is ook economisch de goede regel, want een ontwikkelaar doet het minimum dat mag. Zodra de kentallen uit #505 de Kostenopslag differentieren hoort hier kiezen op kosten te komen, met de lichtste als gelijkspelregel.
+
+			Een eis geldt als de eis-invoer op de cel TRUE is; de aanroeper verwerkt zelf de schakelaars, zoals BouwwijzeVeenGeldtVoorOPs. Voldoen is per bouwwijze: de diepte-eis via MaxOverstromingsdiepte, de veeneisen via de twee vlaggen. Alles wordt uit de klassificatie gelezen en niets is hier overgetypt, dus een nieuwe bouwwijze in BouwwijzeK doet vanzelf mee."
+{
+	//
+	container Toegestaan;
+	attribute<Bool>  EisOverstromingsbestendig (CompactedAdminDomain);
+	attribute<Bool>  EisBodemdalingbestendig   (CompactedAdminDomain);
+	attribute<Bool>  EisDrijvend               (CompactedAdminDomain);
+	attribute<meter> Waterdiepte               (CompactedAdminDomain);
+	//
+
+	unit<UInt32> BW := /Classifications/Modellering/BouwwijzeK;
+
+	container Voldoet :=
+		for_each_nedv(
+			  BW/name
+			, 'Toegestaan/' + BW/name
+				+ ' && (!EisOverstromingsbestendig || Waterdiepte <= /Classifications/Modellering/BouwwijzeK/MaxOverstromingsdiepte[' + string(id(BW)) + '[/Classifications/Modellering/BouwwijzeK]])'
+				+ ' && (!EisBodemdalingbestendig || /Classifications/Modellering/BouwwijzeK/IsBodemdalingbestendig[' + string(id(BW)) + '[/Classifications/Modellering/BouwwijzeK]])'
+				+ ' && (!EisDrijvend || /Classifications/Modellering/BouwwijzeK/IsDrijvend[' + string(id(BW)) + '[/Classifications/Modellering/BouwwijzeK]])'
+			, CompactedAdminDomain
+			, bool
+		)
+	, Descr = "Per bouwwijze: laat het pakket hem toe en voldoet hij aan alle eisen van deze cel? De dieptetoets, de bodemdalingtoets en de drijvendtoets zijn dezelfde drie die tot #723 los in Zeef_Wonen_perOP_T stonden, maar dan per bouwwijze in plaats van voor de ene vaste bouwwijze van het pakket.";
+
+	attribute<Bool> GeenEnkeleVoldoet (CompactedAdminDomain) := ='not(OR(' + AsItemList('Voldoet/' + BW/name) + '))'
+	, Descr = "Geen van de toegestane bouwwijzen kan op deze cel. Dit is wat de zeef leest: het pakket valt hier af, precies zoals het tot #723 afviel wanneer zijn ene bouwwijze een van de drie toetsen niet haalde.";
+
+	attribute<meter> LichtsteDiepte (CompactedAdminDomain) := ='min_elem(' + AsItemList('Voldoet/' + BW/name + ' ? /Classifications/Modellering/BouwwijzeK/MaxOverstromingsdiepte[' + string(id(BW)) + '[/Classifications/Modellering/BouwwijzeK]] : null_f') + ')'
+	, Descr = "De kleinste MaxOverstromingsdiepte onder de bouwwijzen die voldoen; null waar geen enkele voldoet. Zelfde min_elem-met-null-patroon als Bodemdalingkosten_T/Goedkoopste.";
+
+	attribute<BW> Keuze (CompactedAdminDomain) := =
+		'switch('
+		+ AsItemList('case(Voldoet/' + BW/name + ' && /Classifications/Modellering/BouwwijzeK/MaxOverstromingsdiepte[' + string(id(BW)) + '[/Classifications/Modellering/BouwwijzeK]] == LichtsteDiepte, ' + string(id(BW)) + '[/Classifications/Modellering/BouwwijzeK])')
+		+ ', null_u)'
+	, Descr = "De gekozen bouwwijze: de eerste die voldoet en de lichtste diepte draagt. De vergelijking loopt over de gelezen dieptes en niet over klassenummers, dus een nieuwe rij in BouwwijzeK verschuift hier niets; bij twee bouwwijzen met exact dezelfde diepte wint de laagste rij, en dat is de enige plek waar de rijvolgorde iets betekent. Null waar geen enkele voldoet; de zeef zeeft die cellen weg voordat iemand de keuze leest.";
+
+	container Controle
+	{
+		attribute<Bool> KeuzeCompleet (CompactedAdminDomain) := GeenEnkeleVoldoet || IsDefined(Keuze)
+		, IntegrityCheck = "all(this)"
+		, Descr = "Waar minstens een bouwwijze voldoet moet er ook gekozen zijn. Bewaakt de gelijkheidsvergelijking in Keuze: die leest exact dezelfde lookups als LichtsteDiepte, dus dit kan alleen falen als iemand die twee uit elkaar laat lopen.";
+	}
+
+	attribute<Bool>    GekozenIsDrijvend        (CompactedAdminDomain) := MakeDefined(/Classifications/Modellering/BouwwijzeK/IsDrijvend[Keuze], FALSE)
+	, Descr = "Wordt er op deze cel drijvend gebouwd? FALSE waar geen keuze is. Gelezen door Suitabilities/Groenfracties_T.";
+	attribute<meter>   GekozenSchadevrijeDiepte (CompactedAdminDomain) := MakeDefined(/Classifications/Modellering/BouwwijzeK/SchadevrijeDiepte[Keuze], 0[meter])
+	, Descr = "Tot welke waterdiepte boekt de overstromingsschade deze cel als schadevrij? Nul waar geen keuze is, zodat dit overal een geldige verschuiving is. Gelezen door SSM2017_Overstromingsschades/Grondgebruik/Zichtjaar (#681).";
+	attribute<Float32> GekozenKostenopslag      (CompactedAdminDomain) := MakeDefined(/Classifications/Modellering/BouwwijzeK/Kostenopslag[Keuze], 1f)
+	, Descr = "De kostenopslag van de gekozen bouwwijze; 1,0 waar geen keuze is. Gelezen door Geschiktheden/Bouwkosten als ModelParameters/Wonen/BouwwijzeOpslagInBouwkosten aanstaat.";
+}

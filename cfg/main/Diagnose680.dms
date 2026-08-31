@@ -1,0 +1,68 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// TIJDELIJK meetharnas #680: hoe groot is de afwaardering die in de NbS-varianten de verwervingskosten
+// verlaagt, en waar bijt zij. Alle grootheden hier zijn basisjaargrootheden en dus variantonafhankelijk;
+// de schakelaar FunderingschadeWordtHersteld bepaalt alleen of deze afwaardering wordt toegepast, niet
+// hoe groot zij is. Verwijderen zodra de getallen in #680 staan.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose680
+: Descr = "Tijdelijk meetharnas #680: omvang en aangrijpingspunt van de funderingsafwaardering in de wonen-geschiktheid."
+{
+	unit<uint64> CompactedAdminDomain := /Geography/CompactedAdminDomain;
+
+	// Zelfde twee grootheden als Templates/Indicatoren.dms:465-466, dus de ongemaskeerde woningwaarde.
+	// Cast naar float32 en rekenen met kale getallen, want eenheidsliteralen lossen hier niet op.
+	attribute<float32> Schade_ruw (CompactedAdminDomain) := float32(/SourceData/Vastgoed/Funderingsschade/per_pand/k), Descr = "Funderingsschade per cel, na per-woning-cap en herverdeling binnen de buurt.";
+	attribute<float32> Waarde_ruw (CompactedAdminDomain) := float32(collect_by_cond(CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal)), Descr = "Verwervingswaarde van de bestaande woningen per cel.";
+
+	// min_elem(null, x) geeft x, dus eerst de nulls wegwerken; anders krijgt elke cel zonder pand de volle
+	// woningwaarde als afwaardering toegewezen. De configuratie zelf zet om dezelfde reden een guard op kcap0_i.
+	attribute<float32> Schade (CompactedAdminDomain) := MakeDefined(Schade_ruw, 0f);
+	attribute<float32> Waarde (CompactedAdminDomain) := MakeDefined(Waarde_ruw, 0f);
+
+	attribute<float32> Afwaardering (CompactedAdminDomain) := min_elem(Schade, Waarde), Descr = "Wat in de NbS-varianten van de verwervingskosten wordt afgetrokken: min_elem(Src, Woningen0), zoals Suitability_Wonen_perOP_T.dms:51.";
+
+	attribute<bool> HeeftWaarde        (CompactedAdminDomain) := Waarde > 0f;
+	attribute<bool> HeeftSchade        (CompactedAdminDomain) := Schade > 0f;
+	attribute<bool> VolledigWeg        (CompactedAdminDomain) := HeeftWaarde && Afwaardering >= Waarde, Descr = "Cel waar de afwaardering de hele verwervingswaarde opeet, zodat de bestaande woningen voor de allocatie gratis te verwerven zijn.";
+	attribute<bool> MeerDanHelftWeg    (CompactedAdminDomain) := HeeftWaarde && Afwaardering >= 0.5f * Waarde;
+
+	parameter<float64> Schade_mld        := sum(float64(Schade))       / 1e9;
+	parameter<float64> Waarde_mld        := sum(float64(Waarde))       / 1e9;
+	parameter<float64> Afwaardering_mld  := sum(float64(Afwaardering)) / 1e9;
+	parameter<float64> Verlies_door_cap_mld := Schade_mld - Afwaardering_mld, Descr = "Deel van de schade dat door min_elem boven de woningwaarde uitkomt en dus nergens landt.";
+
+	parameter<uint32>  Cellen_met_waarde     := sum(uint32(HeeftWaarde));
+	parameter<uint32>  Cellen_met_schade     := sum(uint32(HeeftSchade));
+	parameter<uint32>  Cellen_volledig_weg   := sum(uint32(VolledigWeg));
+	parameter<uint32>  Cellen_meer_dan_helft := sum(uint32(MeerDanHelftWeg));
+
+	parameter<float64> Waarde_op_volledig_weg_mld := sum(float64(Waarde * float32(VolledigWeg))) / 1e9, Descr = "Verwervingswaarde die op de volledig afgeschreven cellen stond.";
+
+	parameter<float64> Fractie_voorraadwaarde := Afwaardering_mld / Waarde_mld;
+
+	parameter<String> Uitdraai :=
+		  'grootheid;waarde'
+		+ '|schade_totaal_mld;'            + string(Schade_mld)
+		+ '|woningwaarde_totaal_mld;'      + string(Waarde_mld)
+		+ '|afwaardering_totaal_mld;'      + string(Afwaardering_mld)
+		+ '|verlies_door_cap_mld;'         + string(Verlies_door_cap_mld)
+		+ '|fractie_van_voorraadwaarde;'   + string(Fractie_voorraadwaarde)
+		+ '|cellen_met_woningwaarde;'      + string(Cellen_met_waarde)
+		+ '|cellen_met_schade;'            + string(Cellen_met_schade)
+		+ '|cellen_volledig_afgeschreven;' + string(Cellen_volledig_weg)
+		+ '|cellen_meer_dan_helft_weg;'    + string(Cellen_meer_dan_helft)
+		+ '|waarde_op_volledig_afgeschreven_mld;' + string(Waarde_op_volledig_weg_mld)
+	, StorageName = "='%LocalDataProjDir%/Diagnose/D680_funderingsafwaardering.txt'"
+	, StorageType = "str"
+	, Descr = "Alle regels in een bestand, zodat een run alles in een keer materialiseert; de keten is duur en er is geen CalcCache meer.";
+}

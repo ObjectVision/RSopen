@@ -1,0 +1,185 @@
+﻿////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+//
+// Parseert een blok tekstregels (rijen maal nrAttr velden) tot een volwaardige OP-set met alle afgeleide
+// kolommen, controles en subsets. Een keer geschreven, drie keer gebruikt: Default, en per NbS-variant de
+// union van Default met de eigen rijen (#721).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template OPTabel_T
+: Descr = "Een OP-set uit een blok tekstregels (#721). De invoer is een Elements-eenheid met een String-attribuut Text van rijen maal nrAttr velden; alles wat een ontwikkelpakket is of kan, van kolomparse tot bouwwijzemasker en subsets per WP2xVSSH, staat hier een keer. De kleuren komen via de naam uit KleurenOP, zodat elke set dezelfde pakketkleuren toont zonder per set een kleurenlijst te dragen."
+{
+	//
+	unit<UInt32> Elements;
+	//
+
+	parameter<UInt32> ControleRest := mod(#Elements, nrAttr)
+	, IntegrityCheck = "this == 0"
+	, Descr = "Het aantal tekstvelden moet een veelvoud van nrAttr zijn. Faalt zodra iemand een veld vergeet of een rij een kolom mist, voordat de kolommen stil verschuiven.";
+
+	unit<UInt8> OP := range(uint8, 0[uint8], uint8(#Elements / nrAttr))
+	, Descr = "De ontwikkelpakketten van deze set, een rij per pakket."
+	{
+	
+		attribute<String>               name                   := Elements/Text[value(uint32(id(.))* nrAttr +  0, Elements)], Descr = "De naam van het ontwikkelpakket";
+		attribute<String>               WP2_name_short         := Elements/Text[value(uint32(id(.))* nrAttr +  1, Elements)], Descr = "De WP2 classificatie van het ontwikkelpakket, verkorte naam";
+		attribute<String>               VSSH_name_short        := Elements/Text[value(uint32(id(.))* nrAttr +  2, Elements)], Descr = "De VSSH classificatie van het ontwikkelpakket, verkorte naam";
+		attribute<Woonoppervlak_Woning> Woonoppervlakte_woning := Elements/Text[value(uint32(id(.))* nrAttr +  3, Elements)][Woonoppervlak_Woning], Descr = "De gemiddelde woonoppervlakte per woning in m2 gebruiksoppervlak (GBO); via de vormfactor om te rekenen naar BVO (zie BVOPerWoning)";
+		attribute<UInt32>               Aant_kamers            := Elements/Text[value(uint32(id(.))* nrAttr +  4, Elements)][uint32], Descr = "Het gemiddelde aantal kamers per woning";
+		attribute<UInt32>               Aant_badkamers         := Elements/Text[value(uint32(id(.))* nrAttr +  5, Elements)][uint32], Descr = "Het gemiddelde aantal badkamers per woning";
+		attribute<Bool>                 HeeftPriveParkeren     := Elements/Text[value(uint32(id(.))* nrAttr +  6, Elements)][bool], Descr = "Geeft aan of er bij de woningen in dit ontwikkelpakket sprake is van privé parkeermogelijkheden (op eigen terrein)";
+	
+		// Wegingsfactoren ten aanzien van centraliteit/bereikbaarheid en de nabijheid van amenities (Voorzieningen).
+		attribute<Float32>              Weging_NatNiv      := Elements/Text[value(uint32(id(.))* nrAttr +  7, Elements)][float32], Descr = "Wegingsfactor voor de invloed van nationale niveaus (proxy voor Randstad-NietRandstad) op de woningprijs";
+		attribute<Float32>              Weging_NatOV       := Elements/Text[value(uint32(id(.))* nrAttr +  8, Elements)][float32], Descr = "Wegingsfactor voor de invloed van nationale OV (proxy voor grotere steden) op de woningprijs";
+		attribute<Float32>              Weging_Amenities   := Elements/Text[value(uint32(id(.))* nrAttr +  9, Elements)][float32], Descr = "Wegingsfactor voor de invloed van de nabijheid van amenities (voorzieningen) op de woningprijs";
+	
+		attribute<FSI>                  FloorSpaceIndex    := Elements/Text[value(uint32(id(.))* nrAttr + 10, Elements)][FSI], Descr = "De Floor Space Index (FSI) van het ontwikkelpakket, oftewel de verhouding tussen de totale vloeroppervlakte van alle gebouwen en de terreinoppervlakte van de netto buurt";
+		attribute<GSI>                  GroundSpaceIndex   := Elements/Text[value(uint32(id(.))* nrAttr + 11, Elements)][GSI], Descr = "De Ground Space Index (GSI) van het ontwikkelpakket, oftewel de verhouding tussen de footprint van alle gebouwen en de terreinoppervlakte van de netto buurt";
+		attribute<String>               WP4_name           := Elements/Text[value(uint32(id(.))* nrAttr + 12, Elements)], Descr = "De WP4 classificatie van het ontwikkelpakket, volledige naam";
+	
+		attribute<Classifications/Vastgoed/WP4> WP4_rel := rlookup(lowercase(WP4_name), lowercase(/Classifications/Vastgoed/WP4/name))
+		, IntegrityCheck = "all(IsDefined(this))"
+		, Descr = "De WP4 classificatie van het ontwikkelpakket. De IntegrityCheck is er sinds #673: vanaf toen haalt de bouwkostenkant via deze relatie een kental op, en een typefout in kolom 12 zou anders stil een null opleveren die de hele bouwkostenkaart van dat pakket wist en het pakket zonder foutmelding uit de ArgMax laat vallen.";
+	
+
+		unit<uint8> InUitgeefbaarExPandFootprint := ., Descr = "De inrichting van het uitgeefbaar deel van de netto buurt exclusief de footprint van de panden"
+		{
+			// De check zit op Verhard omdat die in elke run wordt bijgewerkt, maar toetst de hele rij: verhard,
+			// groen, water en bruin moeten samen de buitenruimte vullen. Pakketten zonder private buitenruimte
+			// (FractieUitgeefbaar == GroundSpaceIndex, zie TuinDoel 0) zijn uitgezonderd: daar staan de fracties
+			// op 0 omdat er niets te verdelen valt.
+			attribute<Float32> Verhard  := Elements/Text[value(uint32(id(..))* nrAttr + 13, Elements)][float32]
+			, IntegrityCheck = "all(!(FractieUitgeefbaar > GroundSpaceIndex) || abs(add(this, Groen, Water, Bruin) - 1f) < 0.005f)";
+			attribute<Float32> Groen    := Elements/Text[value(uint32(id(..))* nrAttr + 15, Elements)][float32];
+			attribute<Float32> Water    := Elements/Text[value(uint32(id(..))* nrAttr + 17, Elements)][float32];
+			attribute<Float32> Boom0    := Elements/Text[value(uint32(id(..))* nrAttr + 19, Elements)][float32];
+			attribute<Float32> Gras0    := Elements/Text[value(uint32(id(..))* nrAttr + 20, Elements)][float32];
+			attribute<Float32> Struik0  := Elements/Text[value(uint32(id(..))* nrAttr + 21, Elements)][float32];
+			attribute<Float32> Groen0   := add(Boom0, Gras0, Struik0);
+		
+			attribute<Float32> Bruin    := const(0f, ..); // Werd niet ingeschat door WR. TODO toevoegen
+		
+			//Schalen omdat groen Totaal bij nader inzien moest optellen tot fractie groen
+			attribute<Float32> Boom    := Boom0   / Groen0 * Groen;
+			attribute<Float32> Gras    := Gras0   / Groen0 * Groen;
+			attribute<Float32> Struik  := Struik0 / Groen0 * Groen;
+		}
+	
+		unit<uint8> InOpenbaar := ., Descr = "De inrichting van het openbare deel van de netto buurt"
+		{
+			// Zelfde check als bij InUitgeefbaarExPandFootprint, maar zonder uitzondering: openbaar gebied is
+			// Terrein * (1 - FractieUitgeefbaar) en dat is bij elk pakket groter dan nul.
+			attribute<Float32> Verhard  := Elements/Text[value(uint32(id(..))* nrAttr + 14, Elements)][float32]
+			, IntegrityCheck = "all(abs(add(this, Groen, Water, Bruin) - 1f) < 0.005f)";
+			attribute<Float32> Groen    := Elements/Text[value(uint32(id(..))* nrAttr + 16, Elements)][float32];
+			attribute<Float32> Water    := Elements/Text[value(uint32(id(..))* nrAttr + 18, Elements)][float32];
+			attribute<Float32> Boom0    := Elements/Text[value(uint32(id(..))* nrAttr + 22, Elements)][float32];
+			attribute<Float32> Gras0    := Elements/Text[value(uint32(id(..))* nrAttr + 23, Elements)][float32];
+			attribute<Float32> Struik0  := Elements/Text[value(uint32(id(..))* nrAttr + 24, Elements)][float32];
+			attribute<Float32> Groen0   := add(Boom0, Gras0, Struik0);
+		
+			attribute<Float32> Bruin    := const(0f, ..); // Werd niet ingeschat door WR. TODO toevoegen
+		
+			//Schalen omdat groen Totaal bij nader inzien moest optellen tot fractie groen
+			attribute<Float32> Boom    := Boom0   / Groen0 * Groen;
+			attribute<Float32> Gras    := Gras0   / Groen0 * Groen;
+			attribute<Float32> Struik  := Struik0 / Groen0 * Groen;
+		}
+	
+		attribute<string>    FractieUitgeefbaar0  := Elements/Text[value(uint32(id(.))* nrAttr +  25, Elements)], Descr = "De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt";
+		attribute<string>    TuinDoel0            := Elements/Text[value(uint32(id(.))* nrAttr +  26, Elements)], Descr = "Doeltuin: de beoogde private buitenruimte per woning in m2, exclusief de voetafdruk van de woning. 'null' = niet opgegeven, dan geldt de FractieUitgeefbaar-kolom. 0 = geen private buitenruimte, uitgeefbaar is dan exact de gebouwvoetafdruk; dat is de conventie bij appartementen, waar de InUitgeefbaar-fracties op 0 staan en FractieUitgeefbaar dus de GSI moet volgen.";
+		attribute<Bool>      HeeftTuinDoel        := TuinDoel0 != 'null', Descr = "Geeft aan of voor dit ontwikkelpakket een doeltuin is opgegeven; zo ja, dan wordt FractieUitgeefbaar daaruit afgeleid in plaats van uit de FractieUitgeefbaar-kolom.";
+		attribute<m2_Woning> TuinDoel             := replace(TuinDoel0, 'null', '0')[m2_Woning], Descr = "De doeltuin per woning in m2 (0 waar geen doeltuin is opgegeven, zie HeeftTuinDoel).";
+		attribute<m2_Woning> Tuin                 := BVOPerWoning * (FractieUitgeefbaar - GroundSpaceIndex) / FloorSpaceIndex;
+
+		// #618: de tuin is Terrein * (FractieUitgeefbaar - GSI), per woning dus BVOPerWoning * (FU - GSI) / FSI.
+		// Omgekeerd levert een gewenste tuin de benodigde FractieUitgeefbaar: FU = GSI + FSI * tuin / BVOPerWoning.
+		// Zo staat de ontwerpkeuze (hoeveel tuin) in de tabel en niet de afgeleide fractie. BVOPerWoning volgt uit Woonoppervlakte_woning en Vormfactor, en die uit FSI en GSI.
+		attribute<float32> FractieUitgeefbaar                      :=
+			HeeftTuinDoel
+				? GroundSpaceIndex[float32] + FloorSpaceIndex[float32] * TuinDoel[float32] / BVOPerWoning[float32]
+				: replace(FractieUitgeefbaar0, 'null', string(ModelParameters/Wonen/DefaultFractieUitgeefbaar))[float32]
+		, IntegrityCheck = "all(!(GroundSpaceIndex > this)) && all(WP2_rel != Vastgoed/WP2/V/eengezins || this > GroundSpaceIndex)"
+		, Descr = "De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt, afgeleid uit TuinDoel waar die is opgegeven. Moet bij eengezinspakketten strikt groter zijn dan de GSI, anders is de tuin 0 en valt de lnlotsize-term uit de nieuwbouwprijs (#618); zie Checks.";
+	
+		attribute<Bool> IsNbSMaxOP                                 := Elements/Text[value(uint32(id(.))* nrAttr +  27, Elements)][bool], Descr = "Hoort dit ontwikkelpakket bij de NbSMax-set? Sinds #721 is dit lidmaatschap van een rijenset en geen zeeftoets meer: de Max-rijen staan in hun eigen bronblok en alleen de NbSMax-variant unioneert ze bij de default. Tot #685 was er een gedeelde NbS-kolom, tot #721 zeefde Zeef_Wonen_perOP_T de pakketten van de andere variant per cel weg.";
+		attribute<Bool> IsNbSGenuanceerdOP                         := Elements/Text[value(uint32(id(.))* nrAttr +  28, Elements)][bool], Descr = "Hoort dit ontwikkelpakket bij de NbSGenuanceerd-set? De tegenhanger van IsNbSMaxOP, lees daar de toelichting. De Nuanceerd-pakketten hebben bij gelijke woninggrootte een hogere FSI dan de Max-pakketten, dus zonder deze scheiding zou Nuanceerd op exploitatiesaldo ook in de NbSMax-variant winnen (#685); sinds #721 zitten ze simpelweg niet in elkaars set.";
+		attribute<Bool> IsNbSOP                                    := IsNbSMaxOP || IsNbSGenuanceerdOP, Descr = "Is dit een ontwikkelpakket met Nature based Solutions, dus met veel groen of water ten behoeve van gezondheid en klimaatadaptatie? Dit is de vereniging van de twee variantkolommen. Gebruik hem waar het om het fysieke karakter van het pakket gaat en niet om de variant: de koolstofindicator, de NDVI-mortaliteit, Groenfracties_T en het toepassingsgebied. Voor de variantvraag gelden IsNbSMaxOP en IsNbSGenuanceerdOP apart.";
+		attribute<string> NbSOPToepassingsgebied_ref               := Elements/Text[value(uint32(id(.))* nrAttr +  29, Elements)]
+		, IntegrityCheck = "all(this == 'Overal' || this == 'Laag_NL' || this == 'Hoog_NL')"
+		, Descr = "Geeft aan voor welk gebied dit ontwikkelpakket bedoeld is, Hoog NL, Laag NL of overal. De IntegrityCheck bewaakt de kolomindex: bij het invoegen van een kolom in de tabel moeten de indices hierna meeschuiven, wat bij de doeltuin-kolom (#618) is misgegaan en IsNbSOP stil op FALSE zette.";
+		attribute<string> BouwwijzeToegestaan := Elements/Text[value(uint32(id(.))* nrAttr +  30, Elements)]
+		, Descr = "Welke bouwwijzen dit ontwikkelpakket mag aannemen, als lijst van namen uit Classifications/Modellering/BouwwijzeK, elk tussen puntkomma's. Dus ;GeenMaatregelen; voor een pakket dat alleen ongewijzigd gebouwd wordt, en ;GeenMaatregelen;Opgehoogd;Drijvend; voor een pakket dat zich aan de plek mag aanpassen.
+
+					Waarom een lijst en geen enkele waarde. Tot #723 stond hier een klassenummer en lag de bouwwijze dus vast per pakket. Dat bundelde een woningproduct met een aanpassing aan de ondergrond. De 27 reguliere pakketten stonden alle op GeenMaatregelen en vielen daarmee weg in elke gevaarzone waar het water boven de 0,2 meter komt, niet omdat een gewone woning daar niet met maatregelen te bouwen is maar omdat niemand die variant had ingetikt. En de 26 NbS-pakketten droegen een bouwwijze die met hun naam meeliep, dus een tweede locatieaanname boven op NbSOPToepassingsgebied_ref. Nu zegt het pakket wat het toelaat en bepaalt de plek welke van die bouwwijzen het wordt; zie Zeef_Wonen_perOP_T/Bouwwijzekeuze.
+
+					Waarom namen en geen posities. Een masker als 10011 zou aan de rijvolgorde van BouwwijzeK hangen, en die tabel mag achteraan aangroeien. Met namen slaat een nieuwe klasse nergens stil aan.
+
+					De controle staat op Bouwwijze/Aantal en niet hier. Zij bewaakt twee dingen tegelijk: elk pakket laat minstens een bouwwijze toe, en elke naam in de lijst is ook echt een bestaande klasse. Dat tweede volgt uit de telling, want er staan evenveel scheidingstekens als er klassen matchen, plus een. Een typefout levert dus een scheidingsteken zonder klasse en faalt hard. Daarmee bewaakt zij ook de kolomindex, zoals NbSOPToepassingsgebied_ref dat doet.";
+
+		container Bouwwijze
+		: Descr = "De kolom BouwwijzeToegestaan uitgepakt naar een vlag per klasse. Staat in een eigen container en niet los in de OP-tabel, omdat de metascript-expansie van Aantal anders de tabel zelf moet aflopen om de controle op te bouwen en dat een kringloop oplevert."
+		{
+			container Toegestaan :=
+				for_each_nedv(
+					  Classifications/Modellering/BouwwijzeK/name
+					, 'strcount(BouwwijzeToegestaan, /Classifications/Modellering/BouwwijzeK/Sleutel[' + string(id(Classifications/Modellering/BouwwijzeK)) + '[/Classifications/Modellering/BouwwijzeK]]) > 0'
+					, ..
+					, bool
+				)
+			, Descr = "Per bouwwijze: laat dit ontwikkelpakket hem toe? Een item per klasse van BouwwijzeK, zodat de zeef er per pakket een parameter uit kan lezen. Groeit vanzelf mee als er een bouwwijze bij komt.";
+
+			attribute<UInt32> Aantal (..) := = 'add(' + AsItemList('uint32(Toegestaan/' + Classifications/Modellering/BouwwijzeK/name + ')') + ')'
+			, IntegrityCheck = "all(this > 0 && this + 1 == strcount(../BouwwijzeToegestaan, Classifications/Modellering/BouwwijzeK/Scheider))"
+			, Descr = "Hoeveel bouwwijzen dit pakket toelaat, en de plek van de controle op de kolom. De zeef leest hem als parameter, zodat een pakket dat door een typefout niets toelaat hard faalt in plaats van stil overal weg te vallen.";
+		}
+	
+		attribute<Bool> IsHoogbouw := Bouwlagen * ModelParameters/Wonen/Bouwlaaghoogte > ModelParameters/Wonen/Hoogbouwgrens, Descr = "Geeft aan of het ontwikkelpakket als hoogbouw wordt beschouwd (meer dan X bouwlagen)";
+	
+		// is per definitie de fractie uitgeefbaar van terreinopp nettobuurt
+		attribute<Float32>                 Bouwlagen                    := FloorSpaceIndex / GroundSpaceIndex, Descr = "Het gemiddeld aantal bouwlagen van de woningen in het ontwikkelpakket";
+		attribute<Woonoppervlak_m2BVO>     Vormfactor                   := WP2_rel == Classifications/Vastgoed/WP2/V/Eengezins ? ModelParameters/Wonen/VormfactorEengezins: IsHoogbouw ? ModelParameters/Wonen/VormfactorHoogbouw: ModelParameters/Wonen/VormfactorMeergezins, Descr = "De vormfactor: verhouding gebruiksoppervlak (GBO) per m2 bruto vloeroppervlak (BVO), afhankelijk van het woningtype en of het hoogbouw betreft";
+		attribute<m2BVO_Woning>            BVOPerWoning                 := Woonoppervlakte_woning / Vormfactor, Descr = "Het gemiddelde bruto vloeroppervlak (BVO) per woning in m2, afgeleid van de Woonoppervlakte_woning (GBO) en de vormfactor (GBO/BVO)";
+		attribute<Woning_ha>               Dichtheid                    := (FloorSpaceIndex * Terreinoppervlakte) / BVOPerWoning / Terreinoppervlakte[ha], Descr = "De dichtheid van het ontwikkelpakket in woningen per hectare, afgeleid van de FSI en het BVO per woning";
+		attribute<Woonoppervlak_ha>        Woonoppervlakte              := (Dichtheid[float32] * Woonoppervlakte_woning[float32])[Woonoppervlak_ha], Descr = "De woonoppervlakte per hectare in de netto buurt, afgeleid van de dichtheid en de woonoppervlakte per woning";
+	
+		container Checks
+		{
+			attribute<Bool> GSIIsNietGroterDanFractieUitgeefbaar (..) := !(GroundSpaceIndex > FractieUitgeefbaar);
+		
+			// #618: bij FractieUitgeefbaar == GroundSpaceIndex is Buitenruimte (= Terrein * (FU - GSI)) exact 0 en dus ook
+			// Tuinoppervlakte. Woningwaarde.dms kapt dat af op 1 m2, log(1) = 0, waardoor de hele lnlotsize-term uit de
+			// nieuwbouwprijs valt. Voor eengezinswoningen draagt lnlotsize een coefficient (vrijstaand 0.090, rijtjeswoning
+			// 0.020, twee_onder_1_kap 0.027) en is een tuin van 0 dus een prijsartefact; bij appartementen kent de
+			// NVM-schatting geen lnlotsize, daar mag FU == GSI wel. De check hierboven toetst op '>' en laat gelijkheid door.
+			attribute<Bool> EengezinsHeeftPriveBuitenruimte (..) := WP2_rel != Vastgoed/WP2/V/eengezins || FractieUitgeefbaar > GroundSpaceIndex;
+		}
+	
+		attribute<String>            Label                := name, DialogType = "LabelText";
+		attribute<Vastgoed/WP2>      WP2_rel              := lowercase(WP2_name_short) == lowercase('EG') ? rlookup(lowercase('eengezins'), lowercase(Vastgoed/WP2/name)) : rlookup(lowercase('meergezins'), lowercase(Vastgoed/WP2/name));
+		attribute<String>            WP2_name             := Vastgoed/WP2/name[WP2_rel];
+		attribute<Vastgoed/VSSH>     VSSH_rel             := lowercase(VSSH_name_short) == lowercase('VS') ? rlookup(lowercase('vrijeSector'), lowercase(Vastgoed/VSSH/name)) : rlookup(lowercase('SocialeHuur'), lowercase(Vastgoed/VSSH/name));
+		attribute<String>            VSSH_name            := Vastgoed/VSSH/name[VSSH_rel];
+		attribute<String>            WP2xVSSH_name        := WP2_name+'_'+VSSH_name;
+		attribute<Vastgoed/WP2xVSSH> WP2xVSSH_rel         := rlookup(lowercase(WP2xVSSH_name), lowercase(Vastgoed/WP2xVSSH/name));
+		attribute<Actor/Sector/xSubsector> SectorxSubSector_rel := Vastgoed/WP2xVSSH/SectorxSubSector_rel[WP2xVSSH_rel];
+	
+		container perWP2xVSSH := for_each_ne(Vastgoed/WP2xVSSH/name,'perWP2xVSSH_T('+quote(Vastgoed/WP2xVSSH/name)+', ..)');
+		container perWP2      := for_each_ne(Vastgoed/WP2/name,'perWP2_T('+quote(Vastgoed/WP2/name)+', ..)');
+	
+	
+		container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+
+		attribute<UInt32> BrushColor := MakeDefined(KleurenOP/Kleur[rlookup(name, KleurenOP/name)], 0), DialogType = "BrushColor"
+		, Descr = "De kaartkleur van dit pakket, op naam opgezocht in KleurenOP zodat een pakket in elke set dezelfde kleur draagt. Zwart als de naam daar ontbreekt; voeg bij een nieuw pakket dus ook een kleur toe.";
+	}
+}

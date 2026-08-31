@@ -1,0 +1,101 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Methaan uit natte veenbodems, als aparte indicator naast de twee CO2-indicatoren (#657).
+//
+// Waarom deze indicator er is. Deltares heeft bij de bevestiging dat verstedelijkt en verdronken veen geen CO2 uitstoot
+// erbij gezegd dat er uit waterberging en natte natuur wel veel methaan komt, en dat het model daar niets mee doet.
+// Diezelfde bouwstenentabel waaruit de veennatuurtypen komen geeft per bouwsteen ook een methaankental, en dat blijkt
+// het grootste getal op het blad: in de eindtoestand 2120 komt de CO2-balans van het veengebied volgens team Veen op
+// ongeveer nul uit, tegen 3,1 Mton CO2-equivalent per jaar aan methaan. Het gat heeft richting, want de varianten die
+// het meeste veen vernatten hebben de meeste natte hectares.
+//
+// De indicator verandert niets aan de bestaande CO2-indicatoren; hij komt ernaast. Optellen bij SOMERS_CO2_laagveen of
+// bij CarbonStorageSequestration mag, want de drie beschrijven verschillende gassen of verschillende reservoirs, maar
+// die laatste twee mogen sinds #657 onderling niet meer bij elkaar.
+//
+// Twee wegen naar het kental, want methaan hangt aan twee verschillende dingen.
+//   1. Aan de landgebruiksklasse, voor open water, riet, veenmosveen en moerasbos. Die staan in
+//      Classifications/Grondgebruik/VeenBroeikasgas.
+//   2. Aan de drooglegging, voor het veenweideperceel dat vernat wordt maar grasland of natte teelt blijft. Dat perceel
+//      verandert in de landgebruikskaart niet van klasse, dus langs weg 1 zou het onzichtbaar blijven.
+// Weg 1 gaat voor: is de cel open water of moeras geworden, dan telt die klasse en niet de drooglegging.
+//
+// Wat er niet in zit, en dus een onderschatting is:
+//   - sloten, want RSopen heeft geen slotenkaart op 25 meter. De aangeleverde emissiefactor is 14,5 ton CO2-equivalent
+//     per hectare per jaar, hoger dan elke andere post hier.
+//   - methaan uit natte natuur en waterberging buiten de veen- en moerige gronden. Team Veen levert alleen kentallen
+//     voor het veengebied, en een kental van veen op zand plakken is niet onderbouwd.
+//   - het nieuwe open water van bouwsteen 9a, zolang VariantK/ExogeenWaterOpleggen uit staat. Dat water komt dan niet
+//     als waterklasse binnen en houdt zijn oude landgebruik.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Methaan_T
+: Descr = "Methaan uit natte veenbodems, in ton CO2-equivalent. Zie #657."
+{
+	//
+	parameter<String> Zichtjaar_name;
+	//
+
+	parameter<Bool>      IsStartYear         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	parameter<Int16>     PrevZichtjaar_value := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel);
+	parameter<Int16>     Zichtjaar_value     := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
+	parameter<Bool>      IsFirstAllocYear    := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
+	parameter<jaar>      Periode             := Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar];
+
+	unit<UInt8> CarbonClass := /Classifications/Grondgebruik/CarbonClass;
+	container   Kentallen   := /Classifications/Grondgebruik/VeenBroeikasgas;
+
+	attribute<bool> OpVeenbodem (AdminDomain) := MakeDefined(/SourceData/Bodem/BOFEK/IsVeenOfMoerig_grid, FALSE)
+	, Descr = "Veengrond of moerige grond volgens BOFEK2020, dezelfde afbakening als de veenreserve in de koolstofindicator en als waarop SOMERS rekent. Buiten deze bodems boekt de indicator niets.";
+
+	attribute<CarbonClass> CC (AdminDomain) := ThisYear/CarbonStorageSequestration/Zichtjaar/Grondgebruik/CC
+	, Descr = "De koolstofklasse van dit zichtjaar, overgenomen uit de koolstofindicator zodat er maar een definitie van het landgebruik is. Die klasse draagt de exogeen opgelegde natuur en valt daarbuiten terug op de landgebruikskaart van het basisjaar.";
+
+	attribute<float32> PerHa_UitKlasse (AdminDomain) := MakeDefined(Kentallen/CH4_ton_CO2eq_ha_jaar[CC], 0f)
+	, Descr = "Weg 1: het kental dat bij de landgebruiksklasse hoort, in ton CO2-equivalent per hectare per jaar. Nul voor elke klasse die niet in VeenBroeikasgas/Regel staat.";
+
+	attribute<float32> Drooglegging_m (AdminDomain) := ThisYear/SOMERS_CO2_laagveen/Huidige_Percelen/Zomerdrooglegging_m_perGrid
+	, Descr = "De zomerdrooglegging die deze variant op het veenweideperceel legt, in meters onder maaiveld. Null buiten de percelen.";
+
+	attribute<bool> IsVernatVeenweide (AdminDomain) := MakeDefined(Drooglegging_m < Kentallen/Drooglegging_VernatGrens_m, FALSE)
+	, Descr = "Ligt hier een veenweideperceel dat in deze variant vernat wordt? De MakeDefined is nodig omdat de drooglegging buiten de percelen null is; een vergelijking met een null geeft weliswaar FALSE, maar dat expliciet maken scheelt de volgende lezer een omweg.";
+
+	attribute<float32> PerHa_UitDrooglegging (AdminDomain) := IsVernatVeenweide ? Kentallen/CH4_VernatteVeenweide : 0f
+	, Descr = "Weg 2: het kental voor een vernat veenweideperceel dat grasland of natte teelt blijft, gewogen over de bouwstenen 3a, 3b, 4a en 4b.";
+
+	attribute<float32> PerHa (AdminDomain) := = /ModelParameters/Advanced/Methaan_Meetellen
+		? 'OpVeenbodem ? (PerHa_UitKlasse > 0f ? PerHa_UitKlasse : PerHa_UitDrooglegging) : 0f'
+		: 'const(0f, AdminDomain)'
+	, Descr = "Het methaankental van deze cel, in ton CO2-equivalent per hectare per jaar. De klasse gaat voor op de drooglegging: is het perceel open water of moeras geworden, dan telt die klasse. Een ternair en geen som, want optellen zou op een vernat perceel dat riet wordt beide posten tellen.";
+
+	attribute<ton_jaarlijks> Jaarlijks (AdminDomain) := (PerHa * AdminDomain/NrHaPerCell[float32])[ton_jaarlijks];
+
+	attribute<ton> Cumulatief_overZichtjaar  (AdminDomain) := Jaarlijks * Periode;
+	attribute<ton> Cumulatief_sindsStartyear (AdminDomain) := = IsFirstAllocYear
+																	? 'Cumulatief_overZichtjaar'
+																	: IsStartYear
+																		? 'Jaarlijks * 1[jaar]'
+																		: 'PrevIndicatoren/Methaan/Cumulatief_sindsStartyear + Cumulatief_overZichtjaar'
+	, Descr = "Cumulatief sinds het basisjaar, langs dezelfde opbouw als SOMERS_CO2_laagveen zodat de twee reeksen op elkaar aansluiten. Het basisjaar draagt net als daar een jaar uitstoot.";
+
+	parameter<mton>  Jaarlijks_StGebied  := (sum(Jaarlijks) * 1[jaar])[mton], Descr = "Landelijke methaanuitstoot in dit zichtjaar, in Mton CO2-equivalent per jaar. De vermenigvuldiging met een jaar is er alleen om de eenheid van een stroom naar een hoeveelheid te brengen; het getal is een jaarwaarde.";
+	parameter<mton>  Cumulatief_StGebied := sum(Cumulatief_sindsStartyear)[mton], Descr = "Landelijk cumulatief sinds het basisjaar, in Mton CO2-equivalent.";
+
+	parameter<Ha>    Areaal_MetMethaan   := sum(PerHa > 0f ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Op hoeveel hectare deze indicator iets boekt. Blijft dit nul terwijl de schakelaar aanstaat, dan is er iets mis met de veenbodemkaart of met de koppeling naar de landgebruiksklasse.";
+	parameter<Ha>    Areaal_UitKlasse    := sum(OpVeenbodem && PerHa_UitKlasse > 0f ? AdminDomain/NrHaPerCell : 0[Ha]);
+	parameter<Ha>    Areaal_UitVernatting:= sum(OpVeenbodem && PerHa_UitKlasse == 0f && IsVernatVeenweide ? AdminDomain/NrHaPerCell : 0[Ha]);
+
+	parameter<string> StorageStr := IsStartYear
+		? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/Methaan_tonCO2eq_Cumulatief_sindsStartyear_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+		: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Methaan_tonCO2eq_Cumulatief_sindsStartyear_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+
+	attribute<ton> Write_Result_SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Cumulatief_sindsStartyear : null_f, StorageName = "=StorageStr", StorageType = "gdalwrite.grid";
+}
