@@ -39,6 +39,45 @@ Wat moet sluiten:
 - Decomposities. De sloop valt uiteen in exogeen, gealloceerd en rest; de inbreiding in een teller en een noemer met bruto bij en af. Tellen de delen niet op tot het totaal, dan is er een categorie zoek.
 - Gevulde kaarten. Alle 96 gepaarde kaarten per zichtjaar horen gevuld te zijn. Een lege kaart is een stille fout.
 
+## Laag 1b: lees eerst de wikipagina van de indicator
+
+Een getal dat optelt en plausibel oogt kan nog steeds iets anders meten dan je denkt. Elke indicator
+heeft een eigen wikipagina met wat hij meet, wat hij niet meet, en de aannames die de uitkomst sturen.
+Lees die voordat je een conclusie trekt, niet erna.
+
+De wiki staat als lokale kloon in `C:\ProjDir\_Tools\RSopen.wiki`, markdown, met
+`Effectmodules-en-indicatoren.md` als index en `_Sidebar.md` als navigatie. De pagina heet meestal
+naar de indicator: `Claimrealisatie.md`, `Verharding.md`, `Mortaliteit-agv-groenveranderingen.md`.
+
+De wiki kan achterlopen op de code. Bij een verschil is de code leidend voor wat er is gerekend, en
+is het verschil zelf een bevinding die op de wiki thuishoort. Twee bekende achterstanden: de
+variantnamen op oudere pagina's zijn nog BAU/WBS/Transformeren in plaats van BAU/BAU2/NbSMax/
+NbSGenuanceerd, en `Overstromingsschade.md` is een stub terwijl de SSM2017-implementatie uitgebreid is.
+
+Vier valkuilen die op 2026-09-01 een verkeerde conclusie opleverden voordat de wiki erbij werd gehaald:
+
+- **Claimrealisatie hoort over de schaalniveaus gelezen te worden, niet op NVM alleen.** Overflow is
+  asymmetrisch: een tekort schuift omhoog naar COROP en provincie en wordt daar alsnog ingevuld, een
+  overschot blijft staan want het allocatiedoel is `max(restclaim, 0)`. Gemeten op Y2120: bij
+  NbSGenuanceerd staan 17 van de 76 NVM-regio's onder 0,95, op COROP nog 6, op provincie nul, met
+  alles tussen 0,96 en 1,01. De juiste conclusie is niet dat regio's hun claim missen maar dat de
+  variant woningbouw over regiogrenzen herverdeelt. Zie `Claimrealisatie.md` en `Overflow.md`.
+- **Zet regio's apart die hun claim al voor de allocatie hadden gehaald.** Daar kan de realisatie niet
+  anders dan boven 1 uitkomen. `ClaimRealisatie_Toets` in `Templates/Indicatoren.dms` doet die
+  scheiding en levert tekort, overschot en saldo; het saldo hoort rond nul te liggen.
+- **De waterbergingsindicator en de waterbergingssector delen alleen hun naam.** De indicator meet de
+  piekbui in bebouwd gebied, de sector alloceert seizoensberging in het landelijk gebied op een eigen
+  claim per bergingsregio. Ze bij elkaar optellen of tegen elkaar afzetten is een categoriefout.
+- **`CO2Flow_TovBasisjaar` is een klein verschil van twee grote voorraden.** De voorraad is ongeveer
+  tweehonderd keer zo groot als het verschil, dus een wijziging van een tiende procent in de
+  zichtjaarvoorraad slaat door als ruim twintig procent in deze indicator. Zet er altijd
+  `CO2Stock_Zichtjaar` naast, en lees hem niet als maat voor de omvang van een effect.
+
+Let ook op tekenafspraken. `SterfteAfname` is positief wanneer het groen bij woningen toeneemt en de
+sterfte dus daalt; negatief betekent extra sterfgevallen. De formule is
+`ReferentieSterfte * NDVIToename * EffectPerNDVI * Bewoners * Periode`, met `EffectPerNDVI` op
+`0,04 / 0,1` en dus positief.
+
 ## Laag 2: orde van grootte
 
 Een getal dat optelt kan nog steeds onzin zijn. Zet elke uitkomst naast een referentie: hetzelfde getal in het vorige zichtjaar, in de vorige ronde, of in de BAU-variant. Springt het meer dan een factor, dan is dat een bevinding tot het tegendeel is aangetoond.
