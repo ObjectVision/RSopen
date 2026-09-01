@@ -272,22 +272,35 @@ container Wonen
 		parameter<Float64> inflate_size       := 0.2d, Descr = "Inflate van panden in meters om overlap te detecteren (e.g. bepaling rijtjeswoningen)"; 
 	}
 	
-	unit<uint8> MilieuCat := cat_range(1b, 7b)
-	, Descr = "Per milieu categorie, zoals bekend voor bedrijventerreinen (e.g. IBIS), wat is de restrictie buffer daaromheen voor wonen. Afstanden volgen de grootste VNG-richtafstand per hoofdcategorie (VNG, Bedrijven en milieuzonering, editie 2009); cat 1 (richtafstand 10 m, kleiner dan een gridcel) krijgt 0 zodat cat-1-terreinen wonen niet blokkeren."
+	unit<uint8> MilieuCat : NrOfRows = 14
+	, Descr = "Per milieucategorie van een bedrijventerrein, zoals IBIS die levert, de restrictiebuffer daaromheen voor wonen. De afstanden zijn de VNG-richtafstanden (VNG, Bedrijven en milieuzonering, editie 2009), telkens de grootste van de vier aspecten.
+
+				De tabel draagt sinds #694 zowel de hoofdcategorieen als de subcategorieen. IBIS levert maximale_milieucategorie als tekst en de provincies schrijven dat veld verschillend: Gelderland en Utrecht leveren 3.1 en 4.2, de meeste andere provincies alleen 3 en 4. Voorheen las de configuratie alleen het hoofdgetal, zodat 3.1 de 100 meter van 3.2 kreeg waar de VNG 50 zegt, 4.1 de 300 van 4.2 waar 200 hoort, en 5.1 de 1.000 van 5.3 waar 500 hoort. Gemeten over de jaargang 2024 trof dat 353 terreinen met 5.991 hectare netto, vrijwel allemaal in Gelderland en Utrecht. Wie nauwkeurig aanleverde werd dus ruimer gebufferd dan wie afrondde.
+
+				De rijen Cat3, Cat4 en Cat5 zonder subcategorie blijven bestaan en houden de grootste richtafstand van hun hoofdcategorie. Dat is wat een terrein krijgt dat alleen het hoofdgetal levert, en het is ook de betekenis van de namen die ModelParameters/Werken doorgeeft aan Buffer_rond_Nijverheid en Buffer_omgekeerd_Nijverheid; die verwijzingen blijven dus werken.
+
+				Cat1 heeft richtafstand 10 m, kleiner dan een gridcel, en krijgt 0 zodat cat-1-terreinen wonen niet blokkeren. Cat0 bestaat niet in de VNG-tabel maar wel in de brondata, waar twee terreinen met samen 19 hectare een 0 invullen; die rij staat er zodat de sleutel altijd gevonden wordt en de IntegrityCheck op MilieuCat_rel in IBIS.dms echt iets zegt.
+
+				Categorie_x10 is de milieucategorie maal tien, zodat 3.1 en 3.2 als geheel getal uit elkaar te houden zijn. De leeskant in SourceData/Grondgebruik/IBIS.dms parseert de brontekst met float64 en vermenigvuldigt met tien; float64 leest 3.1 als 3,1 en 2=licht als 2, en geeft alleen null voor X, X=onbekend en leeg."
 	, URL = "https://vng.nl/publicaties/bedrijven-en-milieuzonering"
 	{
-		attribute<string> Name              := 'Cat'+string(MaxMilieuCat);
-		attribute<uint8>  MaxMilieuCat      := id(.);
-		attribute<meter>  Buffer_wonen      :=
-			switch(
-				 case(MaxMilieuCat == v/Cat1, 0[meter])
-				,case(MaxMilieuCat == v/Cat2, 30[meter])
-				,case(MaxMilieuCat == v/Cat3, 100[meter])
-				,case(MaxMilieuCat == v/Cat4, 300[meter])
-				,case(MaxMilieuCat == v/Cat5, 1000[meter])
-				,case(MaxMilieuCat == v/Cat6, 1500[meter])
-				,0[meter]
-			);
+		attribute<string> Name          : ['Cat0','Cat1','Cat2','Cat3','Cat3_1','Cat3_2','Cat4','Cat4_1','Cat4_2','Cat5','Cat5_1','Cat5_2','Cat5_3','Cat6'];
+		attribute<uint8>  Categorie_x10 : [    0,    10,    20,    30,      31,      32,    40,      41,      42,    50,      51,      52,      53,    60];
+		attribute<meter>  Buffer_wonen  : [    0,     0,    30,   100,      50,     100,   300,     200,     300,  1000,     500,     700,    1000,  1500];
+		attribute<string> Label         := Name, DialogType = "LabelText";
+		
+		parameter<bool>   AanvullenBijOnbekend        := TRUE
+		, Descr = "Krijgt een werklocatie zonder bruikbare milieucategorie een aanname op grond van zijn werklocatietype (#694)? Staat deze schakelaar op FALSE, dan houdt zo'n terrein een bufferafstand van nul en blokkeert het wonen dus nergens, wat de stand tot #694 was.
+
+					Waarom dit een schakelaar is en de subcategorieen hierboven niet: het uitlezen van 3.1 is de reparatie van een leesfout, het invullen van een ontbrekende categorie is een aanname.
+
+					De omvang van het gat, gemeten op IBIS_NL_2024_extern.gpkg: van de 3.912 records hebben er 448 met 6.301 hectare netto geen bruikbare categorie, namelijk X, X=onbekend of leeg. Dat gat is niet willekeurig verdeeld maar bijna een provinciale leveringskwestie: Zeeland vult 204 van zijn 222 records niet in, Gelderland heeft er nul. Daaronder zitten veertien zeehaventerreinen met 2.517 hectare, waaronder het Sloegebied bij Vlissingen en Borssele en het DOW-terrein bij Terneuzen. Dat zijn in werkelijkheid de zwaarste terreinen van het land en zij kregen nul meter zonering, zodat wonen er in de zeef pal tegenaan mocht.
+
+					Aanvullen uit de jaargang 2023 is geen alternatief: gejoind op RIN levert dat 7 records met 81 hectare op, want die jaargang heeft hetzelfde gat.";
+		parameter<uint8>  Aanvulling_Zeehaven         := 50b
+		, Descr = "Welke Categorie_x10 een zeehaventerrein krijgt waarvan IBIS de milieucategorie niet levert. 50 is categorie 5, oftewel 1.000 meter. Empirisch verankerd en niet gekozen: van de 45 zeehaventerreinen die de categorie wel invullen is zowel de modus als de mediaan 5, en het oppervlaktegewogen gemiddelde exact 5,00.";
+		parameter<uint8>  Aanvulling_Bedrijventerrein := 30b
+		, Descr = "Welke Categorie_x10 een gewoon bedrijventerrein krijgt waarvan IBIS de milieucategorie niet levert. 30 is categorie 3, oftewel 100 meter. Van de 2.307 bedrijventerreinen die de categorie wel invullen zijn modus en mediaan allebei 3; het oppervlaktegewogen gemiddelde ligt op 4,00, dus dit is de voorzichtige kant van de brondata. Economische zones (retail, onderwijs, zorg, agribusiness) krijgen geen aanvulling, want dat is geen vervuilende bedrijvigheid.";
 		
 		parameter<meter>  Buffer_rond_Nijverheid := ='Buffer_wonen[v/'+Werken/MilieuCatDist_restrictief_anderesectoren_Nijverheid+']';
 		parameter<meter>  Buffer_rond_Logistiek  := ='Buffer_wonen[v/'+Werken/MilieuCatDist_restrictief_anderesectoren_Logistiek+']';
