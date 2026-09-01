@@ -1,0 +1,156 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #727, verwijderen zodra de getallen in het issue staan.
+//
+// Meet wat de overstromingsmaatregel voor werken doet. Drie kanten, in drie uitdraaien:
+//
+// zeef     draait op het basisjaar, zonder allocatie. Hoeveel hectare sluit de nieuwe toets per
+//          werksubsector, en hoeveel daarvan was nog niet om een andere reden dicht.
+// stand    draait op een ontkoppelde stand. Welke bouwwijze staat er op de gealloceerde werkcellen,
+//          en over hoeveel hectare loopt de verschuiving van de schadefunctie.
+// schade   draait op diezelfde stand. De schade per hoofdgroep, zodat het aandeel niet-woon te lezen is.
+//
+// De schade-uitdraai draag je twee keer op, met ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket
+// op FALSE en op TRUE; de schakelaarstand staat in de bestandsnaam. Het verschil in bedrijven_schade_eur
+// tussen die twee runs is precies het effect van #727, want de acht woningrijen zitten er niet in.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose727
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #727: de bouwwijze van werksubsectoren in de zeef, in de stand en in de overstromingsschade."
+{
+	parameter<String> Casus   := /Diagnose/Casus, Descr = "Dezelfde casus als de rest van het diagnoseharnas, aangestuurd via de omgevingsvariabele DiagCasus.";
+	parameter<String> Jaar    := /Diagnose/Jaar;
+	parameter<String> Variant := /Diagnose/Variant;
+
+	parameter<String> Pad_Z := '/Indicatoren/'+Casus+'/Zichtjaren/'+Jaar+'/';
+	parameter<String> Pad_V := '/VariantData/'+Variant+'/';
+	parameter<String> Pad_S := Pad_Z + 'Overstromingsschade/';
+
+	parameter<Float32> HaPerCel := float32(AdminDomain/NrHaPerCell);
+
+	unit<uint8> Sub: nrofrows = 6
+	, Descr = "De zes werksubsectoren, met de hand overgenomen uit Classifications/Actor/Jobs6 zodat dit harnas geen naam uit de klassificatie afschermt. De volgorde doet er niet toe: elke regel bouwt zijn eigen pad uit de naam."
+	{
+		attribute<String> name: ['Nijverheid','Logistiek','Detailhandel','Ov_consumentendiensten','Zak_dienstverlening','Overheid_kw_diensten'];
+	}
+
+	container Zeef
+	: Descr = "Wat de nieuwe bouwwijzetoets in de basisjaar-zeef sluit, per werksubsector. Draait zonder allocatie."
+	{
+		parameter<String> P := Pad_V + 'Zeef/Basisjaar/Werken/';
+
+		attribute<Float32> Toets_ha (Sub) := ='union_data(Sub, ' + AsList('sum(float32(' + P + Sub/name + '/Impl/GeenToegestaneBouwwijzeVoldoet)) * HaPerCel', ', ') + ')'
+		, Descr = "Hectare waar geen enkele toegestane bouwwijze van deze subsector de waterdiepte haalt.";
+
+		attribute<Float32> Nieuw_ha (Sub) := ='union_data(Sub, ' + AsList(
+			  'sum(float32(' + P + Sub/name + '/Impl/GeenToegestaneBouwwijzeVoldoet && !('
+			+ P + Sub/name + '/IsRestrictief_BuitenPlancapaciteit || '
+			+ P + Sub/name + '/IsRestrictief_BuitenHardePlancapaciteit || '
+			+ P + Sub/name + '/Impl/IsEvidentBenutBinnenPlancapaciteit || '
+			+ P + Sub/name + '/Impl/IsWettelijkVerbod || '
+			+ P + Sub/name + '/Impl/TeGevaarlijk || '
+			+ P + Sub/name + '/Impl/OpSlotDoorLandschap || '
+			+ P + Sub/name + '/Impl/ReserverenVoorRivierAfvoer || '
+			+ P + Sub/name + '/Impl/IsAutowegInclKlaverbladen || '
+			+ P + Sub/name + '/Impl/IsDierentuinOpenluchtMuseum || '
+			+ P + Sub/name + '/Impl/IsStichtseRotonde))) * HaPerCel', ', ') + ')'
+		, Descr = "Hectare die alleen op deze toets afketst, dus het areaal dat #727 werkelijk dichtzet. De acht overige termen van IsRestrictief_Overal staan hier voluit; de twee andere groepen zitten in hun eigen aggregaat.";
+
+		attribute<Float32> Beschikbaar_ha (Sub) := ='union_data(Sub, ' + AsList('sum(float32(' + P + Sub/name + '/IsBeschikbaar)) * HaPerCel', ', ') + ')'
+		, Descr = "Hectare die na alle toetsen overblijft, dus inclusief deze nieuwe toets.";
+
+		attribute<String> regel (Sub) := Sub/name + ';' + string(Toets_ha) + ';' + string(Nieuw_ha) + ';' + string(Beschikbaar_ha);
+
+		parameter<String> uitdraai :=
+			  'subsector;toets_ha;alleen_deze_toets_ha;beschikbaar_ha'
+			+ '|' + AsList(regel, '|')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/727_'+Variant+'_zeef.txt'", StorageType = "str";
+	}
+
+	container Stand
+	: Descr = "Welke bouwwijze er op de gealloceerde werkcellen staat, en over hoeveel hectare de schadefunctie verschuift. Leest de ontkoppelde stand."
+	{
+		unit<uint32> BW := /Classifications/Modellering/BouwwijzeK;
+
+		attribute<Bool> IsWerk (AdminDomain) := ='/Classifications/Actor/Sector/xSubsector/Sector_rel['+Pad_Z+'Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Werken';
+
+		attribute<Float32> Verschuiving (AdminDomain) := ='float32('+Pad_S+'Grondgebruik/Zichtjaar/SchadevrijeDiepte_Werken / 1[meter])'
+		, Descr = "Wat de gekozen bouwwijze van de werksubsector buiten het pand houdt, in meter.";
+
+		attribute<Float32> Diepte (AdminDomain) := float32(/BaseData/Omgeving/Overstromingsdiepte / 1[meter])
+		, Descr = "Dezelfde dieptekaart die de zeef en de bouwwijzekeuze lezen, dus het elementgewijze maximum van de drie LIWO-kaarten. Niet de kaart per watersysteem waarmee de schade rekent.";
+
+		attribute<Bool> Eis (AdminDomain) := ='MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, '+Pad_V+'BouwwijzeEis/Overstromingsbestendig), FALSE)';
+
+		attribute<Float32> PerBouwwijze_ha (BW) := ='union_data(BW, ' + AsList('sum(float32(IsWerk && MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, '+Pad_S+'Grondgebruik/Zichtjaar/BouwwijzekeuzeWerken/Keuze) == '+string(id(/Classifications/Modellering/BouwwijzeK))+'[/Classifications/Modellering/BouwwijzeK], FALSE))) * HaPerCel', ', ') + ')'
+		, Descr = "Hectare gealloceerde werklocatie per gekozen bouwwijze.";
+
+		attribute<String> regel (BW) := BW/name + ';' + string(PerBouwwijze_ha);
+
+		parameter<String> uitdraai :=
+			  'maat;waarde'
+			+ '|werkcellen_ha;'                + string(sum(float32(IsWerk) * HaPerCel))
+			+ '|werkcellen_in_eiszone_ha;'     + string(sum(float32(IsWerk && Eis) * HaPerCel))
+			+ '|werkcellen_verschoven_ha;'     + string(sum(float32(IsWerk && Verschuiving > 0f) * HaPerCel))
+			+ '|verschuiving_gemiddeld_m;'     + string(sum(Verschuiving * float32(IsWerk)) / sum(float32(IsWerk)))
+			+ '|diepte_gemiddeld_op_werk_m;'   + string(sum(MakeDefined(Diepte, 0f) * float32(IsWerk)) / sum(float32(IsWerk)))
+			+ '|werk_boven_verschuiving_ha;'   + string(sum(float32(IsWerk && MakeDefined(Diepte, 0f) > Verschuiving && MakeDefined(Diepte, 0f) > 0f) * HaPerCel))
+			+ '|bouwwijze;ha'
+			+ '|' + AsList(regel, '|')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/727_'+Casus+'_'+Jaar+'_stand.txt'", StorageType = "str";
+	}
+
+	container Schade
+	: Descr = "De schade per hoofdgroep. Draag deze uitdraai twee keer op, met SchadeToetstBouwwijzeVanPakket op FALSE en op TRUE; het verschil in bedrijven_schade_eur is het effect van #727."
+	{
+		parameter<String> P_R := Pad_S + 'Resultaat/';
+
+		unit<uint32> BedrijfsRij: nrofrows = 7
+		, Descr = "De zeven bedrijvenrijen die sinds #727 de verschoven diepte lezen."
+		{
+			attribute<String> name: ['Bedrijven_Bijeenkomst','Bedrijven_Gezondheidszorg','Bedrijven_Industrie','Bedrijven_Kantoor','Bedrijven_Onderwijs','Bedrijven_Sport','Bedrijven_Winkel'];
+		}
+
+		unit<uint32> WoningRij: nrofrows = 8
+		{
+			attribute<String> name:
+			[
+				 'Woningen_Opstal_eengezinsWoningen',   'Woningen_Opstal_meergezins_bg'
+				,'Woningen_Opstal_meergezins_1e',       'Woningen_Opstal_meergezins_hoog'
+				,'Woningen_Inboedel_eengezinsWoningen', 'Woningen_Inboedel_meergezins_bg'
+				,'Woningen_Inboedel_meergezins_1e',     'Woningen_Inboedel_meergezins_hoog'
+			];
+		}
+
+		attribute<Float64> Tot (AdminDomain) := =
+			  'MakeDefined(float64('+P_R+'Hoofdwatersysteem_Binnendijks/Totaal), 0d)'
+			+ '+ MakeDefined(float64('+P_R+'Hoofdwatersysteem_Buitendijks/Totaal), 0d)'
+			+ '+ MakeDefined(float64('+P_R+'Regionaalwatersysteem_Binnendijks/Totaal), 0d)'
+		, Descr = "De drie watersystemen hebben elk hun eigen dieptekaart, dus waar de ene een bedrag geeft is de andere null. Zonder MakeDefined maakt de optelling er null van.";
+
+		attribute<Float64> Bedr (AdminDomain) := ='add('
+			+ AsItemList('MakeDefined(float64('+P_R+'Hoofdwatersysteem_Binnendijks/'+BedrijfsRij/name+'/Totaal), 0d)') + ', '
+			+ AsItemList('MakeDefined(float64('+P_R+'Hoofdwatersysteem_Buitendijks/'+BedrijfsRij/name+'/Totaal), 0d)') + ', '
+			+ AsItemList('MakeDefined(float64('+P_R+'Regionaalwatersysteem_Binnendijks/'+BedrijfsRij/name+'/Totaal), 0d)')
+			+ ')';
+
+		attribute<Float64> Won (AdminDomain) := ='add('
+			+ AsItemList('MakeDefined(float64('+P_R+'Hoofdwatersysteem_Binnendijks/'+WoningRij/name+'/Totaal), 0d)') + ', '
+			+ AsItemList('MakeDefined(float64('+P_R+'Hoofdwatersysteem_Buitendijks/'+WoningRij/name+'/Totaal), 0d)') + ', '
+			+ AsItemList('MakeDefined(float64('+P_R+'Regionaalwatersysteem_Binnendijks/'+WoningRij/name+'/Totaal), 0d)')
+			+ ')';
+
+		parameter<String> uitdraai :=
+			  'maat;waarde'
+			+ '|schakelaar;'                   + string(/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket)
+			+ '|schade_totaal_eur;'            + string(sum(Tot))
+			+ '|woningen_schade_eur;'          + string(sum(Won))
+			+ '|bedrijven_schade_eur;'         + string(sum(Bedr))
+			+ '|overig_schade_eur;'            + string(sum(Tot) - sum(Won) - sum(Bedr))
+			+ '|bedrijven_op_werkcellen_eur;'  + string(sum(Bedr * float64(Stand/IsWerk)))
+			+ '|bedrijven_op_verschoven_eur;'  + string(sum(Bedr * float64(Stand/IsWerk && Stand/Verschuiving > 0f)))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/727_'+Casus+'_'+Jaar+'_schade_'+string(/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket)+'.txt'", StorageType = "str";
+	}
+}

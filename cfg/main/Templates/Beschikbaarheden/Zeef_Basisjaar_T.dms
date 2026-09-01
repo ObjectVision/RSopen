@@ -76,6 +76,7 @@ Template Zeef_Basisjaar_T
 			Impl/IsEvidentBenutBinnenPlancapaciteit,
 			Impl/IsWettelijkVerbod,
 			Impl/TeGevaarlijk,
+			Impl/GeenToegestaneBouwwijzeVoldoet,
 			Impl/OpSlotDoorLandschap,
 			Impl/ReserverenVoorRivierAfvoer,
 			Impl/IsAutowegInclKlaverbladen,
@@ -119,6 +120,37 @@ Template Zeef_Basisjaar_T
 	attribute<Bool> IsRestrictief_BuitenPlancapaciteit (CompactedAdminDomain):=
 		IsRestrictief_BuitenPlancapaciteit_Bron && !Impl/HeeftPlannenDezeSector, Descr = "Deze restricties gelden overal, behalve binnen plancapaciteit";
 	
+
+	parameter<Bool> IsSectorWerken := lowercase(Sector_name) == lowercase('Werken')
+	, Descr = "Is dit een werksubsector? Alleen daar geldt de bouwwijzetoets hieronder; wonen heeft zijn eigen toets per ontwikkelpakket in Zeef_Wonen_perOP_T en de overige sectoren bouwen niets waar een bouwwijze bij hoort.";
+
+	container BouwwijzeInput
+	: Descr = "De invoer voor de bouwwijzekeuze van deze werksubsector (#727): wat de subsector toelaat als vlag per cel, en wat de plek eist. De tegenhanger van Zeef_Wonen_perOP_T/BouwwijzeInput, met de subsectorkolom in plaats van de OP-kolom.
+
+				De twee veeneisen staan hier bewust op FALSE. De bebouwingstypekaart veen wijst aangepast bouwen en wonen op water aan voor woningen; wat een bedrijfspand op diezelfde plek moet doen is niet belegd, en #727 gaat over de overstromingsmaatregel. Zet dat er ooit bij, dan komen hier dezelfde twee eisen te staan als aan de wonen-kant, achter dezelfde schakelaar BouwwijzeVeenGeldtVoorOPs."
+	{
+		attribute<meter> Waterdiepte (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsdiepte);
+		attribute<Bool>  GeenVeeneis (CompactedAdminDomain) := const(FALSE, CompactedAdminDomain);
+
+		container Toegestaan :=
+			for_each_nedv(
+				  /Classifications/Modellering/BouwwijzeK/name
+				, IsSectorWerken
+					? 'const(/Classifications/Actor/Jobs6/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[/Classifications/Actor/Jobs6/V/' + Subsector_name + '], CompactedAdminDomain)'
+					: 'const(FALSE, CompactedAdminDomain)'
+				, CompactedAdminDomain
+				, bool
+			)
+		, Descr = "Per bouwwijze: laat deze subsector hem toe? Buiten werken staat hier overal FALSE; dat wordt nooit opgevraagd, want Impl/GeenToegestaneBouwwijzeVoldoet staat daar als meta-expressie op const(FALSE).";
+	}
+
+	container Bouwwijzekeuze := Templates/Beschikbaarheden/Bouwwijzekeuze_T(
+		  BouwwijzeInput/Toegestaan
+		, ThisVariant/BouwwijzeEis/Overstromingsbestendig
+		, BouwwijzeInput/GeenVeeneis
+		, BouwwijzeInput/GeenVeeneis
+		, BouwwijzeInput/Waterdiepte
+	), Descr = "De bouwwijzekeuze per cel voor deze werksubsector (#727). Hetzelfde sjabloon en dezelfde keuzeregel als aan de wonen-kant, dus de zeef en de schade-indicator kiezen per constructie dezelfde bouwwijze. De zeef leest GeenEnkeleVoldoet; de Gekozen-items staan klaar voor wie wil zien wat er op een beschikbare cel gebouwd zou worden.";
 	container Impl
 	{
 		parameter<Bool>   IsThisSectorWonen             := lowercase(Sector_name) == lowercase('Wonen');
@@ -161,6 +193,16 @@ Template Zeef_Basisjaar_T
 		attribute<Bool> TeNat                                     (CompactedAdminDomain) := IsThisSectorWonenOfWerken && src/TeNat                   && NietBouwenWaarNat, Descr = "Is de locatie te nat om op te bouwen";
 		attribute<Bool> TeHogeBeheerKostenInfra                   (CompactedAdminDomain) := IsThisSectorWonenOfWerken && src/TeHogeBeheerKostenInfra && NietBouwenWaarBeheerkostenInfraTeHoog, Descr = "Zijn de beheer kosten van de infrastructuur te hoog om op te bouwen. Deze restrictie had als enige van de slappe-bodemrestricties geen variantschakelaar en stond dus in elke variant aan, terwijl NietBouwenWaarSlap en NietBouwenWaarZettingsgevoelig overal uit staan. Daarmee was dit feitelijk het enige slappe-bodemregime in het model. Nu schakelbaar, zodat de kostenbenadering uit #505 ertegen af te zetten is.";
 		attribute<Bool> TeGevaarlijk                              (CompactedAdminDomain) := IsThisSectorWonenOfWerken && ThisVariant/Bouwregime/OpSlotDoorGevaarzone, Descr = "Is de locatie te gevaarlijk om op te bouwen (overstromingsgevaar)";
+		attribute<Bool> GeenToegestaneBouwwijzeVoldoet            (CompactedAdminDomain) := =IsSectorWerken ? '../Bouwwijzekeuze/GeenEnkeleVoldoet' : 'const(FALSE, CompactedAdminDomain)'
+		, Descr = "Geen van de bouwwijzen die deze werksubsector mag gebruiken kan op deze cel: waar het regime bouwen met maatregelen voorschrijft gaat de waterdiepte boven het dieptevermogen van elke toegestane bouwwijze uit. De tegenhanger van Zeef_Wonen_perOP_T/Impl/GeenToegestaneBouwwijzeVoldoet, uit hetzelfde sjabloon met dezelfde keuzeregel (#727).
+
+											Waarom in IsRestrictief_Overal en niet in een groep met een planvrijstelling: aan de wonen-kant kent deze toets er ook geen. Een hard plan kan een gemeentelijk besluit opzij zetten, maar niet dat er water staat dat geen enkele constructie van deze subsector aankan.
+
+											Waarom in de basisjaar-zeef en niet in de zichtjaar-zeef. Twee redenen, en de tweede is de zwaarste. De kolom van de subsector is statisch, en de dieptekaart en de gevaarzonering zijn dat per variant ook, dus de uitkomst verandert niet per zichtjaar en hoeft maar een keer per variant en subsector gerekend te worden.
+
+											En hier hoort hij inhoudelijk thuis, bij de andere statische plekrestricties: TeGevaarlijk, OpSlotDoorLandschap, ReserverenVoorRivierAfvoer, TeSlap en TeNat staan allemaal in deze zeef. Dat is niet alleen netjes, het is nodig. PotentieleStates/PerSectorxSubsector_T maskeert zowel StandInBereik als Zichtjaar_BeschikbaarheidBasisjaar op IsBeschikbaar_basisjaar, en die twee zijn de noemer en de teller van de dichtheidstoets in Zeef_T. Zet je deze toets in de zichtjaar-zeef, dan rekent die toets potentieel en stand mee op deelcellen waar de subsector nooit kan bouwen, en dat is precies het verschil in deeloppervlak dat #713 daar heeft rechtgezet. In deze zeef lopen teller en noemer wel gelijk op: wat wegvalt is grond die deze subsector niet kan nemen en dus ook niet sloopt.
+
+											Buiten werken staat hier const(FALSE) als meta-expressie, zodat de bouwwijzekeuze voor de andere sectoren niet in de boom komt.";
 		attribute<Bool> OpSlotDoorLandschap_Bron (CompactedAdminDomain) := IsThisSectorWonenOfWerken && ThisVariant/Bouwregime/OpSlotDoorLandschap, Descr = "Het landschapsregime zonder de planvrijstelling van #683. Apart gezet bij #682, want zodra de plannen verlopen zijn is dit wat er van OpSlotDoorLandschap overblijft; zie IsRestrictief_Overal_Bron.";
 		attribute<Bool> OpSlotDoorLandschap      (CompactedAdminDomain) := OpSlotDoorLandschap_Bron && !IsBeschermdDoorPlanTegenLandschapsregime, Descr = "Ligt de locatie in een gebied dat in een landschapstype natuur of water wordt, en gaat het daarom op slot. Nu gevuld vanuit veen (#614), kust (#623), zand (#630) en rivieren (#621).
 																								Sinds #683 niet meer binnen plancapaciteit. Zie IsBeschermdDoorPlanTegenLandschapsregime hieronder voor de twee schakelaars die dat regelen; die staan in alle varianten aan, dus een hard of zacht plan gaat voor op het landschapsregime.

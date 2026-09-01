@@ -58,9 +58,56 @@ container Zichtjaar
 
 				BAG-nieuwbouwcellen staan er expliciet buiten: die vallen voor het grondgebruik terug op de waarneming uit het basisjaar (#550, #609), dus daar hoort geen maatregel van een ontwikkelpakket overheen.
 
-				Alleen wonen. De niet-woonschade en de categorie Overig/Stedelijkgebied lezen de ongeschoven diepte, want bouwwijze bestaat in het model alleen voor wonen. Die asymmetrie is bekend en staat in #681.
+				Alleen wonen. De zeven categorieen onder Bedrijven lezen sinds #727 hun eigen verschuiving, SchadevrijeDiepte_Werken hieronder. Wat nog ongeschoven blijft is de infrastructuur en de categorie Overig/Stedelijkgebied: die horen bij geen enkele sector die een bouwwijze kiest.
 
 				De kostenkant hangt aan precies ditzelfde getal. Bodemdalingkosten_T/Ophoging hoogt op tot het maximum van wat de bodemdaling vraagt en wat dit pakket tegen het water aankan, en beprijst dat tegen 20,00 euro per m2 per meter. Kosten en baten van de maatregel hangen dus aan dezelfde conditie, namelijk de bouwwijze van het gealloceerde pakket, en niet aan de gevaarzone. Dat is bewust: bakende je de kosten af op de zonekaart, dan zou BAU betalen voor een ophoging die het nooit maakt en waarvoor het hier geen krediet krijgt. Zie #505 en #681.";
+
+	attribute<Bool> IsBAGnieuwbouwWerken (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, IsDefined(ThisVariantAllocatie/StartState_metBAGnieuwbouw/SubSector_rel)), FALSE)
+	, Descr = "Cel waar de subsector niet uit de allocatie komt maar uit de BAG-nieuwbouw in de startstand (#550). Daar zet StartState_metBAGnieuwbouw/SubSector_rel een ArgMax over de waargenomen subsectorkolommen, en zo een cel is voor de allocatie daarna niet meer beschikbaar, dus die subsector blijft er staan zonder dat het model hem heeft gekozen.
+
+				De tegenhanger van IsBAGnieuwbouwWonen hierboven, en om dezelfde reden nodig: krediet voor een maatregel hoort bij wat het model zelf heeft neergezet, en op deze cellen is het waarneming. Zonder deze vlag zou de verschuiving hieronder ook daar aangrijpen; gemeten in Y2040 van BAU dragen 26.076 werkcellen de voetafdruk van meer dan een werksubsector, en dat is de handtekening van deze groep.";
+
+	container BouwwijzeInputWerken
+	: Descr = "De invoer voor de bouwwijzekeuze van de werkstand (#727): wat de werksubsector op deze cel toelaat, en wat de plek eist. De tegenhanger van BouwwijzeInput hierboven, met de subsectorkolom Jobs6/BouwwijzeToegestaan in plaats van de OP-kolom.
+
+				De twee veeneisen staan op FALSE, net als in Zeef_Basisjaar_T, zodat de keuze hier dezelfde is als de keuze die de zeef maakte bij het alloceren. Wat een bedrijfspand op een veencel moet doen is niet belegd; zie de toelichting daar."
+	{
+		attribute<Actor/Jobs6> Jobs6_rel_cad (CompactedAdminDomain) := ='collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /Classifications/Actor/Sector/xSubsector/Jobs6_rel['+Zichtjaar_name+'/Stand/SubSector_rel])'
+		, Descr = "Welke werksubsector staat er op deze cel? Null waar de allocatie de cel nooit heeft aangeraakt en null waar een andere sector hem won; op zo een cel is de werkstand ofwel de waarneming uit het basisjaar ofwel nul. Dat is precies de afbakening die de wonen-kant met IsDefined(Stand/OP_rel) maakt: alleen wat het model zelf heeft neergezet krijgt krediet voor een maatregel.";
+
+		attribute<meter> Waterdiepte (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsdiepte);
+		attribute<Bool>  GeenVeeneis (CompactedAdminDomain) := const(FALSE, CompactedAdminDomain);
+
+		container Toegestaan :=
+			for_each_nedv(
+				  /Classifications/Modellering/BouwwijzeK/name
+				, 'MakeDefined(/Classifications/Actor/Jobs6/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[Jobs6_rel_cad], FALSE)'
+				, CompactedAdminDomain
+				, bool
+			);
+	}
+
+	container BouwwijzekeuzeWerken := Templates/Beschikbaarheden/Bouwwijzekeuze_T(
+			  BouwwijzeInputWerken/Toegestaan
+			, ThisVariantData/BouwwijzeEis/Overstromingsbestendig
+			, BouwwijzeInputWerken/GeenVeeneis
+			, BouwwijzeInputWerken/GeenVeeneis
+			, BouwwijzeInputWerken/Waterdiepte
+	), Descr = "Welke bouwwijze staat er op elke werkcel (#727). Zelfde sjabloon, zelfde keuzeregel en dezelfde eisen als Zeef_Basisjaar_T, dus per constructie de bouwwijze waaronder de subsector door de zeef kwam.";
+
+	attribute<meter> SchadevrijeDiepte_Werken (AdminDomain) := =
+		/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket
+			? '!IsBAGnieuwbouwWerken ? MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, BouwwijzekeuzeWerken/GekozenSchadevrijeDiepte), 0[meter]) : 0[meter]'
+			: 'const(0[meter], AdminDomain)'
+	, Descr = "Hoeveel water houdt de bouwwijze die op deze werkcel gebouwd is buiten het pand? De tegenhanger van SchadevrijeDiepte_Nieuwbouw hierboven, en de verschuiving die Parameters/<watersysteem>/Diepte_Bedrijven van de waterdiepte aftrekt voor de zeven categorieen onder Bedrijven (#727).
+
+				Nul waar geen werksubsector staat, want dan is Jobs6_rel_cad null, laat geen enkele bouwwijze zich toe en geeft de keuze null; GekozenSchadevrijeDiepte maakt daar zelf nul van. Nul is overal een geldige verschuiving, dus dit item zet nergens een null in de dieptekaart.
+
+				Een cel die wonen won en waar verzorgende werkgelegenheid is blijven staan valt hier bewust buiten: daar wijst Stand/SubSector_rel naar een woonsubsector en draagt de werkkant de voetafdruk uit het basisjaar, dus bestaande panden. Krediet voor een maatregel hoort alleen bij wat het model zelf heeft neergezet.
+
+				De kostenkant hangt aan ditzelfde getal, net als bij wonen: KostenWerklocaties/Ophoging hoogt op tot wat deze bouwwijze tegen het water aankan en beprijst dat met hetzelfde ophoogtarief. Zie #681 en #727.
+
+				Een kanttekening die de wonen-kant deelt en daar te stellig is opgeschreven. De bouwwijzekeuze leest BaseData/Omgeving/Overstromingsdiepte, het elementgewijze maximum van de drie LIWO-kaarten, terwijl de aftrek daarna per watersysteem tegen de eigen kaart van dat systeem gebeurt. De drie kaarten zijn elkaar uitsluitende scenario's en geen gelijktijdige belastingen, dus wie de ontwerpdiepte op de unie bepaalt en van elk scenario apart aftrekt, geeft per scenario een ruimere korting dan dat scenario zelf rechtvaardigt. Fysisch is dat te verdedigen, want een pand dat op 2,5 meter is ontworpen blijft ook bij een regionale overstroming van 0,3 meter droog, maar de uitkomst per watersysteem is dan niet meer de schade als alleen dat systeem beschouwd wordt. Gemeten in Y2040 van BAU op de werkcellen waar de regionale kaart een waarde heeft: op 48,1 procent ligt de maximumkaart hoger, en op 9,3 procent daarvan gaat de maximumkaart boven 2,0 meter uit terwijl de regionale kaart onder een halve meter blijft.";
 
 	attribute<Bool> IsOverstromingsbestendig (AdminDomain) := =
 		/ModelParameters/Advanced/SchadeToetstBouwwijzeVanPakket
