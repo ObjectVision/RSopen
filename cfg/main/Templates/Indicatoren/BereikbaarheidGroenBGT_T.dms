@@ -7,8 +7,34 @@
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
-// Indicator of een cel binnen de afgebakende studie- of regiogrens ligt. Aantal woningen per cel. Bovengrens
-// afstandsklasse, i.e. tot hoever kijken we?
+// Bereikbaarheid van groen op basis van waargenomen BGT-groen. De derde van drie maten, naast de klassebenadering
+// en de fractiebenadering die allebei in BereikbaarheidGroenBBG_T staan. Zie #719 voor de afweging.
+//
+// Wat deze maat als enige ziet, is het groen in de bestaande stad dat geen eigen kaartklasse heeft. De twee andere
+// maten missen dat allebei, maar om verschillende redenen. De fractiebenadering rekent met de hedonische
+// natuurdefinitie, en die sluit stadsgroen expliciet uit: Classifications/Grondgebruik.dms zegt daar letterlijk dat
+// bos en gras in bebouwd gebied stadsgroen is en dus niet als natuur telt. Binnen bebouwd gebied registreert zij
+// daardoor 6.932 ha natuur waar de BGT 209.596 ha groen waarneemt, en driekwart van wat zij daar wel telt is open
+// water. De klassebenadering ziet het stedelijk groen dat een eigen BBG-klasse draagt, dus parken, plantsoenen,
+// sportterreinen, volkstuinen en begraafplaatsen, wel degelijk: die cellen dragen zelf vrijwel geen woningen en
+// halen de dichtheidseis dus wel. Maar zij telt hele cellen mee of helemaal niet, en zij ziet niets van het groen
+// dat tussen ander gebruik in ligt: 154.321 ha binnen bebouwd gebied, waaronder 63.927 ha op woonterrein, 23.834 ha
+// in wegbermen en 23.292 ha op bedrijfsterrein. Dat is de tuin, de berm, het schoolplein en het bedrijfsgroen, en
+// samen is dat de grootste groenvoorraad van de Nederlandse stad. De BGT neemt die waar op 2,5 meter.
+// De hectares zijn gemeten op de basisjaarkaarten, BGT 20260819 en BBG 2022.
+//
+// Deze maat beantwoordt de vraag naar groen in de woonomgeving en niet die naar bereikbaar parkgroen. Daarom staan
+// hier geen dichtheidseis en geen eis van een hectare aaneengesloten: Deltares heeft in #717 vastgesteld dat die
+// twee bij parkgroen horen en niet bij een maat voor de woonomgeving, en juist de fijnmazige snippers die de BGT
+// als enige waarneemt zouden erdoor sneuvelen. De klassebenadering blijft de parkgroenmaat.
+//
+// Groen is hier groen en geen groenblauw. Open water heeft in de BGT-groenfractietabel een groenaandeel van
+// ongeveer nul, en deze maat houdt dat aan, ook voor water dat het model zelf neerlegt. Wie groen en water samen
+// wil tellen leest de fractiebenadering, die precies dat doet.
+//
+// Status: aangesloten in Templates/Indicatoren.dms als obv_BGT, maar door geen enkele consument opgevraagd en dus
+// ook niet in een levering; InDezeStudie wijst naar obv_BBG. Dat blijft zo tot Deltares de keuze tussen de drie
+// maten heeft gemaakt, op grond van de norm waaraan de score wordt getoetst (#717).
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -17,9 +43,12 @@ Template BereikbaarheidGroenBGT_T : using = "Classifications/Actor"
 	container SrcSrc;
 	//
 	parameter<String> GroenBron := 'BGT';
-	
+
 	container    Src := .;
-	
+
+	unit<UInt8>     LU          := /Classifications/Actor/LU_ModelType;
+	parameter<Bool> IsBasisjaar := lowercase(ThisYear/Zichtjaar_name) == lowercase('basisjaar'), Descr = "Is dit het basisjaar? De tak die de landgebruiksmutatie leest bestaat daar niet, want Indicatoren_T/Basisjaar kent geen Grondgebruik/Verandering/LU_MT_Zichtjaar. Die tak wordt hieronder met een meta-expressie op deze parameter uitgeschakeld, hetzelfde patroon als bij een uitgezette sector.";
+
 //	Groen obv BGT
 	attribute<Meter2> OppGroen_Basisjaar (AdminDomain) := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/GroenOpp_AdminDomain;
 
@@ -29,27 +58,57 @@ Template BereikbaarheidGroenBGT_T : using = "Classifications/Actor"
 	// WaardeNabijheidGroen/Bron_Zichtjaar (IsOPCel) en in de overstromingsschade (#609).
 	attribute<Bool>   IsBAGnieuwbouwWonen                (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), FALSE), Descr = "BAG-nieuwbouwcel: draagt wel een gematchte OP_rel maar geen fysiek ingericht ontwikkelpakket, en houdt daarom het BGT-groen van het basisjaar.";
 
-	attribute<Meter2> OppGroen_NaAllocWonen              (AdminDomain) := ='IsBAGnieuwbouwWonen ? null_f : ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Groen[SrcSrc/Stand/OP_rel]', Descr = "Het groen uit de inrichting van het gealloceerde ontwikkelpakket. Null op een BAG-nieuwbouwcel, zodat de switch hieronder daar op OppGroen_Basisjaar uitkomt.";
+	// #719: de factor NrHaPerCell schaalt de pakketinrichting naar het celoppervlak. OP_Buurt/Terreinoppervlakte is
+	// genormaliseerd op de vaste hectare uit VariantParameters/Ontwikkelpakketten, met als toelichting "de standaard
+	// terreinoppervlakte van een te ontwikkelen gridcel". Die zin klopte toen het domein op 100 meter stond; op 25 meter
+	// is een cel 625 m2, dus zonder deze factor staat er zestien keer te veel groen. Zelfde reparatie en zelfde idioom
+	// als in de waterbergingsindicator en in de overstromingsschade (#609); de werkentak hieronder schaalde zelf al goed.
+	attribute<Meter2> OppGroen_NaAllocWonen              (AdminDomain) := ='IsBAGnieuwbouwWonen ? null_f : ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Groen[SrcSrc/Stand/OP_rel] * AdminDomain/NrHaPerCell[float32]', Descr = "Het groen uit de inrichting van het gealloceerde ontwikkelpakket, geschaald naar het celoppervlak. Null op een BAG-nieuwbouwcel, zodat de switch hieronder daar op OppGroen_Basisjaar uitkomt.";
 	attribute<Meter2> OppGroen_NaAllocWerken             (AdminDomain) := SrcSrc/Stand/Sector_rel == Sector/V/werken ? FractieGroenWerken * AdminDomain/NrMeter2PerCell : null_f;
-	attribute<Meter2> OppGroen_NaAllocVerblijfsrecreatie (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector 
+	attribute<Meter2> OppGroen_NaAllocVerblijfsrecreatie (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector
 																				? 'SrcSrc/Stand/Sector_rel == Sector/V/verblijfsrecreatie ? FractieGroenVerblijfsrecreatie * AdminDomain/NrMeter2PerCell : null_f'
 																				: 'const(null_f, AdminDomain, Meter2)';
 
-	attribute<Meter2> OppGroen (AdminDomain) := 
-		=lowercase(ThisYear/Zichtjaar_name) == lowercase('basisjaar') 
+	// #696/#719: de landgebruiksmutatie, zodat natuur en water deze maat ook bereiken. Tot #719 kende de switch hieronder
+	// alleen takken voor wonen, werken en verblijfsrecreatie, en hield elke overige cel het BGT-groen van het basisjaar,
+	// ook waar het landgebruik naar natuur of naar water was gegaan. Bron en afleiding zijn dezelfde als bij
+	// WaardeNabijheidGroen/Bron_Zichtjaar/LU_Mutatie, dus inclusief de exogeen opgelegde mutaties: die staan net zo goed
+	// in de landgebruikskaart van het zichtjaar.
+	attribute<LU>     LU_Mutatie                         (AdminDomain) := =IsBasisjaar
+																				? 'const(null_b, AdminDomain, LU)'
+																				: 'SrcSrc/Grondgebruik/Verandering/LU_MT_Zichtjaar != SrcSrc/Grondgebruik/Verandering/LU_MT_Basisjaar ? SrcSrc/Grondgebruik/Verandering/LU_MT_Zichtjaar : null_b', Descr = "Het landgebruik van het zichtjaar waar dat sinds het basisjaar is veranderd, anders null. In het basisjaar per definitie leeg.";
+
+	attribute<Bool>   IsLandbouwMutatie                  (AdminDomain) := MakeDefined(LU/IsLandbouw[LU_Mutatie], FALSE), Descr = "Is de mutatie een landbouwklasse? De landbouwallocatie wisselt elk zichtjaar gewassen over vrijwel het hele landelijk gebied, en dat is geen verandering van de landsdekking. Een gewaswissel mag het waargenomen BGT-groen daarom niet verlagen; alleen de expliciet natte klassen (riet, moerasbomen) tellen als winst. Zelfde guard en zelfde reden als in Templates/Suitabilities/Groenfracties_T (#637).";
+
+	attribute<Meter2> OppGroen_Mutatie                   (AdminDomain) := MakeDefined(LU/IsNatuur_hedonisch[LU_Mutatie], FALSE) ? AdminDomain/NrMeter2PerCell : 0[Meter2], Descr = "Het groenoppervlak dat bij het nieuwe landgebruik hoort. Een cel die natuur is geworden telt helemaal mee: de BGT-groenfractietabel geeft bos, heide, struik en grasland een groenaandeel van 1,00, dus dat is wat de BGT er zou waarnemen. Elke andere mutatie zet het groen op nul, want dan beschrijft de waarneming uit het basisjaar niet langer wat er ligt. Open water valt daar ook onder: dat is in de BGT-tabel geen groen, en deze maat telt groen en geen groenblauw.";
+
+	attribute<Meter2> OppGroen_InclLandbouw (AdminDomain) :=
+		=IsBasisjaar
 			? 'OppGroen_Basisjaar'
 			: 'switch(
 				 case(IsDefined(OppGroen_NaAllocWonen), OppGroen_NaAllocWonen)
 				,case(IsDefined(OppGroen_NaAllocWerken), OppGroen_NaAllocWerken)
 				,case(IsDefined(OppGroen_NaAllocVerblijfsrecreatie), OppGroen_NaAllocVerblijfsrecreatie)
+				,case(IsLandbouwMutatie, max_elem(OppGroen_Basisjaar, OppGroen_Mutatie))
+				,case(IsDefined(LU_Mutatie), OppGroen_Mutatie)
 				,OppGroen_Basisjaar
-			)';
-	
+			)', Descr = "Het groenoppervlak per cel, voor de landbouwuitsluiting hieronder. Zelfde volgorde als NatuurCel in Groenfracties_T: eerst bepaalt een gealloceerde inrichting de celwaarde, daarna een landbouwmutatie die de waarneming alleen kan verhogen, daarna het nieuwe landgebruik, en zonder mutatie blijft de BGT-waarneming van het basisjaar staan.";
+
+	// #719: zonder deze uitsluiting is dit een landbouwmaat en geen woonomgevingsmaat. Van de 2.376.119 ha BGT-groen in
+	// Nederland ligt 1.686.360 ha, dus 71 procent, op agrarisch terrein: de BGT geeft agrarisch grasland een groenaandeel
+	// van 1,00 en bouwland 0,70. Een bereikbaarheidsmaat rond woningen zou daarmee voor een groot deel meten hoeveel
+	// weiland er binnen 300 meter ligt, en intensief grasland is geen groenvoorziening: niet toegankelijk, en zonder de
+	// recreatie- en verkoelingsdiensten die aan bewoners toevallen. De klassebenadering heeft hier TotaalExAgrarisch
+	// voor, en InDezeStudie wijst daar ook naar; dit is dezelfde keuze op een bron die geen klassen kent.
+	attribute<Bool>   IsLandbouwCel (AdminDomain) := MakeDefined(LU/IsLandbouw[SrcSrc/Landgebruikskaart/Result_SA] && !LU/IsNatuur_hedonisch[SrcSrc/Landgebruikskaart/Result_SA], FALSE), Descr = "Draagt deze cel een landbouwklasse die hedonisch geen natuur is? De uitzondering is nodig omdat riet, moerasbomen en natuurlijk beheerd agrarisch grasland in LU_ModelType landbouw zijn maar hedonisch natuur; die horen juist wel mee te tellen.";
+
+	attribute<Meter2> OppGroen (AdminDomain) := IsLandbouwCel ? 0[Meter2] : OppGroen_InclLandbouw, Descr = "Het groenoppervlak per cel dat als groen in de woonomgeving meetelt: het waargenomen en bijgewerkte BGT-groen, met de agrarische cellen op nul. De tegenhanger van TotaalExAgrarisch in de klassebenadering.";
+
 	container PerRegios := for_each_ne(Regio/name, 'Templates/Indicatoren/BereikbaarheidGroen_Per_Regio_T('+quote(Regio/name)+',Regio/per_AdminDomain == '+string(id(Regio))+'[Regio], Woningen, Src)')
 	{
 		container Nationaal := Templates/Indicatoren/BereikbaarheidGroen_Per_Regio_T('Nationaal',const(true, AdminDomain), Woningen, Src);
 	}
-	
+
 	Template Per_Afstand_T
 	{
 		parameter<Bereikbaarheid/AfstandGroen> AfstandGroen_id;
@@ -59,26 +118,24 @@ Template BereikbaarheidGroenBGT_T : using = "Classifications/Actor"
 		parameter<string>                      GroenK_name := ''; //place holder om indirectie in storagename werkend te krijgen.
 		parameter<meter>                       Bovengrens                                  := Bereikbaarheid/AfstandGroen/Bovengrens[AfstandGroen_id], Descr = "Bovengrens afstandsklasse, i.e. tot hoever kijken we?";
 		attribute<Woning>                      WoningenInThisStRegio         (AdminDomain) := Woningen * IsRegio[float32], Descr = "Aantal woningen per cel, geclipt op de geselecteerde regio.";
-		attribute<Woning>                      WoningenInThisStRegio_ge1     (AdminDomain) := Woningen > 0f ? Woningen : null_f * IsRegio[float32], Descr = "Aantal woningen per cel, geclipt op de geselecteerde regio.";
-		
-		attribute<Bool>                        Extent0                       (AdminDomain) := Woningen <= MaxWoningenInGroen * AdminDomain/NrHaPerCell && OppGroen > MinimumOppervlakteInCelOmMeeTeDoen && IsRegio, Descr = "Initiele groen extent: opp groen per cell boven grens EN minder woningen in cel dan grens";
+		attribute<Woning>                      WoningenInThisStRegio_ge1     (AdminDomain) := WoningenInThisStRegio > 0f ? max_elem(WoningenInThisStRegio, 1f) : null_f, Descr = "Aantal woningen per cel, geclipt op de geselecteerde regio en op minstens een woning. Tot #719 stond hier een variant die de regioclip alleen op de nultak zette en de ondergrens miste, en die daardoor afweek van de tegenhanger in BereikbaarheidGroenBBG_T terwijl beide dezelfde indicator voeden.";
 
-		unit<uint32> ExtentDistrict := district_8(uint32(Extent0))
-		, Descr = "Identificatie van aaneengesloten groengebieden op basis van 8-connectiviteit."
-		{
-			attribute<meter2> Oppervlakte := sum(OppGroen, Districts), Descr = "Oppervlakte van elk aaneengesloten groengebied (in hectare).";
-		}
+		// #719: geen Extent meer. De dichtheidseis van hoogstens vijf woningen per hectare en de eis van een hectare
+		// aaneengesloten horen bij bereikbaar parkgroen, en die vraag beantwoordt de klassebenadering. Op het 25-metergrid
+		// kwam de dichtheidseis bovendien neer op 0,3125 woning per cel, zodat elke cel met een woning afviel en de
+		// pakketgroentak hierboven precies daar werd uitgeschakeld waar hij voor bestaat. Met Extent verdwijnt ook de
+		// celdrempel MinimumOppervlakteInCelOmMeeTeDoen van 100 m2: op de oude cel van een hectare was dat 1 procent
+		// groen, op 25 meter is het 16 procent, dus dezelfde migratie van 100 naar 25 meter als bij de factor hierboven.
+		// Voor een maat die vierkante meters telt hoort er geen ondergrens per cel te staan. Wat overblijft is de regioclip.
+		attribute<meter2>                      OppGroenInRegio               (AdminDomain) := float32(IsRegio) * OppGroen, Descr = "Het groenoppervlak per cel binnen de beschouwde regio; buiten de regio nul.";
 
-		attribute<bool>                        Extent                        (AdminDomain) := Extent0 && ExtentDistrict/Oppervlakte[ExtentDistrict/Districts] >= MinimumAaneengeslotenOppervlakte[meter2], Descr = "Groencellen die deel uitmaken van een aaneengesloten groengebied met een minimale oppervlakte.";
-		attribute<meter2>                      OppGroenBinnenExtent          (AdminDomain) := float32(Extent) * OppGroen, Descr = "Oppervlakte (m²) van groen in cellen die voldoen aan alle selectiecriteria.";
-		
 		attribute<Woning>                      Som_WoningenInOmgeving        (AdminDomain) := ='potential(WoningenInThisStRegio, geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/potrange/Flat2)[Woning]', Descr = "Totale som van woningen binnen de gegeven afstand rond elke cel.";
-		attribute<meter2>                      Som_GroenInOmgeving           (AdminDomain) := ='potential(OppGroenBinnenExtent, geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/potrange/Flat2)[meter2]', Descr = "Totale oppervlakte groen (m²) binnen de gegeven afstand rond elke cel.";
+		attribute<meter2>                      Som_GroenInOmgeving           (AdminDomain) := ='potential(OppGroenInRegio, geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/potrange/Flat2)[meter2]', Descr = "Totale oppervlakte groen (m2) binnen de gegeven afstand rond elke cel.";
 		attribute<meter2>                      Som_GroenInOmgeving_metWoning (AdminDomain) := Som_GroenInOmgeving * float32(WoningenInThisStRegio > 0[woning]), Descr = "Totale oppervlakte groen binnen de gegeven afstand, alleen voor cellen waar woningen aanwezig zijn.";
-		
-		attribute<m2_woning>                   GroenAanwezigPerWoning        (AdminDomain) := OppGroenBinnenExtent / Som_WoningenInOmgeving, Descr = "Oppervlakte groen per woning aan de aanbodzijde, berekend als het aanwezige groen in een cel gedeeld door het aantal omliggende woningen.";
+
+		attribute<m2_woning>                   GroenAanwezigPerWoning        (AdminDomain) := OppGroenInRegio / Som_WoningenInOmgeving, Descr = "Oppervlakte groen per woning aan de aanbodzijde, berekend als het aanwezige groen in een cel gedeeld door het aantal omliggende woningen.";
 		attribute<m2_woning>                   Som_AanwezigGroenPerWoning    (AdminDomain) := ='potential(GroenAanwezigPerWoning, geography/Distmatrices/Impl_25m/pot'+string(Bovengrens)+'m/potrange/Flat2)[m2_woning]', Descr = "Som van per-woning groenbijdragen van alle groencellen binnen de gegeven afstand (drukte-gecorrigeerd groenaanbod).";
-		
+
 		container Indicatoren := for_each_ne(Indicator/name, 'Templates/Indicatoren/BereikbaarGroen_Indicatoren_T('+quote(Indicator/name)+','+quote(Indicator/IndicatorExpr)+','+quote(Indicator/ValuesUnit)+', .)')
 		{
 			parameter<string> Generate := 'Ready', ExplicitSuppliers = "=AsList(Indicator/name+'/Indicator', ';')";
