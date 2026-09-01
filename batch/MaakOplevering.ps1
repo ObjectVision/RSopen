@@ -10,6 +10,20 @@
 
     Elke kaart bestaat uit drie bestanden: de tif, het world file .tfw en een .xml met
     het GeoDMS-itempad en de buildversie. Die xml is herkomst en gaat bewust mee.
+
+    De LEESMIJ wordt aan het eind afgeleid uit wat er werkelijk in de doelmap staat en uit git,
+    en niet uit vaste tekst. Zie #731: een LEESMIJ die varianten belooft die er niet zijn, is
+    misleidender dan geen LEESMIJ. Wat per levering verandert (issuenummer, verwachte varianten,
+    aantekeningen) staat daarom in de parameters hieronder.
+
+.EXAMPLE
+    .\MaakOplevering.ps1 -Doel D:\Oplevering\Indicatoren -Issue 632
+
+.EXAMPLE
+    Tweede stap van een levering die in delen wordt gevuld. De LEESMIJ wordt opnieuw afgeleid
+    uit de dan complete doelmap.
+
+    .\MaakOplevering.ps1 -Doel D:\Oplevering\Indicatoren -Aanvullen
 #>
 [CmdletBinding()]
 param(
@@ -17,12 +31,33 @@ param(
     # Standaard naar de gedeelde projectmap, zodat de levering meteen bij het team staat.
     [string] $Doel      = 'C:\Users\JipClaassens\Objectvision\Object Vision - General\LocalData\RSOpen_NL2120\Productierun_20260829\Indicatoren',
     [string] $Zichtjaar = 'Y2120',
-    [string] $Commit    = ''
+    # Het issue waaronder deze oplevering valt. Verandert per levering, dus een parameter en geen
+    # regel tekst onderin het script.
+    [string] $Issue     = '632',
+    # De werkkopie die de cijfers heeft gemaakt, en niet de werkkopie waarin dit script staat.
+    # Run2120.ps1 draait op RSopen_NL2120_productie terwijl dit script ergens anders kan liggen;
+    # die twee kunnen los van elkaar uit de pas lopen. Branch, commit en tag komen hier vandaan.
+    [string] $Werkkopie = 'C:\ProjDir\RSopen_NL2120_productie',
+    # Vervangt de uit git afgeleide herkomstregels door eigen tekst. Nodig zodra de varianten niet
+    # allemaal op dezelfde commit zijn doorgerekend.
+    [string[]] $Herkomst = @(),
+    # Welke varianten in deze levering horen. Leeg is alle vier uit de tabel hieronder. Wat verwacht
+    # wordt maar niet in de doelmap staat, komt met naam in de LEESMIJ en op het scherm.
+    [string[]] $Verwacht = @(),
+    # Aantekeningen die alleen voor deze levering gelden, bijvoorbeeld op welke servers is gerekend.
+    # Wat voor elke oplevering geldt hoort in de vaste tekst onderin dit script, want de LEESMIJ in
+    # de doelmap wordt bij elke run overschreven.
+    [string[]] $Notitie  = @(),
+    # Schrijven in een bestaande doelmap. Nodig als een levering in stappen wordt gevuld; de LEESMIJ
+    # wordt dan opnieuw afgeleid uit alles wat er op dat moment staat.
+    [switch]   $Aanvullen
 )
 
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $Bron)) { throw "Bronmap niet gevonden: $Bron" }
-if (Test-Path $Doel) { throw "Doelmap bestaat al, verwijder of hernoem hem eerst: $Doel" }
+if ((Test-Path $Doel) -and (-not $Aanvullen)) {
+    throw "Doelmap bestaat al. Verwijder of hernoem hem, of gebruik -Aanvullen: $Doel"
+}
 
 $varianten = [ordered]@{
     'WLO_hoog_BAU'            = 'BAU1'
@@ -30,6 +65,8 @@ $varianten = [ordered]@{
     'WLO_hoog_NbSGenuanceerd' = 'NbSGenuanceerd'
     'WLO_hoog_NbSMax'         = 'NbSMax'
 }
+if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
+$Issue = $Issue.TrimStart('#')
 
 function Schoon([string]$Naam) {
     # Haalt de modelstaart uit de naam: _Nederland_SS-11 of _Nederland vlak voor de extensie.
@@ -95,6 +132,53 @@ function Kopieer {
         }
     }
     return 1
+}
+
+function Opsomming([string[]]$Delen) {
+    # Zodat de LEESMIJ een zin wordt en geen lijstje: a, b en c.
+    if ($Delen.Count -le 1) { return ($Delen -join '') }
+    return (($Delen[0..($Delen.Count - 2)] -join ', ') + ' en ' + $Delen[-1])
+}
+
+function Get-Herkomst([string]$Pad) {
+    # Leest branch, commit en tag uit de werkkopie die de cijfers heeft gemaakt. Alles wat hier
+    # misgaat levert een regel op die dat zegt; een ontbrekende herkomstregel is niet te
+    # onderscheiden van een oplevering waarvan de herkomst wel bekend is.
+    if (-not (Test-Path $Pad)) { return @("Configuratie: werkkopie $Pad niet gevonden, herkomst onbekend.") }
+
+    try {
+        $branch = git -C $Pad rev-parse --abbrev-ref HEAD 2>$null
+        $commit = git -C $Pad rev-parse --short HEAD 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $commit) {
+            $global:LASTEXITCODE = 0
+            return @("Configuratie: geen git-informatie te lezen uit $Pad.")
+        }
+
+        # Faalt met exitcode 128 zodra HEAD niet getagd is. Dat is hier geen fout maar een feit dat in
+        # de LEESMIJ hoort, anders leest een ongetagde oplevering als een getagde. De exitcode moet wel
+        # opgeruimd worden, want anders eindigt het script erop en leest een aanroeper dat als mislukt.
+        $tag = git -C $Pad describe --tags --exact-match 2>$null
+        if ($LASTEXITCODE -ne 0) { $tag = '' }
+        $vuil = @(git -C $Pad status --porcelain 2>$null)
+        $global:LASTEXITCODE = 0
+    }
+    catch {
+        $global:LASTEXITCODE = 0
+        return @("Configuratie: git niet aan te roepen, herkomst onbekend.")
+    }
+
+    $r = @()
+    $r += "Configuratie: commit $commit op branch $branch, " + $(if ($tag) { "getagd als $tag." } else { "niet getagd." })
+    $r += "  Gelezen uit werkkopie $Pad."
+    if ($vuil.Count -gt 0) {
+        # Een commithash beschrijft de gebruikte configuratie alleen volledig als er niets openstond.
+        $r += $(if ($vuil.Count -eq 1) { "  Let op: in die werkkopie stond een wijziging open, dus de commit hierboven" }
+                else { "  Let op: in die werkkopie stonden $($vuil.Count) wijzigingen open, dus de commit hierboven" })
+        $r += "  beschrijft niet alles wat er is doorgerekend:"
+        foreach ($v in ($vuil | Select-Object -First 10)) { $r += "    $v" }
+        if ($vuil.Count -gt 10) { $r += "    en nog $($vuil.Count - 10) andere" }
+    }
+    return $r
 }
 
 New-Item -ItemType Directory -Path $Doel -Force | Out-Null
@@ -169,12 +253,36 @@ if (Test-Path "$Bron\Basisjaar") {
         ForEach-Object { [void](Kopieer $_ (Join-Path $Doel 'Basisjaar')) }
 }
 
+# Wat er in de LEESMIJ komt te staan, komt uit de doelmap zelf en niet uit de variantentabel bovenin.
+# Een levering wordt in stappen gevuld, dus wat deze run heeft gekopieerd is niet hetzelfde als wat de
+# ontvanger straks ziet. Basisjaar is geen variant en staat apart in de indeling.
+$geleverd = [ordered]@{}
+Get-ChildItem $Doel -Directory | Where-Object { $_.Name -ne 'Basisjaar' } | Sort-Object Name | ForEach-Object {
+    $geleverd[$_.Name] = @(Get-ChildItem $_.FullName -Recurse -File).Count
+}
+$ontbreekt = @($Verwacht | Where-Object { $geleverd.Keys -notcontains $_ })
+$onbekend  = @($geleverd.Keys | Where-Object { $Verwacht -notcontains $_ })
+
 $regels = @()
-$regels += "Oplevering RuimteScanner NL2120, issue #658"
+$regels += "Oplevering RuimteScanner NL2120, issue #$Issue"
 $regels += "Samengesteld op $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 $regels += ""
-$regels += "Zichtjaar $Zichtjaar, varianten BAU1 en BAU2."
-if ($Commit) { $regels += "Configuratie: commit $Commit op branch oplevering-658-20260828." }
+if ($geleverd.Count -eq 0) {
+    $regels += "Zichtjaar $Zichtjaar. LET OP: deze map bevat op dit moment geen enkele variant."
+} else {
+    $lijst = Opsomming @($geleverd.Keys | ForEach-Object { "$_ ($($geleverd[$_]) bestanden)" })
+    $regels += "Zichtjaar $Zichtjaar. Deze map bevat $lijst."
+}
+if ($ontbreekt.Count -gt 0) {
+    $regels += "LET OP: deze levering is niet compleet. Verwacht en nog niet aanwezig: $(Opsomming $ontbreekt)."
+}
+$regels += ""
+$regels += $(if ($Herkomst) { $Herkomst } else { Get-Herkomst $Werkkopie })
+if ($Notitie) {
+    $regels += ""
+    $regels += "BIJ DEZE LEVERING"
+    foreach ($r in $Notitie) { $regels += "  $r" }
+}
 $regels += ""
 $regels += "INDELING"
 $regels += "  <variant>/tabellen/            RegionaleIndicatoren (een regel, heel Nederland), de arealen"
@@ -199,9 +307,30 @@ $regels += "LET OP BIJ HET LEZEN"
 $regels += "  De sloopindicatoren zijn geen tijdreeks. Ze worden geteld uit de stand in het"
 $regels += "  basisjaar onder het opleggingsmasker, en dat masker gaat in het eerste zichtjaar in"
 $regels += "  een keer op. De waarde is daardoor in elk zichtjaar gelijk."
+$regels += ""
 $regels += "  Vanaf 2060 staat de TIGRIS-claim voor wonen en werken stil; latere zichtjaren"
 $regels += "  bouwen alleen nog terug wat de exogene opleggingen slopen."
+$regels += ""
+# Deze twee notities gelden voor elke oplevering en horen daarom hier en niet in de doelmap: de
+# LEESMIJ daar wordt bij elke run overschreven, dus met de hand toegevoegde tekst verdwijnt.
+$regels += "  CO2Flow_TovBasisjaar is het verschil tussen twee voorraden die ongeveer tweehonderd keer"
+$regels += "  zo groot zijn als het verschil zelf. Een wijziging van een tiende procent in de"
+$regels += "  zichtjaarvoorraad verandert deze indicator met ruim twintig procent. Lees hem daarom niet"
+$regels += "  als een maat voor de omvang van een effect, en zet er bij een vergelijking tussen runs"
+$regels += "  altijd CO2Stock_Zichtjaar naast, zodat de schaal zichtbaar blijft."
+$regels += ""
+$regels += "  De waterbergingsindicator meet de piekbui in bebouwd gebied en niet de seizoensberging"
+$regels += "  in het landelijk gebied die de sector Waterberging alloceert. Die twee delen alleen hun"
+$regels += "  naam. Vraag en aanbod worden bovendien per blok van 500 meter tegen elkaar weggestreept,"
+$regels += "  en aanbod in een blok met meer aanbod dan vraag vervalt. Zie #720."
 $regels | Set-Content (Join-Path $Doel 'LEESMIJ.txt') -Encoding UTF8
 
 $totaal = Get-ChildItem $Doel -Recurse -File | Measure-Object Length -Sum
 Write-Host ("klaar: {0} bestanden, {1} GB in {2}" -f $totaal.Count, [math]::Round($totaal.Sum/1GB,2), $Doel)
+# Het scherm is de enige plek waar dit nog op te merken valt voordat de map wordt doorgestuurd.
+if ($ontbreekt.Count -gt 0) {
+    Write-Host ("LET OP: onvolledige levering, nog niet aanwezig: {0}" -f ($ontbreekt -join ', ')) -ForegroundColor Yellow
+}
+if ($onbekend.Count -gt 0) {
+    Write-Host ("in de doelmap staan varianten die niet verwacht werden: {0}" -f ($onbekend -join ', ')) -ForegroundColor Yellow
+}
