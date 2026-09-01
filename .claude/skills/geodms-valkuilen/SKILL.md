@@ -66,7 +66,9 @@ Geval C bewijst dat de check in A wel wordt geevalueerd en de waarde van de sibl
 
 De regel: een schrijfstorage vuurt op de datagraaf en niet op de checkgraaf. Wil je een bestand op schijf hebben, zorg dan dat het item als data in de keten zit of expliciet in een `ExplicitSuppliers` of een `Generate` staat. Een check erop is geen vervanging.
 
-Zo ging het bij `#732`. De stand-tifs van de tussenliggende zichtjaren kwamen er wel, want die zijn supplier van het volgende zichtjaar, en het legenda-zijbestand niet, want dat hangt aan geen enkele StandVar. De reparatie zit daarom in `Generate_LastZichtjaar`, dat nu elk zichtjaar apart noemt.
+Zo ging het bij `#732`. De stand-tifs van de tussenliggende zichtjaren kwamen er wel, want die zijn supplier van het volgende zichtjaar, en het legenda-zijbestand niet, want dat hangt aan geen enkele StandVar. De reparatie zit daarom in `Extra_prev` in `Zichtjaar_T`: elk zichtjaar noemt het `Generate` van zijn voorganger in zijn eigen `ExplicitSuppliers`.
+
+Twee eigenschappen van `ExplicitSuppliers` die daarbij bleken, en die nergens in de documentatie staan. Een supplierpad wordt omhoog gezocht vanaf de container van het item en niet relatief genavigeerd: `../../Y2040/Impl/Generate` geeft `ExplicitSupplier not found`, het ongekwalificeerde `Y2040/Impl/Generate` werkt. En de ketting draagt door: wijst Y2050 naar Y2040 en Y2040 naar Y2030, dan levert een aanroep van alleen Y2050 alle drie de bestanden op.
 
 ## Een uitdraai die niet meedraait blijft stil staan
 
