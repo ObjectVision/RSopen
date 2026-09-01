@@ -49,6 +49,25 @@ Gebeurd bij `#721`. `WriteStand/Legenda` schreef het zijbestand met de standlege
 
 De controle is goedkoop en hoort bij elke nieuwe `StorageName`: grep of het itempad ergens in een `ExplicitSuppliers` of een `Generate` voorkomt. Staat het er niet, dan schrijft het nooit. En de kanarie achteraf is simpeler nog: kijk of het bestand na een run werkelijk op schijf staat.
 
+## Een IntegrityCheck dwingt geen schrijfactie af
+
+Wie het vorige geval wil repareren grijpt al snel naar een `IntegrityCheck`, want dat is bij een `for_each` de enige haak per item: de checkArray. En aan de leeskant is bekend dat een check een sibling met leesstorage wel degelijk afdwingt.
+
+Voor een SCHRIJFstorage werkt dat niet. Gemeten in een losse dms op 2026-09-01, GeoDms20.17.0.m, met een schone uitvoermap:
+
+| geval | wat er staat | exit | tif | zijbestand |
+|---|---|---|---|---|
+| A | `IntegrityCheck` op het tif-item noemt `strlen(Legenda) > 0` | 0 | ja | nee |
+| C | zelfde check, drempel op `> 1000`, als kanarie | 1 | ja | nee |
+| D | de legenda staat in de expressie van het tif-item | 0 | ja | ja |
+| E | een afnemer een laag hoger leest het tif-item en de legenda | 0 | ja | ja |
+
+Geval C bewijst dat de check in A wel wordt geevalueerd en de waarde van de sibling echt wordt uitgerekend; het bestand ontstaat alleen niet. Rechtstreeks om het item vragen levert het bestand meteen op, dus aan de storage mankeert niets.
+
+De regel: een schrijfstorage vuurt op de datagraaf en niet op de checkgraaf. Wil je een bestand op schijf hebben, zorg dan dat het item als data in de keten zit of expliciet in een `ExplicitSuppliers` of een `Generate` staat. Een check erop is geen vervanging.
+
+Zo ging het bij `#732`. De stand-tifs van de tussenliggende zichtjaren kwamen er wel, want die zijn supplier van het volgende zichtjaar, en het legenda-zijbestand niet, want dat hangt aan geen enkele StandVar. De reparatie zit daarom in `Generate_LastZichtjaar`, dat nu elk zichtjaar apart noemt.
+
 ## Een uitdraai die niet meedraait blijft stil staan
 
 Hetzelfde mechanisme, maar dan verraderlijker, want hier is er wel een bestand: alleen een oud.
