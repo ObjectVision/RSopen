@@ -129,7 +129,7 @@ function TrapB([string]$variant, [string]$jaar) {
     # hij hoort in elke variant en elk zichtjaar hetzelfde te zijn. Dat maakt hem een harde
     # invariant: wijkt hij af, dan is er iets met de maskering of met de basisjaarstand.
     $wb = LeesDiag "waterberging_${casus}_$j.txt"
-    if ($null -eq $wb)          { Meld 'B' $casus "$j piekbui" 'GEEN DATA' 'bestand ontbreekt' 'draai /Diagnose/Ongemeten/uitdraaiWB' }
+    if ($null -eq $wb)          { Meld 'B' $casus "$j piekbui" 'GEEN DATA' 'bestand ontbreekt' 'draai /Diagnose/GenerateAll' }
     elseif ($wb.Verouderd)      { Meld 'B' $casus "$j piekbui" 'GEEN DATA' "bestand van $($wb.Tijd.ToString('dd-MM HH:mm'))" 'na de runstart' }
     else {
         $v = Ontleed $wb.Tekst
@@ -143,7 +143,7 @@ function TrapB([string]$variant, [string]$jaar) {
     # exact op te tellen, maar een gat groter dan een half procent betekent dat er een categorie
     # zoek is en niet dat er een restje naar een vierde bestemming gaat.
     $gb = LeesDiag "${casus}_${j}_grondbalans_bestemmingen.txt"
-    if ($null -eq $gb)     { Meld 'B' $casus "$j grondbalans" 'GEEN DATA' 'bestand ontbreekt' 'draai /Diagnose/grondbalans_bestemmingen' }
+    if ($null -eq $gb)     { Meld 'B' $casus "$j grondbalans" 'GEEN DATA' 'bestand ontbreekt' 'draai /Diagnose/GenerateAll' }
     elseif ($gb.Verouderd) { Meld 'B' $casus "$j grondbalans" 'GEEN DATA' "bestand van $($gb.Tijd.ToString('dd-MM HH:mm'))" 'na de runstart' }
     else {
         $g = Ontleed ($gb.Tekst -replace ';(?=[a-z_]+;)', '|')
