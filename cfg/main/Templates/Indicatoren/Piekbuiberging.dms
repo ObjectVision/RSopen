@@ -1,0 +1,70 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Laadt via #include: Aanbod.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Piekbuiberging := Basisjaar/Piekbuiberging
+, Descr = "Welk deel van de piekbuiopgave in bestaand bebouwd gebied wordt gedekt door blauw-groene maatregelen. De opgave ligt vast in het basisjaar; deze container voegt het aanbod van het zichtjaar toe en streept opgave en aanbod per blok tegen elkaar weg.
+
+			Heette tot #720 Waterberging, en die naam draagt ook de sector Waterberging, die bergingsgebieden in het landelijk gebied alloceert op een seizoensopgave in m3 per maand voor juli (#575, #664). In de opleveringstabel stonden de twee onder bijna dezelfde kolomnaam naast elkaar. Ze meten ander water, op een andere plek, op een andere tijdschaal, en horen nooit bij elkaar opgeteld te worden. Cellen die aan de sector Waterberging zijn toegewezen leveren aan deze indicator per constructie nul; ToetsOplevering.ps1 bewaakt dat als harde toets."
+{
+	#include<Aanbod.dms> // Is extra tov bestaand aanbod (het aanbod achter de restopgave in basisjaar)
+
+	container PerGrid
+	{
+		attribute<meter3> Opgave             (Grid) := Basisjaar/Piekbuiberging/PerGrid/Opgave;
+		attribute<meter3> Aanbod             (Grid) := ='sum(Piekbuiberging/Aanbod/Totaal, AdminDomain/rdc_'+Grid_ref+'_rel)';
+		attribute<meter3> AanbodBinnenBBG    (Grid) := ='sum(Piekbuiberging/Aanbod/Totaal * float32(BestaandBebouwdGebied), AdminDomain/rdc_'+Grid_ref+'_rel)'
+		, Descr = "Het deel van het aanbod dat ligt waar ook opgave is. De opgave is op celniveau op bestaand bebouwd gebied gemaskeerd en het aanbod niet, dus aanbod net buiten die begrenzing telt toch mee zodra het in hetzelfde blok valt. Het verschil met Aanbod is de omvang van die asymmetrie. Zie #720; of de maskering aan beide kanten hoort te gelden is daar als vervolgvraag benoemd.";
+		attribute<meter3> Restopgave         (Grid) := Opgave - Aanbod;
+		attribute<meter3> Ongedekt           (Grid) := max_elem(Restopgave, 0[meter3]);
+		attribute<meter3> AanbodZonderOpgave (Grid) := max_elem(Aanbod - Opgave, 0[meter3])
+		, Descr = "Het aanbod dat in zijn eigen blok geen opgave tegenkomt en daarmee uit de dekkingsgraad valt. De klemming op nul een regel hoger laat overschot niet naar een naburig blok stromen, dus dit is bergingscapaciteit die wel wordt aangelegd en niet wordt meegeteld. Het is de grootste enkele post van deze indicator en hij stond tot #720 nergens gerapporteerd. Onbenut is het woord niet: of die capaciteit in werkelijkheid nut heeft hangt af van de afstand waarover berging een plas kan bedienen, en juist die afstand is hier op een blokmaat vastgezet.";
+		attribute<meter3> Gedekt             (Grid) := Opgave - Ongedekt;
+
+		attribute<float32> Dekkingsgraad     (Grid) := Gedekt / Opgave;
+	}
+
+	container PerRegio
+	{
+		unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path
+		{
+			attribute<.> Per_Grid (Grid) := ='modus(Regio/Per_AdminDomain, AdminDomain/rdc_'+Grid_ref+'_rel)'
+			, Descr = "Regio van het blok, als meest voorkomende regio van de onderliggende cellen. Tot #705 kwam dit uit poly2grid op de regiogeometrie; met modus volgt het blok altijd dezelfde kaart als de celaggregaties, en kan ook een indeling zonder geometry meedoen, zoals Landschap.";
+		}
+
+		attribute<Meter3> Opgave             (Regio) := sum(PerGrid/Opgave, Regio/Per_Grid);
+		attribute<Meter3> Aanbod             (Regio) := sum(PerGrid/Aanbod, Regio/Per_Grid);
+		attribute<Meter3> AanbodBinnenBBG    (Regio) := sum(PerGrid/AanbodBinnenBBG, Regio/Per_Grid);
+		attribute<Meter3> Restopgave         (Regio) := sum(PerGrid/Restopgave, Regio/Per_Grid);
+		attribute<Meter3> Ongedekt           (Regio) := sum(PerGrid/Ongedekt, Regio/Per_Grid);
+		attribute<Meter3> AanbodZonderOpgave (Regio) := sum(PerGrid/AanbodZonderOpgave, Regio/Per_Grid);
+		attribute<meter3> Gedekt             (Regio) := Opgave - Ongedekt;
+
+		attribute<float32> Dekkingsgraad           (Regio) := Gedekt / Opgave;
+		attribute<float32> Dekkingsgraad_Ongeklemd (Regio) := min_elem(Aanbod, Opgave) / Opgave
+		, Descr = "De dekkingsgraad die zou gelden als het aanbod binnen de regio vrij naar de opgave kon stromen, dus zonder de klemming per blok. Samen met Dekkingsgraad spant dit de bandbreedte op die de blokmaat oplevert: Dekkingsgraad is de ondergrens, waarbij berging alleen zijn eigen blok bedient, en Dekkingsgraad_Ongeklemd de bovengrens, waarbij berging de hele regio bedient. De waarheid ligt ertussen en hangt af van de afstand waarover een voorziening werkelijk water opvangt. Zie #720.";
+	}
+
+	container PerNL
+	{
+		parameter<Meter3> Opgave             := sum(PerGrid/Opgave);
+		parameter<Meter3> Aanbod             := sum(PerGrid/Aanbod);
+		parameter<Meter3> AanbodBinnenBBG    := sum(PerGrid/AanbodBinnenBBG);
+		parameter<Meter3> Restopgave         := sum(PerGrid/Restopgave);
+		parameter<Meter3> Ongedekt           := sum(PerGrid/Ongedekt);
+		parameter<Meter3> AanbodZonderOpgave := sum(PerGrid/AanbodZonderOpgave);
+		parameter<meter3> Gedekt             := Opgave - Ongedekt;
+
+		parameter<float32> Dekkingsgraad           := Gedekt / Opgave;
+		parameter<float32> Dekkingsgraad_Ongeklemd := min_elem(Aanbod, Opgave) / Opgave;
+	}
+}

@@ -125,18 +125,32 @@ function TrapB([string]$variant, [string]$jaar) {
     $casus = "${Scenario}_$variant"
     $j = $jaar -replace '^Stand',''
 
-    # Piekbui. De vraag hangt aan het basisjaar en is op bestaand bebouwd gebied gemaskeerd, dus
+    # Piekbui. De opgave hangt aan het basisjaar en is op bestaand bebouwd gebied gemaskeerd, dus
     # hij hoort in elke variant en elk zichtjaar hetzelfde te zijn. Dat maakt hem een harde
     # invariant: wijkt hij af, dan is er iets met de maskering of met de basisjaarstand.
-    $wb = LeesDiag "waterberging_${casus}_$j.txt"
+    # Het bestand heet sinds #720 piekbuiberging_*; onder de oude naam waterberging_* stond dezelfde
+    # uitdraai, en die naam droeg ook de sector, wat precies de verwarring was die #720 opruimt.
+    $wb = LeesDiag "piekbuiberging_${casus}_$j.txt"
     if ($null -eq $wb)          { Meld 'B' $casus "$j piekbui" 'GEEN DATA' 'bestand ontbreekt' 'draai /Diagnose/GenerateAll' }
     elseif ($wb.Verouderd)      { Meld 'B' $casus "$j piekbui" 'GEEN DATA' "bestand van $($wb.Tijd.ToString('dd-MM HH:mm'))" 'na de runstart' }
     else {
         $v = Ontleed $wb.Tekst
-        $okVraag = [math]::Abs($v['vraag'] - 497.023) -lt 0.01
-        Meld 'B' $casus "$j piekbuivraag is de bekende invariant" $(if ($okVraag) {'PASS'} else {'FAIL'}) ("{0:N3} mln m3" -f $v['vraag']) '497,023 mln m3'
+        $okOpgave = [math]::Abs($v['opgave'] - 497.023) -lt 0.01
+        Meld 'B' $casus "$j piekbuiopgave is de bekende invariant" $(if ($okOpgave) {'PASS'} else {'FAIL'}) ("{0:N3} mln m3" -f $v['opgave']) '497,023 mln m3'
         $okWb = ($v['aanbod_op_wbcellen'] -eq 0)
         Meld 'B' $casus "$j bergingscellen tellen niet mee in de dekking" $(if ($okWb) {'PASS'} else {'FAIL'}) ("{0}" -f $v['aanbod_op_wbcellen']) 'exact 0'
+
+        # Twee posten die de dekkingsgraad bepalen en tot #720 nergens werden gerapporteerd. Geen
+        # PASS of FAIL: er is geen norm voor. Ze staan hier omdat een dekkingsgraad die zonder deze
+        # twee getallen wordt overgenomen een puntgetal suggereert dat het niet is.
+        if ($v['aanbod_totaal'] -gt 0) {
+            $klemAandeel   = $v['aanbod_zonder_opgave'] / $v['aanbod_totaal']
+            $buitenAandeel = 1 - ($v['aanbod_binnen_bbg'] / $v['aanbod_totaal'])
+            $dekking       = $v['gedekt'] / $v['opgave']
+            $dekkingOngekl = [math]::Min($v['aanbod_totaal'], $v['opgave']) / $v['opgave']
+            Meld 'B' $casus "$j dekkingsgraad piekbui, bandbreedte" 'INFO' ("{0:P1} geklemd op blok, {1:P1} ongeklemd" -f $dekking, $dekkingOngekl) 'lees als bandbreedte'
+            Meld 'B' $casus "$j aanbod dat de dekking niet haalt" 'INFO' ("{0:P1} valt door de blokklemming, {1:P1} ligt buiten bebouwd gebied" -f $klemAandeel, $buitenAandeel) 'zie #720'
+        }
     }
 
     # Grondbalans. De drie bestemmingen zijn deelverzamelingen van het verlies, dus ze hoeven niet
