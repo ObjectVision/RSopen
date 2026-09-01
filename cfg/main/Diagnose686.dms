@@ -120,6 +120,74 @@ container Diagnose686
 			+ '|stedelijk_keuze_is_geen;'      + string(sum(uint32(MakeDefined(Pad/StedelijkEGVS/Bouwwijzekeuze/Keuze == /Classifications/Modellering/BouwwijzeK/V/GeenMaatregelen, FALSE))))
 			+ '|cellen_totaal;'                + string(uint32(#/Geography/CompactedAdminDomain))
 		, StorageName = "%LocalDataProjDir%/Diagnose/723_keuze.txt", StorageType = "str"
-		, Descr = "Voor een drijvend pakket en een gewoon pakket in NbSGenuanceerd Y2040: hoe vaak voldoet er niets, en is de keuze overal het ene toegestane element. drijvend_voldoet plus drijvend_geenvoldoet hoort op cellen_totaal uit te komen, en hetzelfde geldt aan de stedelijke kant.";
+		, Descr = "Voor een drijvend pakket en een gewoon pakket in NbSGenuanceerd Y2040: hoe vaak voldoet er niets, en is de keuze overal het ene toegestane element. drijvend_voldoet plus drijvend_geenvoldoet hoort op cellen_totaal uit te komen, en hetzelfde geldt aan de stedelijke kant. Let op dat die verwachting van voor #726 is: sinds die verruiming draagt geen enkel pakket nog precies een bouwwijze, dus de partitietoets op het ene toegestane element slaat niet meer aan. Zie D726.";
+	}
+
+	container D726
+	: Descr = "Meetpunt voor #726: wat de verruiming van BouwwijzeToegestaan en de twee bijgestelde dieptes met de bouwwijzekeuze doen. Gerekend op NbSGenuanceerd, want daar gelden zowel de overstromingseis in gevaarzone 3 tot en met 5 als de twee veeneisen uit de bebouwingstypekaart veen.
+
+				Verwachting vooraf. De maskers dragen vijf bouwwijzen voor elk eengezinspakket en drie voor elk meergezinspakket, dus aantal is overal 5 of 3 en nergens 1. Waar geen enkele eis geldt kiezen beide maskers GeenMaatregelen, want dat is de lichtste. Binnen de eiszone haalt eengezins 6,0 meter en meergezins 2,0, dus geen_voldoet hoort bij meergezins hoger te liggen; bij eengezins hoort het alleen te gaan over water dieper dan 6,0 meter. Op de wonen-op-water-cellen voldoet alleen Drijvend, en die draagt meergezins niet, dus daar valt meergezins volledig weg.
+
+				Voor #726 haalde een pakket zijn ene bouwwijze en niets anders. De vergelijking met die oude stand loopt daarom niet via de keuze maar via de dieptebanden hieronder: die zeggen per plafond hoeveel areaal er binnen de eiszone onder valt."
+	{
+		unit<UInt32> BW := /Classifications/Modellering/BouwwijzeK;
+		unit<UInt8> OPd := /VariantParameters/Ontwikkelpakketten/NettoBuurt/Default;
+		container   OPm := /VariantParameters/Ontwikkelpakketten/NettoBuurt/PerVariant/NbSMax/OP;
+		container   OPg := /VariantParameters/Ontwikkelpakketten/NettoBuurt/PerVariant/NbSGenuanceerd/OP;
+
+		container Eis := /VariantData/NbSGenuanceerd/BouwwijzeEis, Descr = "De drie eisen van de plek, ongefilterd overgenomen; BouwwijzeVeenGeldtVoorOPs staat in deze variant aan, dus de twee veeneisen gelden zoals ze hier staan.";
+
+		attribute<meter> Waterdiepte (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsdiepte);
+		attribute<bool>  EisO        (CompactedAdminDomain) := Eis/Overstromingsbestendig;
+
+		parameter<String> EG_name := 'LaagStedelijkEGVS';
+		parameter<String> MG_name := 'LaagStedelijkMGVS';
+		parameter<OPd>    EG_rel  := rlookup(EG_name, OPd/name), IntegrityCheck = "IsDefined(this)";
+		parameter<OPd>    MG_rel  := rlookup(MG_name, OPd/name), IntegrityCheck = "IsDefined(this)";
+
+		container ToegestaanEG := for_each_nedv(BW/name, 'const(OPd/Bouwwijze/Toegestaan/' + BW/name + '[EG_rel], CompactedAdminDomain)', CompactedAdminDomain, bool);
+		container ToegestaanMG := for_each_nedv(BW/name, 'const(OPd/Bouwwijze/Toegestaan/' + BW/name + '[MG_rel], CompactedAdminDomain)', CompactedAdminDomain, bool);
+
+		container KeuzeEG := Templates/Beschikbaarheden/Bouwwijzekeuze_T(ToegestaanEG, Eis/Overstromingsbestendig, Eis/Bodemdalingbestendig, Eis/Drijvend, Waterdiepte);
+		container KeuzeMG := Templates/Beschikbaarheden/Bouwwijzekeuze_T(ToegestaanMG, Eis/Overstromingsbestendig, Eis/Bodemdalingbestendig, Eis/Drijvend, Waterdiepte);
+
+		parameter<String> maskers :=
+			  'set;pakket;aantal;masker'
+			+ AsList('|default;'         + OPd/name + ';' + string(OPd/Bouwwijze/Aantal) + ';' + OPd/BouwwijzeToegestaan, '')
+			+ AsList('|nbsmax;'          + OPm/name + ';' + string(OPm/Bouwwijze/Aantal) + ';' + OPm/BouwwijzeToegestaan, '')
+			+ AsList('|nbsgenuanceerd;'  + OPg/name + ';' + string(OPg/Bouwwijze/Aantal) + ';' + OPg/BouwwijzeToegestaan, '')
+		, StorageName = "%LocalDataProjDir%/Diagnose/726_maskers.txt", StorageType = "str"
+		, Descr = "Alle pakketten van de drie sets met hun aantal toegestane bouwwijzen en het masker zelf. Forceert daarmee de IntegrityCheck op Bouwwijze/Aantal over alle rijen, en dat is de controle op de kolom: een typefout laat een scheidingsteken zonder klasse achter en faalt hard.";
+
+		parameter<String> banden :=
+			  'band;areaal_ha'
+			+ '|eis_overstroming_totaal;' + string(sum(float32(EisO) * Cel))
+			+ '|eis_met_diepte;'          + string(sum(float32(EisO && Waterdiepte > 0.0[meter]) * Cel))
+			+ '|tot_0_2m;'                + string(sum(float32(EisO && Waterdiepte > 0.0[meter] && Waterdiepte <= 0.2[meter]) * Cel))
+			+ '|tot_0_5m;'                + string(sum(float32(EisO && Waterdiepte > 0.2[meter] && Waterdiepte <= 0.5[meter]) * Cel))
+			+ '|tot_2_0m;'                + string(sum(float32(EisO && Waterdiepte > 0.5[meter] && Waterdiepte <= 2.0[meter]) * Cel))
+			+ '|tot_2_5m;'                + string(sum(float32(EisO && Waterdiepte > 2.0[meter] && Waterdiepte <= 2.5[meter]) * Cel))
+			+ '|tot_3_0m;'                + string(sum(float32(EisO && Waterdiepte > 2.5[meter] && Waterdiepte <= 3.0[meter]) * Cel))
+			+ '|tot_5_5m;'                + string(sum(float32(EisO && Waterdiepte > 3.0[meter] && Waterdiepte <= 5.5[meter]) * Cel))
+			+ '|tot_6_0m;'                + string(sum(float32(EisO && Waterdiepte > 5.5[meter] && Waterdiepte <= 6.0[meter]) * Cel))
+			+ '|boven_6_0m;'              + string(sum(float32(EisO && Waterdiepte > 6.0[meter]) * Cel))
+			+ '|eis_diepte_nul;'          + string(sum(float32(EisO && Waterdiepte == 0.0[meter]) * Cel))
+			+ '|eis_diepte_null;'         + string(sum(float32(EisO && !IsDefined(Waterdiepte)) * Cel))
+			+ '|diepte_null_totaal;'      + string(sum(float32(!IsDefined(Waterdiepte)) * Cel))
+		, StorageName = "%LocalDataProjDir%/Diagnose/726_banden.txt", StorageType = "str"
+		, Descr = "Het areaal binnen de eiszone per dieptebandje tussen twee plafonds, zodat te lezen is wat elk plafond toevoegt. De banden 2,0 tot 2,5 en 2,5 tot 3,0 staan apart omdat de palenklasse van 3,0 naar 2,5 meter ging, en 3,0 tot 5,5 apart van 5,5 tot 6,0 omdat de drijvende klasse van 5,5 naar 6,0 ging.";
+
+		parameter<String> keuze :=
+			  'maat;eengezins_ha;meergezins_ha'
+			+ '|geen_voldoet;'            + string(sum(float32(KeuzeEG/GeenEnkeleVoldoet) * Cel))                                     + ';' + string(sum(float32(KeuzeMG/GeenEnkeleVoldoet) * Cel))
+			+ '|kiest_GeenMaatregelen;'   + string(sum(float32(MakeDefined(KeuzeEG/Keuze == BW/V/GeenMaatregelen,   FALSE)) * Cel))   + ';' + string(sum(float32(MakeDefined(KeuzeMG/Keuze == BW/V/GeenMaatregelen,   FALSE)) * Cel))
+			+ '|kiest_GebouwMaatregelen;' + string(sum(float32(MakeDefined(KeuzeEG/Keuze == BW/V/GebouwMaatregelen, FALSE)) * Cel))   + ';' + string(sum(float32(MakeDefined(KeuzeMG/Keuze == BW/V/GebouwMaatregelen, FALSE)) * Cel))
+			+ '|kiest_Opgehoogd;'         + string(sum(float32(MakeDefined(KeuzeEG/Keuze == BW/V/Opgehoogd,         FALSE)) * Cel))   + ';' + string(sum(float32(MakeDefined(KeuzeMG/Keuze == BW/V/Opgehoogd,         FALSE)) * Cel))
+			+ '|kiest_OpPalen;'           + string(sum(float32(MakeDefined(KeuzeEG/Keuze == BW/V/OpPalen,           FALSE)) * Cel))   + ';' + string(sum(float32(MakeDefined(KeuzeMG/Keuze == BW/V/OpPalen,           FALSE)) * Cel))
+			+ '|kiest_Drijvend;'          + string(sum(float32(MakeDefined(KeuzeEG/Keuze == BW/V/Drijvend,          FALSE)) * Cel))   + ';' + string(sum(float32(MakeDefined(KeuzeMG/Keuze == BW/V/Drijvend,          FALSE)) * Cel))
+			+ '|binnen_eis_geen_voldoet;' + string(sum(float32(EisO && KeuzeEG/GeenEnkeleVoldoet) * Cel))                             + ';' + string(sum(float32(EisO && KeuzeMG/GeenEnkeleVoldoet) * Cel))
+			+ '|totaal;'                  + string(float32(#CompactedAdminDomain) * Cel)                                             + ';' + string(float32(#CompactedAdminDomain) * Cel)
+		, StorageName = "%LocalDataProjDir%/Diagnose/726_keuze.txt", StorageType = "str"
+		, Descr = "De gekozen bouwwijze over het hele compacted domain voor een eengezins- en een meergezinsmasker, in hectare. De vijf keuzeregels plus geen_voldoet horen samen op totaal uit te komen; dat is de partitietoets. GeenMaatregelen hoort veruit het grootste deel te zijn, want de eis geldt alleen in gevaarzone 3 tot en met 5 en op de twee veencategorieen.";
 	}
 }
