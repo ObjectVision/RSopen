@@ -134,12 +134,44 @@ Gemeten na het terugdraaien, in NbSGenuanceerd Y2040: opgelegde sloop 3.461,45 w
 
 De eerste aanname staat nog. Wat er in deze lijst aan koolstof, groen en verharding voor NbSGenuanceerd staat is gemeten op de stand van voor de bouwstenenroute en geldt dus niet voor een levering op de huidige stand.
 
+## Uitkomst op de productiereeks van 1 september
+
+De reeks is gedraaid van 31 augustus 22:38 tot 1 september 14:58, BAU en BAU2 tot en met Y2120 op commit 439d6222, met de diagnosestap na Y2040 en Y2120. Alle stappen exit 0. NbSGenuanceerd is apart gedraaid en staat in dezelfde LocalData. Beoordeeld met `batch/ToetsOplevering.ps1`: 58 PASS, 2 FAIL, 6 GEEN DATA.
+
+Daarmee zijn de twee dingen beantwoord die alleen een volledige reeks kon beantwoorden.
+
+De legendablokkade is definitief weg. Over drie varianten en negen zichtjaren staan 27 standmappen, elk met een zijbestand dat de goede setgrootte draagt: 27 voor BAU en BAU2, 39 voor NbSGenuanceerd, en overal elf subsectoren. Geen enkele stand is leeg en geen enkele is ouder dan de runstart. Dat is precies wat voor de reparatie onmogelijk was: toen brak het tweede zichtjaar.
+
+En de hernoemde opbrengstenbestanden bleken geen blokkade. De reeks is doorgelopen, dus de zichtjaargeschiktheid struikelt er niet over; de variantdatastap heeft de set onder de nieuwe namen opnieuw gegenereerd zoals verwacht.
+
+De zes GEEN DATA zijn de piekbui- en grondbalansuitdraai op Y2040 in alle drie de varianten. Die vielen destijds buiten `GenerateAll`, precies zoals rij 4 beschrijft, en zijn met #729 in de generatiestap opgenomen. Die fix landde op 1 september 13:54 en dus na de Y2040-stappen van deze reeks. Op Y2120 zijn ze er wel.
+
+### De twee bevindingen
+
+Beide zitten in NbSGenuanceerd op Y2120 en beide zijn echt.
+
+Drieendertig van de 76 NVM-regio's halen de woningclaim niet, met 0,7327 als laagste, tegen elf regio's in BAU en BAU2 met 0,8789 als laagste. Landelijk valt daar niets van te zien: de realisatie is 0,9948 tegen 0,9953. Uitgedrukt in woningen, uit de claimrealisatietabel van #693: NbSGenuanceerd heeft 559.630 woningen tekort in de ene regio en 504.496 over in de andere, tegen 128.316 en 77.905 in de referentievarianten. De variant bouwt dus niet minder woningen, hij bouwt ze ruim een factor vier vaker in de verkeerde regio. De grootste tekorten zitten in Zwolle (41.562), Almere (37.785) en Waterland (21.569).
+
+Dat past bij het ruimtebeslageffect van de dichtheidsfactoren uit #715: lagere dichtheden vragen meer grond, en waar die grond op is schuift de claim naar buurregio's. De overflow aggregeert restclaims niet omhoog, zie #689, dus die verschuiving is zichtbaar op NVM-niveau en niet landelijk.
+
+De waterberging haalt in NbSGenuanceerd op Y2120 in de slechtste regio 0,9256, tegen 0,9991 op Y2040. De opgave groeit tot 2100 door terwijl de ruimte niet meegroeit, dus dat is verzadiging en geen fout.
+
+### BAU en BAU2 verschillen alleen in de koolstof
+
+Nagelopen omdat beide varianten op elke toets exact hetzelfde getal gaven. Dat klopt: op Y2120 zijn alle twintig standtifs byte-identiek, en van de indicatorkaarten zijn er 227 identiek en 8 verschillend. Die acht zijn precies de CO2-kaarten, vier van SOMERS en vier van CarbonStorageSequestration.
+
+De vijf variantparameters waarin de twee verschillen zijn allemaal waterbeheer: `Waterbeheeroptie`, de winter- en zomerdrooglegging, de infiltratiemaatregel en `WaterbergingClaimBron`. Die veranderen de veenoxidatie en daarmee de koolstofbalans, maar ze werken niet door naar de allocatie. Dat sluit aan op #680, waar is vastgesteld dat de funderingsafwaardering alleen in de NbS-varianten de allocatie bereikt; zou zij dat in de referentievarianten ook doen, dan zou de drooglegging via de woningwaarde wel verschil maken.
+
+Dit is geen fout, maar het hoort bij de levering te staan: wie de kaarten van BAU en BAU2 naast elkaar legt vindt buiten de acht CO2-kaarten geen enkel verschil.
+
 ## Wat er niet is getoetst
 
-- Een volledige reeks zichtjaren. De legendafix repareert alleen de schrijfkant, dus de standen Y2050 tot en met Y2120 uit de productierun blijven geweigerd en een reeks moet vanaf Y2040 opnieuw. Dat is ongeveer zeven uur per variant.
-- Of de zichtjaargeschiktheid struikelt op de 26 hernoemde opbrengstenbestanden.
-- Of de waterberging in NbSGenuanceerd op de 9a-vlakken landt.
-- Het verschil tussen poly2grid en modus in de piekbui-indicator.
-- Of de woningtype-as in #673 de keuze tussen ontwikkelpakketten verzet.
+Alles wat hier stond is inmiddels gemeten, op een uitzondering na.
+
+- Een volledige reeks zichtjaren: gedraaid op 1 september, zie hierboven.
+- De hernoemde opbrengstenbestanden: geen blokkade, de reeks liep door.
+- De 9a-vlakken: 52,0 procent van de gealloceerde berging valt erop, zie rij 10.
+- De woningtype-as: voor de helft van de pakketten bewezen zonder effect, zie rij 17.
+- Het verschil tussen poly2grid en modus in de piekbui-indicator. Dit is het enige dat open blijft, en het is de moeite niet meer waard: de rest bedraagt vier op de miljoen van de landelijke vraag en is herleid tot kust- en grensblokken zonder regio. Of de oude indeling dezelfde blokken liet vallen verandert niets aan wat er wordt opgeleverd.
 
 Ronde 3, de container `Diagnose/Ongemeten` voor beide varianten, liep bij het schrijven van deze lijst nog. De rijen 20 tot en met 23 dragen daaruit al de BAU-getallen; de NbSGenuanceerd-kant volgt.

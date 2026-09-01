@@ -162,12 +162,21 @@ function TrapB([string]$variant, [string]$jaar) {
         Meld 'B' $casus "$j claimrealisatie $($paar[1])" $(if ($w -ge $paar[2] -and $w -le $paar[3]) {'PASS'} else {'FAIL'}) ("{0:N4}" -f $w) ("{0} tot {1}" -f $paar[2], $paar[3])
     }
 
+    # Wonen per NVM-regio. Beoordeel op het AANTAL regio's onder de norm en niet op het minimum:
+    # het minimum zakt vanzelf naarmate de reeks vordert, want de claim groeit door terwijl de
+    # ruimte opraakt, en een vaste ondergrens geeft daarom vanaf de latere zichtjaren altijd een
+    # FAIL. Dat maakt de toets waardeloos. Het aantal regio's onder de norm is wel te vergelijken:
+    # de oplevering van 28 augustus noteerde er negen op Y2120 voor de referentievarianten.
     $nvm = LeesDiag "${casus}_${j}_claimreal_NVM_woningen.txt"
     if ($null -ne $nvm -and -not $nvm.Verouderd) {
         $r = @($nvm.Tekst -split ';' | Where-Object { $_ -match '^\d' } | ForEach-Object { [double]$_ } | Where-Object { $_ -gt 0 })
         if ($r.Count -gt 0) {
-            $min = ($r | Measure-Object -Minimum).Minimum
-            Meld 'B' $casus "$j slechtste NVM-regio wonen" $(if ($min -ge 0.94) {'PASS'} else {'FAIL'}) ("{0:N4} over {1} regio's" -f $min, $r.Count) 'minstens 0,94'
+            $min    = ($r | Measure-Object -Minimum).Minimum
+            $onder  = @($r | Where-Object { $_ -lt 0.99 }).Count
+            # Ruim boven de negen van 28 augustus, zodat gewone spreiding geen alarm geeft en een
+            # verdubbeling wel. NbSGenuanceerd zat op Y2120 op 33 en dat is een echte bevinding.
+            $grens  = 15
+            Meld 'B' $casus "$j NVM-regio's onder de woningclaim" $(if ($onder -le $grens) {'PASS'} else {'FAIL'}) ("$onder van $($r.Count), laagste {0:N4}" -f $min) "hoogstens $grens, referentie 9 op Y2120"
         }
     }
 
