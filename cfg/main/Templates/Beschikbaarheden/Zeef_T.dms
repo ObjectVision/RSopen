@@ -34,14 +34,20 @@ Template Zeef_T //wordt aangeroepen in Zeef_Zichtjaar_T
 	parameter<Bool>    IsHardePlannenGeldigInZeef                       := VariantK/HardePlannenGeldigInZeef[Variant_rel];
 	parameter<Bool>    IsZachtePlannenGeldigInZeef                      := VariantK/ZachtePlannenGeldigInZeef[Variant_rel];
 	parameter<Bool>    IsPlancapaciteitNogGeldig                        := ='uint32('+substr(Zichtjaar_name, 1, 4)+') <= uint32(/ModelParameters/Advanced/PlancapaciteitGeldigTotEnMet)', Descr = "Plannen hebben een beperkte looptijd: in zichtjaren na ModelParameters/Advanced/PlancapaciteitGeldigTotEnMet heffen harde en zachte plannen de zeef-restricties niet meer op.";
-	
+	parameter<String>  BasisjaarZeefItem                                := IsPlancapaciteitNogGeldig ? 'IsRestrictief' : 'IsRestrictief_ZonderPlanvrijstelling'
+	, Descr = "Welke van de twee uitkomsten van de basisjaar-zeef dit zichtjaar overneemt (#682). De basisjaar-zeef wordt een keer per variant geinstantieerd en kan het zichtjaar dus niet kennen; hij levert daarom beide, en hier valt de keuze.
+
+				Hierin zitten de restricties die er inhoudelijk toe doen: de restrictiekaarten, de milieuzonering, de Natura 2000-buffer, de bodemtoetsen, het landschapsregime, de zeehaven, het energielabel en evident benut. Zonder deze keuze bleef de vrijstelling die harde en zachte plannen daarop geven tot het eindjaar staan, ook al staat IsPlancapaciteitNogGeldig hierboven al sinds #639 in de configuratie: die raakte alleen de twee vlaggen in Src hieronder, en die voeden in deze zeef nog maar een toets.
+
+				Dit is een meta-keuze, dus er komt per zichtjaar maar een van de twee items in de boom te hangen. De twee delen al hun bronitems, dus het kost geen tweede berekening.";
+
 	attribute<Bool>    IsBeschikbaar             (CompactedAdminDomain) := !IsRestrictief;
-	attribute<Bool>    IsRestrictief             (CompactedAdminDomain) := = 
+	attribute<Bool>    IsRestrictief             (CompactedAdminDomain) := =
 		'OR(
 			 IsRestrictief_OokBinnenPlancapaciteit[CompactedAdminDomain/CompactedAllocDomain_rel]
-			,ThisVariant/Zeef/Basisjaar/'+Sector_name+'/'+Subsector_name+'/IsRestrictief'
+			,ThisVariant/Zeef/Basisjaar/'+Sector_name+'/'+Subsector_name+'/'+BasisjaarZeefItem+
 			',Impl/TeHoogBouwjaarBinnenHardePlancapaciteit'
-			',Impl/TeHoogBouwjaarBuitenHardePlancapaciteit' //Buiten-toets is gemaskeerd op harde plancapaciteit, zie Impl; cellen zonder panden hebben null PandLeeftijd en vallen bij beide toetsen op FALSE
+			',Impl/TeHoogBouwjaarBuitenHardePlancapaciteit' //De twee leeftijdstoetsen sluiten elkaar uit op harde plancapaciteit, zie Impl; cellen zonder panden hebben null PandLeeftijd en vallen bij beide op FALSE
 			',IsRestrictief_DoorExogeenopleggen'
 			',Impl/TeOndiepVoorWaterberging'
 		')', Descr = "Is de locatie restrictief voor deze sector/subsector in dit zichtjaar?";
@@ -86,8 +92,20 @@ Template Zeef_T //wordt aangeroepen in Zeef_Zichtjaar_T
 
 				De noemer telt sinds #713 alle werkgelegenheid in bereik van deze subsector, en niet meer alleen die van subsectoren die op de cel zelf mogen bouwen; zie StandInBereik in PerSectorxSubsector_T. Dat werkt twee kanten op, en per saldo precies zoals het hoort. Gemeten in Y2040 van BAU: nijverheid en logistiek worden strenger, van 31.440 naar 34.240 en van 18.208 naar 21.350 restrictieve cellen, want banen die eerder buiten de wacht vielen tellen nu mee. De drie verzorgende subsectoren worden juist ruimer, van rond de 50.000 naar rond de 8.000 restrictieve cellen, omdat de oude noemer hen banen aanrekende op deelcellen waar zij helemaal niet mogen bouwen, zoals industrieterrein. Dat laatste is een van de mechanische oorzaken van de binnenstedelijke schaarste uit #709.";
 		// attribute<Bool>    GeeftOnvoldoendeRuimte                  (CompactedAllocDomain) := Src/PotentieleRuimte < MinimalLandAvailability;
-		attribute<Bool>    TeHoogBouwjaarBinnenHardePlancapaciteit (CompactedAdminDomain) := src/PandLeeftijd < GeenSlooptotLeeftijd_BinnenHardePlancapaciteit[float32] && !IsVerdikkingsCel; //geldt ook buiten harde plannen; daar overstemt de strengere Buiten-toets zolang Binnen <= Buiten
-		attribute<Bool>    TeHoogBouwjaarBuitenHardePlancapaciteit (CompactedAdminDomain) := src/PandLeeftijd < GeenSlooptotLeeftijd_BuitenHardePlancapaciteit[float32] && !Src/HeeftHardePlannenDezeSector[CompactedAdminDomain/CompactedAllocDomain_rel] && !IsVerdikkingsCel;
+		attribute<Bool>    TeHoogBouwjaarBinnenHardePlancapaciteit (CompactedAdminDomain) := src/PandLeeftijd < GeenSlooptotLeeftijd_BinnenHardePlancapaciteit[float32] && Src/HeeftHardePlannenDezeSector[CompactedAdminDomain/CompactedAllocDomain_rel] && !IsVerdikkingsCel
+		, Descr = "Sloopbescherming binnen harde plancapaciteit. Sinds #586 gemaskeerd op HeeftHardePlannenDezeSector, zodat deze toets en zijn buitentegenhanger elkaar uitsluiten en elk alleen gelden waar hun naam zegt.
+
+					De uitkomst verandert daar niet van zolang de binnendrempel onder de buitendrempel ligt, en dat is nu zo: 25 tegen 55 jaar. Tot #586 gold deze toets ook buiten harde plannen, waar de strengere buitentoets hem overstemde. Dat werkte, maar het leunde op een invariant die nergens werd bewaakt. Wie de binnendrempel boven de buitendrempel zet, laat de soepele regel naar buiten de plannen lekken en krijgt daar juist de strengste van de twee, precies omgekeerd aan wat de namen beloven. Dat kan nu niet meer.
+
+					Deze tak is bovendien alleen gevuld zolang er geldige plancapaciteit is. HeeftHardePlannenDezeSector draagt IsPlancapaciteitNogGeldig, en ModelParameters/Advanced/PlancapaciteitGeldigTotEnMet staat op 2050, dus vanaf Y2060 valt in deze zeef alles onder de buitentak.
+
+					Cellen zonder panden hebben een null PandLeeftijd en vallen bij beide toetsen op FALSE, want null < x is FALSE.";
+		attribute<Bool>    TeHoogBouwjaarBuitenHardePlancapaciteit (CompactedAdminDomain) := src/PandLeeftijd < GeenSlooptotLeeftijd_BuitenHardePlancapaciteit[float32] && !Src/HeeftHardePlannenDezeSector[CompactedAdminDomain/CompactedAllocDomain_rel] && !IsVerdikkingsCel
+		, Descr = "Sloopbescherming buiten harde plancapaciteit, de strengere van de twee. Gemaskeerd op harde plancapaciteit sinds #639; daarvoor gold hij overal en bestond de soepelere binnenregel feitelijk niet.
+
+					Deze toets dooft uit met de horizon, en dat is geen keuze maar een bijwerking. PandLeeftijd is het zichtjaar min BouwjaarPand, en BouwjaarPand is statische basisjaardata uit de BAG. Zodra het zichtjaar het hoogste celgemiddelde bouwjaar plus de drempel passeert, zeeft deze toets niets meer weg. Gemeten in BAU op codestand a7ef2fb7, cellen op het compacted domain voor eengezins_VrijeSector: Y2040 2.245.666, Y2050 1.509.788, Y2060 832.234, Y2070 335.140, en Y2080 tot en met Y2120 nul. Voor nijverheid loopt de reeks vrijwel gelijk.
+
+					In vier van de negen zichtjaren van de reeks doet deze rem dus niets meer. Toen de drempel op 55 jaar werd gezet liep de reeks tot 2060 en beet hij in elk zichtjaar; sinds #658 loopt hij tot 2120. De drempel ophogen verplaatst alleen het moment waarop hij wegvalt. Zie #586 voor de meting en voor de vraag wat hier structureel voor in de plaats hoort.";
 	}
 	
 	container Src
