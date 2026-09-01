@@ -144,12 +144,20 @@ function TrapB([string]$variant, [string]$jaar) {
         # PASS of FAIL: er is geen norm voor. Ze staan hier omdat een dekkingsgraad die zonder deze
         # twee getallen wordt overgenomen een puntgetal suggereert dat het niet is.
         if ($v['aanbod_totaal'] -gt 0) {
-            $klemAandeel   = $v['aanbod_zonder_opgave'] / $v['aanbod_totaal']
-            $buitenAandeel = 1 - ($v['aanbod_binnen_bbg'] / $v['aanbod_totaal'])
+            $klemAandeel   = $v['aanbod_zonder_opgave'] / $v['aanbod']
+            $buitenAandeel = $v['aanbod_buiten_bbg'] / $v['aanbod_totaal']
             $dekking       = $v['gedekt'] / $v['opgave']
-            $dekkingOngekl = [math]::Min($v['aanbod_totaal'], $v['opgave']) / $v['opgave']
+            $dekkingOngekl = [math]::Min($v['aanbod'], $v['opgave']) / $v['opgave']
             Meld 'B' $casus "$j dekkingsgraad piekbui, bandbreedte" 'INFO' ("{0:P1} geklemd op blok, {1:P1} ongeklemd" -f $dekking, $dekkingOngekl) 'lees als bandbreedte'
-            Meld 'B' $casus "$j aanbod dat de dekking niet haalt" 'INFO' ("{0:P1} valt door de blokklemming, {1:P1} ligt buiten bebouwd gebied" -f $klemAandeel, $buitenAandeel) 'zie #720'
+            Meld 'B' $casus "$j aanbod dat de dekking niet haalt" 'INFO' ("{0:P1} valt door de blokklemming, {1:P1} ligt buiten bebouwd gebied" -f $klemAandeel, $buitenAandeel) 'zie #720 en #741'
+        }
+
+        # De drie aanbodposten horen op te tellen: de gemaskeerde som plus wat de maskering weglaat is
+        # het aanbod zoals het tot #741 werd geteld. Sluit dat niet, dan is er iets met de begrenzing
+        # of met een null in BBGSamengesteld, en dan klopt de dekkingsgraad ook niet.
+        if ($null -ne $v['aanbod'] -and $null -ne $v['aanbod_buiten_bbg']) {
+            $gat = [math]::Abs(($v['aanbod'] + $v['aanbod_buiten_bbg']) - $v['aanbod_totaal'])
+            Meld 'B' $casus "$j aanbod binnen plus buiten is het totaal" $(if ($gat -lt 0.001) {'PASS'} else {'FAIL'}) ("gat {0:N4} mln m3" -f $gat) 'kleiner dan 0,001'
         }
     }
 

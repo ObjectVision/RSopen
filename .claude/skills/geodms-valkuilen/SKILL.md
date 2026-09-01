@@ -265,3 +265,20 @@ Wie de volgorde van de argumenten omdraait verandert dus de betekenis van de hel
 ## Een template kan op vier manieren aangeroepen worden
 
 Zoek je uit of een template nog gebruikt wordt, dan zijn letterlijke treffers niet genoeg. Een template kan rechtstreeks worden aangeroepen, via de stringvorm in `for_each_ne`, via een uit stukken opgebouwde naam (`Dairy_T` en `Akkerbouw_T` komen uit `LandbouwKlasses/Templatetype`), en zonder haakjes als `container X : = Vergridding_T { ... }`. Die laatste twee hebben nul letterlijke treffers en draaien wel degelijk.
+
+## Een slash aan het eind van een itempad is een deling
+
+`a/Resultaat/ + b/Resultaat` parseert niet als een optelling van drie termen maar als `a/Resultaat / (+b/Resultaat)`. De slash aan het eind van het pad wordt de deeloperator en de plus wordt het unaire plusteken van de volgende term. Er komt geen waarschuwing, ook niet als de eenheden daardoor niet meer kloppen.
+
+Bewezen in een losse dms op 2026-09-02, GeoDms20.17.0.m, met a=10, b=1, c=100:
+
+| expressie | uitkomst |
+|---|---|
+| `A/Resultaat/ + B/Resultaat + C/Resultaat` | 110 |
+| `A/Resultaat + B/Resultaat + C/Resultaat` | 111 |
+
+Twee dingen gaan er tegelijk mis, en het tweede is het venijnigst. De term verdwijnt uit de som, en waar de noemer nul is deelt hij door nul. Dat levert een null op, die door de rest van de kale som propageert, waarna een `MakeDefined` hogerop er stil nul van maakt. Een cel verliest dan niet die ene term maar alles.
+
+Zo ging het bij `#741`. In de piekbuiberging-indicator telde `Wonen/Totaal` zeven bergingsmaatregelen op, en `OpGrasUitgeefbaar/Resultaat` droeg sinds 7 januari 2026 een slash aan het eind. De wadi's en het doorlatend groen op gras zaten daardoor acht maanden lang niet in het aanbod van wonen: gemeten 121,1 in plaats van 140,2 mln m3 op zichtjaar 2120. En op de 11.257 cellen zonder openbaar gras viel de hele cel weg, inclusief daken en halfverharding. De werken-tak had dezelfde optelling zonder de slash en was in orde, wat het verschil pas zichtbaar maakte toen het aanbod per maatregel werd uitgesplitst.
+
+Zo vang je hem: splits een samengestelde som uit naar zijn termen en leg de som van de delen naast het geheel. Wijken die af, dan telt de som iets anders dan je leest. Een grep op `Resultaat/ +` of algemener op een slash gevolgd door spatie-plus kost niets en vindt het patroon rechtstreeks.
