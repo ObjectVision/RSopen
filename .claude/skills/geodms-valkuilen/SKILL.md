@@ -121,6 +121,23 @@ Dat kost seconden. Een configuratie die halverwege een reeks stukgaat kost de he
 
 `PropValue(item, 'StorageName')` geeft de expressietekst terug, niet de uitkomst. Dat werkt als je hem meteen weer als StorageName gebruikt, maar niet als invoer voor iets dat een echt pad verwacht, zoals `ExistingFile`. Zet het pad dan als eigen `parameter<String>` neer en verwijs daar vanuit beide kanten naar.
 
+## `max` en `min` geven op een lege groep geen null
+
+Een groepsaggregatie over een partitie levert voor een groep zonder waarden geen null op maar het uiterste van het waardetype: `max` geeft de kleinste float32, `min` de grootste. Gemeten op 2026-09-02, GeoDms20.17.0.m: `min_jongste_waar_gem_bestaat` kwam uit op -3,4028235e+38.
+
+Dat is stil en het propageert. `zichtjaar - max(...)` wordt dan geen null maar 3,4e+38, en een toets als `leeftijd < drempel` geeft daar gewoon FALSE, dus in een wegzeeftoets valt het niet op. Wie later op datzelfde item rekent krijgt wel onzin. `sum` heeft dit niet: die geeft nul op een lege groep, wat zijn eigen valkuil is.
+
+De reparatie is een expliciete guard op het aantal bijdragende rijen, en die moet dimensieloos zijn omdat de waarde zelf een metriek kan dragen:
+
+```
+attribute<Float32> N   (D) := sum(float32(IsDefined(bron/waarde))[rel], partitie_rel);
+attribute<Float32> Uit (D) := N > 0f ? max(bron/waarde[rel], partitie_rel) : null_f;
+```
+
+Toegepast bij #735 in `Zeef_Basisjaar_T/Src/BouwjaarPand`. Zonder de guard zou de pandleeftijd op ruim vijftig miljoen cellen een oneindigheid zijn geworden, met exitcode 0 en een ongewijzigde zeefuitkomst.
+
+Een tweede reden om zo'n omzetting met een zelftoets te doen. Een gewogen gemiddelde hoort nooit boven het maximum van dezelfde waarden te liggen, maar in float32 kan het net wel: bij bouwjaren rond 2000 kwam `sum(b*w)/sum(w)` tot 0,0004 boven `max(b)` uit. Op een strikte kleiner-dan aan precies de drempelgrens draait dat de uitkomst om, in dit geval voor 893 cellen. Meet zo'n verschil dus met een drempel eromheen, niet met een kale ongelijkheid, anders leest de afrondingsruis als een fout in je nieuwe definitie.
+
 ## Null-semantiek
 
 `null < x` en `0f/0f < x` geven FALSE. Er is dus geen null-propagatie naar bool, ook niet door `&&` of `OR(...)` heen. Een null-conditie in een `switch` valt door naar de default.
