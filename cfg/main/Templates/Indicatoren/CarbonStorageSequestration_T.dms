@@ -273,6 +273,41 @@ Template CarbonStorageSequestration_T
 		
 		container Carbon
 		{
+			// #737: de klok van de vastlegging. De rekenregel die Deltares in #483 heeft opgeschreven vermenigvuldigt de
+			// opbouw met (zichtjaar min het jaar van de landgebruiksverandering); de afboekkant van diezelfde regel zit al in
+			// Koolstof_AfboekenAlleenBijLagerMaximum, de opbouwkant telde tot nu toe gewoon de verstreken periode. Daardoor
+			// groeide elke cel met ruimte onder haar klassemaximum een eeuw lang door, ook als er niets gebeurde: 80 procent
+			// van de bruto toename in BAU viel op cellen met een ongewijzigde klasse, waarvan 155 van de 215 Mton CO2 op
+			// bestaand bos. Zie de twee schakelaars in ModelParameters/Advanced.
+			//
+			// De vlaggen staan hier en niet in Grondgebruik, omdat alleen de koolstofkant ze leest en de naam CC daar al
+			// bezet is. Ze staan bewust voor container Max, want daar worden ze gelezen.
+			attribute<bool> KlasseGewijzigd (AdminDomain) := MakeDefined(Grondgebruik/CC != BaseYear/Grondgebruik/CC, FALSE) || IsDefined(Grondgebruik/OP_rel)
+			, Descr = "Is hier sinds het basisjaar iets veranderd waar de koolstofboekhouding aanwas aan mag hangen?
+
+						Twee wegen, want de klasse alleen is niet genoeg. Een cel met een ontwikkelpakket draagt via IsStedelijk de klasse Dichtbebouwd, en op een inbreidingslocatie die in het basisjaar al bebouwd was zou de klassevergelijking dan geen verandering zien terwijl het pakket wel nieuwe bomen en nieuw gras brengt. Het basisjaar kent geen ontwikkelpakketten, dus een gevuld OP_rel betekent per constructie dat hier tijdens de run is ontwikkeld.
+
+						De MakeDefined vangt de zestien LGN-klassen op die in de koolstoftabel niet voorkomen. Daar is CC null en is de hele koolstofketen al missing; deze vlag maakt dat niet erger en niet beter.";
+
+			attribute<bool> KlasseWisseltNu (AdminDomain) := MakeDefined(Grondgebruik/CC != PrevZichtjaar/Grondgebruik/CC, FALSE)
+			, Descr = "Viel de klassewisseling in deze periode? Dan telt maar een deel van de periode mee als aanwastijd, zie Koolstof_VastleggingsdeelInWisselperiode.
+
+						Deze toets loopt alleen over de klasse en niet ook over OP_rel, anders dan KlasseGewijzigd hierboven. De reden is dat het basisjaar geen OP_rel heeft en PrevZichtjaar in het eerste allocatiezichtjaar naar het basisjaar wijst. Gevolg is dat een inbreidingslocatie die in het basisjaar al bebouwd was de volle periode meekrijgt in plaats van de helft. Dat is de ruime kant, op een post die klein is.";
+
+			attribute<bool> LegtVast (AdminDomain) := = /ModelParameters/Advanced/Koolstof_VastleggenAlleenNaVerandering
+																? 'KlasseGewijzigd'
+																: 'const(TRUE, AdminDomain)'
+			, Descr = "Mag deze cel in dit zichtjaar vastleggen? Met de schakelaar uit legt iedereen vast, zoals voor #737.";
+
+			attribute<jaar> Aanwasduur (AdminDomain) := LegtVast
+																? (KlasseWisseltNu ? Periode * /ModelParameters/Advanced/Koolstof_VastleggingsdeelInWisselperiode : Periode)
+																: 0[jaar]
+			, Descr = "De tijd die in dit zichtjaar als aanwas meetelt, per cel. Vervangt Periode in de twee plekken waar Flow_ha wordt opgebouwd.
+
+						Er is geen teller per cel nodig om vanaf de verandering te tellen. De klasse wordt door de keten van zichtjaren meegedragen, dus KlasseGewijzigd is vanaf het zichtjaar van de wisseling waar en blijft dat; de aanwas telt dan vanzelf periode voor periode door vanaf dat moment.
+
+						Wat hier bewust niet in zit is een demping met de leeftijd. Een cel die van klasse verandert groeit vanaf dat moment met een constant tempo tot het klassemaximum. Voor nieuw bos is dat verdedigbaar, want de startvoorraad is bodem en het maximum bodem plus biomassa, en die biomassa moet er inderdaad nog helemaal komen; voor bodemkoolstof is een vaste overgangstermijn eigenlijk passender. Zie de restpunten onderaan #737.";
+
 			container Max
 			{
 				container UitAllocAlgemeen
@@ -284,7 +319,7 @@ Template CarbonStorageSequestration_T
 
 					attribute<ton_ha> Stock_ha               (AdminDomain) := VeenKental ? VeenKentallen/Cmax_ha_veen[Grondgebruik/CC][ton_ha]          : CarbonClass/Cmax_ha[Grondgebruik/CC];
 					attribute<ton_ha_jaarlijks> Flow_ha_jaar (AdminDomain) := VeenKental ? VeenKentallen/Cseq_ha_veen[Grondgebruik/CC][ton_ha_jaarlijks] : CarbonClass/Cseq_ha[Grondgebruik/CC];
-					attribute<ton_ha> Flow_ha                (AdminDomain) := Flow_ha_jaar * Periode;
+					attribute<ton_ha> Flow_ha                (AdminDomain) := Flow_ha_jaar * Aanwasduur; // #737: Aanwasduur en niet Periode, zodat de aanwas vanaf de landgebruiksverandering telt
 				}
 				
 				container PerOPSubklasse := for_each_ne(OPSubklasseK/name, 'OPSubklasseT('+string(id(OPSubklasseK))+'[OPSubklasseK])')
@@ -293,7 +328,7 @@ Template CarbonStorageSequestration_T
 					{
 						attribute<ton_ha>           Stock_ha     (AdminDomain) := = 'add('+AsItemList('PerOPSubklasse/'+OPSubklasseK/name+'/Stock_ha')+')';
 						attribute<ton_ha_jaarlijks> Flow_ha_jaar (AdminDomain) := = 'add('+AsItemList('PerOPSubklasse/'+OPSubklasseK/name+'/Flow_ha_jaar')+')';
-						attribute<ton_ha>           Flow_ha      (AdminDomain) :=  Flow_ha_jaar * Periode;
+						attribute<ton_ha>           Flow_ha      (AdminDomain) :=  Flow_ha_jaar * Aanwasduur; // #737, zie Zichtjaar/Carbon/Aanwasduur
 					}
 					parameter<String> Meting699 := =(
 						  quote('maat;waarde')
