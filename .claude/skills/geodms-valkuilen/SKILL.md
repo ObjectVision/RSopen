@@ -140,6 +140,14 @@ Denk hierbij aan de plekken waar de configuratie zelf bewust een null neerzet, z
 
 Beide helften bewijs je in seconden met een losse .dms in de scratchpad; zie de skill rs-draaien, trap 2.
 
+### Een vergelijking omdraaien klapt de betekenis van null om
+
+Omdat `null < x` en `null > x` allebei FALSE geven, betekent een null in een wegzeeftoets iets anders dan in een voldoettoets. `diepte > Max` zeeft op null niets weg; `diepte <= Max` laat op null niets toe. De ene vorm leest een ontbrekende waarde als geen beperking, de andere als niets is toegestaan, en het herschrijven van de ene naar de andere ziet eruit als een logisch equivalente ombouw.
+
+Zo ging het bij #723, dat de dieptetoets van de zeef omdraaide naar een voldoettoets per bouwwijze. Op de 20.864 ha binnen de gevaarzone waar de LIWO-kaarten geen waarde geven viel daarna elke bouwwijze af en sloot de zeef alle woningbouw uit, terwijl de kostenkant diezelfde cellen met een `MakeDefined` op nul meter bleef lezen. Exitcode 0, geen waarschuwing, en het stond ruim een week in een oplevering. Gerepareerd in #734 met een `MakeDefined` in het sjabloon zelf, zodat de afspraak op een plek staat.
+
+Draai je een vergelijking om, stel dan expliciet vast wat er op een null hoort te gebeuren, en schrijf dat als `MakeDefined` of als een aparte `IsNull`-tak op. Twee dingen om te weten bij het beoordelen hoe ver zo'n fout reikt. Een toets die op een null voor elke variant faalt is onafhankelijk van de maskers en de drempels eromheen, dus latere wijzigingen daaraan veranderen de uitkomst niet en de fout reikt terug tot de commit die de vergelijking omdraaide. En de nullen zitten zelden waar je ze zoekt: hier kwamen ze niet uit de brondata maar uit een plausibiliteitsklem die onzinwaarden op null zet.
+
 ## `float32(x)` houdt de metriek vast, `x[float32]` strijkt hem weg
 
 De twee schrijfwijzen zien er inwisselbaar uit en zijn dat niet. `float32(x)` verandert alleen het waardetype en laat de eenheid staan, `x[float32]` gooit de eenheid weg. Een verhouding die je met `float32()` bouwt draagt dus de eenheden van teller en noemer mee, ook als de declaratie iets anders zegt: de metriek volgt uit de expressie en niet uit het opgegeven waardetype.

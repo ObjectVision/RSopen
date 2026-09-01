@@ -127,8 +127,11 @@ Drie vormen die zich in augustus 2026 voordeden:
 1. De twee toestanden staan naast elkaar als aparte items. Bij #669 staan `HeeftWonen` en `HeeftWoongebied` in dezelfde container, met een schakelaar die kiest. Het verschil tussen die twee IS wat de wijziging heeft gedaan, en dat is met een som te meten zonder iets om te zetten.
 2. De verwijderde toets is na te bouwen uit onderdelen die er nog staan. Bij #670 was `MinimumSubsectorShare` weg, maar de twee sommen waaruit hij bestond niet. Nagebouwd als meetitem dat nergens in hangt, naast de toets die ervoor in de plaats kwam, geeft dat precies het aantal cellen dat de wijziging heeft heropend.
 3. Beide takken van een keuze worden toch al uitgerekend. Bij #699 staan de toewijzing voor hoog en voor laag Nederland als twee attributen naast elkaar; de omgekeerde uitkomst is dan even goed te sommeren als de huidige.
+4. De oude toets is uit de nieuwe uitkomst terug te rekenen. Bij #734 gaf de nieuwe regel op een ontbrekende waarde geen beperking meer, en de oude uitkomst is dan `nieuw || (eis && !IsDefined(invoer))`. Die regel als extra kolom in het bestaande harnas geeft voor en na in dezelfde aanroep, op dezelfde codestand en met dezelfde invoer.
 
 Dit scheelt niet alleen een run maar is ook zuiverder: bij een A/B verschilt altijd meer dan wat je onderzoekt, hier per constructie niets.
+
+IJk de reconstructie altijd tegen een eerdere losse meting van diezelfde oude toestand, als die er is. Bij #734 kwam de teruggerekende oude stand op 28.136,875 ha uit tegen de 28.137 ha die een week eerder los was gemeten; pas daarmee stond vast dat de nabouw dezelfde vraag beantwoordde, en pas daarna waren de nieuwe getallen te vertrouwen zonder herdraai. Klopt de ijking niet, dan meet je iets anders dan je denkt, en dat is precies wat een A/B niet had laten zien.
 
 Twee dingen om te controleren als je zo meet. Sommeer je over `AdminDomain`, leg dan een masker op `IsStudyArea`, anders telt de halve Noordzee mee. En reken na of het gemeten verschil klopt met het kental maal de omvang: bij #699 gaf 1,3 ton per hectare maal 118 hectare areaalverschil exact het gemeten verschil in vastlegging, en daarmee stond vast dat de opzoeking de goede rijen raakte.
 
