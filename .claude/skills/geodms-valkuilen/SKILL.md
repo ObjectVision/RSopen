@@ -218,6 +218,33 @@ Drie dingen om te weten. Het is een metadata-fout, geen rekenfout, dus hij komt 
 
 Zoek ze met een grep op de sectornaam in `=`-expansies, en toets met de sector uit, want met de sector aan is de guard onzichtbaar.
 
+## Overerving van een container is early binding
+
+`container B := A { ... }` erft de items van A en laat je er items aan toevoegen of overschrijven. Een GEERFD item houdt echter de verwijzing naar het item uit A, ook als je dat item in B overschrijft.
+
+Gemeten op 2026-09-01, GeoDms20.17.0.m:
+
+```
+container src            { Blad := TRUE;  Afgeleid := !Blad; }
+container src_zonder := src { Blad := FALSE; }
+```
+
+`src_zonder/Blad` is FALSE, zoals bedoeld, maar `src_zonder/Afgeleid` blijft FALSE en wordt geen TRUE: het leest `Blad` van `src`. Alleen de items die je zelf noemt volgen de override, en er komt geen waarschuwing.
+
+De consequentie is dat je elk item moet noemen dat je wilt verleggen, ook de afgeleide. Bij `Trede/src_ZonderPlancapaciteit` in #739 zijn dat alle 57 plancapaciteitsvlaggen en niet alleen de zeven die rechtstreeks uit SourceData lezen; de dertig Buiten-vlaggen zijn afgeleiden van de Binnen-vlaggen en zouden anders stil de oude waarde houden. Genereer zo'n lijst uit de bron in plaats van hem over te typen.
+
+## In `combine` varieert het eerste argument het langzaamst
+
+Bij `combine(A, B, ...)` is het EERSTE argument het zwaarste cijfer. Gemeten met drie bij twee:
+
+```
+rij 0: a0_b0   rij 2: a1_b0   rij 4: a2_b0
+rij 1: a0_b1   rij 3: a1_b1   rij 5: a2_b1
+```
+
+Dat is bepalend zodra de rijvolgorde een voorrangsvolgorde is. `Trede_T` kiest met `ArgMin` de laagst genummerde klasse die waar is, dus de as die in de `combine` vooraan staat domineert de hele ladder. In `VariantParameters/Tredes/Wonen.dms` is dat `PlancapaciteitPlusStimuli`, en `IterSubsector_T` maakt de ordening bovendien strikt lexicografisch, zodat een hogere trede altijd voorgaat op elke lagere, ongeacht de geschiktheid.
+
+Wie de volgorde van de argumenten omdraait verandert dus de betekenis van de hele ladder, zonder dat er aan de cardinaliteit of aan de namen iets te zien is.
 ## Een template kan op vier manieren aangeroepen worden
 
 Zoek je uit of een template nog gebruikt wordt, dan zijn letterlijke treffers niet genoeg. Een template kan rechtstreeks worden aangeroepen, via de stringvorm in `for_each_ne`, via een uit stukken opgebouwde naam (`Dairy_T` en `Akkerbouw_T` komen uit `LandbouwKlasses/Templatetype`), en zonder haakjes als `container X : = Vergridding_T { ... }`. Die laatste twee hebben nul letterlijke treffers en draaien wel degelijk.
