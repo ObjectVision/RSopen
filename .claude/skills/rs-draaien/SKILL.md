@@ -96,6 +96,16 @@ Verder rekent GeoDmsRun alleen door wat naar een storage gaat. Vraag je een item
 
 Semantiek van een operator of een randgeval bewijs je het snelst in een losse minimale .dms in de scratchpad, met eigen unitdeclaraties. Neem daar altijd een bewust falende kanarie in op, zodat je weet dat exit 1 ook echt werkt.
 
+### De zeef kost geen allocatie
+
+Wil je weten wat een zeeftoets per zichtjaar wegzeeft, dan hoef je niet te alloceren. `Templates/VariantData_T.dms` bouwt `container Zeef` als een `for_each` over de zichtjaren, gevoed uit `StateBasisjaar`, de dichtheid, de plancapaciteit en de restricties. De zeef van Y2120 leest de allocatie van Y2110 dus niet, en alle zichtjaren zijn in een aanroep op te vragen.
+
+Gemeten op 2026-09-01: alle negen zichtjaren van BAU, twee subsectoren, tien tellingen per zichtjaar, samen 2,5 minuten. Vraag ze in een aanroep op, want zonder CalcCache kost een tweede aanroep de hele basisdata opnieuw.
+
+Bouw zo'n uitdraai als een `Diagnose<nummer>.dms` met een `AsList` over `/Classifications/Time/Zichtjaar/name`, zodat de reeks meebeweegt met `Model_FirstZichtjaar` en `Model_FinalYear` in plaats van dat de zichtjaren in het harnas worden herhaald.
+
+Neem een zelftoets op zodra je een samengestelde toets met de hand nabouwt, bijvoorbeeld een OR waar je een term uit wilt laten. Zet de nabouw plus de weggelaten term naast het echte item en schrijf het verschil als kolom weg; staat die kolom niet overal op nul, dan meet je iets anders dan je denkt. Bij #586 hield dat de nabouw van `IsRestrictief` eerlijk toen een andere sessie halverwege de avond een term in diezelfde OR verving.
+
 ## Trap 3: de ketentriggers (minuten)
 
 `CommitChecks` in `cfg/main.dms` dwingt hele deelketens af via ExplicitSuppliers: `MaakBaseData1`, `MaakBaseData2`, `MaakVariantData1`, `MaakVariantData2`, `MaakAllocatieFirstZichtjaar`, plus de drie claimrealisatie-checks. Bedoeld om voor een commit te zien of het model nog loopt, niet voor productie.
