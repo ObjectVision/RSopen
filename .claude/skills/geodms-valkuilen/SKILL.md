@@ -70,6 +70,30 @@ Zo ging het bij `#732`. De stand-tifs van de tussenliggende zichtjaren kwamen er
 
 Twee eigenschappen van `ExplicitSuppliers` die daarbij bleken, en die nergens in de documentatie staan. Een supplierpad wordt omhoog gezocht vanaf de container van het item en niet relatief genavigeerd: `../../Y2040/Impl/Generate` geeft `ExplicitSupplier not found`, het ongekwalificeerde `Y2040/Impl/Generate` werkt. En de ketting draagt door: wijst Y2050 naar Y2040 en Y2040 naar Y2030, dan levert een aanroep van alleen Y2050 alle drie de bestanden op.
 
+## Een IntegrityCheck op een tabel die alleen metadata voedt vuurt nooit
+
+Hetzelfde onderscheid, maar dan aan de leeskant en met een venijniger uitkomst: de check staat er, hij is juist geformuleerd, en hij gaat nooit af.
+
+Genereer je items met `for_each_nedv` uit een tabel, dan is die tabel supplier van de expressietekst en niet van de uitkomst. Zodra de tekst is opgebouwd zijn de leveranciers van het gegenereerde item de items die IN die tekst staan. De tabel valt uit de rekengraaf, en een `IntegrityCheck` daarop wordt alleen nog geevalueerd als je de tabel zelf opvraagt.
+
+Gemeten op 2026-09-02 bij `#747`, GeoDms20.17.0.m, met een bewust kapotte tabelregel:
+
+| wat je opvraagt | exit |
+|---|---|
+| het tabelitem met de check erop | 1 |
+| een gegenereerd item, met `@statistics` | 0 |
+
+De reparatie is de toets in de rekengraaf trekken. Zet hem op een parameter met een neutrale waarde en vermenigvuldig die mee in elke gegenereerde term:
+
+```
+parameter<Float32> Dekking := 1f
+, IntegrityCheck = "sum_uint32(IsDefined(Doel/Jobs6_rel) && !IsDefined(Doel/Cat_rel)) == 0";
+
+attribute<String> Term := '... * BedrijvenSamenstelling/Dekking';
+```
+
+Zet in de `Descr` waarom de factor er staat, anders haalt de volgende lezer hem weg als overbodig en is de toets weer dood. Toets zo'n constructie altijd met een kanarie: maak de tabel kapot en stel vast dat het gegenereerde item exit 1 geeft, niet alleen het tabelitem.
+
 ## Een uitdraai die niet meedraait blijft stil staan
 
 Hetzelfde mechanisme, maar dan verraderlijker, want hier is er wel een bestand: alleen een oud.
