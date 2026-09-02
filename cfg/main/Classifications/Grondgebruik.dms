@@ -426,8 +426,78 @@ container Grondgebruik
 		}
 	}
 
-	attribute<CarbonClass> CarbonClass_rel (LGNKlasse) := rjoin(id(LGNKlasse), CarbonClass/StandaardVoorLGN/LGN_rel, CarbonClass/StandaardVoorLGN/org_rel)
-	, Descr = "De koolstofklasse per LGN-klasse, eenduidig via CarbonClass/IsStandaardVoorLGN (#657). Undefined voor de zestien LGN-klassen die in de koolstoftabel niet voorkomen. Gelezen door Templates/Indicatoren/CarbonStorageSequestration_T.";
+	attribute<CarbonClass> CarbonClass_rel_Deltares (LGNKlasse) := rjoin(id(LGNKlasse), CarbonClass/StandaardVoorLGN/LGN_rel, CarbonClass/StandaardVoorLGN/org_rel)
+	, Descr = "De koolstofklasse per LGN-klasse zoals de tabel van Deltares hem geeft, eenduidig via CarbonClass/IsStandaardVoorLGN (#657). Undefined voor de zestien LGN-klassen die in die tabel niet voorkomen; die worden hieronder aangevuld.";
+
+	// #737, restpunt: zestien LGN-klassen komen in de koolstoftabel niet voor en hielden daardoor geen koolstofklasse.
+	// Op die 217.132 hectare deed de cel aan geen enkele kant mee: geen vastlegging en, belangrijker, geen afboeking
+	// wanneer er gebouwd werd. Dat laatste is het echte gat, want de afboeking toetst op MaximumDaalt en dat vergelijkt
+	// met het klassemaximum van het basisjaar; is dat null, dan is de toets FALSE en boekt de cel nooit af. Gemeten op
+	// de productierun van 01-09-2026: 2.846 hectare wordt in BAU stedelijk en 3.711 in NbSGenuanceerd, goed voor 0,90
+	// respectievelijk 1,22 Mton CO2 die niet is afgeboekt.
+	//
+	// Sinds de poort van #737 komt daar een tweede gevolg bij dat zwaarder weegt dan het eerste. KlasseGewijzigd
+	// vergelijkt de klasse van het zichtjaar met die van het basisjaar; is die laatste null, dan is de vergelijking null
+	// en ziet de poort de verandering niet, ook waar de cel wel degelijk nieuwe natuur of nieuw bos is geworden. Zonder
+	// deze aanvulling zou #737 de vastlegging op juist deze hectares onterecht dichtzetten.
+	//
+	// De toewijzingen hieronder zijn van Object Vision en niet van Deltares. Elke regel neemt de koolstofklasse over van
+	// de LGN-klasse waar hij een variant van is, dus er wordt geen nieuw kental verzonnen; de kolom Reden zegt per regel
+	// welke dat is. Zie de schakelaar Koolstof_KlassenAanvullen in ModelParameters/Advanced.
+	unit<UInt8> CarbonClassAanvulling : NrOfRows = 15
+	, Descr = "Koolstofklasse voor de LGN-klassen die in de tabel van Deltares ontbreken. Aanvulling van Object Vision uit #737, elke regel gelijkgesteld aan de verwante LGN-klasse die wel in de tabel staat."
+	{
+		unit<UInt32> elem := range(uint32, 0, nrAttr * uint32(#.))
+		{
+			attribute<String> values: [
+			// 'LGN','CC', 'reden'
+				'31' ,'50','open zand in kustgebied: zelfde klasse als open stuifzand en rivierzand (LGN 35), kale grond in natuurgebied',
+				'33' ,'48','duinen met hoge vegetatie: struikgewas en kreupelhout, de hoge tegenhanger van duinen met lage vegetatie (LGN 32)',
+				'34' ,'47','duinheide: zelfde klasse als heide (LGN 36), droge heide',
+				'37' ,'47','matig vergraste heide: zelfde klasse als heide (LGN 36), de vergrassing verandert de bodemvoorraad niet',
+				'38' ,'47','sterk vergraste heide: zelfde klasse als heide (LGN 36), idem',
+				'41' ,'18','overige moerasvegetatie: zelfde klasse als rietvegetatie (LGN 42), riet en watervegetatie',
+				'43' ,'23','bos in moerasgebied: zelfde klasse als bos in hoogveengebied (LGN 40), het enige natte bostype in de tabel',
+				'45' ,'26','natuurlijk beheerde agrarische graslanden: zelfde klasse als overig gras (LGN 47), overig agrarisch grasland',
+				'46' ,'51','gras in het kustgebied: overig open begroeid natuurgebied, want dit is natuurlijk gras en geen landbouwgras',
+				'62' ,'41','fruitkwekerijen: zelfde klasse als boomgaarden (LGN 9), fruitbomen en boomgaarden',
+				'321','48','struikvegetatie in hoogveengebied (laag): zelfde klasse als overige struikvegetatie (LGN 323)',
+				'322','48','struikvegetatie in moerasgebied (laag): idem',
+				'331','48','struikvegetatie in hoogveengebied (hoog): idem',
+				'332','48','struikvegetatie in moerasgebied (hoog): idem',
+				'333','48','overige struikvegetatie (hoog): idem, de tabel kent alleen de lage variant'
+			];
+		}
+
+		attribute<UInt32>      id       := uint32(id(.));
+		attribute<UInt16>      LGN_code := UInt16(elem/values[value(id * nrAttr + 0, elem)]);
+		attribute<UInt8>       CC_code  := UInt8(elem/values[value(id * nrAttr + 1, elem)]);
+		attribute<String>      Reden    := elem/values[value(id * nrAttr + 2, elem)];
+		attribute<String>      name     := 'LGN' + string(LGN_code);
+		parameter<UInt32>      nrAttr   := 3;
+
+		attribute<LGNKlasse>   LGN_rel  := rlookup(LGN_code, LGNKlasse/code)
+		, IntegrityCheck = "all(IsDefined(LGN_rel)) && all(pcount(LGN_rel) <= 1b)"
+		, Descr = "Faalt als een regel een LGN-code noemt die niet bestaat, of als twee regels dezelfde LGN-klasse claimen.";
+
+		attribute<CarbonClass> CC_rel   := rlookup(CC_code, CarbonClass/code)
+		, IntegrityCheck = "all(IsDefined(CC_rel))"
+		, Descr = "Faalt als een regel een koolstofklasse noemt die niet in de tabel voorkomt.";
+
+		attribute<Bool>        IsEchtNieuw := !IsDefined(CarbonClass_rel_Deltares[LGN_rel])
+		, IntegrityCheck = "all(IsEchtNieuw)"
+		, Descr = "Faalt als een regel een LGN-klasse aanvult die van Deltares al een koolstofklasse heeft. Dan zou de aanvulling stil niets doen en de lezer op het verkeerde been zetten.";
+	}
+
+	attribute<CarbonClass> CarbonClass_rel_Aanvulling (LGNKlasse) := rjoin(id(LGNKlasse), CarbonClassAanvulling/LGN_rel, CarbonClassAanvulling/CC_rel);
+
+	attribute<CarbonClass> CarbonClass_rel (LGNKlasse) := = /ModelParameters/Advanced/Koolstof_KlassenAanvullen
+															? 'MakeDefined(CarbonClass_rel_Deltares, CarbonClass_rel_Aanvulling)'
+															: 'CarbonClass_rel_Deltares'
+	, IntegrityCheck = "!/ModelParameters/Advanced/Koolstof_KlassenAanvullen || all(IsDefined(CarbonClass_rel) || lowercase(LGNKlasse/naam) == lowercase('onbekend'))"
+	, Descr = "De koolstofklasse per LGN-klasse, uit de tabel van Deltares en waar die niets geeft uit de aanvulling van #737. Gelezen door Templates/Indicatoren/CarbonStorageSequestration_T.
+
+				De IntegrityCheck bewaakt dat er met de aanvulling aan geen enkele LGN-klasse meer zonder koolstofklasse zit, behalve de klasse onbekend. Komt er een LGN-jaargang met een nieuwe klasse bij, dan valt hij hier om in plaats van stil een cel op te leveren die aan geen enkele kant van de koolstofboekhouding meedoet.";
 
 	container VeenBroeikasgas
 	: Descr = "#657: broeikasgaskentallen die alleen op veen- en moerige bodem gelden, afgeleid uit de bouwstenentabel van team Veen en uit de emissiefactoren die Deltares op 31-08-2026 heeft aangeleverd.
