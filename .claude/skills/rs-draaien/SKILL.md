@@ -25,6 +25,8 @@ Exitcodes: 0 is goed, 1 is een rekenfout of een gefaalde IntegrityCheck, 2 is ee
 
 Maar exit 0 is niet genoeg om een stap goed te keuren. Een ontbrekend bronbestand kan met exit 0 aflopen terwijl de fout alleen in het log staat. Gemeten op 2026-08-27 met een claim-CSV die niet bestond: `[E] GDAL Error: cannot open dataset ... No such file or directory`, exitcode 0, en de gevraagde statistiek kwam leeg terug. Toets in een batch dus altijd het log op `[E]` naast de exitcode, anders draait een lange run door op invoer die er niet is.
 
+Dezelfde val met een ander gezicht, gemeten op 2026-09-01: een ontkoppeld bestand dat niet op het domein past geeft `[E] FileTileArray Error: stored array ... holds N bytes, but the domain it is read into requires exactly M bytes`, en ook dat loopt af met exitcode 0. De gevraagde parameter komt dan leeg terug. Let op dat zo'n bestand op zichzelf wel gewoon leest: het attribuut rechtstreeks opvragen gaf exit 0 zonder een enkele foutregel. De fout ontstaat pas als het in een domein wordt gelezen dat de configuratie zelf afleidt, dus de melding zegt niet dat het bestand stuk is maar dat de twee kanten het over de omvang oneens zijn.
+
 ## Welke GeoDMS
 
 Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.17.0.m`. Niet op de build uit Visual Studio in `C:\dev\GeoDms_2026\bin\Release\x64`. Die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie. Op 2026-08-29 meldde Object Vision bovendien dat die build op dat moment niet stabiel was.
@@ -171,6 +173,17 @@ cp -r cfg Data git.txt /pad/naar/scratchpad/RSopen_NL2120/
 De mapnaam boven `cfg` moet gelijk zijn aan die van het project. `%LocalDataProjDir%` resolvet naar `C:/LocalData/<naam van de map boven cfg>`, en onder een andere naam vindt de configuratie de ontkoppelde bestanden niet. Dat valt niet op bij het parsen maar pas als een keten er een leest: op 2026-08-31 viel de grootwatervlag om op `BBG2022_25m_Modus_Nederland.tif` in een map die niet bestond.
 
 Met de goede naam leest de kopie dezelfde ontkoppelde bestanden als de werkkopie. Dat is veilig zolang je alleen items zonder storage opvraagt. Wil je een uitdraai zien, zet de `StorageName` van dat ene item dan om naar de scratchpad, zodat er niets in de gedeelde `LocalData/Diagnose` belandt terwijl een ander daar schrijft.
+
+"Geen storage" is echter niet af te lezen aan het item dat je opvraagt. Een schrijfstap kan achter een meta-keuze zitten, en dan draagt het item zelf geen `StorageName` terwijl de gekozen tak er wel een heeft. Twee gevallen die op 2026-09-01 zijn gemeten:
+
+- `Landgebruikskaart/Result_SA` kiest op `ModelParameters/LandUseMapOntkoppeld`. Die staat op FALSE, dus de keuze valt op `Write_Result_SA` en de kaart wordt weggeschreven in de gedeelde LocalData. Zet hem in je kopie op TRUE, dan leest `Read_Result_SA` de bestaande tif.
+- `SourceData/Grondgebruik/IBIS/Result/RestrictiefWonen` schrijft via de Make-tak een tif zodra een wijziging de fingerprint verandert. Vraag een niveau dieper, dus `Calc_RestrictiefWonen`, dan blijft het lezen.
+
+De regel die daaruit volgt: zoek voor je een item opvraagt niet alleen naar `StorageName` op dat item, maar volg ook elke `:= =` meta-keuze in de keten erboven naar de tak die werkelijk wordt gekozen. Bewijs achteraf dat er niets is geschreven door de mtimes onder `%LocalDataProjDir%` voor en na te vergelijken; dat is sterker dan de redenering dat er niets geschreven zou worden.
+
+Zelfs dat is niet genoeg, en het strandde op 2026-09-02 alsnog. Een item zonder storage kan een supplier hebben die er wel een draagt, willekeurig ver de keten in. Een diagnose op `CO2FlowTovBasisjaar` voor Y2120 liep via `PrevIndicatoren` door negen zichtjaren terug en raakte onderweg `Landgebruikskaart/Write_Result_SA`, waarmee tien landgebruikskaarten in de opleveringsmap opnieuw werden weggeschreven. Dezelfde aanroep op Y2040 deed dat niet, want daar wijst `PrevZichtjaar` naar het basisjaar en is de keten kort. De ketenlengte hangt dus af van het zichtjaar, en een meting die op het ene jaar veilig is, is dat op het andere niet.
+
+**How to apply:** vertrouw niet op "ik vraag een item zonder storage op". Laat de kopie naar een eigen `%LocalDataProjDir%` wijzen door de map boven `cfg` een eigen naam te geven, en neem de kosten van het opnieuw maken van de ontkoppelde bestanden voor lief. Kan dat niet, houd het dan bij een enkel zichtjaar met een korte keten, en vergelijk hoe dan ook de mtimes voor en na.
 
 De winst is dat de kopie ook een plek is om schakelaars om te zetten die in de werkkopie van iemand anders zijn. Een meting met `IndicatorRegio_ref` op een andere indeling kan zo zonder aan de gedeelde `ModelParameters/Advanced.dms` te komen.
 
