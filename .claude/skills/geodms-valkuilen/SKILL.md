@@ -138,6 +138,22 @@ Toegepast bij #735 in `Zeef_Basisjaar_T/Src/BouwjaarPand`. Zonder de guard zou d
 
 Een tweede reden om zo'n omzetting met een zelftoets te doen. Een gewogen gemiddelde hoort nooit boven het maximum van dezelfde waarden te liggen, maar in float32 kan het net wel: bij bouwjaren rond 2000 kwam `sum(b*w)/sum(w)` tot 0,0004 boven `max(b)` uit. Op een strikte kleiner-dan aan precies de drempelgrens draait dat de uitkomst om, in dit geval voor 893 cellen. Meet zo'n verschil dus met een drempel eromheen, niet met een kale ongelijkheid, anders leest de afrondingsruis als een fout in je nieuwe definitie.
 
+## Een numerieke cast op tekst kapt af zonder te klagen
+
+`uint8('3.1')` geeft 3 en `uint8('2=licht')` geeft 2. De cast leest de voorloopcijfers en stopt bij het eerste teken dat er niet in past, zonder foutmelding en zonder null. Alleen tekst die met een niet-cijfer begint, zoals `X` of leeg, geeft null. `float64` op dezelfde tekst leest wel door: `float64('3.1')` is 3,1 en `float64('2=licht')` is 2.
+
+Het venijn zit in de combinatie met een `rlookup` op een klassentabel. Wat afgekapt wordt vindt gewoon een rij en gaat stil op de verkeerde klasse verder; wat null wordt vindt niets, en een `MakeDefined(..., 0)` erachter maakt daar een geldig ogende nulwaarde van. Twee verschillende fouten, allebei zonder melding, en ze zijn in de uitkomst niet uit elkaar te houden.
+
+Gemeten in #694 op het IBIS-veld `maximale_milieucategorie`, dat als TEXT in het geopackage staat. Van de 3.912 terreinen leverden er 557 een subcategorie of een toelichting: `3.1`, `4.2`, `2=licht`. Die kwamen als hoofdcategorie binnen en kregen de grootste VNG-richtafstand van die hoofdcategorie, dus 3.1 kreeg 100 meter waar 50 hoort en 5.1 kreeg 1.000 waar 500 hoort. Tegelijk kregen 448 terreinen met 6.301 hectare via de null-route helemaal geen zonering, waaronder veertien zeehaventerreinen. De twee fouten hieven elkaar in totaal oppervlak bijna op, 22.544 hectare eraf tegen 18.502 erbij, terwijl ze compleet andere terreinen troffen.
+
+Wat je ermee doet. Cast tekst met `float64` en niet met een integercast, en maak er een exacte sleutel van wanneer er decimalen in kunnen zitten: `uint8(round(float64(tekst) * 10d))` geeft 30 voor `3`, 31 voor `3.1` en 32 voor `3.2`, en houdt null voor wat echt onleesbaar is. Zet daarna een `IntegrityCheck` op de rlookup zelf, want dat is de enige plek waar een onbekende schrijfwijze uit een volgende levering nog zichtbaar wordt:
+
+```
+attribute<Klasse> Klasse_rel := rlookup(sleutel, Tabel/sleutel), IntegrityCheck = "all(IsDefined(this))";
+```
+
+Toets een bronveld dat als tekst binnenkomt sowieso eerst op zijn schrijfwijzen voordat je er een cast op zet. Eenzelfde levering kan per provincie anders geschreven zijn: bij IBIS leveren Gelderland en Utrecht subcategorieen en de rest alleen hoofdgetallen, zodat de fout regionaal is en niet willekeurig verdeeld.
+
 ## Null-semantiek
 
 `null < x` en `0f/0f < x` geven FALSE. Er is dus geen null-propagatie naar bool, ook niet door `&&` of `OR(...)` heen. Een null-conditie in een `switch` valt door naar de default.
