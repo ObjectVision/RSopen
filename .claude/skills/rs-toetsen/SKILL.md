@@ -144,6 +144,8 @@ De valkuil is dat er meer verschilt dan wat je onderzoekt. Wat werkte bij de eng
 3. Reken erop dat er plumbing-fixes nodig zijn die geen gedrag veranderen: hernoemde parameters onder hun oude naam terugzetten, verplaatste templates terugverwijzen. Houd scherp welke daarvan wel gedrag zijn. In dat geval was `IterVanafWaarWeAfgewezenCellenUitsluitenInAlloc` er een: die stond op 5 en staat nu op 1, en dat is wel enginegedrag.
 4. Checks uit het diagnoseharnas halen die in de oude versie niet kunnen bestaan.
 
+Concreet voor die vergelijking, mocht hij herhaald moeten worden. De basis was `fa161af4` van 4 augustus 2026 en teruggezet waren negen bestanden onder `cfg/main/Templates/Allocatie`: `IterSubsector_T.dms`, `IterSubsector_T_Wind.dms`, `IterSubsector_T_Wonen.dms`, `Iter_Landbouw_T.dms`, `Iter_T/Iter_Allocatie.dms`, `SectorAllocRegio_T.dms`, `SectorAllocRegio_T/Restricties_Dynamisch_Wind.dms`, `Sequence_T.dms` en `Zichtjaar_T.dms`. Drie plumbing-fixes waren nodig: `Buffer_gridcel_T` is naar `Templates/Allocatie/` verhuisd dus de aanroepen in `SectorAllocRegio_T` en `Sequence_T` moesten mee, `IsWoonkern` in `Iter_Allocatie` had een leidende slash nodig, en de allocatieparameters moesten terug in de hoofdcontainer `ModelParameters` omdat ze sindsdien onder `Advanced` staan. De worktree van die vergelijking bestaat niet meer; met deze gegevens is hij opnieuw te bouwen.
+
 Meld altijd expliciet wat je niet getoetst hebt. Bij die vergelijking waren dat de werken-schakelaars afzonderlijk, de NbS-variant en de zeeflaag.
 
 ## Wat een bevinding is
