@@ -151,3 +151,17 @@ Meld altijd expliciet wat je niet getoetst hebt. Bij die vergelijking waren dat 
 ## Wat een bevinding is
 
 Meld een uitkomst pas als bevinding wanneer je kunt zeggen welk getal je verwachtte en waarom. Een verschil zonder verwachting is een waarneming, geen bevinding. Noem bij elke bevinding het gemeten getal, de referentie en het pad in de config, zodat het na te rekenen is. Een holle OK is geen uitkomst: is een controle niet gedraaid, zeg dat dan.
+
+## Bewaar de oude uitdraaien voordat je opnieuw meet
+
+`/Diagnose/GenerateAll` schrijft elke uitdraai onder een vaste naam en overschrijft dus de vorige. Wie een voor-en-na wil, kopieert de map eerst; achteraf is de oude waarde weg en blijft alleen over wat er toevallig in een commit message of een issue staat.
+
+```bash
+cp -rp /c/LocalData/RSopen_NL2120/Diagnose /pad/naar/scratchpad/diagnose_voor
+```
+
+Gebruik `cp -p` en niet een kale `cp`. Zonder `-p` krijgt de kopie de tijd van nu, en juist de mtime is wat de vintage van de baseline bepaalt. Op 2026-09-02 kostte dat het bewijs van welke codestand de baseline had gemaakt; het zijbestand `<naam>.xml` naast elke uitdraai draagt gelukkig een `SessionStartTime` en een volledige `git status`, dus daaruit was het alsnog te herleiden. Kopieer daarom altijd de xml mee.
+
+En kopieer voordat je de nieuwe run start. Een run die al draait heeft de eerste uitdraaien al overschreven; op 2026-09-02 waren dat er acht van de 46, precies de goedkoopste metingen die als eerste klaar zijn.
+
+Twee dingen bepalen of een voor-en-na iets waard is. De stand moet tussen beide metingen stil hebben gestaan, want anders meet je code en allocatie door elkaar. Dat is te controleren op de mtime van de tifs onder `Allocatie/<casus>/Stand<jaar>/`. En de baseline moet te dateren zijn: zoek in de oude waarden een getal dat elders is vastgelegd, in een issue of in een commit message, en pin daarmee vast wanneer hij gemaakt is.

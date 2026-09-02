@@ -100,6 +100,10 @@ Twee dingen die hierbij misgaan.
 
 Bepaal `$OLD` een keer en gebruik diezelfde waarde voor `read-tree`, voor `-p` en voor de guard. Leest de tweede aanroep `HEAD` opnieuw uit, dan kan er ondertussen een commit van een andere sessie tussen zijn gekomen en hangt jouw boom aan een nieuwere ouder dan zijn eigen basis. Alles wat daartussen zat verdwijnt dan zonder conflict en zonder waarschuwing, want een boom is compleet en zegt niets over zijn herkomst. De `$OLD`-guard op `update-ref` vangt dat niet, want die kijkt alleen of de ref nog op `$OLD` staat en dat klopt dan.
 
+Sla die laatste `git reset` niet over, ook niet als je alle bestanden zelf hebt geschreven. Commit je via een eigen `GIT_INDEX_FILE`, dan blijft de gedeelde index staan waar hij stond, terwijl HEAD vooruit gaat. `git status` toont daarna elk gewijzigd bestand als `MM`, en `git diff --cached` geeft precies de inverse van wat je zojuist hebt gecommit: min zesendertig regels waar je er zesendertig hebt toegevoegd. Dat leest als werk van een ander dat op verdwijnen staat, terwijl er niets aan de hand is. Gemeten op 2026-09-02, na twee commits met een tijdelijke index: elf bestanden op `MM`, terwijl `git diff HEAD` leeg was voor al die elf. Een kale `git reset` zonder paden zet de index terug op HEAD en laat de werkkopie met rust; dat is de opruiming.
+
+Toets het verschil dus altijd tegen HEAD en niet tegen de index. `git diff HEAD --stat` zegt wat er werkelijk open staat, `git status` niet.
+
 Controleer achteraf altijd met `git show --stat <commit>`. Staat er een bestand in dat jij niet hebt aangeraakt, dan hing je boom aan een verouderde basis of heeft de padvorm de werkkopie gepakt. Dat is de goedkoopste kanarie voor allebei de fouten.
 
 Let op de blinde vlek bij untracked bestanden: `git diff` geeft daar niets, en een lege diff leest als schoon terwijl het hele bestand meegaat bij `git add`. In een gedeeld diagnosebestand kan dan werk van een andere sessie in je commit belanden; dat is op 2026-08-28 gebeurd met de container D703 in Diagnose667.dms. Bekijk voor een nieuw bestand dus altijd de volledige inhoud, of `git diff --cached` na het stagen, voordat je commit.
