@@ -116,7 +116,11 @@ Neem een zelftoets op zodra je een samengestelde toets met de hand nabouwt, bijv
 
 Die twee werken niet hetzelfde. `DiagCasus` voedt een gewone parameter, dus `WLO_hoog_BAU` volstaat. `DiagJaar` voedt een meta-expressie, dus de waarde moet zelf aanhalingstekens dragen: `'Y2040'` en niet `Y2040`. Zonder die aanhalingstekens wordt het zichtjaar als itemnaam gelezen en krijg je `Unknown identifier 'Y2040'`, een melding die naar het diagnose-item wijst en niet naar de omgevingsvariabele. De default in de configuratie doet het goed, want die staat er met `quote(...)` omheen.
 
-Meetharnassen per issue staan als `Diagnose<nummer>.dms` naast `Diagnose.dms`, met een `#include` in `cfg/main.dms`. Ze zijn tijdelijk en horen weg zodra de getallen in het issue staan.
+Meetharnassen per issue staan als `Diagnose<nummer>.dms` in `cfg/main/Diagnose/`, met een `#include` in de container `PerIssue` onderaan `cfg/main/Diagnose.dms`. Ze zijn tijdelijk en horen weg zodra de getallen in het issue staan; dat is dan een regel in `PerIssue` en het bestand.
+
+Een nieuw harnas hangt dus onder `/Diagnose/PerIssue/Diagnose<nummer>/` en niet in de wortel. Dat is een keuze voor de boom in de GUI: dertien harnassen in de wortel maakten de bovenste laag onleesbaar. Het hoofdharnas blijft wel `/Diagnose`, dus `/Diagnose/GenerateAll` en `/Diagnose/Casus` zijn onveranderd.
+
+Let bij een nieuw harnas op de naamketen. Een kale naam zoekt vanaf `PerIssue` omhoog en komt dan langs de 59 items van het hoofdharnas voordat hij de wortel bereikt, dus namen als `Casus`, `Jaar`, `Variant` en `Pad_Z` binden aan het hoofdharnas zodra je ze niet zelf definieert. Verwijs naar modelcode daarom met een absoluut pad.
 
 ## Trap 4: allocatie draaien
 
