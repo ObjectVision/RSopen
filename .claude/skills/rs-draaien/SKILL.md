@@ -141,6 +141,27 @@ Twee valkuilen bij het inkorten. `Classifications/Modellering/StandVar_Prep` han
 
 Voor indicatorcontroles is de allocatie vaak helemaal niet nodig: met `StandAllocatieOntkoppeld` op TRUE, de default, leest de indicatorenkant de stand uit de tifs.
 
+## Niet elke variant alloceert: BAU2 leent de stand van BAU
+
+Sinds a9ca6b47 draait de allocatie van BAU2 niet meer. Hij leent de standtifs van BAU, en alleen zijn indicatoren draaien nog. Dat scheelt 7,71 uur per reeks, gemeten op de productierun van 1 september 2026.
+
+De schakelaar is de kolom `StandVanVariant` in `cfg/main/VariantParameters/VariantK.dms`. Staat daar de eigen naam, dan alloceert de variant gewoon; staat er een andere naam, dan leest de indicatorenkant de tifs van die variant. Dat gebeurt op precies een plek, `Templates/Indicatoren_T/StandCasus_name`, die `@CASUS@` in `AllocatieFileName` vult. `Variant_rel` blijft die van de lenende variant, dus alle variantparameters worden gewoon van BAU2 gelezen en de zes koolstofkolommen blijven verschillen.
+
+Wat dat voor het draaien betekent:
+
+- `batch/Run2120.ps1` kent dit. Geef gewoon `-Varianten BAU,BAU2,NbSGenuanceerd` mee; BAU2 wordt overgeslagen met een regel in het log en zijn diagnose ook, want die meet de allocatie. Wel moet de uitlener in dezelfde aanroep meedraaien, anders stopt het script.
+- `batch/RunAll.cmd`, `RunZichtjaren.cmd` en `RunScenarios.cmd` kennen dit NIET. Draai je BAU2 daarmee, dan alloceert hij alsnog en kost dat 7,71 uur voor een stand die byte-identiek wordt aan die van BAU. Gebruik voor een productiereeks `Run2120.ps1`.
+- `batch/RunIndicatoren.ps1` hoeft niets te weten: de indicatorenkant lost het lenen zelf op.
+- `batch/ToetsOplevering.ps1` meldt een lenende variant als INFO en niet als FAIL op een ontbrekende allocatiemap.
+
+Er is geen map `Allocatie/WLO_hoog_BAU2` meer, en dat is geen fout. Beoordeel die stand bij BAU.
+
+De aanname eronder is dat BAU en BAU2 op alles wat de allocatie raakt gelijk zijn, gemeten in #730. `Test-LeenAanname` in `Run2120.ps1` bewaakt dat omgekeerd: hij eist dat de kolommen waarop de twee VERSCHILLEN precies de bekende zes zijn, en dat de sector Landbouw niet wordt gealloceerd. Die tweede voorwaarde staat in `ModelParameters/SectorAllocRegio` en niet in VariantK, dus geen kolomvergelijking ziet hem.
+
+Valt die toets om, zet `StandVanVariant` dan terug op de eigen naam en laat BAU2 weer alloceren. Aanzetten van de sector Landbouw doet hem ook omvallen, en terecht.
+
+Let op bij een verkorte allocatie: lenen is alleen veilig als lener en uitlener op dezelfde `ModelParameters/Skeleton`-instellingen draaien. Verschillen die, dan leent BAU2 een stand die onder andere aannames is gemaakt en waarschuwt niets.
+
 ## Tag de codestand bij een productierun
 
 Een productierun beslaat uren en loopt vaak op meerdere machines tegelijk, terwijl de branch ondertussen doorloopt. Zonder tag is achteraf niet meer vast te stellen welke code een uitdraai heeft gemaakt. Zet daarom bij de start een annotated tag op de commit die draait, met de conventie `oplevering_<project>_<datum>`:
