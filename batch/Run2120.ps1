@@ -195,7 +195,81 @@ if (-not $SkipVariantData) {
     }
 }
 
+function Get-StandLeen([string]$CfgPad) {
+    # Leest de kolom StandVanVariant uit VariantK.dms en geeft een tabel variant -> uitlenende variant.
+    # Bewust een parse van de configuratie en geen GeoDmsRun: dit moet klaar zijn voordat de eerste
+    # stap begint, en het kost zo milliseconden in plaats van een minuut.
+    $vk = Join-Path (Split-Path $CfgPad -Parent) 'main\VariantParameters\VariantK.dms'
+    if (-not (Test-Path $vk)) { throw "VariantK.dms niet gevonden naast $CfgPad" }
+    $tekst = Get-Content $vk -Raw
+    $kolommen = @{}
+    foreach ($naam in @('name','StandVanVariant')) {
+        $m = [regex]::Match($tekst, "attribute<[^>]+>\s+$naam\s*:\s*\[(.*?)\]", 'Singleline')
+        if (-not $m.Success) { throw "kolom $naam niet gevonden in VariantK.dms" }
+        $kolommen[$naam] = @([regex]::Matches($m.Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
+    }
+    $t = @{}
+    for ($i = 0; $i -lt $kolommen['name'].Count; $i++) { $t[$kolommen['name'][$i]] = $kolommen['StandVanVariant'][$i] }
+    return $t
+}
+
+function Test-LeenAanname([string]$CfgPad, [string]$Lener, [string]$Uitlener) {
+    # De aanname onder het lenen is dat de twee varianten op alles wat de allocatie raakt gelijk zijn.
+    # Deze toets keert dat om: hij eist dat de kolommen waarop ze verschillen precies de bekende zijn.
+    # Dat vangt het echte risico af, namelijk dat er ooit een zesde afwijkende rij bij komt.
+    $vk = Join-Path (Split-Path $CfgPad -Parent) 'main\VariantParameters\VariantK.dms'
+    $tekst = Get-Content $vk -Raw
+    $toegestaan = @('name','StandVanVariant','LeentStand','Label',
+                    'Waterbeheeroptie','WinterdroogleggingK_ref','ZomerdroogleggingK_ref',
+                    'InfiltratieMaatregelK_ref','WaterbergingClaimBron')
+    $namen = @([regex]::Matches([regex]::Match($tekst,"attribute<[^>]+>\s+name\s*:\s*\[(.*?)\]",'Singleline').Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
+    $iL = $namen.IndexOf($Lener); $iU = $namen.IndexOf($Uitlener)
+    if ($iL -lt 0 -or $iU -lt 0) { throw "variant $Lener of $Uitlener staat niet in VariantK" }
+
+    $afwijkend = @()
+    foreach ($m in [regex]::Matches($tekst, "attribute<[^>]+>\s+(\w+)\s*:\s*\[(.*?)\]", 'Singleline')) {
+        $kol = $m.Groups[1].Value
+        if ($toegestaan -contains $kol) { continue }
+        $w = @([regex]::Matches($m.Groups[2].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
+        if ($w.Count -eq 0) { $w = @($m.Groups[2].Value -split ',' | ForEach-Object { $_.Trim() }) }
+        if ($w.Count -le [Math]::Max($iL,$iU)) { continue }
+        if ($w[$iL] -ne $w[$iU]) { $afwijkend += "$kol ($($w[$iU]) tegen $($w[$iL]))" }
+    }
+    if ($afwijkend.Count -gt 0) {
+        Write-Regel "GESTOPT: $Lener leent de stand van $Uitlener, maar ze verschillen op kolommen die de allocatie kunnen raken:"
+        $afwijkend | ForEach-Object { Write-Host "   $_" }
+        throw "Leenaanname geschonden voor $Lener"
+    }
+
+    # Tweede voorwaarde, en die staat niet in VariantK: de gelijkheid rust erop dat de sector Landbouw
+    # niet wordt gealloceerd. Die schakelaar zit in ModelParameters/SectorAllocRegio, dus geen enkele
+    # kolomvergelijking ziet hem.
+    $mp = Join-Path (Split-Path $CfgPad -Parent) 'main\ModelParameters.dms'
+    $regels = (Get-Content $mp) | Where-Object { $_ -match "^\s*[,']" -and $_ -match "'Landbouw'" -and $_ -notmatch '^\s*//' }
+    if ($regels) {
+        Write-Regel "GESTOPT: $Lener leent de stand van $Uitlener, maar de sector Landbouw staat aan in SectorAllocRegio."
+        $regels | ForEach-Object { Write-Host "   $($_.Trim())" }
+        throw "Leenaanname geschonden: Landbouw wordt gealloceerd"
+    }
+    Write-Regel "leentoets  : $Lener mag de stand van $Uitlener lezen (geen afwijkende kolom, Landbouw uit)"
+}
+
+
+$leen = Get-StandLeen $Cfg
+
 foreach ($v in $Varianten) {
+    $uitlener = $leen[$v]
+    if ($uitlener -and $uitlener -ne $v) {
+        # Deze variant leent haar stand van een andere en hoeft dus niet te alloceren. De
+        # indicatorenkant leest de tifs van de uitlener via VariantK/StandVanVariant; zie
+        # Templates/Indicatoren_T/StandCasus_name.
+        Test-LeenAanname $Cfg $v $uitlener
+        if (-not ($Varianten -contains $uitlener)) {
+            throw "Variant $v leent de stand van $uitlener, maar die staat niet in -Varianten. Draai $uitlener mee of zet StandVanVariant terug."
+        }
+        Write-Regel "overslaan : allocatie-$v, leent de stand van $uitlener"
+        continue
+    }
     foreach ($y in $Zichtjaren) {
         Invoke-Stap "allocatie-$v-$y" "/Allocatie/${Scenario}_$v/Zichtjaren/$y/Impl/Generate"
 

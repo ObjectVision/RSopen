@@ -57,9 +57,46 @@ function Get-Zichtjaren([string]$casusPad) {
 }
 
 # ---------------------------------------------------------------- trap A: wat er op schijf staat
+function Get-Uitlener([string]$variant) {
+    # Leest VariantK/StandVanVariant, zodat het harnas weet welke variant haar stand leent.
+    # Faalt de parse, dan geeft hij de variant zelf terug: liever een overbodige toets dan een
+    # gemiste. Het pad naar de configuratie is afgeleid van $LocalData en kan afwijken; daarom
+    # zoekt hij ook naast het script.
+    if ($script:LeenTabel -eq $null) {
+        $script:LeenTabel = @{}
+        $kandidaten = @(
+            (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main\VariantParameters\VariantK.dms')
+        )
+        foreach ($vk in $kandidaten) {
+            if (-not (Test-Path $vk)) { continue }
+            $t = Get-Content $vk -Raw
+            $mn = [regex]::Match($t, "attribute<[^>]+>\s+name\s*:\s*\[(.*?)\]", 'Singleline')
+            $ms = [regex]::Match($t, "attribute<[^>]+>\s+StandVanVariant\s*:\s*\[(.*?)\]", 'Singleline')
+            if (-not ($mn.Success -and $ms.Success)) { continue }
+            $n = @([regex]::Matches($mn.Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
+            $u = @([regex]::Matches($ms.Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
+            for ($i = 0; $i -lt $n.Count -and $i -lt $u.Count; $i++) { $script:LeenTabel[$n[$i]] = $u[$i] }
+            break
+        }
+    }
+    if ($script:LeenTabel.ContainsKey($variant)) { return $script:LeenTabel[$variant] }
+    return $variant
+}
+
 function TrapA([string]$variant) {
     $casus = "${Scenario}_$variant"
     $pad   = Join-Path $LocalData "Allocatie\$casus"
+
+    # Een variant die haar stand van een andere leent heeft geen eigen allocatiemap, en dat is
+    # geen fout. VariantK/StandVanVariant zegt van wie ze leent; staat daar een andere naam, dan
+    # is de allocatie bewust niet gedraaid en beoordeel je die stand bij de uitlener. Zie
+    # Templates/Indicatoren_T/StandCasus_name en de leentoets in batch/Run2120.ps1.
+    $uitlener = Get-Uitlener $variant
+    if ($uitlener -and $uitlener -ne $variant) {
+        Meld 'A' $casus 'allocatie geleend' 'INFO' "leest de stand van ${Scenario}_$uitlener" 'beoordeel die stand bij de uitlener'
+        return
+    }
+
     if (-not (Test-Path $pad)) { Meld 'A' $casus 'allocatiemap bestaat' 'FAIL' 'ontbreekt' $pad; return }
 
     $standen = Get-ChildItem $pad -Directory -Filter 'Stand*' -ErrorAction SilentlyContinue |
