@@ -120,6 +120,22 @@ Commit of push alleen wanneer daarom gevraagd is.
 
 Blijkt bij het afronden dat het issue nog niet af is, sluit het dan niet. Zeg wat er nog open staat en laat de keuze bij de gebruiker.
 
+## Een issue heropenen
+
+Een issue heropenen is twee handelingen en niet één. Naast `gh issue reopen` moet het in elk project waarin het staat terug van het bakje Done naar To do. Blijft dat achterwege, dan staat het issue open terwijl het bord zegt dat het klaar is, en dan ziet niemand het meer op de plek waar het werk wordt bijgehouden.
+
+Plaats bij het heropenen ook een comment die zegt waarom het weer open moet. Een issue dat zonder toelichting van dicht naar open springt leest als een vergissing.
+
+De statuskolom is geen veld van het issue maar van het projectitem, en dat zit in de Projects v2-API. Daarvoor is de scope `read:project` of `project` nodig, en het token in deze werkkopie heeft die niet: `gh issue view <nr> --json projectItems` geeft dan een lege lijst en een GraphQL-vraag geeft `INSUFFICIENT_SCOPES`. Die lege lijst betekent dus niet dat het issue in geen enkel project zit. Meld daarom bij het heropenen expliciet dat de statuskolom nog met de hand moet, of vraag de gebruiker het te doen; claim niet dat het geregeld is.
+
+Kan het wel, dus met een token dat de scope heeft, dan gaat het zo:
+
+```bash
+gh issue view <nr> --json projectItems --jq '.projectItems[].project.number'
+gh project item-list <projectnr> --owner ObjectVision --format json    # id van het item en van het statusveld
+gh project item-edit --id <itemid> --project-id <projectid> --field-id <statusveldid> --single-select-option-id <todo-optie-id>
+```
+
 ## Een goed issue
 
 Noem het pad in de config waar het over gaat, met bestandsnaam en regelnummer als je die hebt. Noem het gemeten getal en waartegen je het afzet. Scheid de waarneming van de interpretatie: wat je gemeten hebt is een feit, waarom het zo is is een hypothese totdat het aangetoond is. Zeg expliciet wat je niet getoetst hebt.
