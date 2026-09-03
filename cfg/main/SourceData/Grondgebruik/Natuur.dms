@@ -195,7 +195,7 @@ container Natuur
 				: SqlString = "select GPGIDENT as gpgident, deelgebied, coalesce(\"2_pct\", 0) / 100.0 as BS2, coalesce(\"3a_pct\", 0) / 100.0 as BS3a, coalesce(\"3b_pct\", 0) / 100.0 as BS3b, coalesce(\"4a_pct\", 0) / 100.0 as BS4a, coalesce(\"4b_pct\", 0) / 100.0 as BS4b, coalesce(\"5_pct\", 0) / 100.0 as BS5, coalesce(\"6_pct\", 0) / 100.0 as BS6, coalesce(\"7_pct\", 0) / 100.0 as BS7, coalesce(\"8_pct\", 0) / 100.0 as BS8, coalesce(\"9a_pct\", 0) / 100.0 as BS9a, coalesce(\"9b_pct\", 0) / 100.0 as BS9b, 0.0 as BS10a, geom from (select *, row_number() over (partition by geom order by fid) as rn, count(*) over (partition by geom) as cnt from NBSnuanc_bouwsteen_pct_perpeilvak) where rn = (cnt + 1) / 2 order by ST_Area(geom) desc"
 				, Descr = "Gebieden met een peilvak. De percentages per bouwsteen tellen per peilvak niet tot 100 op; de rest is bouwsteen 0, 1 of 10.
 
-							Naast de fracties komen twee tekstkolommen mee: gpgident, de peilvaksleutel die de twee veenleveringen delen en waarmee team Veen een gebied terugvindt, en deelgebied, de acht gebieden van Friesland-Groningen tot 3.2 Veluwe waarbinnen de overloop uit #660 mag schuiven.";
+							Naast de fracties komen twee tekstkolommen mee: gpgident, de peilvaksleutel die de twee veenleveringen delen en waarmee team Veen een gebied terugvindt, en deelgebied, de acht gebieden van Friesland-Groningen tot 3.2 Veluwe waarop de indicatoren en de terugkoppeling worden samengevat.";
 			}
 			container Bron_ZonderPeilvak
 			: StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/NbSGenuanceerd/NBSnuanc_bouwsteen_pct_zonderpv.gpkg"
@@ -649,7 +649,9 @@ container Natuur
 					, Descr = "Het gerasterde oppervlak van het gebied binnen het studiegebied. Dit is de basis onder de opgave: fractie maal dit getal.";
 
 					unit<uint32> Deelgebied := unique(Peilvak/Deelgebied_Naam)
-					, Descr = "De acht deelgebieden uit de levering, van Friesland-Groningen tot 3.2 Veluwe. Dit is de claimregio van de overloopallocatie: de opgave die een peilgebied zelf niet kan bergen mag binnen het eigen deelgebied elders landen, en niet daarbuiten. Zie het besluit in #660 dat overschotten overgeheveld worden."
+					, Descr = "De acht deelgebieden uit de levering, van Friesland-Groningen tot 3.2 Veluwe. Het niveau waarop de veenuitkomsten worden samengevat en teruggekoppeld aan team Veen.
+
+								Dit was tot 3 september 2026 ook de claimregio van een overlooptrap, die de opgave die een peilgebied zelf niet kon bergen elders binnen het deelgebied liet landen. Deltares heeft die laten vervallen: de verdeling van bouwstenen binnen een peilgebied volgt uit de water- en bodemkundige eigenschappen van dat gebied, dus die opgave hoort niet ergens anders te gaan liggen. Zie #660 voor het oorspronkelijke besluit en #761 voor de herziening."
 					{
 						attribute<string> Label           := values, DialogType = "LabelText";
 						attribute<.>      Per_Peilvak     (Peilvak)     := rlookup(Peilvak/Deelgebied_Naam, values);
@@ -894,31 +896,6 @@ container Natuur
 
 								Alleen NbSGenuanceerd heeft een veenlevering, dus deze aanroep staat hier en niet in een sjabloon per variant.";
 
-					// ---- de overloop: wat het eigen peilgebied niet bood landt binnen het deelgebied, #660 ----
-
-					container Claim_Overloop :=
-						for_each_nedv(
-							VeenType/name
-							, 'sum(Alloc/Controle/Tekort/' + VeenType/name + ', Deelgebied/Per_Peilvak)'
-							, Deelgebied
-							, Ha
-						)
-					, Descr = "De opgave van de tweede trap: per deelgebied per type wat de eerste trap in de eigen peilgebieden niet kwijt kon. Dit is het besluit uit #660 dat overschotten overgeheveld mogen worden, gebouwd als twee trappen en niet als een grovere claimregio: het peilgebied blijft leidend voor alles wat er wel in past, en alleen het restant schuift. Een allocatie die meteen per deelgebied zou rekenen laat de hele opgave binnen het deelgebied schuiven, en dan is de samenstelling per peilgebied die team Veen heeft uitgerekend geen randvoorwaarde meer.
-
-								Hier zit ook het afrondingsgruis in: de eerste trap kapt elke opgave af op hele cellen van 0,0625 ha, en die restjes tellen hier per deelgebied op tot echte cellen. Dat hoort zo, want het zijn geleverde hectares die anders stilzwijgend zouden verdwijnen.";
-
-					container Geschiktheid_Overloop :=
-						for_each_nedv(
-							VeenType/name
-							, 'IsDefined(Alloc/INL_Beheertype_rel_AD) || Basisjaar/IsNatuur || Basisjaar/IsWater ? null_f : Geschiktheid/' + VeenType/name
-							, AdminDomain
-							, float32
-						)
-					, Descr = "De geschiktheid van de tweede trap: dezelfde aanhaking en dezelfde ruis als de eerste, met drie groepen cellen extra op null. De cellen die de eerste trap al heeft gealloceerd, want die zijn vergeven. En de cellen die in het basisjaar al natuur of open water zijn: in het eigen peilgebied telt bestaande natuur mee als eindtoestand, maar overloop is opgave die er fysiek niet in paste, en die op andermans bestaande natuur zetten zou de opgave op papier halen zonder dat er iets verandert.";
-
-					container Alloc_Overloop := /Templates/SourceData/NatuurAlloc_T('Veen NbSGenuanceerd overloop', VeenType, Deelgebied, Claim_Overloop, Geschiktheid_Overloop, IsSloopgebied)
-					, Descr = "De tweede trap, hetzelfde sjabloon met het deelgebied als claimregio. Wat ook hier niet past is het eindtekort, en dat is de onderrealisatie die aan team Veen wordt teruggekoppeld; zie Controle en Diagnose/VeenNatuur.";
-
 					// ---- trap 1: welke bouwsteen komt waar, #684 ----
 
 					parameter<bool> SloopUitGealloceerdeBouwsteen := TRUE
@@ -1009,51 +986,12 @@ container Natuur
 					container Alloc_Bouwsteen := /Templates/SourceData/NatuurAlloc_T('Veen bouwstenen NbSGenuanceerd', BouwsteenType, Peilvak, Claim_Bouwsteen, Geschiktheid_Bouwsteen, IsSloopgebied)
 					, Descr = "Trap 1 van de opzet bij #684. Hetzelfde sjabloon als de typenallocatie, alleen met de bouwstenen als typen en zonder beheertype, dus het legt niets op. Wat eruit komt is Bouwsteen_rel hieronder.";
 
-					attribute<BouwsteenType> Bouwsteen_Trap1_rel (AdminDomain) := Alloc_Bouwsteen/Type/Src_rel[Alloc_Bouwsteen/Type_rel]
-					, Descr = "Welke bouwsteen heeft de eerste trap hier neergelegd, null waar de cel in het type Rest valt of buiten het veengebied ligt. De overloop hieronder leest dit item om te weten welke cellen al vergeven zijn; wat er uiteindelijk ligt staat in Bouwsteen_rel.";
+					attribute<BouwsteenType> Bouwsteen_rel (AdminDomain) := Alloc_Bouwsteen/Type/Src_rel[Alloc_Bouwsteen/Type_rel]
+					, Descr = "Welke bouwsteen is hier gealloceerd, null waar de cel in het type Rest valt of buiten het veengebied ligt. Dit is het item dat #684 vraagt: hieruit volgt via kolom J van de bouwstenentabel of er gesloopt wordt, en hieraan hangt ook de samenstelling van trap 2 hieronder.
 
-					attribute<bool> HeeftBouwsteen_Trap1 (AdminDomain) := IsDefined(Bouwsteen_Trap1_rel);
+								Een tweede trap die de opgave van een vol peilgebied elders binnen het deelgebied laat landen heeft hier op 3 september 2026 een halve dag gestaan, naar het voorbeeld van de overloop die #660 voor de typenallocatie had gebouwd. Deltares heeft beide diezelfde dag laten vervallen: de verdeling van bouwstenen binnen een peilgebied volgt uit de water- en bodemkundige eigenschappen van dat gebied, dus een opgave die daar niet past hoort niet ergens anders te gaan liggen. Wat niet past blijft liggen. Zie #761.
 
-					// ---- de overloop op de bouwstenen: wat het eigen peilgebied niet bood landt binnen het deelgebied, #761 ----
-
-					attribute<bool> IsWaterBouwsteen (BouwsteenType) := BouwsteenType/code == '9a' || BouwsteenType/code == '9b'
-					, IntegrityCheck = "sum(uint32(this)) == 2"
-					, Descr = "Welke bouwstenen mogen bestaand open water vervangen? Bouwsteen 9a en 9b, de twee waterbouwstenen. Dat is het antwoord uit #761 op de vraag waar de overloop mag landen: op bestaande natuur mag alles, op bestaand water alleen deze twee.
-
-								De IntegrityCheck telt dat het er precies twee zijn. Zonder die telling zou een hernummering van de bouwstenen, zoals #762 er een aankondigt, deze regel stil op nul zetten en zou de overloop overal op bestaand water mogen landen.";
-
-					container Claim_Overloop_Bouwsteen :=
-						for_each_nedv(
-							BouwsteenType/name
-							, 'sum(Alloc_Bouwsteen/Controle/Tekort/' + BouwsteenType/name + ', Deelgebied/Per_Peilvak)'
-							, Deelgebied
-							, Ha
-						)
-					, Descr = "De opgave van de tweede trap: per deelgebied per bouwsteen wat de eerste trap in de eigen peilgebieden niet kwijt kon. Dit is de overheveling die #660 voor de natuurbeheertypen besloot en die in #761 ook voor de bouwstenen is toegestaan.
-
-								Zelfde opzet als Claim_Overloop bij de typen, en om dezelfde reden twee trappen en niet een grovere claimregio: het peilgebied blijft leidend voor alles wat er wel in past, en alleen het restant schuift. Hier komt ook het afrondingsgruis terecht, want de eerste trap kapt elke opgave af op hele cellen van 0,0625 ha.";
-
-					container Geschiktheid_Overloop_Bouwsteen :=
-						for_each_nedv(
-							BouwsteenType/name
-							, (IsWaterBouwsteen ? 'HeeftBouwsteen_Trap1' : 'HeeftBouwsteen_Trap1 || Basisjaar/IsWater')
-								+ ' ? null_f : Geschiktheid_Bouwsteen/' + BouwsteenType/name
-							, AdminDomain
-							, float32
-						)
-					, Descr = "De geschiktheid van de tweede trap: dezelfde aanhaking en dezelfde ruis als de eerste, met twee uitsluitingen. De cellen die de eerste trap al heeft vergeven, want die zijn op. En bestaand open water voor alle bouwstenen behalve 9a en 9b, conform het antwoord in #761.
-
-								Bestaande natuur staat er bewust niet bij. Bij de typenallocatie is die wel uitgesloten, omdat overloop op andermans bestaande natuur de opgave op papier zou halen zonder dat er iets verandert. Voor de bouwstenen is in #761 het omgekeerde besloten: de bouwstenen beschrijven een eindtoestand, dus bestaande natuur mag herlabeld worden.";
-
-					container Alloc_Bouwsteen_Overloop := /Templates/SourceData/NatuurAlloc_T('Veen bouwstenen overloop', BouwsteenType, Deelgebied, Claim_Overloop_Bouwsteen, Geschiktheid_Overloop_Bouwsteen, IsSloopgebied)
-					, Descr = "De tweede trap, hetzelfde sjabloon met het deelgebied als claimregio. Wat ook hier niet past is het eindtekort, en dat is de onderrealisatie die aan team Veen wordt teruggekoppeld; zie Diagnose/VeenNatuur/Bouwstenen.";
-
-					attribute<BouwsteenType> Bouwsteen_Overloop_rel (AdminDomain) := Alloc_Bouwsteen_Overloop/Type/Src_rel[Alloc_Bouwsteen_Overloop/Type_rel];
-
-					attribute<BouwsteenType> Bouwsteen_rel (AdminDomain) := MakeDefined(Bouwsteen_Trap1_rel, Bouwsteen_Overloop_rel)
-					, Descr = "Welke bouwsteen ligt hier, over de twee trappen samen. Null waar de cel in het type Rest valt of buiten het veengebied ligt. Dit is het item dat #684 vraagt: hieruit volgt via kolom J van de bouwstenentabel of er gesloopt wordt, en hieraan hangt ook de samenstelling van trap 2 hieronder.
-
-								De twee trappen overlappen per constructie niet, want de overloop mag alleen landen waar de eerste trap niets heeft neergelegd. De MakeDefined is dus een samenvoeging en geen voorrang.";
+								Dat het nauwelijks meer kost komt door #768. Sinds de pandentoets uit staat is het opleggingsmasker uit #641 de enige uitsluiting, en dat is precies de afbakening die ClaimNoemerExclBebouwd ook als noemer gebruikt. Noemer en kandidaatruimte vallen daarmee samen, en omdat de twaalf geleverde fracties per peilgebied optellen tot ongeveer 0,907 past de opgave er per constructie in. Gemeten op 2026-09-03: opgave 441.808,8 ha, kandidaatruimte 476.792,6 ha, en een tekort van 311,3 ha ofwel 0,07 procent. Dat restant is afrondingsgruis, want MaxClaims kapt elke opgave per peilgebied per bouwsteen af op hele cellen van 0,0625 ha; het opruimen daarvan was het enige dat de tweede trap nog deed.";
 
 					attribute<Classifications/Modellering/BouwregimeK> Bouwregime_uitBouwsteen (AdminDomain) :=
 						MakeDefined(BouwsteenType/BouwregimeK_rel[Bouwsteen_rel], Classifications/Modellering/BouwregimeK/V/Bouwen)
@@ -1262,11 +1200,11 @@ container Natuur
 
 					// ---- wat er wordt opgelegd ----
 
-					attribute<INL_Beheertype>       INL_Beheertype_rel_AD (AdminDomain) := MakeDefined(Alloc/INL_Beheertype_rel_AD, Alloc_Overloop/INL_Beheertype_rel_AD)
-					, Descr = "Het gealloceerde beheertype per cel, null waar de cel blijft zoals hij is. De twee trappen overlappen per constructie niet: de overloop mag alleen landen op cellen die de eerste trap heeft overgeslagen, dus de MakeDefined is een samenvoeging en geen voorrang.";
-					attribute<NatuurType>           NatuurTypen_rel_AD    (AdminDomain) := MakeDefined(Alloc/NatuurTypen_rel_AD, Alloc_Overloop/NatuurTypen_rel_AD);
-					attribute<INL_Beheertype>       ExoNatuur             (AdminDomain) := MakeDefined(Alloc/ExoNatuur, Alloc_Overloop/ExoNatuur);
-					attribute<INL_Beheertype>       ExoWater              (AdminDomain) := MakeDefined(Alloc/ExoWater,  Alloc_Overloop/ExoWater);
+					attribute<INL_Beheertype>       INL_Beheertype_rel_AD (AdminDomain) := Alloc/INL_Beheertype_rel_AD
+					, Descr = "Het gealloceerde beheertype per cel, null waar de cel blijft zoals hij is. Wat het eigen peilgebied niet kon bergen blijft liggen; tot 3 september 2026 schoof dat via een tweede trap naar een ander peilgebied binnen het deelgebied, en Deltares heeft die overheveling die dag laten vervallen omdat de verdeling van bouwstenen binnen een peilgebied uit water en bodem volgt. Zie #660 en #761.";
+					attribute<NatuurType>           NatuurTypen_rel_AD    (AdminDomain) := Alloc/NatuurTypen_rel_AD;
+					attribute<INL_Beheertype>       ExoNatuur             (AdminDomain) := Alloc/ExoNatuur;
+					attribute<INL_Beheertype>       ExoWater              (AdminDomain) := Alloc/ExoWater;
 
 					attribute<INL_Beheertype> Natuur (AdminDomain) := = SloopUitGealloceerdeBouwsteen ? 'Natuur_uitBouwsteen' : 'ExoNatuur'
 					, Descr = "Wat het veen aan terrestrische natuur oplegt. Twee bronnen, met dezelfde schakelaar als het bouwregime.
@@ -1318,13 +1256,10 @@ container Natuur
 										Een type dat bewust niet wordt gealloceerd staat op 1 en niet op nul gedeeld door nul. Die deling geeft een null, en een null valt door de IntegrityCheck heen als onwaar, dus dan zou een bewuste keuze als een rasteringsfout binnenkomen.";
 
 							attribute<Ha> Gerealiseerd := ='union_data(., '+AsItemList('sum(Alloc/Controle/Gerealiseerd/'+VeenType/name+')')+')'
-							, Descr = "Wat de eerste trap er landelijk van neerzet, in de eigen peilgebieden.";
+							, Descr = "Wat de allocatie er landelijk van neerzet, in de eigen peilgebieden.";
 
-							attribute<Ha> Overloop := ='union_data(., '+AsItemList('sum(Alloc_Overloop/Controle/Gerealiseerd/'+VeenType/name+')')+')'
-							, Descr = "Wat de tweede trap daarbuiten binnen het deelgebied kwijt kan.";
-
-							attribute<Ha> Tekort := Raster - Gerealiseerd - Overloop
-							, Descr = "Opgave min realisatie van beide trappen samen. Positief betekent dat het deelgebied als geheel te weinig ruimte bood; NatuurAlloc_T/Controle/Krapte laat per peilvak zien waar de eerste trap al klem zat. Hier staat bewust geen IntegrityCheck op: een tekort is een meetbare uitkomst van de invoer en mag het model niet laten falen.";
+							attribute<Ha> Tekort := Raster - Gerealiseerd
+							, Descr = "Opgave min realisatie. Positief betekent dat het peilgebied te weinig ruimte bood en dat die hectares blijven liggen; NatuurAlloc_T/Controle/Krapte laat per peilvak zien waar het klem zit. Hier staat bewust geen IntegrityCheck op: een tekort is een meetbare uitkomst van de invoer en mag het model niet laten falen.";
 						}
 
 						parameter<Ha> Areaal_Veengebied      := sum(IsVeengebied && Geography/rdc_meter/IsStudyArea_AdminDomain ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het hele ruimtebeslag van de twee leveringen binnen het studiegebied.";
@@ -1343,11 +1278,8 @@ container Natuur
 						parameter<Ha> Claim_NTypen           := ='add('+AsItemList('sum(Claim/'+NbSVeen/NbSNatuurtype/InGebruik/name+')')+')', Descr = "De opgave over de achttien natuurbeheertypen uit de bouwstenentabel samen, dus inclusief het water dat via N04.01 en N04.02 loopt.";
 						parameter<Ha> Claim_OppervlakteWater := sum(Claim/OppervlakteWater), Descr = "De opgave voor het open water uit kolom OppervlakteWater, die tot #660 nergens werd gelezen.";
 						parameter<Ha> Claim_Totaal           := Claim_NTypen + Claim_OppervlakteWater;
-						parameter<Ha> Gerealiseerd_Eigen     := Alloc/Controle/Gerealiseerd_NL, Descr = "Wat de eerste trap in de eigen peilgebieden neerzet.";
-						parameter<Ha> Gerealiseerd_Overloop  := Alloc_Overloop/Controle/Gerealiseerd_NL, Descr = "Wat de tweede trap daarbuiten binnen het deelgebied kwijt kan.";
-						parameter<Ha> Gerealiseerd_Totaal    := Gerealiseerd_Eigen + Gerealiseerd_Overloop;
-						parameter<Ha> Tekort_InPeilgebied    := Alloc/Controle/Tekort_NL, Descr = "Wat het eigen peilgebied niet kon bergen. Dit is de onderrealisatie per peilgebied die aan team Veen wordt teruggekoppeld; per gebied staat zij in Diagnose/VeenNatuur/Krapte/terugkoppeling.";
-						parameter<Ha> Tekort_Totaal          := Alloc_Overloop/Controle/Tekort_NL, Descr = "Het getal dat na een run gerapporteerd moet worden: hoeveel van de opgave ook na de overloop nergens in het deelgebied paste.";
+						parameter<Ha> Gerealiseerd_Totaal    := Alloc/Controle/Gerealiseerd_NL, Descr = "Wat de allocatie in de eigen peilgebieden neerzet.";
+						parameter<Ha> Tekort_Totaal          := Alloc/Controle/Tekort_NL, Descr = "Wat het eigen peilgebied niet kon bergen en dus blijft liggen. Per gebied staat het in Diagnose/VeenNatuur/Krapte/terugkoppeling.";
 
 						parameter<Ha> Verlies_Pandentoets    := Alloc/Controle/Verlies_Pandentoets_NL, Descr = "Hoeveel ruimte de pandentoets uit #661 de veenzeef kost. Leg dit naast Tekort_Totaal: pas als het verlies een peilvak over de streep duwt gaat de opgave er werkelijk aan onderdoor.";
 
