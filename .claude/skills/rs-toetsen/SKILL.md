@@ -165,3 +165,22 @@ Gebruik `cp -p` en niet een kale `cp`. Zonder `-p` krijgt de kopie de tijd van n
 En kopieer voordat je de nieuwe run start. Een run die al draait heeft de eerste uitdraaien al overschreven; op 2026-09-02 waren dat er acht van de 46, precies de goedkoopste metingen die als eerste klaar zijn.
 
 Twee dingen bepalen of een voor-en-na iets waard is. De stand moet tussen beide metingen stil hebben gestaan, want anders meet je code en allocatie door elkaar. Dat is te controleren op de mtime van de tifs onder `Allocatie/<casus>/Stand<jaar>/`. En de baseline moet te dateren zijn: zoek in de oude waarden een getal dat elders is vastgelegd, in een issue of in een commit message, en pin daarmee vast wanneer hij gemaakt is.
+
+## Een oude stand opnieuw doormeten
+
+Naast de uitdraaien staan onder `Allocatie/<casus>/` ook bewaarde standen, met namen als
+`StandY2040_vintage20260902pre`. Daarmee is een meting die alleen op de oude stand bestond alsnog te
+herhalen, en dat is meer waard dan het oude getal zelf: je kunt er nieuwe uitsplitsingen op loslaten die
+er destijds niet waren.
+
+De haak is `ModelParameters/Advanced/AllocatieFileName`. Zet in een scratchpadkopie `Stand@JAAR@` om naar
+`Stand@JAAR@_vintage<datum>` en de hele indicatorenkant leest de bewaarde stand. Werkt alleen voor de
+zichtjaren waarvan die map bestaat, dus vraag er precies een op; het basisjaar loopt niet via deze
+parameter maar via `BaseData/StartState/StateBasisjaar` en blijft dus ongemoeid.
+
+Wat je dan meet is een oude stand onder de huidige code, en dat is precies de combinatie die een
+vintageverschil zichtbaar maakt. Bij #766 leverde dat het antwoord op de vraag die in het issue nog
+openstond: van de 2.872 ha gealloceerde waterberging in de stand van 31 augustus stond er 1.662 ha op de
+landgebruikskaart, en de ontbrekende 1.210 ha werd afgevangen door de opleggingscase. Op de stand van
+2 september, uit dezelfde reeks als de basisdata, was datzelfde getal 0 ha. Zonder de bewaarde stand was
+dat niet meer vast te stellen geweest.

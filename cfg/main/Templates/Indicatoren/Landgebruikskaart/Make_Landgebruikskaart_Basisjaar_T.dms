@@ -131,7 +131,12 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 				vandaag niet eens wordt bereikt: het open water van veenbouwsteen 9a en 9b komt pas in de kaart als
 				VariantK/ExogeenWaterOpleggen aanstaat, en dan wint de exogene oplegging hierboven al.
 
-				Daarna de allocatie, en als niets van dat alles geldt, de vorige kaart.";
+				Daarna de allocatie, en als niets van dat alles geldt, de vorige kaart.
+
+				Die allocatiecase is de enige route voor elke gealloceerde sector die hierboven geen eigen case heeft, en dat is
+				vandaag alleen waterberging. Alles wat eerder wint maskeert daar de gealloceerde klasse, en hoeveel dat is telt
+				Toets_AllocatieZonderEigenCase onderaan. Sinds #766 leest de arealenindicator voor waterberging daarom de stand
+				en niet deze kaart; de kaart houdt haar voorrangsregel en het verschil tussen de twee is een gemeten getal.";
 	
 	// Ook het basisjaar krijgt Casus_name in het pad. De basisjaarkaart is namelijk niet casusonafhankelijk: hij
 	// loopt via Stand, en die hangt aan de variant. Zonder Casus_name schreven twee casussen over elkaars
@@ -187,5 +192,65 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 		
 		parameter<Ha> Opp_WaterWintVanWonen := sum(float32(Cel) * AdminDomain/NrHaPerCell)
 		, Descr = "Hetzelfde in hectares.";
+	}
+
+	container Toets_AllocatieZonderEigenCase
+	: Descr = "Hoeveel gealloceerd oppervlak laat deze kaart niet zien? Wonen, werken en verblijfsrecreatie hebben elk een eigen case in de switch hierboven en komen daar hoe dan ook doorheen. Elke andere gealloceerde sector heeft alleen de generieke allocatiecase, en die staat achter de afscherming van de oplegging, van water en van bestaand bebouwd gebied. Vandaag is waterberging de enige sector in die positie; zet een van de uitgecommentarieerde regels in ModelParameters/SectorAllocRegio aan en landbouw, zon of wind komen erbij.
+
+				Dit is een teller en geen harde controle, om dezelfde reden als bij Toets_WonenOpWater hierboven: de toestand
+				bestaat vandaag al en zij volgt uit een voorrangsregel die met opzet zo staat. Wat er niet mocht bestaan is dat
+				het verschil ONGEMETEN blijft, want dan beantwoordt de kaart stil een vraag die de stand ook beantwoordt en
+				kiest een indicator zonder het te melden de andere van de twee. Zie #766.
+
+				Er tellen twee dingen op, en de uitsplitsing scheidt ze. Opp_DoorWater, Opp_DoorAfscherming en
+				Opp_DoorDominantie zijn de maskering waar #766 over gaat: de kaart houdt vast aan wat er stond en de
+				gealloceerde klasse komt er niet doorheen. Opp_DoorOplegging is iets anders, want de zeef houdt via
+				Zeef_T/IsRestrictief_DoorExogeenopleggen elke sector weg van de opgelegde cellen. Die term hoort dus nul te
+				zijn zolang de stand en de basisdata van dezelfde codestand komen, en loopt op zodra dat niet meer zo is.
+
+				Gemeten in WLO_hoog_NbSGenuanceerd Y2040, alle drie op de standtifs van 2 september 2026:
+
+				op commit b2e7ffeb, 2 ha, volledig op de afschermingsroute. Y2050 op dezelfde reeks 4,5 ha, ook daar volledig
+				op de afscherming. Dat is de orde van de maskering zelf.
+
+				op commit 3599d264, 59,4 ha, waarvan 57,4 op de opleggingsroute. Daar zit fe94ad08 tussen, de overloop van de
+				veenbouwstenen uit #761: die legt bouwstenen ook buiten het eigen peilgebied neer, dus de oplegging dekt meer
+				cellen dan toen deze standtifs werden gealloceerd. De gealloceerde waterberging ging daar naar natuur
+				(29,4 ha), rietteelt (25,7 ha) en vernat grasland (2,3 ha). Geen fout in #761; dit is de teller die zegt dat de
+				stand achterloopt op de oplegging.
+
+				op de stand van 31 augustus, gealloceerd voordat #749 de begrenzing van bebouwd gebied verving, 1.210,3 ha,
+				vrijwel volledig op de opleggingsroute, met dezelfde drie bestemmingen (rietteelt 554,4 ha, natuur 451,6 ha,
+				vernat grasland 204,0 ha). De arealenindicator zag toen 57,9 procent van de eigen stand, en meldde het
+				vintageverschil als een sprong van 74,9 procent.
+
+				Lees het getal dus zo: staat Opp_DoorOplegging boven nul, dan draai je een gemengde vintage en is elk getal dat
+				de kaart met de stand vergelijkt verdacht. Wat daarnaast overblijft is de maskering, en die is klein."
+	{
+		attribute<Bool> HeeftEigenCase (AdminDomain) :=
+			   MakeDefined(Allocatie == Wonen_LUT,              FALSE)
+			|| MakeDefined(Allocatie == Werken_LUT,             FALSE)
+			|| MakeDefined(Allocatie == Verblijfsrecreatie_LUT, FALSE)
+		, Descr = "Wijst de allocatie hier een klasse aan die een eigen case in de switch heeft? Die drie komen langs de dominantieregel op de kaart en hangen niet aan de generieke allocatiecase. Staat zo'n sector uit, dan is de bijbehorende LUT null en levert de vergelijking null; vandaar MakeDefined om de heen.";
+
+		attribute<Bool> IsOplegging (AdminDomain) := =IsStartJaar ? 'const(FALSE, AdminDomain)' : 'IsDefined(ExogeenOpleggen)'
+		, Descr = "Dezelfde voorwaarde als de opleggingscase hierboven. Als indirecte expressie geschreven zodat het in het basisjaar een constante zonder supplier is, net als bij Toets_WonenOpWater.";
+
+		attribute<Bool> IsAfscherming (AdminDomain) := IsLU_exogenous || IsLU_Wonen || IsLU_Verblijfsrecreatie
+		, Descr = "De vierde case van de switch, die bestaand bebouwd gebied en exogeen grondgebruik ongemoeid laat.";
+
+		attribute<Bool> Cel (AdminDomain) := IsDefined(Allocatie) && !HeeftEigenCase && Result != Allocatie && Geography/rdc_meter/IsStudyArea_AdminDomain
+		, Descr = "De cel waar de allocatie een klasse zonder eigen case aanwijst en de kaart iets anders toont. Met opzet Result en niet Result_SA, zodat deze toets niet een weggeschreven kaart van gisteren naast de stand van vandaag legt; zie de toelichting bij Toets_WonenOpWater/IsWaterOpKaart.
+
+					Dat verschil is bij #766 zelf tegen de lamp gelopen. Een meting die hier Result_SA las kwam op 2 ha uit waar
+					deze teller 59,4 ha telde, en dat leek een tegenspraak. Het waren twee kaarten: de weggeschreven tif was van
+					voor fe94ad08 en de verse switch van erna. Wie de kaart naast de stand legt moet dus weten welke van de twee
+					hij leest, en dat is precies waar dit issue over gaat.";
+
+		parameter<Ha> Opp                := sum(float32(Cel) * AdminDomain/NrHaPerCell), Descr = "Het totaal in hectares. Dit is het getal dat in Diagnose als alloc_niet_op_kaart_ha wordt weggeschreven.";
+		parameter<Ha> Opp_DoorOplegging  := sum(float32(Cel &&  IsOplegging) * AdminDomain/NrHaPerCell), Descr = "Afgevangen door de exogene oplegging. Hoort in een consistente run nul te zijn.";
+		parameter<Ha> Opp_DoorWater      := sum(float32(Cel && !IsOplegging &&  IsLU_Water) * AdminDomain/NrHaPerCell), Descr = "Afgevangen doordat de vorige kaart water toont.";
+		parameter<Ha> Opp_DoorAfscherming:= sum(float32(Cel && !IsOplegging && !IsLU_Water &&  IsAfscherming) * AdminDomain/NrHaPerCell), Descr = "Afgevangen door de afscherming van bestaand bebouwd gebied en exogeen grondgebruik.";
+		parameter<Ha> Opp_DoorDominantie := sum(float32(Cel && !IsOplegging && !IsLU_Water && !IsAfscherming) * AdminDomain/NrHaPerCell), Descr = "Wat overblijft: de dominantieregel voor wonen, werken of verblijfsrecreatie wint van de allocatie. De vier uitsplitsingen volgen de volgorde van de switch en tellen samen op tot Opp.";
 	}
 }

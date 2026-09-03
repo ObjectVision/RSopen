@@ -73,6 +73,11 @@ container Grondgebruik : using = "/SourceData/Grondgebruik"
 		, Descr = "Verstedelijking buiten bestaand bebouwd gebied, de teller van het buitenstedelijke aandeel. Leest sinds #749 dezelfde begrenzing als de zeef en de trede, namelijk de eigen afleiding met peiljaar ModelParameters/BegrenzingBebouwdGebied_jaar. Stond daarvoor op de CBS-bevolkingskernen van 2011, en die zijn in dit model vijftien jaar ouder dan het basisjaar: alles wat tussen 2011 en 2022 is gebouwd telde hier dus als buitenstedelijk terwijl het inmiddels binnen de kom valt.";
 		
 		attribute<bool> Verstedelijking                             (AdminDomain) := Sector_rel_Verstedelijking_Buitenstedelijk
+		, Descr = "Verstedelijking buiten bestaand bebouwd gebied, in hectares. Leest via Sector_rel de stand en niet de landgebruikskaart, en is daarmee ongevoelig voor de maskering die #766 beschrijft. Dat de drie arealenindicatoren in deze container uit verschillende bronnen lezen is sinds #766 een bewuste keuze per indicator en niet een verschil dat er toevallig in is gegroeid: hier de stand, bij NieuweNatuur de kaart, bij WaterbergingVeen weer de stand.
+
+					Let op dat de vruchtbare-grondvarianten van alle drie wel de kaart lezen, want zij snijden op
+					VerdwenenVruchtbareLandbouw. Daar is dat de goede bron: de vraag is of de cel landbouw WAS en het niet meer is,
+					en dat is precies wat de kaart bijhoudt."
 		{
 			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
 			parameter<ha> Per_NL := sum(float32(.) * AdminDomain/NrHaPerCell);
@@ -93,6 +98,18 @@ container Grondgebruik : using = "/SourceData/Grondgebruik"
 		
 		// Cellen die in het zichtjaar natuur zijn en dat in het basisjaar niet waren.
 		attribute<bool> NieuweNatuur (AdminDomain) := Natuur_Zichtjaar && !Natuur_Basisjaar
+		, Descr = "Cellen die in het zichtjaar natuur zijn en dat in het basisjaar niet waren.
+
+					Deze indicator leest met opzet de kaart en niet de stand, anders dan WaterbergingVeen hieronder, en dat is bij
+					#766 nagemeten in plaats van aangenomen. Natuur is in deze toepassing geen gealloceerde sector: in
+					ModelParameters/SectorAllocRegio staan alleen wonen, werken en waterberging. Nieuwe natuur komt uitsluitend
+					uit VariantData/ExogeenOpleggen, en die heeft in de switch van de landgebruikskaart de tweede case, meteen na
+					geen data. Er is dus geen case die haar kan maskeren, en er is ook geen stand om in plaats van de kaart te
+					lezen. Gemeten in WLO_hoog_NbSGenuanceerd Y2040: nul hectare gealloceerde natuur, 972.836 ha natuur op de kaart.
+
+					Wat de kaart hier wel afsnijdt is het deel van de levering dat binnen bestaand bebouwd gebied valt, want
+					ExogeenOpleggen/MagOpleggen laat dat vervallen voordat de kaart eraan toekomt. Dat is de keuze uit #641 en niet
+					een maskering door de switch; hoeveel het is telt ExogeenOpleggen/Opp_GespaardInBebouwdGebied."
 		{
 			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
 			parameter<ha> Per_NL            := sum(float32(.) * AdminDomain/NrHaPerCell);
@@ -116,9 +133,31 @@ container Grondgebruik : using = "/SourceData/Grondgebruik"
 		}
 
 		// De waterbergingsector, in NL2120 de waterberging in het veenweidegebied.
-		parameter<LU_ModelType> Waterberging_LUT := rlookup(lowercase('Waterberging_Totaal'), lowercase(LU_ModelType/Label)), Descr = "Opgezocht in plaats van rechtstreeks naar LU_ModelType/V/Waterberging_Totaal verwezen. De klassenset hangt aan de actieve sectoren in ModelParameters/SectorAllocRegio; staat waterberging uit, dan bestaat die klasse niet en levert een rechtstreekse verwijzing een parsefout op. Nu is de uitkomst dan null en zijn de indicatoren hieronder overal false.";
-		
-		attribute<bool> WaterbergingVeen (AdminDomain) := MakeDefined(LU_MT_Zichtjaar == Waterberging_LUT, FALSE)
+		parameter<Sector> Waterberging_Sector := rlookup(lowercase('Waterberging'), lowercase(/Classifications/Actor/Sector/name)), Descr = "Opgezocht in plaats van rechtstreeks naar Sector/V/Waterberging verwezen. De unit Sector wordt opgebouwd uit de actieve regels in ModelParameters/SectorAllocRegio; staat waterberging uit, dan bestaat die sector niet en levert een rechtstreekse verwijzing een parsefout op. Nu is de uitkomst dan null en zijn de indicatoren hieronder overal false.
+
+					Hier stond tot #766 dezelfde constructie op de landgebruiksklasse, Waterberging_LUT, want de indicator las toen de kaart. Die is met de bronwissel meegegaan; hij had daarna geen enkele lezer meer.";
+
+		attribute<bool> WaterbergingVeen (AdminDomain) := MakeDefined(Sector_rel == Waterberging_Sector, FALSE)
+		, Descr = "Waar heeft het model waterberging gealloceerd? Leest sinds #766 de stand en niet de landgebruikskaart, net als Verstedelijking hierboven.
+
+					Waarom dat uitmaakt. Waterberging is de enige gealloceerde sector zonder eigen case in de switch van
+					Templates/Indicatoren/Landgebruikskaart: wonen, werken en verblijfsrecreatie komen daar langs de dominantieregel
+					op de kaart, waterberging hangt aan de generieke allocatiecase, en die staat achter de afscherming van de
+					oplegging, van water en van bestaand bebouwd gebied. Alles wat daarvoor wint maskeert de gealloceerde klasse.
+
+					Gemeten in WLO_hoog_NbSGenuanceerd Y2040, met de kaart van 3 september 2026. Op de stand van 2 september, dus
+					stand en basisdata uit dezelfde reeks, scheelt de bron 2 van de 2.909 ha. Op de stand van 31 augustus, die is
+					gealloceerd voordat #749 de begrenzing van bebouwd gebied verving, scheelde zij 1.210 van de 2.872 ha ofwel 42
+					procent, alles langs de opleggingscase. Dat tweede is een vintageverschil en geen inhoudelijk resultaat, maar de
+					indicator meldde het als een sprong van 74,9 procent terwijl de werkelijke verandering 1,28 procent was.
+
+					Zolang deze indicator de kaart las kon zij dus niet naast de bergingscapaciteit gelegd worden, want die leest de
+					stand. Nu tellen de twee dezelfde cellen.
+
+					Wat er niet mee verandert: de kaart houdt haar voorrangsregel, en het verschil tussen kaart en stand wordt
+					geteld in Landgebruikskaart/Toets_AllocatieZonderEigenCase. De exogeen opgelegde waterstroom van veenbouwsteen
+					9a en 9b telt hier net zo min mee als voorheen: die komt als Water_Totaal op de kaart en niet als
+					Waterberging_Totaal, en staat sowieso niet in de stand."
 		{
 			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
 			parameter<ha> Per_NL            := sum(float32(.) * AdminDomain/NrHaPerCell);
