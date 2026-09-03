@@ -998,14 +998,28 @@ container Natuur
 						)
 					, Descr = "Geschiktheid per bouwsteen: dezelfde vorm als bij de typen, aanhaking plus ruis, en null buiten de zeef. De aanhakingsterm is voor alle bouwstenen gelijk en valt dus weg in de keuze tussen bouwstenen; hij bepaalt alleen welke cellen het eerst aan de beurt zijn. Welke bouwsteen een cel wordt hangt uitsluitend af van de ruis, en die is per bouwsteen glad, zodat ze als vlekken naast elkaar komen te liggen.";
 
+					parameter<bool> ClaimNoemerExclBebouwd := TRUE
+					, Descr = "Gelden de aangeleverde percentages over het hele peilgebied, of over het deel dat het model mag omzetten?
+
+								Staat aan, op het antwoord in #761: over het deel dat het model mag omzetten, dus zonder bestaand bebouwd gebied en zonder exogeen grondgebruik. Dat is dezelfde afbakening als BaseData/Omgeving/Opleggingsmasker/MagOpleggen, en daarmee dezelfde die zegt waar er uberhaupt iets opgelegd mag worden.
+
+								Uit geeft het gedrag van voor #761: de fractie maal het hele gerasterde peilgebied. Dat leverde een opgave op die niet kon passen. Gemeten op 2026-09-03: de aangeleverde percentages beslaan 90,7 procent van het peilgebiedoppervlak, terwijl het masker en de pandentoets samen 13,7 procent van het veengebied wegnemen. De landelijke opgave lag daarmee 23.593 ha boven alles wat er aan kandidaatruimte is, en dat deel was met geen enkele allocatieregel te halen.
+
+								Wat de schakelaar niet doet is de pandentoets uit de noemer halen. Die weert de allocatie van losse cellen met een BAG-pand (#661) en is een keuze van het model, geen uitspraak over waar de levering geldt; het tekort dat daaruit volgt hoort zichtbaar te blijven. Bestaand bebouwd gebied en infrastructuur zijn dat wel, want daar legt het model in geen enkele variant iets op.
+
+								De typenallocatie hieronder houdt de oude noemer. Die route bepaalt sinds #684 niets meer, en haar controlegetal Controle/PerType legt de gerasterde opgave naast het areaal dat rechtstreeks uit de polygonen volgt. Die vergelijking bewaakt het rasteren en werkt alleen met het hele peilgebied als noemer.";
+
+					attribute<float32> Claim_Weging (VeenCel) := ClaimNoemerExclBebouwd ? float32(/BaseData/Omgeving/Opleggingsmasker/MagOpleggen[VeenCel/AdminDomain_rel]) : 1f
+					, Descr = "Het gewicht waarmee elke veencel in de noemer van de opgave meetelt: een, of nul waar het model niets mag opleggen. Omdat de fractie binnen een peilgebied overal gelijk is komt de gewogen som neer op fractie maal het toegestane deel van het peilgebied.";
+
 					container Claim_Bouwsteen :=
 						for_each_nedv(
 							BouwsteenType/name
-							, 'sum(Fr_perBouwsteen/' + BouwsteenType/name + '[VeenCel/AdminDomain_rel], Peilvak_rel_Cel) * AdminDomain/NrHaPerCell'
+							, 'sum(Fr_perBouwsteen/' + BouwsteenType/name + '[VeenCel/AdminDomain_rel] * Claim_Weging, Peilvak_rel_Cel) * AdminDomain/NrHaPerCell'
 							, Peilvak
 							, Ha
 						)
-					, Descr = "De opgave per peilvak per bouwsteen: de aangeleverde fractie maal het gerasterde peilvakoppervlak. Dit is de levering zelf, zonder tussenstap; de omweg via de natuurbeheertypen die de typenallocatie maakt is hier niet nodig.
+					, Descr = "De opgave per peilvak per bouwsteen: de aangeleverde fractie maal het deel van het gerasterde peilgebied dat volgens ClaimNoemerExclBebouwd meetelt. Dit is de levering zelf, zonder tussenstap; de omweg via de natuurbeheertypen die de typenallocatie maakt is hier niet nodig.
 
 								De som blijft onder het peilvakoppervlak, want bouwsteen 0, 1 en 10 zijn niet aangeleverd. Dat verschil valt in het type Rest van NatuurAlloc_T en houdt zijn huidige grondgebruik, zie Fr_Bouwsteen_Rest.";
 
@@ -1015,8 +1029,51 @@ container Natuur
 					container Alloc_Bouwsteen := /Templates/SourceData/NatuurAlloc_T('Veen bouwstenen NbSGenuanceerd', BouwsteenType, Peilvak, Claim_Bouwsteen, Geschiktheid_Bouwsteen, SloopgebiedVoorPandentoets)
 					, Descr = "Trap 1 van de opzet bij #684. Hetzelfde sjabloon als de typenallocatie, alleen met de bouwstenen als typen en zonder beheertype, dus het legt niets op. Wat eruit komt is Bouwsteen_rel hieronder.";
 
-					attribute<BouwsteenType> Bouwsteen_rel (AdminDomain) := Alloc_Bouwsteen/Type/Src_rel[Alloc_Bouwsteen/Type_rel]
-					, Descr = "Welke bouwsteen is hier gealloceerd, null waar de cel in het type Rest valt of buiten het veengebied ligt. Dit is het item dat #684 vraagt: hieruit volgt via kolom J van de bouwstenentabel of er gesloopt wordt.";
+					attribute<BouwsteenType> Bouwsteen_Trap1_rel (AdminDomain) := Alloc_Bouwsteen/Type/Src_rel[Alloc_Bouwsteen/Type_rel]
+					, Descr = "Welke bouwsteen heeft de eerste trap hier neergelegd, null waar de cel in het type Rest valt of buiten het veengebied ligt. De overloop hieronder leest dit item om te weten welke cellen al vergeven zijn; wat er uiteindelijk ligt staat in Bouwsteen_rel.";
+
+					attribute<bool> HeeftBouwsteen_Trap1 (AdminDomain) := IsDefined(Bouwsteen_Trap1_rel);
+
+					// ---- de overloop op de bouwstenen: wat het eigen peilgebied niet bood landt binnen het deelgebied, #761 ----
+
+					attribute<bool> IsWaterBouwsteen (BouwsteenType) := BouwsteenType/code == '9a' || BouwsteenType/code == '9b'
+					, IntegrityCheck = "sum(uint32(this)) == 2"
+					, Descr = "Welke bouwstenen mogen bestaand open water vervangen? Bouwsteen 9a en 9b, de twee waterbouwstenen. Dat is het antwoord uit #761 op de vraag waar de overloop mag landen: op bestaande natuur mag alles, op bestaand water alleen deze twee.
+
+								De IntegrityCheck telt dat het er precies twee zijn. Zonder die telling zou een hernummering van de bouwstenen, zoals #762 er een aankondigt, deze regel stil op nul zetten en zou de overloop overal op bestaand water mogen landen.";
+
+					container Claim_Overloop_Bouwsteen :=
+						for_each_nedv(
+							BouwsteenType/name
+							, 'sum(Alloc_Bouwsteen/Controle/Tekort/' + BouwsteenType/name + ', Deelgebied/Per_Peilvak)'
+							, Deelgebied
+							, Ha
+						)
+					, Descr = "De opgave van de tweede trap: per deelgebied per bouwsteen wat de eerste trap in de eigen peilgebieden niet kwijt kon. Dit is de overheveling die #660 voor de natuurbeheertypen besloot en die in #761 ook voor de bouwstenen is toegestaan.
+
+								Zelfde opzet als Claim_Overloop bij de typen, en om dezelfde reden twee trappen en niet een grovere claimregio: het peilgebied blijft leidend voor alles wat er wel in past, en alleen het restant schuift. Hier komt ook het afrondingsgruis terecht, want de eerste trap kapt elke opgave af op hele cellen van 0,0625 ha.";
+
+					container Geschiktheid_Overloop_Bouwsteen :=
+						for_each_nedv(
+							BouwsteenType/name
+							, (IsWaterBouwsteen ? 'HeeftBouwsteen_Trap1' : 'HeeftBouwsteen_Trap1 || Basisjaar/IsWater')
+								+ ' ? null_f : Geschiktheid_Bouwsteen/' + BouwsteenType/name
+							, AdminDomain
+							, float32
+						)
+					, Descr = "De geschiktheid van de tweede trap: dezelfde aanhaking en dezelfde ruis als de eerste, met twee uitsluitingen. De cellen die de eerste trap al heeft vergeven, want die zijn op. En bestaand open water voor alle bouwstenen behalve 9a en 9b, conform het antwoord in #761.
+
+								Bestaande natuur staat er bewust niet bij. Bij de typenallocatie is die wel uitgesloten, omdat overloop op andermans bestaande natuur de opgave op papier zou halen zonder dat er iets verandert. Voor de bouwstenen is in #761 het omgekeerde besloten: de bouwstenen beschrijven een eindtoestand, dus bestaande natuur mag herlabeld worden.";
+
+					container Alloc_Bouwsteen_Overloop := /Templates/SourceData/NatuurAlloc_T('Veen bouwstenen overloop', BouwsteenType, Deelgebied, Claim_Overloop_Bouwsteen, Geschiktheid_Overloop_Bouwsteen, SloopgebiedVoorPandentoets)
+					, Descr = "De tweede trap, hetzelfde sjabloon met het deelgebied als claimregio. Wat ook hier niet past is het eindtekort, en dat is de onderrealisatie die aan team Veen wordt teruggekoppeld; zie Diagnose/VeenNatuur/Bouwstenen.";
+
+					attribute<BouwsteenType> Bouwsteen_Overloop_rel (AdminDomain) := Alloc_Bouwsteen_Overloop/Type/Src_rel[Alloc_Bouwsteen_Overloop/Type_rel];
+
+					attribute<BouwsteenType> Bouwsteen_rel (AdminDomain) := MakeDefined(Bouwsteen_Trap1_rel, Bouwsteen_Overloop_rel)
+					, Descr = "Welke bouwsteen ligt hier, over de twee trappen samen. Null waar de cel in het type Rest valt of buiten het veengebied ligt. Dit is het item dat #684 vraagt: hieruit volgt via kolom J van de bouwstenentabel of er gesloopt wordt, en hieraan hangt ook de samenstelling van trap 2 hieronder.
+
+								De twee trappen overlappen per constructie niet, want de overloop mag alleen landen waar de eerste trap niets heeft neergelegd. De MakeDefined is dus een samenvoeging en geen voorrang.";
 
 					attribute<Classifications/Modellering/BouwregimeK> Bouwregime_uitBouwsteen (AdminDomain) :=
 						MakeDefined(BouwsteenType/BouwregimeK_rel[Bouwsteen_rel], Classifications/Modellering/BouwregimeK/V/Bouwen)

@@ -879,6 +879,7 @@ container Diagnose
 		{
 			container Veen := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Veen;
 			container Bsn  := Veen/Alloc_Bouwsteen;
+			container Ovl  := Veen/Alloc_Bouwsteen_Overloop;
 
 			parameter<Bool> IsVanToepassing := /Diagnose/Variant == 'NbSGenuanceerd' && Veen/SloopUitGealloceerdeBouwsteen
 			, Descr = "Draait deze casus de bouwsteenallocatie? Alleen NbSGenuanceerd heeft een veenlevering, en alleen met de schakelaar aan bepaalt zij de oplegging. Staat hij op onwaar, dan schrijven de drie uitdraaien een regel die dat zegt, in plaats van een allocatie af te dwingen die deze casus niet gebruikt. Dat is nodig omdat GenerateAll deze items ook in een BAU-run opvraagt.";
@@ -898,55 +899,74 @@ container Diagnose
 			attribute<float32> Opp          (P) := float32(Veen/Opp_Peilvak);
 
 			attribute<Bool>    IsVrij (/Geography/AdminDomain) := Bsn/IsKandidaat && !Veen/HeeftBouwsteen
-			, Descr = "Kandidaatcellen die na de allocatie geen bouwsteen hebben gekregen. Dit is de ruimte waar een overlooptrap terecht zou kunnen; per deelgebied staat zij in de uitdraai perdeelgebied.";
+			, Descr = "Kandidaatcellen die na beide trappen geen bouwsteen hebben gekregen. Dit is de ruimte die na de overloop nog over is; blijft zij op nul terwijl er nog een tekort staat, dan is het deelgebied vol.";
 
 			attribute<float32> Vrij_D (D) := sum(float32(IsVrij && IsDefined(D/Per_AdminDomain)), D/Per_AdminDomain) * HaPerCel;
+
+			attribute<float32> Ontvangen_Overloop (P) := sum(float32(IsDefined(Veen/Bouwsteen_Overloop_rel) && IsDefined(Veen/Peilvak/Per_AdminDomain)), Veen/Peilvak/Per_AdminDomain) * HaPerCel
+			, Descr = "Hoeveel de tweede trap in dit peilgebied heeft neergelegd. Dat is opgave van een ander peilgebied binnen hetzelfde deelgebied, dus het telt niet mee in het tekort van dit gebied maar het staat er straks wel.";
 
 			attribute<float32> Opgave_D       (D) := sum(Opgave,       D/Per_Peilvak);
 			attribute<float32> Gerealiseerd_D (D) := sum(Gerealiseerd, D/Per_Peilvak);
 			attribute<float32> Tekort_D       (D) := sum(Tekort,       D/Per_Peilvak);
+			attribute<float32> Overloop_D     (D) := float32(Ovl/Controle/Gerealiseerd_Totaal);
+			attribute<float32> EindTekort_D   (D) := float32(Ovl/Controle/Tekort_Totaal_Regio);
 
 			parameter<String> Regel_Realisatie :=
 				  'claim_ha;'               + string(float32(Bsn/Controle/Claim_NL))
-				+ ';gerealiseerd_ha;'       + string(float32(Bsn/Controle/Gerealiseerd_NL))
-				+ ';tekort_ha;'             + string(float32(Bsn/Controle/Tekort_NL))
+				+ ';gerealiseerd_eigen_ha;' + string(float32(Bsn/Controle/Gerealiseerd_NL))
+				+ ';tekort_eigen_ha;'       + string(float32(Bsn/Controle/Tekort_NL))
+				+ ';overloop_ha;'           + string(float32(Ovl/Controle/Gerealiseerd_NL))
+				+ ';tekort_ha;'             + string(float32(Ovl/Controle/Tekort_NL))
 				+ ';afgedwongen_tekort_ha;' + string(sum(max_elem(Krapte, 0f)))
 				+ ';n_peilvak;'             + string(float32(#P))
 				+ ';n_krap;'                + string(sum(float32(Krapte > 0f)))
 				+ ';veengebied_ha;'         + string(float32(Veen/Controle/Areaal_Veengebied))
 				+ ';kandidaatruimte_ha;'    + string(sum(Ruimte))
 				+ ';verlies_panden_ha;'     + string(float32(Bsn/Controle/Verlies_Pandentoets_NL))
-				+ ';vrije_ruimte_ha;'       + string(sum(float32(IsVrij)) * HaPerCel);
+				+ ';vrije_ruimte_ha;'       + string(sum(float32(IsVrij)) * HaPerCel)
+				+ ';trap1_op_bestaand_water_ha;' + string(sum(float32(Veen/HeeftBouwsteen_Trap1 && !MakeDefined(Veen/IsWaterBouwsteen[Veen/Bouwsteen_Trap1_rel], FALSE) && /SourceData/Grondgebruik/Natuur/Basisjaar/IsWater)) * HaPerCel);
 
 			parameter<String> realisatie := =IsVanToepassing ? 'Regel_Realisatie' : 'NietVanToepassing'
 			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_realisatie.txt'", StorageType = "str"
-			, Descr = "De opgave van de bouwstenen en wat de allocatie ervan haalt, landelijk. Drie getallen verklaren het tekort samen: veengebied_ha min kandidaatruimte_ha is wat het masker en de pandentoets wegnemen, en claim_ha min kandidaatruimte_ha is het deel van de opgave dat nergens in het veengebied kan landen. Wat daarna overblijft is vrije_ruimte_ha, en dat is ruimte die in een ander peilgebied ligt dan waar de opgave staat.
+			, Descr = "De opgave van de bouwstenen en wat de twee trappen ervan halen, landelijk. Gerealiseerd_eigen_ha is de eerste trap in het eigen peilgebied, overloop_ha is wat de tweede trap daarna binnen het deelgebied plaatst, en tekort_ha is wat ook daarna nergens paste. Dat laatste is het getal dat na een run aan team Veen wordt gemeld.
 
-						Afgedwongen_tekort_ha is de som van de positieve krapte per peilgebied: het deel van het tekort dat de capaciteit van het eigen peilgebied afdwingt, hoe de allocator ook kiest. Ligt dat dicht bij tekort_ha, dan speelt de keuze tussen bouwstenen binnen een peilgebied geen rol.";
+						Drie getallen verklaren dat tekort. Veengebied_ha min kandidaatruimte_ha is wat het opleggingsmasker en de pandentoets wegnemen. Claim_ha min kandidaatruimte_ha is het deel van de opgave dat nergens in het veengebied kan landen, en dat hoort sinds de noemerkeuze in #761 negatief te zijn. Vrije_ruimte_ha is wat er na beide trappen nog aan kandidaatcellen over is; staat die op nul terwijl er nog een tekort is, dan zit het deelgebied vol.
 
-			parameter<String> Regel_Terugkoppeling := 'sleutel;deelgebied;opp_ha;opgave_ha;ruimte_ha;gerealiseerd_ha;tekort_ha|' + AsList(
+						Afgedwongen_tekort_ha is de som van de positieve krapte per peilgebied: het deel van het tekort van de eerste trap dat de capaciteit van het eigen peilgebied afdwingt, hoe de allocator ook kiest. Ligt dat dicht bij tekort_eigen_ha, dan speelt de keuze tussen bouwstenen binnen een peilgebied geen rol.
+
+						De laatste kolom staat er als openstaand punt. De regel uit #761 dat bestaand open water alleen door een waterbouwsteen vervangen mag worden, is ingebouwd in de tweede trap en niet in de eerste; de zeef van trap 1 is het hele veengebied. Deze kolom telt hoeveel hectare bestaand open water de eerste trap met een andere bouwsteen bedekt. Is dat een groot getal, dan verdient de regel het om ook in trap 1 te gelden.";
+
+			parameter<String> Regel_Terugkoppeling := 'sleutel;deelgebied;opp_ha;opgave_ha;ruimte_ha;gerealiseerd_ha;tekort_ha;ontvangen_overloop_ha|' + AsList(
 				  Veen/Peilvak/Sleutel + ';'
 				+ Veen/Peilvak/Deelgebied_Naam + ';'
 				+ string(Opp) + ';'
 				+ string(Opgave) + ';'
 				+ string(Ruimte) + ';'
 				+ string(Gerealiseerd) + ';'
-				+ string(Tekort), '|');
+				+ string(Tekort) + ';'
+				+ string(Ontvangen_Overloop), '|');
 
 			parameter<String> terugkoppeling := =IsVanToepassing ? 'Regel_Terugkoppeling' : 'NietVanToepassing'
 			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_terugkoppeling.txt'", StorageType = "str"
-			, Descr = "De onderrealisatie per peilgebied van de route die de kaart maakt. Dit is de tabel die in #660 als actie voor team RS staat en die in #761 op de bouwsteenroute is gezet. De sleutel is GPGIDENT voor de peilvakkenlaag en de deelgebiednaam voor de laag zonder peilvak. Rijen gescheiden door een verticale streep; filter op tekort_ha groter dan nul voor de gebieden waar de opgave niet paste.";
+			, Descr = "De onderrealisatie per peilgebied van de route die de kaart maakt. Dit is de tabel die in #660 als actie voor team RS staat en die in #761 op de bouwsteenroute is gezet.
 
-			parameter<String> Regel_PerDeelgebied := 'deelgebied;opgave_ha;gerealiseerd_ha;tekort_ha;vrije_ruimte_ha|' + AsList(
+						Opgave, ruimte, gerealiseerd en tekort gaan over de eigen opgave van het gebied, dus over de eerste trap. Ontvangen_overloop_ha staat er los naast: dat is opgave van een ander peilgebied binnen hetzelfde deelgebied die hier is geland. Die twee mogen niet bij elkaar opgeteld worden, want dan telt dezelfde hectare twee keer mee.
+
+						De sleutel is GPGIDENT voor de peilvakkenlaag en de deelgebiednaam voor de laag zonder peilvak. Rijen gescheiden door een verticale streep; filter op tekort_ha groter dan nul voor de gebieden waar de opgave niet paste.";
+
+			parameter<String> Regel_PerDeelgebied := 'deelgebied;opgave_ha;gerealiseerd_eigen_ha;tekort_eigen_ha;overloop_ha;tekort_ha;vrije_ruimte_ha|' + AsList(
 				  D/Label + ';'
 				+ string(Opgave_D) + ';'
 				+ string(Gerealiseerd_D) + ';'
 				+ string(Tekort_D) + ';'
+				+ string(Overloop_D) + ';'
+				+ string(EindTekort_D) + ';'
 				+ string(Vrij_D), '|');
 
 			parameter<String> perdeelgebied := =IsVanToepassing ? 'Regel_PerDeelgebied' : 'NietVanToepassing'
 			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_perdeelgebied.txt'", StorageType = "str"
-			, Descr = "Hetzelfde per deelgebied, met de vrije kandidaatruimte erbij. Het deelgebied is de claimregio die #660 voor de overloop aanwijst, dus deze twee kolommen naast elkaar zeggen hoeveel van het tekort binnen het eigen deelgebied nog te plaatsen zou zijn. Gemeten op 2026-09-03 is de vrije ruimte in zeven van de acht deelgebieden kleiner dan het tekort.";
+			, Descr = "Hetzelfde per deelgebied, en dit is de regio waarop de overloop uit #761 werkt. Tekort_eigen_ha is wat de peilgebieden binnen dit deelgebied zelf niet konden bergen en dus de tweede trap in ging; overloop_ha is wat die trap ervan plaatste en tekort_ha is wat er daarna nog ontbreekt. Vrije_ruimte_ha zegt of er nog kandidaatcellen over zijn: is die nul en het tekort niet, dan is het deelgebied vol en helpt geen enkele verdeling meer.";
 		}
 	}
 	container Veenreserve
