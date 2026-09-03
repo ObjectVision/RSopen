@@ -152,7 +152,7 @@ container Diagnose
 		);
 
 	parameter<String> GenerateAll := 'Klaar'
-	, ExplicitSuppliers = "=AsList('Resultaten/'+Checks/name+'/Waarde', ';')+';/Diagnose/grondbalans_bestemmingen;/Diagnose/Ongemeten/uitdraaiWB;/Diagnose/VeenNatuur/Bouwstenen/realisatie;/Diagnose/VeenNatuur/Bouwstenen/terugkoppeling;/Diagnose/VeenNatuur/Bouwstenen/perdeelgebied'"
+	, ExplicitSuppliers = "=AsList('Resultaten/'+Checks/name+'/Waarde', ';')+';/Diagnose/grondbalans_bestemmingen;/Diagnose/Ongemeten/uitdraaiWB;/Diagnose/VeenNatuur/Bouwstenen/realisatie;/Diagnose/VeenNatuur/Bouwstenen/terugkoppeling;/Diagnose/VeenNatuur/Bouwstenen/perdeelgebied;/Diagnose/waterberging_perregio'"
 	, Descr = "Rekent in een aanroep alle controlewaarden uit en schrijft ze weg. De tabel Checks levert het merendeel; de items die er met de hand achter staan horen er net zo goed bij, maar passen niet als rij in die tabel.
 
 				Check_T kent een pad, een item en een aggregatiecode, en maakt daarmee een enkel getal uit een enkel item. grondbalans_bestemmingen en Ongemeten/uitdraaiWB zetten juist een reeks gelabelde waarden uit verschillende items in een regel, met eigen rekenwerk erin, en uitdraaiWB leest bovendien BaseData en het basisjaar en niet een van de drie paden Z, V en A die Check_T kent. Ze zijn dus niet in de tabel te vangen zonder Check_T te verbouwen. De twee paden staan volledig gekwalificeerd, om dezelfde reden als in de Maak-containers van SourceData: een ongekwalificeerde naam zou stil naar een gelijknamig item hogerop oplossen zodra dit item wordt hernoemd of verplaatst.
@@ -193,15 +193,51 @@ container Diagnose
 	, StorageType = "str"
 	, Descr = "De negen waterbergingsregio's in de volgorde van de unit, dus de volgorde van de shapefile met de restregio erachter, plus de vlag die zegt welke de restregio is. Nodig om claimreal_Waterberging te kunnen lezen: die uitdraai gebruikt AsList en dat slaat de null-waarden over, dus een regio zonder opgave verschijnt er niet in en de posities schuiven op. Zonder deze lijst is niet te zeggen welke regio bij welk getal hoort.";
 
+	container Waterberging_Veenwater
+	: Descr = "Het bergingsvolume dat op de cellen ligt die de veenlevering als open water aanwijst, de bouwstenen 9a en 9b. Zie #761: team Stad vroeg wat de bouwstenen zelf aan berging opleveren naast de opgave die zij per deelgebied aanleveren.
+
+				Dit is geen tweede claim en het mag niet bij het gerealiseerde volume worden opgeteld. Sinds #664 bepaalt de veenallocatie waar dat open water komt en gebruikt de sector waterberging diezelfde cellen als voorkeurslocatie, zodat de aangeleverde opgave daar landt in plaats van er bovenop te komen. Wat hier staat is dus de bovengrens van wat de veenlevering op die plekken kan bergen, en de vergelijking met de opgave zegt hoeveel van die opgave alleen al uit de bouwstenen kan komen.
+
+				Alleen NbSGenuanceerd heeft een veenlevering. In een andere casus staan de kolommen op nul in plaats van dat zij de veenallocatie afdwingen, want die is daar niet in gebruik."
+	{
+		unit<UInt32> R := /SourceData/RegioIndelingen/Waterbergingsregio;
+
+		container Veen := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Veen;
+
+		attribute<Bool> IsWaterBouwsteen (Veen/BouwsteenType) := Veen/BouwsteenType/deelstrategie == 'waterbuffering'
+		, IntegrityCheck = "sum(uint32(this)) == 2"
+		, Descr = "De twee bouwstenen die open water opleggen, 9a nieuw open water voor waterbuffering en 9b bestaand open water met extra buffercapaciteit. Herkend aan de kolom deelstrategie en niet aan de code, zodat de hernummering uit #762 hem niet stil uitschakelt.";
+
+		attribute<Bool> IsVeenWaterCel (/Geography/AdminDomain) := MakeDefined(IsWaterBouwsteen[Veen/Bouwsteen_rel], FALSE);
+
+		attribute<float32> Volume_Cel (/Geography/AdminDomain) := MakeDefined(float32(/BaseData/Suitabilities/Waterberging/Diepte), 0f) * float32(/Geography/AdminDomain/NrMeter2PerCell)
+		, Descr = "De bergbare waterschijf maal het celoppervlak, dus m3 per cel. Leest hetzelfde item als de bergingscapaciteit in Templates/Densities/DichtheidZichtjaar_T en de geschiktheid, inclusief de bovengrens Maximum_Waterschijf; cellen daarboven tellen als nul.";
+
+		attribute<float32> Calc_Volume (R) := sum(IsVeenWaterCel ? Volume_Cel : 0f, R/Per_AdminDomain);
+		attribute<float32> Calc_Areaal (R) := sum(float32(IsVeenWaterCel), R/Per_AdminDomain) * float32(/Geography/AdminDomain/NrHaPerCell);
+
+		attribute<float32> Volume (R) := =/Diagnose/Variant == 'NbSGenuanceerd' ? 'Calc_Volume' : 'const(0f, R)';
+		attribute<float32> Areaal (R) := =/Diagnose/Variant == 'NbSGenuanceerd' ? 'Calc_Areaal' : 'const(0f, R)';
+	}
+
 	parameter<String> waterberging_perregio := =('
-		  '+quote('regio;opgave_m3;gerealiseerd_m3|')+' + AsList(
+		  '+quote('regio;opgave_m3;gerealiseerd_m3;saldo_m3;veenwater_m3;veenwater_ha|')+' + AsList(
 			/SourceData/RegioIndelingen/Waterbergingsregio/label + '+quote(';')+'
 			+ string('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging) + '+quote(';')+'
-			+ string('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/Stand_PerAllocRegio/meter3_Waterberging), '+quote('|')+')
+			+ string('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/Stand_PerAllocRegio/meter3_Waterberging) + '+quote(';')+'
+			+ string(float32('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/Stand_PerAllocRegio/meter3_Waterberging) - float32('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging)) + '+quote(';')+'
+			+ string(Waterberging_Veenwater/Volume) + '+quote(';')+'
+			+ string(Waterberging_Veenwater/Areaal), '+quote('|')+')
 	')
 	, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_waterberging_perregio.txt'"
 	, StorageType = "str"
-	, Descr = "De opgave en het gerealiseerde volume per waterbergingsregio, met de naam erbij. claimreal_Waterberging geeft alleen de verhouding en laat via AsList de regio's zonder opgave weg, dus daar is niet uit te lezen welke regio welk getal heeft en hoe groot de opgave daar is. Deze uitdraai wel.";
+	, Descr = "De opgave, het gerealiseerde volume en het saldo per waterbergingsregio, met de naam erbij, plus wat de waterbouwstenen van de veenlevering daar aan berging bieden. Dit is het antwoord op #761 aan de allocatiekant.
+
+				Saldo_m3 is gerealiseerd min opgave, dus negatief bij onderrealisatie en positief bij overrealisatie. Het model brengt een overschot niet terug: het allocatiedoel per iteratie is de opgave min de stand, geklemd op nul, zoals bij elke sector. En de opgave is cumulatief per zichtjaar, dus een tekort in het ene zichtjaar kan in het volgende alsnog worden ingelopen; lees deze uitdraai daarom als een stand en niet als een jaarsaldo.
+
+				Veenwater_m3 en veenwater_ha zijn geen tweede claim en mogen niet bij gerealiseerd_m3 worden opgeteld; zie de toelichting bij Waterberging_Veenwater.
+
+				claimreal_Waterberging uit de tabel Checks geeft alleen de verhouding tussen stand en opgave, en laat via AsList de regio's zonder opgave weg, dus daar is niet uit te lezen welke regio welk getal heeft en hoe groot de opgave daar is. Deze uitdraai wel, en hij loopt sinds #761 mee in GenerateAll.";
 
 	// --- landgebruikskaart: hoe vaak wint water van een stand die woningen telt (#665) ---
 	parameter<String> wonen_op_water := =('
