@@ -1,0 +1,113 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #765, verwijderen zodra de getallen in het issue staan.
+//
+// Toetst de aanname onder de verkorte allocatieopzet: valt er vanaf het drempeljaar werkelijk niets meer te alloceren?
+// Uit de toetsronde van #753 kwam dat BAU tussen Y2060 en Y2080 nog 22.042 woningen erbij krijgt terwijl de claim vanaf
+// Y2060 bevroren is. Dit harnas laat per zichtjaar zien waar die woningen vandaan komen en of er iets blijft liggen.
+//
+// De hele tabel komt uit de standtifs en uit de claim-csv, dus het toetsen kost geen allocatie. Dat is met opzet: een
+// toets die zelf een run kost is duurder dan de kwaal. Vraag het item Tabel op met StandAllocatieOntkoppeld op TRUE
+// (de default) en AlleenEindjaar op FALSE, anders bestaan de tussenliggende zichtjaren niet in de boom.
+//
+// De casus komt uit de omgevingsvariabele DiagCasus, net als bij de rest van het diagnoseharnas. DiagJaar wordt hier
+// NIET gebruikt: de tabel loopt over alle zichtjaren tegelijk, want de vraag gaat over het verloop van de reeks.
+//
+// LET OP bij het lezen van de uitkomst. De hypothese dat de groei na 2060 herbouw is van wat nieuwe natuur, water en
+// vernatting sloopten, is voor BAU al weerlegd voordat dit harnas draait: SloopVolgtExogeneOplegging staat op FALSE,
+// BAU kent geen landschapstypen en WaterbergingClaimActief staat er op FALSE, waardoor alle drie de sloopoorzaken uit
+// #658 nul zijn. Gemeten in de productiekopie: WLO_hoog_BAU_Y2040_sloop_nieuwenatuur.txt en de Y2120-versie staan
+// allebei op 0. De kolommen winst_op_bezet en winst_op_leeg hieronder wijzen dus aan waar de groei wel vandaan komt.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose765
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #765: valt er na het skeleton-drempeljaar nog iets te alloceren, en blijft er iets liggen?"
+{
+	parameter<String> Casus    := /Diagnose/Casus, Descr = "Uit de omgevingsvariabele DiagCasus, zie Diagnose.dms.";
+	parameter<String> Scenario := first(/Classifications/Modellering/ScenarioK/name), Descr = "Er is er maar een, WLO_hoog. Uit de classificatie gehaald en niet als tekst herhaald, zodat een tweede scenario dit harnas niet stil laat afwijken.";
+	parameter<String> Variant  := replace(Casus, Scenario+'_', ''), Descr = "De casusnaam is per definitie de scenarionaam, een onderstreepje en de variantnaam, zie Classifications/Modellering. Diagnose.dms doet dit met een hardgecodeerde prefix; deze vorm blijft kloppen als het scenario ooit anders heet.";
+
+	parameter<String> Instellingen :=
+		  'skeleton_actief;'          + string(/ModelParameters/Skeleton/Actief)
+		+ '|skeleton_vanafzichtjaar;' + string(/ModelParameters/Skeleton/VanafZichtjaar)
+		+ '|skeleton_iters_seq0;'     + string(/ModelParameters/Skeleton/AantalIters)
+		+ '|skeleton_iters_laterseq;' + string(/ModelParameters/Skeleton/AantalItersInLaterSeq)
+		+ '|default_iters;'           + string(/ModelParameters/Default_NrOfIters)
+		+ '|tigris_klemjaar;'         + string(/ModelParameters/Advanced/FromWhichDoWeKeepTIGRISconstant)
+		+ '|casus;'                   + Casus
+	, StorageName = "='%LocalDataProjDir%/Diagnose/765_instellingen_'+Casus+'.txt'", StorageType = "str"
+	, Descr = "Onder welke skeleton-instellingen de tabel hiernaast is gemaakt.
+
+				Dit is geen luxe maar de enige beschikbare herkomstregistratie. De standtifs dragen geen fingerprint, dus een tabel zonder deze regel is achteraf niet toe te wijzen aan een instelling, en twee tabellen uit verschillende runs zijn niet te onderscheiden. Sinds het leenmechanisme van #753 telt dat dubbel: een variant die de stand van een andere leent erft ook diens skeleton-instellingen, en daar waarschuwt niets voor. Schrijf deze uitdraai dus altijd samen met de tabel weg.";
+
+	unit<UInt8> Zichtjaar := /Classifications/Time/Zichtjaar
+	, Descr = "De zichtjarenreeks zoals de configuratie hem kent, dus meebewegend met Model_FirstZichtjaar en Model_FinalYear. Niet met de hand herhalen: dan loopt het harnas stil uit de pas zodra de reeks verandert."
+	{
+		attribute<String> Pad      := '/Indicatoren/'+Casus+'/Zichtjaren/'+name+'/';
+		attribute<String> PadClaim := '/VariantData/'+Variant+'/Claims/'+Scenario+'/Zichtjaren/'+name+'/'
+		, Descr = "De claimboom van deze variant. Alleen nodig voor TIGRIS_Jaar_name; de claimwaarden zelf komen via de indicatorenkant binnen, zodat claim en stand uit dezelfde boom komen.";
+		attribute<String> PadCR := Pad + 'ClaimRealisatie/Per_AllocRegio/NVM/'
+		, Descr = "De claimrealisatie per NVM-regio. Deze tak leest de claim uit de csv en de stand uit de tifs, en raakt de allocatieboom niet. Gebruik hier NIET ClaimRealisatie_Toets uit Templates/Indicatoren.dms: dat item leest /Allocatie/ en trekt een volledige allocatie mee.";
+
+		attribute<String> Claim := 'MakeDefined('+PadCR+'Impl/Claims/Aantal_Woningen_Totaal, 0[Woning])';
+		attribute<String> StandR := 'MakeDefined('+PadCR+'Impl/Stand_PerAllocRegio/Aantal_Woningen_Totaal, 0[Woning])';
+		attribute<String> Nu    := 'MakeDefined('+Pad+'Stand/Aantal_Woningen_Totaal, 0[Woning])';
+		attribute<String> Voor  := 'MakeDefined('+Pad+'PrevStand/Aantal_Woningen_Totaal, 0[Woning])';
+
+		attribute<String> expr :=
+			  quote(name+';')
+			+ ' + ' + PadClaim + 'TIGRIS_Jaar_name'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(' + Claim + '))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(' + StandR + '))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(' + Nu + '))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(uint32(' + StandR + ' < ' + Claim + ')))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(max_elem(' + Claim + ' - ' + StandR + ', 0[Woning])))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(min_elem(' + Nu + ' - ' + Voor + ', 0[Woning])))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(max_elem(' + Nu + ' - ' + Voor + ', 0[Woning])))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(' + Voor + ' > 0[Woning] ? max_elem(' + Nu + ' - ' + Voor + ', 0[Woning]) : 0[Woning]))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(' + Voor + ' == 0[Woning] ? max_elem(' + Nu + ' - ' + Voor + ', 0[Woning]) : 0[Woning]))'
+			+ ' + ' + quote(';')
+			+ ' + string(sum(uint32(' + Nu + ' < ' + Voor + ')))'
+			+ ' + ' + quote('|')
+		, Descr = "Een regel per zichtjaar, als DMS-expressie. Elke numerieke term staat in een MakeDefined, want buiten het gecompacteerde domein leveren de standtifs null, en AsList slaat een regel met een null stil over: dan verdwijnt een heel zichtjaar uit de tabel zonder foutmelding.";
+	}
+
+	parameter<String> Verstedelijking :=
+		=quote('zichtjaar;verstedelijking_ha|')
+		+' + '+AsList(quote(Zichtjaar/name+';') + ' + string(' + Zichtjaar/Pad + 'Grondgebruik/Verandering/Verstedelijking/Per_NL)' + ' + ' + quote('|'), ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/765_verstedelijking_'+Casus+'.txt'", StorageType = "str"
+	, Descr = "Het verstedelijkt areaal per zichtjaar, cumulatief sinds het basisjaar en buiten bestaand bebouwd gebied.
+
+				Bewust apart van Tabel en niet als dertiende kolom daarin. Deze maat leest Stand/SubSector_rel, en dat item draagt de legendatoets van #721: staat er naast de tif geen kloppend zijbestand, dan faalt de lezing hard. Zat deze kolom in Tabel, dan zou een enkel verouderd zijbestand de hele meting onbruikbaar maken, ook de kolommen die alleen de wonentifs nodig hebben. Gemeten op 2026-09-03 in C:/LocalData/RSopen_NL2120: Y2090 valt om op LegendaKlopt terwijl de acht andere zichtjaren goed zijn.
+
+				Draai deze dus op een complete en verse standenset. Faalt hij, dan zegt dat iets over de standen op schijf en niets over de verkorte allocatieopzet.";
+
+	parameter<String> Tabel :=
+		=quote('zichtjaar;tigris_jaar;claim_nvm;stand_nvm;stand_nl;regios_onder_claim;tekort_woningen;verlies;winst;winst_op_bezet;winst_op_leeg;cellen_verloren|')
+		+' + '+AsList(Zichtjaar/expr, ' + ')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/765_reeks_'+Casus+'.txt'", StorageType = "str"
+	, Descr = "Een regel per zichtjaar, puntkomma-gescheiden, regels gescheiden door een liggend streepje.
+
+				Hoe je hem leest, van links naar rechts.
+
+				tigris_jaar laat de klem zien. Vanaf het jaar in Advanced/FromWhichDoWeKeepTIGRISconstant staat hier steeds datzelfde jaar, en niet het zichtjaar. Staat er iets anders, dan werkt de klem niet zoals gedacht en klopt de hele aanname onder #765 niet.
+
+				claim_nvm tegen stand_nvm is de kernvraag. regios_onder_claim telt hoeveel van de 76 NVM-regio's onder hun claim blijven en tekort_woningen is hoeveel woningen dat samen is. Loopt dat tekort op vanaf het drempeljaar, dan kost de verkorte opzet realisatie en moet Skeleton/AantalIters omhoog of moeten de passen op COROP en Provincie terug. Blijft het vlak, dan is de verkorting onschadelijk op dit punt.
+
+				stand_nl naast stand_nvm is de kanarie op het regio-lek van #748. De landelijke rastersom en de som over de regio's meten niet hetzelfde: de standkaart is op 25 meter gemaskeerd en de NVM-toewijzing loopt over 100 meter, dus cellen zonder regio vallen stil uit de regiosom. Een klein verschil is normaal, een groeiend verschil niet.
+
+				verlies, winst, winst_op_bezet en winst_op_leeg beantwoorden waar de 22.042 woningen na 2060 vandaan komen. Is winst_op_bezet groot, dan wordt er verdicht op cellen die al woningen hadden. Is winst_op_leeg groot, dan is het uitbreiding. Let op dat dit netto per cel is: krijgt een cel een dichter ontwikkelpakket, dan vervangt de allocatie de bestaande voorraad en is het verschil toch positief. Deze maat onderschat de bruto sloop dus, en dat is precies waarom hij naast verstedelijking_ha hoort te staan.
+
+				Leg de uitkomst naast het item Verstedelijking hierboven. In de productiekopie groeit het verstedelijkt areaal door tot 78.880,6 ha op Y2120 terwijl de woningvoorraad daar op 10.580.030 staat, lager dan de 10.602.608 van Y2080. Meer areaal en minder woningen tegelijk is niet met herbouw te verklaren en is het eigenlijke raadsel dat deze twee uitdraaien samen zichtbaar maken.";
+}
