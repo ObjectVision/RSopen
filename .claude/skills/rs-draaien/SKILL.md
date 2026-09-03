@@ -141,6 +141,12 @@ Twee valkuilen bij het inkorten. `Classifications/Modellering/StandVar_Prep` han
 
 Voor indicatorcontroles is de allocatie vaak helemaal niet nodig: met `StandAllocatieOntkoppeld` op TRUE, de default, leest de indicatorenkant de stand uit de tifs.
 
+### Vraag een exportkolom niet via de tabel op
+
+Een item onder `/Indicatoren/<casus>/Zichtjaren/Export/PerNederland/Tabel/...` opvragen trekt de hele tabel en daarmee elke indicator die erin staat. Gemeten op 2026-09-03 door de sessie van #763: na tien minuten nog niet klaar. De losse `Per_NL`- en `Per_Regio`-items eronder kosten 15 seconden en bewijzen hetzelfde.
+
+Let ook op het pad: de exportcontainer hangt onder `Zichtjaren`, dus `/Indicatoren/<casus>/Zichtjaren/Export/...` en niet `/Indicatoren/<casus>/Export/...`. Export.dms wordt binnen dat blok geinclude.
+
 ## Niet elke variant alloceert: BAU2 leent de stand van BAU
 
 Sinds a9ca6b47 draait de allocatie van BAU2 niet meer. Hij leent de standtifs van BAU, en alleen zijn indicatoren draaien nog. Dat scheelt 7,71 uur per reeks, gemeten op de productierun van 1 september 2026.
