@@ -242,6 +242,14 @@ foreach ($casus in $varianten.Keys) {
         else                                        { $n.basisjaar += Kopieer $_ $basis }
     }
 
+    # Kaarten die niet per casus maar per variant in de wortel van Indicatoren staan, zoals de
+    # veenbouwsteenkaart uit #764. Die hangen aan de levering en niet aan een zichtjaar, dus ze gaan
+    # naar de basisjaarmap van de variant. Zonder deze regel vallen ze buiten de oplevering, want de
+    # lus hierboven kijkt alleen in de casusmap.
+    Get-ChildItem $Bron -File -Filter "*_${v}_*.tif" -ErrorAction SilentlyContinue | ForEach-Object {
+        $n.basisjaar += Kopieer $_ $basis
+    }
+
     $telling[$v] = $n
     Write-Host ("{0}: {1} tabellen, {2} kaarten {3}, {4} kaarten tijdreeks, {5} kaarten basisjaar" -f `
         $v, $n.tabellen, $n.zichtjaar, $Zichtjaar, $n.tijdreeks, $n.basisjaar)
