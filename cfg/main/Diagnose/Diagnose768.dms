@@ -1,0 +1,209 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #768, verwijderen zodra de getallen in het issue staan.
+//
+// De stelling van Deltares in #768: behalve waar een landschapsteam uitdrukkelijk sloop vraagt komen alle bouwstenen
+// van de landschappen over de bestaande bebouwing heen te liggen; die bebouwing wijkt daar niet en haar banen worden
+// niet verdrongen. Bestaand bebouwd gebied en de andere uitzonderingen vallen daarbuiten.
+//
+// Dat zijn drie meetbare uitspraken, en dit harnas toetst ze alle drie:
+//   A. de oplegging wijkt niet voor een BAG-pand, dus geen enkele allocatie verliest kandidaatruimte aan de pandentoets;
+//   B. buiten bouwregime Slopen wijkt geen woning en geen baan, ook niet waar een bouwsteen op de cel landt;
+//   C. binnen bestaand bebouwd gebied en op exogeen grondgebruik landt niets.
+//
+// De vierde vraag is geen toets maar een meting: hoeveel woningen en banen blijven er onder de nieuwe bouwsteen
+// staan, en hoeveel wijken er nog wel omdat kolom J van de bouwstenentabel of het rivierensloopgebied dat vraagt.
+//
+// Alles telt op het compacted domain en op de stand in het basisjaar, dezelfde grondslag als
+// VariantData/<variant>/Sloop/Verschil, zodat de getallen naast die uitdraai te leggen zijn. De allocatie hoeft niet
+// te draaien: dit hangt alleen aan VariantData. Vaste variant NbSGenuanceerd, want alleen daar bestaan landschapstypen.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose768
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #768: liggen de bouwstenen van de landschappen over de bestaande bebouwing heen, en blijven die woningen en banen daar staan."
+{
+	container VD   := /VariantData/NbSGenuanceerd;
+	container Veen := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Veen;
+	container Zand := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Zand;
+
+	parameter<float32> Cel := AdminDomain/NrHaPerCell[float32];
+
+	attribute<AdminDomain> AD_rel (CompactedAdminDomain) := CompactedAdminDomain/AdminDomain_rel;
+
+	// ---- de stand in het basisjaar: woningen naast banen, want #768 noemt ze beide ----
+
+	attribute<float32> Won (CompactedAdminDomain) := VD/StateBasisjaar/wonen/Totaal[float32];
+
+	attribute<float32> Ban (CompactedAdminDomain) :=
+		='add(' + AsItemList('VD/StateBasisjaar/' + /Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/name + '[float32]') + ')'
+	, Descr = "Banen in het basisjaar over alle werken-subsectoren. Zelfde constructie als in Diagnose620; nodig omdat N.B. 1 van #768 uitdrukkelijk over verdringing van banen gaat.";
+
+	// ---- de drie assen uit VariantData ----
+
+	attribute<bool> Opgelegd    (CompactedAdminDomain) := VD/Sloop/DoorExogeneOplegging_Ongefilterd, Descr = "Landt hier een nieuw landgebruik? Dit is IsDefined(ExogeenOpleggen/Totaal) op het compacted domain, dus de as opleggen.";
+	attribute<bool> Gesloopt    (CompactedAdminDomain) := VD/Sloop/Totaal,                           Descr = "Wijkt de stand hier? Dit is wat Zichtjaar_T in het eerste zichtjaar op nul zet, voor wonen en werken beide.";
+	attribute<bool> MoetSlopen  (CompactedAdminDomain) := VD/Bouwregime/MoetSlopen,                  Descr = "Vraagt het bouwregime sloop? Dit is de uitzondering die #768 maakt: expliciet volgens de landschapsteams.";
+	attribute<bool> MagOpleggen (CompactedAdminDomain) := VD/Sloop/MagOpleggen,                      Descr = "Het opleggingsmasker uit #641: buiten bestaand bebouwd gebied en niet over exogeen grondgebruik. Dit is N.B. 2 van #768.";
+
+	attribute<bool> HeeftPanden (CompactedAdminDomain) := MakeDefined(/BaseData/Omgeving/Opleggingsmasker/HeeftPanden[AD_rel], FALSE)
+	, Descr = "Staat er een BAG-pand in de cel? Dit is de toets waarmee de natuurallocatie tot #768 uitweek naar een onbebouwde cel.";
+
+	// ---- de ruimtebeslagen, zelfde definities als Diagnose684 ----
+
+	attribute<bool> Rb_Kust (CompactedAdminDomain) := MakeDefined(/SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Kust/NietBouwen[AD_rel], FALSE);
+	attribute<bool> Rb_Zand (CompactedAdminDomain) := MakeDefined(Zand/NietBouwen[AD_rel], FALSE);
+	attribute<bool> Rb_Veen (CompactedAdminDomain) := MakeDefined(Veen/IsVeengebied[AD_rel], FALSE);
+	attribute<bool> Rb_Riv  (CompactedAdminDomain) := MakeDefined(/SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Rivieren/NietBouwen[AD_rel], FALSE);
+
+	// ---- A: wat kost de pandentoets nog aan kandidaatruimte, per allocatie ----
+	//
+	// Zes allocaties lezen NatuurNietOpPanden: vier in het veen, twee in zand. Verlies_Pandentoets_NL staat per
+	// constructie op nul zodra die schakelaar uit staat, dus de som hieronder is de toets op uitspraak A.
+
+	parameter<float32> Verlies_Veen_Typen     := float32(Veen/Alloc/Controle/Verlies_Pandentoets_NL);
+	parameter<float32> Verlies_Veen_Overloop  := float32(Veen/Alloc_Overloop/Controle/Verlies_Pandentoets_NL);
+	parameter<float32> Verlies_Veen_Bouwsteen := float32(Veen/Alloc_Bouwsteen/Controle/Verlies_Pandentoets_NL);
+	parameter<float32> Verlies_Veen_BsOverl   := float32(Veen/Alloc_Bouwsteen_Overloop/Controle/Verlies_Pandentoets_NL);
+	parameter<float32> Verlies_Zand_Nat       := float32(Zand/Alloc/Alloc_Nat/Controle/Verlies_Pandentoets_NL);
+	parameter<float32> Verlies_Zand_Droog     := float32(Zand/Alloc/Alloc_Droog/Controle/Verlies_Pandentoets_NL);
+
+	parameter<float32> Verlies_Totaal := Verlies_Veen_Typen + Verlies_Veen_Overloop + Verlies_Veen_Bouwsteen + Verlies_Veen_BsOverl + Verlies_Zand_Nat + Verlies_Zand_Droog
+	, Descr = "De kandidaatruimte die de pandentoets alle zes allocaties samen kost, in hectare. Hoort nul te zijn sinds #768. Let op dat de vier veenallocaties elkaar overlappen, dus dit is een som van verliezen en geen aaneengesloten oppervlak.";
+
+	// ---- de opgave van trap 1 in het veen, want die hing aan diezelfde toets ----
+
+	parameter<float32> Trap1_Claim        := float32(Veen/Alloc_Bouwsteen/Controle/Claim_NL);
+	parameter<float32> Trap1_Gerealiseerd := float32(Veen/Alloc_Bouwsteen/Controle/Gerealiseerd_NL);
+	parameter<float32> Trap1_Tekort       := float32(Veen/Alloc_Bouwsteen/Controle/Tekort_NL)
+	, Descr = "Het tekort van de bouwsteenallocatie na de eerste trap. Dit getal beweegt mee met #768: met de pandentoets aan viel het veenweidelint buiten de zeef terwijl de opgave er wel over ging.";
+
+	// ---- B en de meting: wie blijft staan onder de bouwsteen, wie wijkt ----
+
+	attribute<bool> BlijftOnderOplegging (CompactedAdminDomain) := Opgelegd && !Gesloopt
+	, Descr = "De cel krijgt een nieuw landgebruik en de stand blijft staan. Dit is het geval dat #768 als regel neerzet.";
+
+	parameter<float32> Opp_BlijftOnderOplegging := sum(float32(BlijftOnderOplegging)) * Cel;
+	parameter<float32> Won_BlijftOnderOplegging := sum(Won * float32(BlijftOnderOplegging));
+	parameter<float32> Ban_BlijftOnderOplegging := sum(Ban * float32(BlijftOnderOplegging));
+
+	parameter<float32> Won_BlijftOpPandcel := sum(Won * float32(BlijftOnderOplegging && HeeftPanden))
+	, Descr = "Daarvan het deel dat op een cel met een BAG-pand staat. Met de pandentoets aan kon dit alleen buiten de allocaties voorkomen, dus bij kust en rivieren; sinds #768 hoort het overal te kunnen.";
+	parameter<float32> Ban_BlijftOpPandcel := sum(Ban * float32(BlijftOnderOplegging && HeeftPanden));
+	parameter<float32> Opp_BlijftOpPandcel := sum(float32(BlijftOnderOplegging && HeeftPanden)) * Cel;
+
+	parameter<float32> Won_Gesloopt := sum(Won * float32(Gesloopt)), Descr = "De hele opgelegde sloop in woningen uit het basisjaar.";
+	parameter<float32> Ban_Gesloopt := sum(Ban * float32(Gesloopt)), Descr = "Idem in banen. Dit is de verdringing waar N.B. 1 van #768 over gaat; buiten bouwregime Slopen hoort ze nul te zijn.";
+	parameter<float32> Opp_Gesloopt := sum(float32(Gesloopt)) * Cel;
+
+	// ---- de sloop uitgesplitst naar het landschapstype dat erom vraagt ----
+
+	attribute<bool> Regime_Veen     (CompactedAdminDomain) := VD/Bouwregime/Bron/Landschap/Veen     == /Classifications/Modellering/BouwregimeK/V/Slopen;
+	attribute<bool> Regime_Rivieren (CompactedAdminDomain) := VD/Bouwregime/Bron/Landschap/Rivieren == /Classifications/Modellering/BouwregimeK/V/Slopen;
+
+	parameter<float32> Won_Gesloopt_Veen     := sum(Won * float32(Gesloopt && Regime_Veen));
+	parameter<float32> Ban_Gesloopt_Veen     := sum(Ban * float32(Gesloopt && Regime_Veen));
+	parameter<float32> Opp_Gesloopt_Veen     := sum(float32(Gesloopt && Regime_Veen)) * Cel;
+	parameter<float32> Won_Gesloopt_Rivieren := sum(Won * float32(Gesloopt && Regime_Rivieren));
+	parameter<float32> Ban_Gesloopt_Rivieren := sum(Ban * float32(Gesloopt && Regime_Rivieren));
+
+	// ---- per landschapstype: landt de bouwsteen op de bebouwde cellen van zijn eigen ruimtebeslag ----
+
+	parameter<float32> Won_OpPand_Kust := sum(Won * float32(Rb_Kust && Opgelegd && HeeftPanden && !Gesloopt)), Descr = "Kust is de ijking: een levering zonder pandentoets en zonder sloop, dus hier hoorde dit ook voor #768 al te kunnen.";
+	parameter<float32> Won_OpPand_Riv  := sum(Won * float32(Rb_Riv  && Opgelegd && HeeftPanden && !Gesloopt));
+	parameter<float32> Won_OpPand_Zand := sum(Won * float32(Rb_Zand && Opgelegd && HeeftPanden && !Gesloopt)), Descr = "Zand binnen het beekdal. Met de pandentoets aan stond dit op nul, want de zandallocatie week uit; sinds #768 hoort het gevuld te zijn en blijft de bebouwing staan omdat het regime NietBouwen is.";
+	parameter<float32> Won_OpPand_Veen := sum(Won * float32(Rb_Veen && Opgelegd && HeeftPanden && !Gesloopt)), Descr = "Veen buiten de sloopbouwstenen. Ook dit stond met de pandentoets aan op nul.";
+
+	parameter<float32> Ban_OpPand_Zand := sum(Ban * float32(Rb_Zand && Opgelegd && HeeftPanden && !Gesloopt));
+	parameter<float32> Ban_OpPand_Veen := sum(Ban * float32(Rb_Veen && Opgelegd && HeeftPanden && !Gesloopt));
+
+	container Toets
+	: Descr = "De drie uitspraken van #768 als toetsregels met een verwachting vooraf, in dezelfde vorm als Diagnose684/Toets. Elke regel is OK of FOUT; de metingen eronder dragen geen oordeel."
+	{
+		parameter<float32> Marge := 0.5f, Descr = "Een halve woning of baan, om afronding in de float-sommen niet als overtreding te lezen.";
+
+		// --- regel 1: geen enkele oplegging wijkt nog voor een BAG-pand ---
+
+		parameter<float32> R1_Gemeten := Verlies_Totaal;
+		parameter<string>  R1_Oordeel := R1_Gemeten < Marge ? 'OK' : 'FOUT'
+		, Descr = "Uitspraak A: alle bouwstenen komen over de bestaande bebouwing heen te liggen. Verwacht nul hectare kandidaatruimteverlies over de zes allocaties. Staat NatuurNietOpPanden weer aan, dan slaat deze regel meteen aan.";
+
+		// --- regel 2: buiten bouwregime Slopen wijkt niets ---
+
+		attribute<bool> R2_Overtreding (CompactedAdminDomain) := Gesloopt && !MoetSlopen
+		, Descr = "Cel die geleegd wordt terwijl geen enkel bouwregime daarom vraagt. Dat kan alleen langs de tweede slooproute, dus als ModelParameters/SloopVolgtExogeneOplegging weer aan gaat.";
+
+		parameter<float32> R2_Gemeten_Won := sum(Won * float32(R2_Overtreding));
+		parameter<float32> R2_Gemeten_Ban := sum(Ban * float32(R2_Overtreding));
+		parameter<string>  R2_Oordeel     := R2_Gemeten_Won < Marge && R2_Gemeten_Ban < Marge ? 'OK' : 'FOUT'
+		, Descr = "N.B. 1 van #768: waar geen landschapsteam sloop vraagt wijkt geen woning en geen baan. Verwacht nul en nul. Dit is de regel die #620 met SloopVolgtExogeneOplegging heeft afgedwongen; hij staat hier om te bewaken dat het loslaten van de pandentoets die route niet stilzwijgend heropent.";
+
+		// --- regel 3: binnen bestaand bebouwd gebied en op exogeen grondgebruik landt niets ---
+
+		attribute<bool> R3_Overtreding (CompactedAdminDomain) := (Opgelegd || Gesloopt) && !MagOpleggen
+		, Descr = "Cel die een oplegging krijgt of geleegd wordt terwijl het opleggingsmasker dat verbiedt.";
+
+		parameter<float32> R3_Gemeten_Ha := sum(float32(R3_Overtreding)) * Cel;
+		parameter<string>  R3_Oordeel    := R3_Gemeten_Ha < 0.1f ? 'OK' : 'FOUT'
+		, Descr = "N.B. 2 van #768: de uitzonderingsgevallen. Verwacht nul hectare, want beide routes lopen door MagOpleggen heen; zie #641 voor bestaand bebouwd gebied en de Schiphol-uitzondering voor het exogene grondgebruik.";
+
+		// --- regel 4: wat er nog wijkt is veen of het rivierensloopgebied, en niets anders ---
+
+		attribute<bool> R4_Overtreding (CompactedAdminDomain) := Gesloopt && !Regime_Veen && !Regime_Rivieren
+		, Descr = "Cel die geleegd wordt zonder dat veen of rivieren dat vraagt. Kust sloopt sinds #707 niet meer en zand nooit, dus dit hoort leeg te zijn.";
+
+		parameter<float32> R4_Gemeten_Won := sum(Won * float32(R4_Overtreding));
+		parameter<float32> R4_Gemeten_Ban := sum(Ban * float32(R4_Overtreding));
+		parameter<string>  R4_Oordeel     := R4_Gemeten_Won < Marge && R4_Gemeten_Ban < Marge ? 'OK' : 'FOUT'
+		, Descr = "De uitzondering van #768 afgebakend: alleen veen (kolom J van de bouwstenentabel) en het rivierensloopgebied uit #620 mogen slopen. Verwacht nul woningen en nul banen daarbuiten.";
+
+		parameter<String> Uitdraai :=
+			  'regel;verwachting;gemeten;oordeel'
+			+ '|oplegging_wijkt_niet_voor_pand_ha;0;'   + string(R1_Gemeten)     + ';' + R1_Oordeel
+			+ '|sloop_zonder_bouwregime_won;0;'         + string(R2_Gemeten_Won) + ';' + R2_Oordeel
+			+ '|sloop_zonder_bouwregime_ban;0;'         + string(R2_Gemeten_Ban) + ';' + R2_Oordeel
+			+ '|oplegging_in_uitzondering_ha;0;'        + string(R3_Gemeten_Ha)  + ';' + R3_Oordeel
+			+ '|sloop_buiten_veen_en_rivieren_won;0;'   + string(R4_Gemeten_Won) + ';' + R4_Oordeel
+			+ '|sloop_buiten_veen_en_rivieren_ban;0;'   + string(R4_Gemeten_Ban) + ';' + R4_Oordeel
+		, StorageName = "='%LocalDataProjDir%/Diagnose/768_toets.txt'"
+		, StorageType = "str";
+	}
+
+	parameter<String> Uitdraai :=
+		  'grootheid;waarde'
+		+ '|verlies_pandentoets_veen_typen_ha;'      + string(Verlies_Veen_Typen)
+		+ '|verlies_pandentoets_veen_overloop_ha;'   + string(Verlies_Veen_Overloop)
+		+ '|verlies_pandentoets_veen_bouwsteen_ha;'  + string(Verlies_Veen_Bouwsteen)
+		+ '|verlies_pandentoets_veen_bsoverloop_ha;' + string(Verlies_Veen_BsOverl)
+		+ '|verlies_pandentoets_zand_nat_ha;'        + string(Verlies_Zand_Nat)
+		+ '|verlies_pandentoets_zand_droog_ha;'      + string(Verlies_Zand_Droog)
+		+ '|verlies_pandentoets_totaal_ha;'          + string(Verlies_Totaal)
+		+ '|trap1_claim_ha;'                         + string(Trap1_Claim)
+		+ '|trap1_gerealiseerd_ha;'                  + string(Trap1_Gerealiseerd)
+		+ '|trap1_tekort_ha;'                        + string(Trap1_Tekort)
+		+ '|blijft_onder_oplegging_ha;'              + string(Opp_BlijftOnderOplegging)
+		+ '|blijft_onder_oplegging_won;'             + string(Won_BlijftOnderOplegging)
+		+ '|blijft_onder_oplegging_ban;'             + string(Ban_BlijftOnderOplegging)
+		+ '|blijft_op_pandcel_ha;'                   + string(Opp_BlijftOpPandcel)
+		+ '|blijft_op_pandcel_won;'                  + string(Won_BlijftOpPandcel)
+		+ '|blijft_op_pandcel_ban;'                  + string(Ban_BlijftOpPandcel)
+		+ '|gesloopt_ha;'                            + string(Opp_Gesloopt)
+		+ '|gesloopt_won;'                           + string(Won_Gesloopt)
+		+ '|gesloopt_ban;'                           + string(Ban_Gesloopt)
+		+ '|gesloopt_veen_ha;'                       + string(Opp_Gesloopt_Veen)
+		+ '|gesloopt_veen_won;'                      + string(Won_Gesloopt_Veen)
+		+ '|gesloopt_veen_ban;'                      + string(Ban_Gesloopt_Veen)
+		+ '|gesloopt_rivieren_won;'                  + string(Won_Gesloopt_Rivieren)
+		+ '|gesloopt_rivieren_ban;'                  + string(Ban_Gesloopt_Rivieren)
+		+ '|op_pandcel_blijft_kust_won;'             + string(Won_OpPand_Kust)
+		+ '|op_pandcel_blijft_rivieren_won;'         + string(Won_OpPand_Riv)
+		+ '|op_pandcel_blijft_zand_won;'             + string(Won_OpPand_Zand)
+		+ '|op_pandcel_blijft_zand_ban;'             + string(Ban_OpPand_Zand)
+		+ '|op_pandcel_blijft_veen_won;'             + string(Won_OpPand_Veen)
+		+ '|op_pandcel_blijft_veen_ban;'             + string(Ban_OpPand_Veen)
+	, StorageName = "='%LocalDataProjDir%/Diagnose/768_meting.txt'"
+	, StorageType = "str"
+	, ExplicitSuppliers = "Toets/Uitdraai"
+	, Descr = "Beide uitdraaien in een aanroep: de toetstabel hangt als ExplicitSupplier aan dit item zelf en niet aan een container, want een ExplicitSuppliers op een container lift niet mee wanneer een run een los kind opvraagt. Zie de skill geodms-valkuilen.";
+}
