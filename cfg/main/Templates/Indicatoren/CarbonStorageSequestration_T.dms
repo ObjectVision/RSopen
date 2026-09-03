@@ -81,11 +81,15 @@ Template CarbonStorageSequestration_T
 	, Descr = "Gelden de kentallen van team Veen in deze variant: staat de schakelaar aan en is dit een NbS-variant? De variantkolom is IsNbSVariant in VariantParameters/VariantK, dezelfde die bepaalt welke ontwikkelpakketten zijn toegestaan.";
 
 	attribute<bool> VeenKentalGeldt (AdminDomain) := = VeenKentalInDezeVariant
-														? 'OpVeenbodem'
+														? 'OpVeenbodem || OpSOMERSPerceel'
 														: 'const(FALSE, AdminDomain)'
-	, Descr = "Gelden de kentallen in deze variant en ligt deze cel op veen- of moerige bodem? Of de klasse zelf veenvormend is staat in VeenKentalHier hieronder.";
+	, Descr = "Geldt het kentalregime op deze cel: gelden de kentallen in deze variant, en ligt hier veen- of moerige bodem of een SOMERS-veenweideperceel?
 
-	attribute<bool> VeenKentalHier (AdminDomain) := VeenKentalGeldt && MakeDefined(VeenKentallen/IsVeenvormend[Zichtjaar/Grondgebruik/CC], FALSE)
+				De unie en niet de bodemkaart alleen, om dezelfde reden als bij Veenreserve/DraagtReserve in #736: 39.084 van de 245.968 hectare veenweideperceel ligt buiten de veen- en moerige gronden van BOFEK2020, en waar SOMERS zelf zegt dat de cel oxideert hoort daar in de NbS-varianten een kental tegenover te staan in plaats van een SOMERS-getal dat volgens Deltares daar niet bruikbaar is.
+
+				Binnen dit regime levert SOMERS niets meer, ook niet op de percelen; zie Oxidatie/NaLUC. Wat een cel dan wel krijgt staat in VeenKental hieronder, en welke klassen het kental als vastlegging krijgen in VeenKentalHier.";
+
+	attribute<bool> VeenKentalHier (AdminDomain) := VeenKentalGeldt && IsVeenvormendNu
 	, Descr = "Geldt het kental van team Veen op deze cel: veen- of moerige bodem en een veenvormende landgebruiksklasse in dit zichtjaar.
 
 				Twee dingen hangen hieraan, en dat is het hele punt van de netto lezing. De vastlegging komt hier uit
@@ -105,29 +109,85 @@ Template CarbonStorageSequestration_T
 	// grondwaterstand, dus deze post verandert het niveau van de landelijke balans en niet het verschil tussen de
 	// varianten; alleen waar het landgebruik naar water of bebouwing gaat valt hij weg. Zie de vier schakelaars
 	// Koolstof_OxidatieBuitenSOMERS, ...OokHoogNL, ...EFStedelijkOpNul en de twee kentallen in ModelParameters/Advanced.
+	// #758: deze vier vlaggen en de emissiefactor stonden in BuitenSOMERS. Sinds de kentallen in de NbS-varianten ook
+	// binnen de veenweidepercelen gelden zijn er twee lezers, dus staan ze hier, langs dezelfde lijn als OpVeenbodem
+	// in #657 en OpSOMERSPerceel in #736.
+	attribute<float32> EF_ton_ha_jaar (AdminDomain) := OpMoerigeBodem
+														? /ModelParameters/Advanced/Koolstof_EF_Moerig_tonCO2_ha_jaar
+														: /ModelParameters/Advanced/Koolstof_EF_Veen_tonCO2_ha_jaar
+	, Descr = "De emissiefactor van deze bodem in ton CO2 per hectare per jaar, voordat de uitsluitingen eroverheen gaan.";
+
+	attribute<bool> IsWaterklasse (AdminDomain) := MakeDefined(CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 16b || CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 17b || CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 19b, FALSE), Descr = "Open water. De aangeleverde tabel zet grote wateren op nul en geeft sloten alleen methaan, dus hier geen CO2.";
+
+	attribute<bool> IsVeenvormendNu (AdminDomain) := MakeDefined(VeenKentallen/IsVeenvormend[Zichtjaar/Grondgebruik/CC], FALSE)
+	, Descr = "Is het landgebruik hier een veenvormende klasse geworden? Dan boekt deze post niets meer. De emissiefactor beschrijft een gedraineerde veenbodem onder het huidige gebruik en niet een vernat moeras; hem daar laten doorlopen zou de vernatting van veen buiten de veenweidepercelen als uitstoot in de boeken zetten en bovendien via Oxidatie/Actief de vastlegging bevriezen op precies de cellen waar het veen weer aangroeit.";
+
+	// De stedelijke toets moet langs twee wegen. Sector/IsStedelijk, waar Zichtjaar/Grondgebruik/IsStedelijk op
+	// rust, staat alleen op cellen met een gealloceerde stedelijke sector; bestaande bebouwing die in dit zichtjaar
+	// niet opnieuw is gealloceerd valt daarbuiten terwijl haar koolstofklasse wel Dichtbebouwd is. Op alleen die
+	// vlag toetsen liet de emissiefactor op ruim 28.000 ha bestaand stedelijk veen landen.
+	attribute<bool> IsBebouwdNu (AdminDomain) := MakeDefined(VeenKentallen/IsBebouwdeKlasse[Zichtjaar/Grondgebruik/CC], FALSE) || Zichtjaar/Grondgebruik/IsStedelijk
+	, Descr = "Bebouwd gebied, zowel het bestaande via de landgebruiksklasse als het nieuw gealloceerde via de sector.";
+
+	attribute<bool> IsBebouwdInBasisjaar (AdminDomain) := MakeDefined(VeenKentallen/IsBebouwdeKlasse[BaseYear/Grondgebruik/CC], FALSE)
+	, Descr = "Was deze cel in het basisjaar al bebouwd? Nodig sinds #758 om bestaande bebouwing van nieuwe te onderscheiden: op bestaand stedelijk veen loopt de oxidatie door, terwijl de inrichting van nieuwbouw in de NbS-varianten de oxidatie volgens Deltares direct op nul brengt.";
+
+	// #758: de emissiekant van het kentalregime. Deltares heeft op 03-09-2026 laten weten dat SOMERS voor de NbS-varianten
+	// niet bruikbaar is en dat daar met de kentallen van team Veen gerekend moet worden, en dat BAU en BAU2 juist alleen
+	// met SOMERS rekenen. Binnen het regime levert deze container dus de hele CO2-stroom en staat Oxidatie/NaLUC op nul.
+	//
+	// Vier van de vijf regels komen rechtstreeks uit hun tabel. De vijfde, gedraineerd veen dat geen bouwsteen krijgt,
+	// staat op de emissiefactor uit EF_low_nl_2025.csv: die ligt met 10,59 dicht bij de 13 die zij voor het ontwaterde
+	// landbouwgrasland van bouwsteen 1 geven, en zo hoeft er geen kental verzonnen te worden voor een cel die in hun
+	// tabel niet voorkomt. Het gaat om percelen die de vernatting niet meekrijgen omdat de SOMERS-datasheet er geen
+	// infiltratiemaatregel voor kent (#619), en om landbouwveen buiten de percelen.
+	container VeenKental
+	: Descr = "Wat een veencel in de NbS-varianten aan CO2 uitstoot of vastlegt, in plaats van wat SOMERS erover zegt. Leeg in BAU en BAU2."
+	{
+		attribute<float32> Zomerdrooglegging_m (AdminDomain) := ThisYear/SOMERS_CO2_laagveen/Huidige_Percelen/Zomerdrooglegging_m_perGrid
+		, Descr = "De zomerdrooglegging die deze variant op het veenweideperceel legt, in meters onder maaiveld. Null buiten de percelen. Dezelfde bron als de methaanindicator gebruikt.";
+
+		attribute<bool> IsVernatVeenweide (AdminDomain) := MakeDefined(Zomerdrooglegging_m < VeenKentallen/Drooglegging_VernatGrens_m, FALSE)
+		, Descr = "Ligt hier een veenweideperceel dat in deze variant vernat wordt? Zelfde toets en zelfde grens als in Methaan_T, zodat CO2 en methaan niet op verschillende hectares kunnen landen.";
+
+		attribute<bool> GeenUitstoot (AdminDomain) := IsVeenvormendNu || IsWaterklasse || (IsBebouwdNu && !IsBebouwdInBasisjaar)
+		, Descr = "De drie redenen waarom een cel binnen het regime geen uitstoot boekt, in de volgorde waarin ze gaan voor de twee kentallen hieronder.";
+
+		attribute<bool> KrijgtVernatKental (AdminDomain) := !GeenUitstoot && IsVernatVeenweide
+		, Descr = "Krijgt deze cel het kental van de vernatte veenweide? Dit is de post die in de plaats van SOMERS komt, en dus het getal dat telt bij de vraag wat de overstap kost of oplevert.";
+
+		attribute<bool> KrijgtEF (AdminDomain) := !GeenUitstoot && !IsVernatVeenweide
+													&& (/ModelParameters/Advanced/Koolstof_OxidatieBuitenSOMERSOokHoogNL || !Hoog_NL)
+		, Descr = "Krijgt deze cel de emissiefactor, dus is dit gedraineerd veen zonder bouwsteen? Hoog Nederland alleen als de schakelaar daarvoor aanstaat, dezelfde als bij de emissiefactorpost.";
+
+		attribute<float32> PerHa_jaar (AdminDomain) := KrijgtVernatKental ? VeenKentallen/CO2_VernatteVeenweide
+													: KrijgtEF           ? EF_ton_ha_jaar
+													:                      0f
+		, Descr = "Het CO2-kental van deze cel in ton per hectare per jaar, positief is uitstoot. De drie vlaggen hierboven zijn de voorrangsregel.
+
+					Een veenvormende klasse staat hier op nul omdat haar kental een netto opname is en dus aan de vastleggingskant hoort; zie VeenKentalHier en Max/UitAllocAlgemeen. Open water staat op nul omdat de aangeleverde tabel dat zegt, met alleen methaan. Nieuwe bebouwing staat op nul omdat de inrichting in deze varianten de oxidatie volgens Deltares direct beeindigt; bestaande bebouwing valt in de laatste regel en blijft dus uitstoten, wat de tegenstelling met bouwsteen 10a is die in #758 bij team Veen ligt.
+
+					Hoog Nederland volgt dezelfde schakelaar als de emissiefactorpost, Koolstof_OxidatieBuitenSOMERSOokHoogNL. Zonder die regel zou hoog Nederland in de NbS-varianten wel uitstoot krijgen en in BAU niet, en dan zit er een variantverschil in de uitkomst dat alleen uit de bedrading komt. Gemeten voor de reparatie: 321.598 hectare met uitstoot in NbSGenuanceerd tegen 258.000 erna.
+
+					Deze regel hangt bewust niet aan Koolstof_OxidatieBuitenSOMERS. Die schakelaar gaat over de vraag of we oxidatie boeken op veen dat buiten de SOMERS-percelen ligt; hier gaat het om het kental dat in de NbS-varianten in de plaats van SOMERS komt. Zou hij er wel aan hangen, dan zou uitzetten van die schakelaar de grootste emissiepost van de NbS-varianten stil laten verdwijnen.";
+
+		attribute<ton_ha> Vraag_ha (AdminDomain) := VeenKentalGeldt
+														? (PerHa_jaar * float32(Periode / 1[jaar]) / C_to_CO2)[ton_ha]
+														: 0[ton_ha]
+		, Descr = "De uitstoot over deze periode in ton C per hectare, in dezelfde eenheid en met hetzelfde teken als Oxidatie/Vraag_ha, zodat de drie posten bij elkaar opgeteld kunnen worden.";
+
+		parameter<mton> Vraag_StGebied := sum(Vraag_ha * AdminDomain/NrHaPerCell)[mton], Descr = "Landelijk totaal van deze post in Mton C over de periode.";
+		parameter<Ha>   Areaal         := sum(VeenKentalGeldt && PerHa_jaar != 0f ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Op hoeveel hectare deze post werkelijk uitstoot boekt.";
+		parameter<Ha>   Areaal_Vernat  := sum(VeenKentalGeldt && KrijgtVernatKental ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan vernat veenweideperceel, de hectares waar dit kental werkelijk in de plaats van SOMERS komt. Op de vlag en niet op IsVernatVeenweide zelf: een vernat perceel dat een veenvormende klasse is geworden telt hier niet mee, want daar gaat het kental van die klasse voor. Van de 171.112 hectare vernat perceel in NbSGenuanceerd is dat ongeveer de helft.";
+		parameter<Ha>   Areaal_EF      := sum(VeenKentalGeldt && KrijgtEF ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan gedraineerd veen zonder bouwsteen, dat de emissiefactor krijgt.";
+	}
+
 	container BuitenSOMERS
 	{
 		attribute<bool> InSOMERS (AdminDomain) := OpSOMERSPerceel, Descr = "Ligt hier een veenweideperceel waarvoor SOMERS al een emissie geeft? Daar boekt deze post niets, anders telt dezelfde koolstof twee keer. Staat sinds #736 op templateniveau, omdat de veenreserve dezelfde afbakening nodig heeft.";
 
-		attribute<float32> EF_ton_ha_jaar (AdminDomain) := OpMoerigeBodem
-															? /ModelParameters/Advanced/Koolstof_EF_Moerig_tonCO2_ha_jaar
-															: /ModelParameters/Advanced/Koolstof_EF_Veen_tonCO2_ha_jaar
-		, Descr = "De emissiefactor van deze bodem in ton CO2 per hectare per jaar, voordat de uitsluitingen eroverheen gaan.";
-
-		attribute<bool> IsWaterklasse (AdminDomain) := MakeDefined(CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 16b || CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 17b || CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 19b, FALSE), Descr = "Open water. De aangeleverde tabel zet grote wateren op nul en geeft sloten alleen methaan, dus hier geen CO2.";
-
-		attribute<bool> IsVeenvormendNu (AdminDomain) := MakeDefined(VeenKentallen/IsVeenvormend[Zichtjaar/Grondgebruik/CC], FALSE)
-		, Descr = "Is het landgebruik hier een veenvormende klasse geworden? Dan boekt deze post niets meer. De emissiefactor beschrijft een gedraineerde veenbodem onder het huidige gebruik en niet een vernat moeras; hem daar laten doorlopen zou de vernatting van veen buiten de veenweidepercelen als uitstoot in de boeken zetten en bovendien via Oxidatie/Actief de vastlegging bevriezen op precies de cellen waar het veen weer aangroeit.";
-
-		// De stedelijke toets moet langs twee wegen. Sector/IsStedelijk, waar Zichtjaar/Grondgebruik/IsStedelijk op
-		// rust, staat alleen op cellen met een gealloceerde stedelijke sector; bestaande bebouwing die in dit zichtjaar
-		// niet opnieuw is gealloceerd valt daarbuiten terwijl haar koolstofklasse wel Dichtbebouwd is. Op alleen die
-		// vlag toetsen liet de emissiefactor op ruim 28.000 ha bestaand stedelijk veen landen.
-		attribute<bool> IsBebouwdNu (AdminDomain) := MakeDefined(VeenKentallen/IsBebouwdeKlasse[Zichtjaar/Grondgebruik/CC], FALSE) || Zichtjaar/Grondgebruik/IsStedelijk
-		, Descr = "Bebouwd gebied, zowel het bestaande via de landgebruiksklasse als het nieuw gealloceerde via de sector.";
-
 		attribute<bool> Telt (AdminDomain) := = /ModelParameters/Advanced/Koolstof_OxidatieBuitenSOMERS
-			? '  OpVeenbodem && !InSOMERS && !IsWaterklasse && !IsVeenvormendNu'
+			? '  OpVeenbodem && !InSOMERS && !IsWaterklasse && !IsVeenvormendNu && !VeenKentalGeldt'
 			  + ' && (' + string(/ModelParameters/Advanced/Koolstof_OxidatieBuitenSOMERSOokHoogNL) + ' || !Hoog_NL)'
 			  + ' && (' + string(!/ModelParameters/Advanced/Koolstof_EFStedelijkOpNul) + ' || !IsBebouwdNu)'
 			: 'const(FALSE, AdminDomain)'
@@ -401,7 +461,7 @@ Template CarbonStorageSequestration_T
 			{
 				attribute<kg_jaarlijks> NaLUC_SOMERS (AdminDomain) := = 'MakeDefined(ThisYear/SOMERS_CO2_laagveen/Emissies/'+/ModelParameters/Advanced/Koolstof_SOMERSEmissieVariant+'/NaLUC, 0[kg_jaarlijks])', Descr = "De jaarlijkse veenoxidatie uit SOMERS voor de gekozen emissievariant, nul buiten de veenweidepercelen.";
 
-			attribute<kg_jaarlijks> NaLUC (AdminDomain) := VeenKentalHier ? 0[kg_jaarlijks] : NaLUC_SOMERS
+			attribute<kg_jaarlijks> NaLUC (AdminDomain) := VeenKentalGeldt ? 0[kg_jaarlijks] : NaLUC_SOMERS
 			, Descr = "Dezelfde stroom, maar nul waar het kental van team Veen geldt. Daar beschrijft dat kental de netto bodemstroom al, inclusief wat er nog oxideert, dus de SOMERS-stroom er nog eens naast boeken zou dezelfde koolstof twee keer afschrijven en bovendien via Actief de vastlegging bevriezen op precies de cellen waar het veen aangroeit.";
 
 			parameter<mton> Verdrongen_StGebied := sum((NaLUC_SOMERS - NaLUC)[ton_jaarlijks] * 1[jaar])[mton], Descr = "Hoeveel jaarlijkse SOMERS-uitstoot door het kental van team Veen wordt vervangen, in Mton CO2 per jaar. Dit is het getal dat zegt hoe groot de bewuste divergentie tussen de twee indicatoren is.";
@@ -414,7 +474,7 @@ Template CarbonStorageSequestration_T
 				// #657: sinds de emissiefactoren van 31-08-2026 kan er ook buiten de veenweidepercelen oxidatie lopen. De
 				// boekhouding hieronder werkt met een enkele vraag, dus de twee bronnen worden hier opgeteld. Ze sluiten
 				// elkaar per cel uit: BuitenSOMERS/Telt toetst zelf op !InSOMERS.
-				attribute<ton_ha> Vraag_Totaal_ha (AdminDomain) := Vraag_ha + BuitenSOMERS/Vraag_ha, Descr = "De totale afschrijvingsvraag over deze periode in ton C per hectare: de veenoxidatie uit SOMERS op de veenweidepercelen plus de emissiefactor daarbuiten.";
+				attribute<ton_ha> Vraag_Totaal_ha (AdminDomain) := Vraag_ha + BuitenSOMERS/Vraag_ha + VeenKental/Vraag_ha, Descr = "De totale afschrijvingsvraag over deze periode in ton C per hectare, over de drie posten samen: de veenoxidatie uit SOMERS, de emissiefactor daarbuiten, en sinds #758 het kental van team Veen in de NbS-varianten. De drie sluiten elkaar per cel uit.";
 
 				attribute<bool>   Actief   (AdminDomain) := Vraag_Totaal_ha > 0[ton_ha], Descr = "Loopt hier veenoxidatie in deze periode? Op zulke cellen wordt geen vastlegging geboekt: een ontwaterende veenbodem legt niet tegelijk koolstof vast.";
 
