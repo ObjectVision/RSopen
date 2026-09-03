@@ -194,11 +194,19 @@ function TrapB([string]$variant, [string]$jaar) {
         $r = @($nvm.Tekst -split ';' | Where-Object { $_ -match '^\d' } | ForEach-Object { [double]$_ } | Where-Object { $_ -gt 0 })
         if ($r.Count -gt 0) {
             $min    = ($r | Measure-Object -Minimum).Minimum
-            $onder  = @($r | Where-Object { $_ -lt 0.99 }).Count
+            # LET OP: 0,99 is de ALARMDREMPEL van dit harnas en niet de norm van het model.
+            # Het model hanteert 0,98 als ondergrens, als ModelParameters/Advanced/ClaimRealisatie_NormOnder,
+            # en dat is de waarde achter de kolommen OnderNorm, OpNorm en BovenNorm die in de levering komen.
+            # De twee tellen dus verschillend: op NbSGenuanceerd Y2060 geeft deze drempel 26 regio's en de
+            # modelnorm 22. Dat verschil is bewust, een levering wordt strenger beoordeeld dan het model
+            # zichzelf beoordeelt, maar het moet uit de regelnaam blijken. Wie ze gelijk wil trekken zet
+            # $drempel op /ModelParameters/Advanced/ClaimRealisatie_NormOnder; dan verandert het oordeel.
+            $drempel = 0.99
+            $onder  = @($r | Where-Object { $_ -lt $drempel }).Count
             # Ruim boven de negen van 28 augustus, zodat gewone spreiding geen alarm geeft en een
             # verdubbeling wel. NbSGenuanceerd zat op Y2120 op 33 en dat is een echte bevinding.
             $grens  = 15
-            Meld 'B' $casus "$j NVM-regio's onder de woningclaim" $(if ($onder -le $grens) {'PASS'} else {'FAIL'}) ("$onder van $($r.Count), laagste {0:N4}" -f $min) "hoogstens $grens, referentie 9 op Y2120"
+            Meld 'B' $casus "$j NVM-regio's onder alarmdrempel $drempel" $(if ($onder -le $grens) {'PASS'} else {'FAIL'}) ("$onder van $($r.Count), laagste {0:N4}" -f $min) "hoogstens $grens; let op: modelnorm is 0,98"
         }
     }
 
