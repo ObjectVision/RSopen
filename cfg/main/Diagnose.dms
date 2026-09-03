@@ -208,26 +208,46 @@ container Diagnose
 		, IntegrityCheck = "sum(uint32(this)) == 2"
 		, Descr = "De twee bouwstenen die open water opleggen, 9a nieuw open water voor waterbuffering en 9b bestaand open water met extra buffercapaciteit. Herkend aan de kolom deelstrategie en niet aan de code, zodat de hernummering uit #762 hem niet stil uitschakelt.";
 
-		attribute<Bool> IsVeenWaterCel (/Geography/AdminDomain) := MakeDefined(IsWaterBouwsteen[Veen/Bouwsteen_rel], FALSE);
+		attribute<Bool> IsNieuwWater (Veen/BouwsteenType) := Veen/BouwsteenType/code == '9a'
+		, IntegrityCheck = "sum(uint32(this)) == 1"
+		, Descr = "Bouwsteen 9a, nieuw open water voor waterbuffering. Dit is de bouwsteen die extra bergingscapaciteit oplevert, en de enige die naast de opgave gelegd mag worden.";
+
+		attribute<Bool> IsBestaandWater (Veen/BouwsteenType) := Veen/BouwsteenType/code == '9b'
+		, IntegrityCheck = "sum(uint32(this)) == 1"
+		, Descr = "Bouwsteen 9b, bestaand open water met extra buffercapaciteit, dus de peilopzet van 15 cm. Wat die oplevert zit al in de opgave verwerkt en mag er niet nog eens naast worden gelegd; zie de toelichting bij de uitdraai.";
+
+		attribute<Bool> Klopt_Waterbouwstenen (Veen/BouwsteenType) := IsWaterBouwsteen == (IsNieuwWater || IsBestaandWater)
+		, IntegrityCheck = "all(this)"
+		, Descr = "Kanarie op de twee codes hierboven. De splitsing naar nieuw en bestaand water kan alleen op de code 9a en 9b, want geen enkele kolom in de brontabel scheidt die twee. Deze toets bindt die codes aan de kolom deelstrategie: verschuift de nummering, zoals #762 aankondigt, dan valt hij om in plaats van stil de verkeerde bouwsteen te tellen.";
+
+		attribute<Bool> IsCel_9a (/Geography/AdminDomain) := MakeDefined(IsNieuwWater[Veen/Bouwsteen_rel], FALSE) && all(Klopt_Waterbouwstenen);
+		attribute<Bool> IsCel_9b (/Geography/AdminDomain) := MakeDefined(IsBestaandWater[Veen/Bouwsteen_rel], FALSE);
 
 		attribute<float32> Volume_Cel (/Geography/AdminDomain) := MakeDefined(float32(/BaseData/Suitabilities/Waterberging/Diepte), 0f) * float32(/Geography/AdminDomain/NrMeter2PerCell)
 		, Descr = "De bergbare waterschijf maal het celoppervlak, dus m3 per cel. Leest hetzelfde item als de bergingscapaciteit in Templates/Densities/DichtheidZichtjaar_T en de geschiktheid, inclusief de bovengrens Maximum_Waterschijf; cellen daarboven tellen als nul.";
 
-		attribute<float32> Calc_Volume (R) := sum(IsVeenWaterCel ? Volume_Cel : 0f, R/Per_AdminDomain);
-		attribute<float32> Calc_Areaal (R) := sum(float32(IsVeenWaterCel), R/Per_AdminDomain) * float32(/Geography/AdminDomain/NrHaPerCell);
+		attribute<float32> Calc_Volume_9a (R) := sum(IsCel_9a ? Volume_Cel : 0f, R/Per_AdminDomain);
+		attribute<float32> Calc_Areaal_9a (R) := sum(float32(IsCel_9a), R/Per_AdminDomain) * float32(/Geography/AdminDomain/NrHaPerCell);
+		attribute<float32> Calc_Volume_9b (R) := sum(IsCel_9b ? Volume_Cel : 0f, R/Per_AdminDomain);
+		attribute<float32> Calc_Areaal_9b (R) := sum(float32(IsCel_9b), R/Per_AdminDomain) * float32(/Geography/AdminDomain/NrHaPerCell);
 
-		attribute<float32> Volume (R) := =/Diagnose/Variant == 'NbSGenuanceerd' ? 'Calc_Volume' : 'const(0f, R)';
-		attribute<float32> Areaal (R) := =/Diagnose/Variant == 'NbSGenuanceerd' ? 'Calc_Areaal' : 'const(0f, R)';
+		attribute<float32> Volume_9a (R) := =/Diagnose/Variant == 'NbSGenuanceerd' ? 'Calc_Volume_9a' : 'const(0f, R)';
+		attribute<float32> Areaal_9a (R) := =/Diagnose/Variant == 'NbSGenuanceerd' ? 'Calc_Areaal_9a' : 'const(0f, R)';
+		attribute<float32> Volume_9b (R) := =/Diagnose/Variant == 'NbSGenuanceerd' ? 'Calc_Volume_9b' : 'const(0f, R)';
+		attribute<float32> Areaal_9b (R) := =/Diagnose/Variant == 'NbSGenuanceerd' ? 'Calc_Areaal_9b' : 'const(0f, R)';
 	}
 
 	parameter<String> waterberging_perregio := =('
-		  '+quote('waterbergingsregio;benodigde_berging_m3;aangewezen_berging_m3;aangewezen_min_benodigd_m3;berging_op_veenbouwstenen_m3;areaal_veenbouwstenen_ha|')+' + AsList(
+		  '+quote('waterbergingsregio;benodigde_berging_m3;berging_uit_nieuw_water_9a_m3;nieuw_water_9a_min_benodigd_m3;areaal_nieuw_water_9a_ha;aangewezen_berging_m3;aangewezen_min_benodigd_m3;berging_uit_bestaand_water_9b_m3;areaal_bestaand_water_9b_ha|')+' + AsList(
 			/SourceData/RegioIndelingen/Waterbergingsregio/label + '+quote(';')+'
 			+ string('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging) + '+quote(';')+'
+			+ string(Waterberging_Veenwater/Volume_9a) + '+quote(';')+'
+			+ string(Waterberging_Veenwater/Volume_9a - float32('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging)) + '+quote(';')+'
+			+ string(Waterberging_Veenwater/Areaal_9a) + '+quote(';')+'
 			+ string('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/Stand_PerAllocRegio/meter3_Waterberging) + '+quote(';')+'
 			+ string(float32('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/Stand_PerAllocRegio/meter3_Waterberging) - float32('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging)) + '+quote(';')+'
-			+ string(Waterberging_Veenwater/Volume) + '+quote(';')+'
-			+ string(Waterberging_Veenwater/Areaal), '+quote('|')+')
+			+ string(Waterberging_Veenwater/Volume_9b) + '+quote(';')+'
+			+ string(Waterberging_Veenwater/Areaal_9b), '+quote('|')+')
 	')
 	, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_waterberging_perregio.txt'"
 	, StorageType = "str"
@@ -243,7 +263,11 @@ container Diagnose
 
 				aangewezen_min_benodigd_m3 is het verschil van die twee, met het teken erin: negatief is onderrealisatie en positief overrealisatie. De naam is de formule, zodat er geen twijfel over de richting kan bestaan. Het model brengt een overschot niet terug: het allocatiedoel per iteratie is de opgave min de stand, geklemd op nul, zoals bij elke sector. En de opgave is cumulatief per zichtjaar, dus een tekort in het ene zichtjaar kan in het volgende alsnog worden ingelopen; lees deze uitdraai daarom als een stand en niet als een jaarsaldo.
 
-				berging_op_veenbouwstenen_m3 en areaal_veenbouwstenen_ha gaan over de cellen waarop de veenlevering met bouwsteen 9a of 9b open water neerlegt, dus over de bouwstenen en niet over de sector. Het zijn geen tweede opgave en zij mogen niet bij aangewezen_berging_m3 worden opgeteld; zie de toelichting bij Waterberging_Veenwater. Ze staan hier omdat de vraag is hoeveel van de aangeleverde opgave alleen al uit die bouwstenen kan komen.
+				berging_uit_nieuw_water_9a_m3 is wat bouwsteen 9a, nieuw open water voor waterbuffering, in deze regio aan berging oplevert. Dat is het plan van team Veen zelf, en de vraag waarvoor deze uitdraai is gemaakt is of dat plan de regionale vraag al dekt. Nieuw_water_9a_min_benodigd_m3 antwoordt die vraag rechtstreeks: positief betekent dat 9a alleen al genoeg zou zijn.
+
+				Bouwsteen 9b staat er apart bij en mag niet bij 9a worden opgeteld om met de opgave te vergelijken. 9b is bestaand open water waarvan het peil 15 cm wordt opgezet, en die peilopzet zit al aan de vraagkant verwerkt: deze variant leest via VariantK/WaterbergingOpBestaandWater de aangeleverde kolommen OokBestaand_*, waarin de opgave met dat effect is verlaagd. Wie 9b hier alsnog als aanbod optelt telt hem twee keer. De kolom staat er alleen om te kunnen zien hoe groot dat al verrekende deel is; in drie deelgebieden is de resterende opgave door die verlaging nul.
+
+				Beide bouwsteenkolommen gaan over de veenlevering en niet over de sector, dus zij mogen ook niet bij aangewezen_berging_m3 worden opgeteld; zie verder de toelichting bij Waterberging_Veenwater.
 
 				claimreal_Waterberging uit de tabel Checks geeft alleen de verhouding tussen stand en opgave, en laat via AsList de regio's zonder opgave weg, dus daar is niet uit te lezen welke regio welk getal heeft en hoe groot de opgave daar is. Deze uitdraai wel, en hij loopt sinds #761 mee in GenerateAll.";
 
