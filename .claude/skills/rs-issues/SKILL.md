@@ -126,6 +126,22 @@ Noem het pad in de config waar het over gaat, met bestandsnaam en regelnummer al
 
 ## Openstaande punten onderaan, in bullets
 
+### Toets eerst of de vraag nodig is
+
+Doe dit voordat je de bullets opschrijft, niet erna. Elke vraag mailt alle betrokkenen en legt werk bij een ander neer, en een vraag die al beantwoord is kost de ontvanger meer tijd dan hij jou bespaart. Loop per bullet deze drie langs en schrap hem zodra er een raak is.
+
+- staat het antwoord al ergens? Zoek ook in gesloten issues, want dat is hier juist de plek waar dingen zijn vastgelegd. Elk issue dat je in je eigen tekst noemt open je met `gh issue view <nummer> --comments`; dat is het minimum, want een vraag stellen over een issue dat je aanhaalt zonder het te lezen is niet uit te leggen.
+- kun je hem zelf beantwoorden uit de configuratie of met een meting? Dan is het geen vraag maar werk dat je nog niet gedaan hebt.
+- klopt de premisse? Een vraag in de vorm "omdat het model X niet doet" is pas een vraag als je hebt vastgesteld dat het model X inderdaad niet doet. Doe die vaststelling in de code en niet uit je hoofd.
+
+Blijft er een vraag over, zet er dan bij wat je al hebt uitgesloten, zodat de ander niet opnieuw begint.
+
+Gebeurd bij #763 op 3 september 2026. Ik plaatste drie vragen aan Deltares over de kentallen voor de kostenopslag per bouwwijze. Twee waren beantwoord in #505, dat gesloten is en waarin staat dat bijlage E al is overgenomen en dat er niets geleverd hoeft te worden. De derde rustte op de aanname dat het model aangepast bouwen niet beprijst, terwijl Bodemdalingkosten_T de ophoogdikte afleidt uit de schadevrije diepte van de gekozen bouwwijze en die post in het exploitatiesaldo zit. Een vierde punt stond in de code: BouwwijzeInput/Toegestaan zet alles op FALSE waar Stand/OP_rel leeg is. Alle vier hadden weg gekund, en de comment is achteraf aangepast.
+
+Dit patroon herhaalt zich. Vraagt de gebruiker of de vragen nodig zijn, dan zijn ze dat vrijwel nooit; stel die vraag dus zelf, voordat je plaatst.
+
+### De vorm
+
 Blijft er na een issue of een comment iets openstaan, dan sluit je af met een kopje met de openstaande acties en vragen, als bullets. Niet verspreid door de lopende tekst, want dan moet de lezer zelf gaan turven wat er nu eigenlijk moet gebeuren.
 
 Groepeer naar de partij die aan zet is, met die partij in het kopje en de bullets eronder zonder voorvoegsel. Zijn alle vragen voor dezelfde partij, dan is het één kopje. Formuleer elke bullet zo dat hij met ja, nee of een getal te beantwoorden is; "hier moet nog naar gekeken worden" is geen actie.
