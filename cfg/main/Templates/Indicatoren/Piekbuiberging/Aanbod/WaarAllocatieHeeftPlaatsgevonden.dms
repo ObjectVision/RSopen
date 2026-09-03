@@ -32,14 +32,33 @@ container WaarAllocatieHeeftPlaatsgevonden
 		{
 			parameter<float32> FractieGroenDak := /VariantParameters/VariantK/FractieGroenDakNieuwbouw[Variant_rel];
 			parameter<float32> FractieBlauwDak := /VariantParameters/VariantK/FractieBlauwDakNieuwbouw[Variant_rel];
+			parameter<float32> SomDakfracties  := FractieGroenDak + FractieBlauwDak, IntegrityCheck = "this <= 1.001f", Descr = "Dezelfde bewaking als in de bestaand-tak: groen en blauw delen hetzelfde dak. Sinds #746 staat hij ook hier.";
 			
-			attribute<meter2> Dakoppervlak      (AdminDomain) := StandPandFootprintWaarAllocHeeftPlaatsgevonden;
-			attribute<meter2> DakoppervlakGroen (AdminDomain) := Dakoppervlak * FractieGroenDak;
-			attribute<meter2> DakoppervlakBlauw (AdminDomain) := Dakoppervlak * FractieBlauwDak;
-			attribute<meter3> Resultaat         (AdminDomain) := add(
-				DakoppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDak],
-				DakoppervlakBlauw * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/BlauwDak]
-			);
+			attribute<Woning>  WoningenMeergezins (AdminDomain) := Stand/Aantal_Woningen_meergezins_VrijeSector + Stand/Aantal_Woningen_meergezins_SocialeHuur;
+			attribute<Woning>  WoningenEengezins  (AdminDomain) := Stand/Aantal_Woningen_eengezins_VrijeSector  + Stand/Aantal_Woningen_eengezins_SocialeHuur;
+			attribute<float32> FractiePlatDakUitTelling (AdminDomain) := MakeDefined(
+				  (WoningenMeergezins * /ModelParameters/Piekbuiberging/Dakvorm/FractiePlatDak[Classifications/Vastgoed/WP2/V/meergezins] + WoningenEengezins * /ModelParameters/Piekbuiberging/Dakvorm/FractiePlatDak[Classifications/Vastgoed/WP2/V/eengezins])
+				/ (WoningenMeergezins + WoningenEengezins)
+				, 0f)
+			, Descr = "Het platte aandeel naar woningtelling van de cel, voor BAG-nieuwbouw: die cellen dragen de geobserveerde woningen per type en kunnen gemengd zijn, terwijl het gematchte pakket daar een type kiest. Een telling is een grovere maat dan een footprint, want een appartementenblok zet tientallen woningen op een dak; voor modelnieuwbouw geldt daarom het pakket.";
+			attribute<float32> FractiePlatDakCel (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+				? FractiePlatDakUitTelling
+				: MakeDefined(/ModelParameters/Piekbuiberging/Dakvorm/FractiePlatDak[ThisVariantClassifications/Vastgoed/OP/WP2_rel[Stand/OP_rel]], FractiePlatDakUitTelling)
+			, Descr = "Het platte aandeel van het dak in een nieuwbouwcel (#746). Modelnieuwbouw volgt het woningtype van het ontwikkelpakket van de cel via de proxy in ModelParameters/Piekbuiberging/Dakvorm; zo'n cel is homogeen eengezins of meergezins, want elk pakket hoort bij een WP2xVSSH. BAG-nieuwbouw volgt de woningtelling, dezelfde tak als de zes andere maatregelen in deze container.";
+			
+			attribute<meter2> Dakoppervlak            (AdminDomain) := StandPandFootprintWaarAllocHeeftPlaatsgevonden;
+			attribute<meter2> DakoppervlakPlat        (AdminDomain) := Dakoppervlak * FractiePlatDakCel;
+			attribute<meter2> DakoppervlakSchuin      (AdminDomain) := Dakoppervlak - DakoppervlakPlat;
+			attribute<meter2> DakoppervlakGroenPlat   (AdminDomain) := DakoppervlakPlat   * FractieGroenDak;
+			attribute<meter2> DakoppervlakGroenSchuin (AdminDomain) := DakoppervlakSchuin * FractieGroenDak;
+			attribute<meter2> DakoppervlakGroen       (AdminDomain) := DakoppervlakGroenPlat + DakoppervlakGroenSchuin;
+			attribute<meter2> DakoppervlakBlauw       (AdminDomain) := DakoppervlakPlat * FractieBlauwDak, Descr = "Alleen op het platte deel van het dak (#746), zie de bestaand-tak in Aanbod.dms.";
+			attribute<meter3> Resultaat               (AdminDomain) := add(
+				  DakoppervlakGroenPlat   * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDak]
+				, DakoppervlakGroenSchuin * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDakSchuin]
+				, DakoppervlakBlauw       * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/BlauwDak]
+			)
+			, ExplicitSuppliers = "SomDakfracties";
 		}
 		
 		container OpOverigVerhardUitgeefbaar
@@ -180,10 +199,24 @@ container WaarAllocatieHeeftPlaatsgevonden
 		container OpDaken
 		{
 			parameter<float32> FractieGroenDak := /VariantParameters/VariantK/FractieGroenDakNieuwbouw[Variant_rel];
+			parameter<float32> FractieBlauwDak := /VariantParameters/VariantK/FractieBlauwDakNieuwbouw[Variant_rel]
+			, Descr = "Sinds #746. Tot dan kende deze tak alleen een groene fractie, terwijl juist werkpanden onder de dakvormproxy plat zijn en een blauw dak kunnen dragen; in de NbS-varianten, waar de groene fractie nul is, leverden nieuwe werkdaken daardoor niets. Team Stad van Deltares: blauw op platte daken in bestaande en nieuwe stad, met dezelfde percentages.";
+			parameter<float32> SomDakfracties  := FractieGroenDak + FractieBlauwDak, IntegrityCheck = "this <= 1.001f";
+			parameter<float32> FractiePlatDakCel := ='/ModelParameters/Piekbuiberging/Dakvorm/FractiePlatDak'+Sector_ref, Descr = "Het platte aandeel per sector uit ModelParameters/Piekbuiberging/Dakvorm: werkpanden plat, verblijfsrecreatie schuin.";
 			
-			attribute<meter2> Dakoppervlak      (AdminDomain) := StandPandFootprintWaarAllocHeeftPlaatsgevonden;
-			attribute<meter2> DakoppervlakGroen (AdminDomain) := Dakoppervlak * FractieGroenDak;
-			attribute<meter3> Resultaat         (AdminDomain) := DakoppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDak];
+			attribute<meter2> Dakoppervlak            (AdminDomain) := StandPandFootprintWaarAllocHeeftPlaatsgevonden;
+			attribute<meter2> DakoppervlakPlat        (AdminDomain) := Dakoppervlak * FractiePlatDakCel;
+			attribute<meter2> DakoppervlakSchuin      (AdminDomain) := Dakoppervlak - DakoppervlakPlat;
+			attribute<meter2> DakoppervlakGroenPlat   (AdminDomain) := DakoppervlakPlat   * FractieGroenDak;
+			attribute<meter2> DakoppervlakGroenSchuin (AdminDomain) := DakoppervlakSchuin * FractieGroenDak;
+			attribute<meter2> DakoppervlakGroen       (AdminDomain) := DakoppervlakGroenPlat + DakoppervlakGroenSchuin;
+			attribute<meter2> DakoppervlakBlauw       (AdminDomain) := DakoppervlakPlat * FractieBlauwDak, Descr = "Alleen op het platte deel van het dak (#746), zie de bestaand-tak in Aanbod.dms.";
+			attribute<meter3> Resultaat               (AdminDomain) := add(
+				  DakoppervlakGroenPlat   * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDak]
+				, DakoppervlakGroenSchuin * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDakSchuin]
+				, DakoppervlakBlauw       * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/BlauwDak]
+			)
+			, ExplicitSuppliers = "SomDakfracties";
 		}
 		
 		container OpOverigVerhardUitgeefbaar
