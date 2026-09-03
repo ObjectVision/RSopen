@@ -72,6 +72,27 @@ container KostenWoningbouw
 	attribute<Ha> Nieuwbouw_Ha (AdminDomain) := MakeDefined(WaardeNabijheidGroen/Nieuwbouw/n_nieuwbouw_cumulatief, 0[Woning]) > 0[Woning] ? AdminDomain/NrHaPerCell : 0[Ha]
 	,	Descr = "Het oppervlak waarover de kosten worden geboekt: de cellen waar sinds het basisjaar netto woningen zijn bijgekomen, elk voor hun volle celoppervlak. Dat is grover dan naar rato van het aantal woningen, maar de kengetallen van bijlage E zijn per m2 terrein en niet per woning, dus een cel waar wordt gebouwd draagt de inrichtingskosten van die cel.";
 
+	unit<UInt32> BW := /Classifications/Modellering/BouwwijzeK;
+
+	attribute<BW> Bouwwijze (AdminDomain) := Nieuwbouw_Ha > 0[Ha]
+		? recollect_by_cond(AdminDomain/IsCompactedDomain, Bouwwijzekeuze/Keuze)
+		: null_u
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Bouwwijze_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'"
+	,	StorageType = "gdalwrite.grid"
+	,	Descr = "Met welke bouwwijze er op deze cel is gebouwd (#763). Alleen ingevuld waar sinds het basisjaar netto woningen zijn bijgekomen; elders leeg, want een bouwwijze zonder nieuwbouw is een mogelijkheid en geen uitkomst.
+
+				Dit is de kaartkant van aangepast bouwen. Waar de bebouwingstypekaart veen die categorie aanwijst eist het model een bodemdalingbestendige bouwwijze (#614, #723), en hier is per cel te zien wat daaruit gekomen is: ophogen, funderen op palen of drijvend in plaats van een gewone woning. De keuze stond al in de boom, als invoer voor de ophoogkosten en voor de overstromingsschade, maar werd nergens weggeschreven.
+
+				Let op de variantschakelaar. De veeneis werkt alleen door waar BouwwijzeVeenGeldtVoorOPs aanstaat, dus in NbSMax en NbSGenuanceerd en niet in BAU en BAU2. In die laatste twee toont deze kaart de bouwwijze die het pakket zelf toelaat, zonder de eis uit het landschapstype.";
+
+	attribute<Ha> Nieuwbouw_Ha_perBouwwijze (BW) := pcount(Bouwwijze)[float32] * AdminDomain/NrHaPerCell
+	,	Descr = "De tabelkant van de kaart hierboven: hoeveel hectare nieuwbouw er per bouwwijze staat. Gaat als Bouwwijze_Areaal mee in de export (#763).";
+
+	attribute<Float32> Kostenopslag_Bouwwijze (AdminDomain) := = /ModelParameters/Wonen/BouwwijzeOpslagInBouwkosten
+		? 'MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, Bouwwijzekeuze/GekozenKostenopslag), 1f)'
+		: 'const(1f, AdminDomain)'
+	,	Descr = "De opslagfactor op de bouwkosten van de bouwwijze die hier gekozen is, precies zoals Geschiktheden/Bouwkosten hem leest. Staat de schakelaar uit, dan staat er 1,0 en laat de indicator de factor net zo weg als het model zelf.";
+
 	parameter<Bool> BodemdalingIsBeprijsd := VariantParameters/VariantK/BodemdalingkostenInSaldo[Variant_rel]
 	,	Descr = "Heeft deze variant de bodemdaling via de kengetallen beprijsd? Zo niet, dan zat het bodemeffect in de grondproductiekosten via de dummy AndersBouwen, en zouden de twee onderste regels daar bovenop dubbel tellen. Ze staan dan op nul.";
 
@@ -107,6 +128,46 @@ container KostenWoningbouw
 	,	StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_BeheerEnOnderhoud_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
 	,	StorageType = "gdalwrite.grid";
 
+	// #763: de bouwkosten van de woningen zelf. Die zaten wel in de allocatie, via het exploitatiesaldo,
+	// maar stonden in geen enkele indicator en werden dus ook nergens weggeschreven. De drie posten
+	// hierboven gaan over het terrein en niet over het gebouw: Regulier is grondproductie en de twee
+	// andere zijn bodemdaling. Deze regel telt wat er op dat terrein wordt neergezet.
+	container Src_Bouwkosten := ='ThisVariantData/Suitability/src/Wonen/Bouwkosten'
+	,	Descr = "De bouwkostenkant van de geschiktheid, met dezelfde opslagen die de allocatie heeft gebruikt. Zelfde bron als het model, zodat indicator en allocatie niet uit elkaar kunnen lopen.";
+
+	attribute<Eur_m2> Prijs_perM2BVO (AdminDomain) :=
+		OP/VSSH_rel[Stand/OP_rel] == /Classifications/Vastgoed/VSSH/V/SocialeHuur
+			? MakeDefined(/ModelParameters/Wonen/Bouwkosten/SocialeHuur, mean(/ModelParameters/Wonen/Bouwkosten/SocialeHuur))
+			: MakeDefined(/ModelParameters/Wonen/Bouwkosten/VrijeSector, mean(/ModelParameters/Wonen/Bouwkosten/VrijeSector))
+	,	Descr = "Het CBS-kental per m2 bvo van het landsdeel, voor de huursector van het pakket dat hier is gealloceerd. Buiten de landsdeelpolygonen het landelijk gemiddelde, dezelfde terugval als in Geschiktheden/Bouwkosten (#595).";
+
+	attribute<Eur_Ha> Bouwkosten_perHa (AdminDomain) :=
+		  Prijs_perM2BVO
+		* OP/Dichtheid[Stand/OP_rel]
+		* OP/BVOPerWoning[Stand/OP_rel]
+		* Kostenopslag_Bouwwijze
+		* Src_Bouwkosten/WoningtypeOpslag_perOP[Stand/OP_rel]
+		* Src_Bouwkosten/BouwlaagOpslag_perOP[Stand/OP_rel]
+	,	Descr = "De bouwkosten per hectare van het pakket dat in deze cel is gealloceerd: de prijs per m2 bvo maal het bvo dat een hectare van dit pakket draagt, met dezelfde drie opslagen als in Geschiktheden/Bouwkosten. Dezelfde formule als perOP daar, een keer doorgerekend met het gealloceerde pakket in plaats van 53 keer, net zoals Kosten hierboven dat voor de bodemdaling doet.";
+
+	attribute<Eur> Bouwkosten (AdminDomain) := MakeDefined(Bouwkosten_perHa * Nieuwbouw_Ha, 0[Eur])
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Bouwkosten_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	,	StorageType = "gdalwrite.grid"
+	,	Descr = "De bouwkosten van de gealloceerde nieuwbouw, geboekt over dezelfde hectares als de drie posten hierboven (#763).
+
+				Dit is de grootste kostenpost van woningbouw en de enige die tot nu toe alleen binnen de allocatie bestond. Tel hem niet zonder meer op bij Regulier: die twee samen vormen de aanlegkant, terwijl BeheerEnOnderhoud over de gebruiksfase gaat en bij de gemeente valt.
+
+				Zelfde grofheid als de rest van deze indicator: een cel waar netto woningen zijn bijgekomen draagt de bouwkosten van een volle hectare van dat pakket, en niet naar rato van het aantal woningen dat er precies bij kwam.";
+
+	attribute<Eur> MeerkostenBouwwijze (AdminDomain) := Bouwkosten * (1f - 1f / Kostenopslag_Bouwwijze)
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_MeerkostenBouwwijze_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	,	StorageType = "gdalwrite.grid"
+	,	Descr = "Het deel van de bouwkosten hierboven dat aan de gekozen bouwwijze hangt, dus wat aangepast bouwen boven op een gewone woning kost (#763).
+
+				Deze post is op dit moment overal nul, en dat is geen meting maar een lege kolom in de kentallen: BouwwijzeK/Kostenopslag staat voor alle vijf de bouwwijzen op 1,0 en ModelParameters/Wonen/BouwwijzeOpslagInBouwkosten staat op FALSE. Het model beprijst de bouwwijze dus niet, en de veeneis werkt als een restrictie op de pakketkeuze in plaats van als een prijs. Zie #505 en #723. Zodra daar getallen in staan vult deze post zich vanzelf, langs dezelfde weg als de allocatie hem dan voelt.
+
+				Wat wel al een bedrag draagt is MeerkostenBodemdaling hierboven. Dat zijn de ophoogkosten van het terrein uit bijlage E, en die hangen aan de bodemdalingsopgave van de plek en niet aan de categorie uit de bebouwingstypekaart.";
+
 	// #651: bouwen is een eenmalige uitgave bij oplevering, en de drie posten hierboven zijn cumulatief sinds het
 	// basisjaar. De NCW wordt daarom per periode opgebouwd, net als bij Woningwaarde: alleen wat er in deze periode
 	// bijkwam krijgt de factor van dit zichtjaar, opgeteld bij de NCW van het vorige zichtjaar.
@@ -130,10 +191,22 @@ container KostenWoningbouw
 		: 'MakeDefined(BeheerEnOnderhoud_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor + PrevIndicatoren/KostenWoningbouw/BeheerEnOnderhoud_NCW'
 	,	Descr = "Let op de dubbele verdiscontering in de betekenis: het bedrag zelf is al een contante waarde over honderd jaar vanaf oplevering, uit tabel E-9, en wordt hier nog eens teruggerekend van het bouwjaar naar het basisjaar.";
 
+	attribute<Eur> Bouwkosten_NCW (AdminDomain) := = IsFirstAllocYear
+		? 'MakeDefined(Bouwkosten_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor'
+		: 'MakeDefined(Bouwkosten_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor + PrevIndicatoren/KostenWoningbouw/Bouwkosten_NCW'
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Bouwkosten_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	,	StorageType = "gdalwrite.grid"
+	,	Descr = "De bouwkosten in netto contante waarde, per periode opgebouwd volgens dezelfde regel als de posten hierboven (#651, #763).";
+
 	parameter<Eur> Regulier_Per_NL                  := sum(Regulier);
 	parameter<Eur> MeerkostenBodemdaling_Per_NL     := sum(MeerkostenBodemdaling);
 	parameter<Eur> BeheerEnOnderhoud_Per_NL         := sum(BeheerEnOnderhoud);
 	parameter<Eur> MeerkostenBodemdaling_NCW_Per_NL := sum(MeerkostenBodemdaling_NCW);
+	parameter<Eur> Regulier_NCW_Per_NL              := sum(Regulier_NCW);
+	parameter<Eur> BeheerEnOnderhoud_NCW_Per_NL     := sum(BeheerEnOnderhoud_NCW);
+	parameter<Eur> Bouwkosten_Per_NL                := sum(Bouwkosten);
+	parameter<Eur> Bouwkosten_NCW_Per_NL            := sum(Bouwkosten_NCW);
+	parameter<Eur> MeerkostenBouwwijze_Per_NL       := sum(MeerkostenBouwwijze);
 
 	parameter<Ha>  Nieuwbouw_Ha_Per_NL := sum(Nieuwbouw_Ha), Descr = "Controlegetal: over hoeveel hectare deze bedragen zijn geboekt.";
 
@@ -144,6 +217,11 @@ container KostenWoningbouw
 		+ '  meerkosten bodemdaling    ' + string(MeerkostenBodemdaling_Per_NL / 1e6[Eur])  + '\n'
 		+ '  beheer en onderhoud 100jr ' + string(BeheerEnOnderhoud_Per_NL     / 1e6[Eur])  + '\n'
 		+ '  meerkosten in NCW         ' + string(MeerkostenBodemdaling_NCW_Per_NL / 1e6[Eur]) + '\n'
+		+ '  bouwkosten                ' + string(Bouwkosten_Per_NL          / 1e6[Eur])  + '\n'
+		+ '  bouwkosten in NCW         ' + string(Bouwkosten_NCW_Per_NL      / 1e6[Eur])  + '\n'
+		+ '  meerkosten bouwwijze      ' + string(MeerkostenBouwwijze_Per_NL / 1e6[Eur])  + '\n'
+		+ '  hectare per bouwwijze\n    '
+		+ AsList(BW/name + ' ' + string(Nieuwbouw_Ha_perBouwwijze / 1[Ha]), '\n    ') + '\n'
 	,	StorageName = "='%LocalDataProjDir%/Diagnose/KostenWoningbouw_'+Casus_name+'_'+Zichtjaar_name+'.txt'"
 	,	StorageType = "str"
 	,	Descr = "Controlewaarden voor #505, zodat de orde van grootte zonder kaartviewer te lezen is.";
@@ -158,8 +236,28 @@ container KostenWoningbouw
 		attribute<Eur> BeheerEnOnderhoud         (Regio) := sum(KostenWoningbouw/BeheerEnOnderhoud,         Regio/Per_AdminDomain_Fijn);
 		attribute<Eur> MeerkostenBodemdaling_NCW (Regio) := sum(KostenWoningbouw/MeerkostenBodemdaling_NCW, Regio/Per_AdminDomain_Fijn);
 		attribute<Ha>  Nieuwbouw_Ha              (Regio) := sum(KostenWoningbouw/Nieuwbouw_Ha,              Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> Regulier_NCW              (Regio) := sum(KostenWoningbouw/Regulier_NCW,              Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> BeheerEnOnderhoud_NCW     (Regio) := sum(KostenWoningbouw/BeheerEnOnderhoud_NCW,     Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> Bouwkosten                (Regio) := sum(KostenWoningbouw/Bouwkosten,                Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> Bouwkosten_NCW            (Regio) := sum(KostenWoningbouw/Bouwkosten_NCW,            Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> MeerkostenBouwwijze       (Regio) := sum(KostenWoningbouw/MeerkostenBouwwijze,       Regio/Per_AdminDomain_Fijn);
 
 		attribute<Eur_Ha> MeerkostenBodemdaling_perHa (Regio) := (MeerkostenBodemdaling / Nieuwbouw_Ha)[Eur_Ha]
 		,	Descr = "De meerkosten per hectare nieuwbouw in deze regio. Handiger om regio's mee te vergelijken dan het totaal, dat vooral de bouwopgave weerspiegelt.";
+	}
+
+	container Per_NL
+	: Descr = "Dezelfde posten landsdekkend. Bestaat sinds #763, zodat de landelijke indicatorentabel ze langs hetzelfde pad kan lezen als de regionale: alleen de containernaam verschilt. Zelfde constructie als KostenWerklocaties/Per_NL (#705); de waarden zelf stonden er al als losse parameters hierboven."
+	{
+		parameter<Eur> Regulier                  := Regulier_Per_NL;
+		parameter<Eur> Regulier_NCW              := Regulier_NCW_Per_NL;
+		parameter<Eur> MeerkostenBodemdaling     := MeerkostenBodemdaling_Per_NL;
+		parameter<Eur> MeerkostenBodemdaling_NCW := MeerkostenBodemdaling_NCW_Per_NL;
+		parameter<Eur> BeheerEnOnderhoud         := BeheerEnOnderhoud_Per_NL;
+		parameter<Eur> BeheerEnOnderhoud_NCW     := BeheerEnOnderhoud_NCW_Per_NL;
+		parameter<Eur> Bouwkosten                := Bouwkosten_Per_NL;
+		parameter<Eur> Bouwkosten_NCW            := Bouwkosten_NCW_Per_NL;
+		parameter<Eur> MeerkostenBouwwijze       := MeerkostenBouwwijze_Per_NL;
+		parameter<Ha>  Nieuwbouw_Ha              := Nieuwbouw_Ha_Per_NL;
 	}
 }
