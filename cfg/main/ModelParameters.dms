@@ -44,6 +44,30 @@ container ModelParameters : using = "Units;Geography;SourceData/RegioIndelingen"
 	
 	parameter<UInt8>     Default_NrOfIters             := 15b, Descr = "Aantal iteraties in de allocatie. Iteraties zijn  nodig om niet vervulde restclaims in een iteratie in een volgende iteratie te vervullen";
 	parameter<UInt8>     Default_NrOfSequences         := 2b, Descr = "Aantal sequences in de allocatie. Sequences zijn nodig om verdrongen wooneenheden, banen etc in een sequentie in een volgende sequentie te heralloceren, voor zover de verdringing restclaims opleverede. Dit moet minimaal 2 zijn.", IntegrityCheck = "This >= 2b"; 
+	container Skeleton
+	: Descr = "De verkorte allocatieopzet voor de late zichtjaren. Vanaf VanafZichtjaar draaien de sectorallocregio's niet meer allemaal en niet meer met het volle aantal iteraties; wat elke regel dan doet staat in de kolom ItersNaXZichtjaar van de tabel SectorAllocRegio hieronder.
+
+				Waarom dit mag. De wonen- en werkenclaim bevriest op Advanced/FromWhichDoWeKeepTIGRISconstant, en de leeskant in Templates/Claims/ZichtjaarXScenarioxAllocRegios klemt daarop, dus vanaf het zichtjaar daarna is de claim gelijk aan die van het klemjaar terwijl de stand alleen kan groeien. Er valt dan niets meer te verdelen, en de COROP- en Provincie-passen die restclaims van NVM opvangen hebben geen werk meer.
+
+				Waarom 2070 en niet 2060. Y2060 is niet het rustige jaar waar het op lijkt, maar het drukste van de late reeks. De klem staat op 2060, dus Y2060 leest zijn eigen claim en maakt nog een volle stap: op NVM in WLO_hoog/BAU van 10.067.002 naar 10.630.442 woningen, precies zo groot als de stap ervoor. Pas vanaf Y2070 is de stap nul. Tegelijk vervalt in Y2060 de plancapaciteitsvrijstelling (Advanced/PlancapaciteitGeldigTotEnMet op 2050), de trede-voorrang die daaraan hangt (TredeVolgtPlancapaciteitVervaldatum) en de eigendom-as (EigendomVolgtVervaldatum). Dat jaar met een enkele iteratie afdoen zou de allocatie juist raken op het moment dat de voorkeursvolgorde van locaties verandert.
+
+				De keuze is een aanname over de claimreeks en hoort in de verantwoording van een run. Toets hem voordat je hem aanzet, met de restclaim-uitdraaien uit Diagnose op de standen van de vorige oplevering; dat kost geen allocatie. Let op dat de aanname in BAU en BAU2 is waargenomen: in NbSMax en NbSGenuanceerd staat VariantK/WaterbergingClaimActief op TRUE en groeit de bergingsopgave na 2060 gewoon door."
+	{
+		parameter<Bool>      Actief         := FALSE
+		, Descr = "Staat de verkorte opzet aan? Op FALSE draait elk zichtjaar de volledige lijst met het volle aantal iteraties, en doet de kolom ItersNaXZichtjaar niets.
+
+					Staat bewust op FALSE tot een openstaande meting is verklaard. Een constante claim betekent namelijk niet dat er niets meer te alloceren valt: gemeten op verse standen gaat BAU van 10.580.566 woningen op Y2060 naar 10.602.608 op Y2080, dus 22.042 woningen erbij over twee zichtjaren, en de verstedelijking van 76.166,8 naar 76.921,4 ha. In NbSGenuanceerd is dat 23.123 woningen en 658,7 ha. De claim staat vanaf Y2060 stil, dus die woningen komen ergens anders vandaan, vermoedelijk uit herbouw van wat nieuwe natuur, water of vernatting heeft gesloopt.
+
+					Zolang niet is uitgezocht waar die 22.042 vandaan komen en of een enkele iteratie op NVM ze nog plaatst, mag deze schakelaar niet aan in een run waarvan de uitkomst wordt geleverd. Zet hem aan zodra dat is nagerekend, of eerder voor een run waarin alleen de rekentijd telt.";
+
+		parameter<YearRange> VanafZichtjaar := 2070[YearRange]
+		, Descr = "Vanaf welk zichtjaar de verkorte opzet geldt, dit jaar meegerekend. Moet op of na het zichtjaar na Advanced/FromWhichDoWeKeepTIGRISconstant liggen, want daarvoor groeit de claim nog en is er echt werk te doen. De IntegrityCheck bewaakt dat."
+		, IntegrityCheck = "uint16(This) > ModelParameters/Advanced/FromWhichDoWeKeepTIGRISconstant";
+
+		parameter<UInt8>     AantalIters    := 1b
+		, Descr = "Hoeveel iteraties een regel met de kolomwaarde SkeletonIters krijgt, in de eerste en in de latere sequenties. Moet minstens 1 zijn: nul iteraties geeft een lege Iter-unit in SectorAllocRegio_T en daarmee een last() op niets. Een regel die helemaal niet meer hoort mee te doen krijgt de kolomwaarde DoetNietMee en wordt overgeslagen."
+		, IntegrityCheck = "This >= 1b";
+	}
 
 	// Jaren/Data waarvoor recente waarnemingen beschikbaar zijn. t.b.v. het inlezen ervan.
 	parameter<String>    RegioIndelingen_CBSjaar       := '2024'
@@ -145,6 +169,12 @@ container ModelParameters : using = "Units;Geography;SourceData/RegioIndelingen"
 	//                         Alleen de kleinste regio per sector krijgt TRUE (verdringing zo lokaal mogelijk).
 	//   4. AantalIters      : Aantal iteraties in de eerste sequentie (Default_NrOfIters of specifiek).
 	//   5. AantalItersInLaterSeq : Aantal iteraties in eventuele vervolgsequenties.
+	//   6. ItersNaXZichtjaar : Wat deze regel doet vanaf Skeleton/VanafZichtjaar, zodra Skeleton/Actief aanstaat.
+	//                         Drie waarden. 'Default_NrOfIters' betekent onveranderd meedoen. 'SkeletonIters'
+	//                         betekent meedoen met Skeleton/AantalIters, in de eerste en in de latere sequenties.
+	//                         'DoetNietMee' betekent overslaan: de regel geeft zijn ingangsstand door zonder te
+	//                         alloceren, langs dezelfde tak die OntkoppelStedelijkeKlasses gebruikt.
+	//                         Staat Skeleton/Actief op FALSE, dan doet deze kolom niets.
 	//
 	// VOLGORDE IS BELANGRIJK: sectoren worden van boven naar beneden gealloceerd.
 	// Gelijke sectornamen (bijv. Wonen op NVM, daarna Wonen op Provincie) worden na elkaar doorlopen:
@@ -159,21 +189,21 @@ container ModelParameters : using = "Units;Geography;SourceData/RegioIndelingen"
 		, Descr = "Gelijke sectoren moeten direct na elkaar komen. van klein naar grote alloc regios. Teneinde verdringing zo lokaal mogelijk op te lossen. Anders kan wel, maar geeft wellicht onwenselijke resultaten."
 		{
 			attribute<String> Text: [
-			// name                , AllocRegio            , UseInLaterSeq , AantalIters        , AantalItersInLaterSeq
-			  'Wonen'              , 'NVM'                 ,  'TRUE'       ,'Default_NrOfIters' ,'5'
-			 ,'Wonen'              , 'COROP'               , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 ,'Wonen'              , 'Provincie'           , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 // ,'Wonen'              , 'NL'                  , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 ,'Werken'             , 'NVM'                 ,  'TRUE'       ,'Default_NrOfIters' ,'5'
-			 ,'Werken'             , 'COROP'               , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 ,'Werken'             , 'Provincie'           , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 // ,'Werken'             , 'NL'                  , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 // ,'Verblijfsrecreatie' , 'Provincie'           ,  'TRUE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 ,'Waterberging'       , 'Waterbergingsregio'  ,  'FALSE'      ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 // ,'Zon'                , 'Provincie'           ,  'TRUE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 // ,'Wind'               , 'Provincie'           ,  'TRUE'       ,'NrOfIters_Wind'    ,'NrOfIters_Wind'
-			 // ,'Wind'               , 'NL'                  , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
-			 // ,'Landbouw'           , 'Provincie'           , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'
+			// name                , AllocRegio            , UseInLaterSeq , AantalIters        , AantalItersInLaterSeq , ItersNaXZichtjaar
+			  'Wonen'              , 'NVM'                 ,  'TRUE'       ,'Default_NrOfIters' ,'5'                    , 'SkeletonIters'
+			 ,'Wonen'              , 'COROP'               , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'    , 'DoetNietMee'
+			 ,'Wonen'              , 'Provincie'           , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'    , 'DoetNietMee'
+			 // ,'Wonen'              , 'NL'                  , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters' , 'DoetNietMee'
+			 ,'Werken'             , 'NVM'                 ,  'TRUE'       ,'Default_NrOfIters' ,'5'                    , 'SkeletonIters'
+			 ,'Werken'             , 'COROP'               , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'    , 'DoetNietMee'
+			 ,'Werken'             , 'Provincie'           , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters'    , 'DoetNietMee'
+			 // ,'Werken'             , 'NL'                  , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters' , 'DoetNietMee'
+			 // ,'Verblijfsrecreatie' , 'Provincie'           ,  'TRUE'       ,'Default_NrOfIters' ,'Default_NrOfIters' , 'Default_NrOfIters'
+			 ,'Waterberging'       , 'Waterbergingsregio'  ,  'FALSE'      ,'Default_NrOfIters' ,'Default_NrOfIters'    , 'Default_NrOfIters'
+			 // ,'Zon'                , 'Provincie'           ,  'TRUE'       ,'Default_NrOfIters' ,'Default_NrOfIters' , 'Default_NrOfIters'
+			 // ,'Wind'               , 'Provincie'           ,  'TRUE'       ,'NrOfIters_Wind'    ,'NrOfIters_Wind'    , 'NrOfIters_Wind'
+			 // ,'Wind'               , 'NL'                  , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters' , 'DoetNietMee'
+			 // ,'Landbouw'           , 'Provincie'           , 'FALSE'       ,'Default_NrOfIters' ,'Default_NrOfIters' , 'Default_NrOfIters'
 			 //
 			 // Zet je Landbouw hier aan, lees dan eerst de voorwaarde bij
 			 // SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd/Landschap/Veen/SloopUitGealloceerdeBouwsteen.
@@ -196,6 +226,17 @@ container ModelParameters : using = "Units;Geography;SourceData/RegioIndelingen"
 		attribute<Bool>         UseInLaterSequences     := Elements/Text[value(uint32(id(.))* nrAttr + 2, Elements)][bool]; 
 		attribute<UInt8>        AantalIters             := uint8(replace(Elements/Text[value(uint32(id(.))* nrAttr + 3, Elements)], 'Default_NrOfIters', string(ModelParameters/Default_NrOfIters), 'NrOfIters_Wind', string(ModelParameters/Wind/NrOfIters_Wind))), Descr = "Hier wordt het aantal iteraties uit de ModelParameters opgehaald en in deze lijst toegevoegd.";
 		attribute<UInt8>        AantalItersInLaterSeq   := uint8(replace(Elements/Text[value(uint32(id(.))* nrAttr + 4, Elements)], 'Default_NrOfIters', string(ModelParameters/Default_NrOfIters), 'NrOfIters_Wind', string(ModelParameters/Wind/NrOfIters_Wind))), Descr = "Er kan eventueel voor worden gekozen in latere sequenties minder iteraties te gebruiken. Dat kan hier insteld worden.";
+		attribute<String>       ItersNaXZichtjaar_str   := Elements/Text[value(uint32(id(.))* nrAttr + 5, Elements)], Descr = "De ruwe kolomwaarde, apart gezet zodat de IntegrityCheck hieronder kan zeggen welke tekst niet herkend werd.";
+		attribute<UInt8>        ItersNaXZichtjaar       := uint8(replace(ItersNaXZichtjaar_str
+																	, 'Default_NrOfIters', string(ModelParameters/Default_NrOfIters)
+																	, 'NrOfIters_Wind'   , string(ModelParameters/Wind/NrOfIters_Wind)
+																	, 'SkeletonIters'    , string(ModelParameters/Skeleton/AantalIters)
+																	, 'DoetNietMee'      , '0'))
+		, IntegrityCheck = "all(IsDefined(this))"
+		, Descr = "Hoeveel iteraties deze regel krijgt vanaf Skeleton/VanafZichtjaar, met nul voor een regel die dan wordt overgeslagen. Zelfde replace-vertaling als AantalIters hierboven, met er twee sleutelwoorden bij.
+
+					De IntegrityCheck is hier geen luxe. uint8() op een niet herkende tekst geeft null en niet nul, dus een typefout in de tabel of een kolom die per ongeluk verschoven is zou anders stil als een geldige waarde doorlopen. Deze check is meteen de kanarie voor een nrAttr die niet meer bij het aantal kolommen past.";
+		attribute<Bool>         DoetMeeNaXZichtjaar     := ItersNaXZichtjaar > 0b, Descr = "Doet deze regel vanaf Skeleton/VanafZichtjaar nog mee? Nul iteraties wordt nooit als iteratieaantal doorgegeven; SectorAllocRegio_T slaat de regel dan over langs StateNaAllocatie_NoAlloc en geeft de ingangsstand door.";
 		attribute<String>       SortOrder               := string(rlookup(Default_Sectorname, Default_Sectorname)), Descr = "foolproof oplossing om een sortorder af te dwingen, die gebruikt wordt bij de sortering van Uq_Sectors";
 		
 		attribute<AllocRegiosK> AllocRegio_rel          := Default_Regio;
@@ -247,6 +288,8 @@ container ModelParameters : using = "Units;Geography;SourceData/RegioIndelingen"
 			attribute<Sector>       Sector_rel            := ../Sector_rel[org_rel];
 			attribute<UInt8>        AantalIters           := ../AantalIters[org_rel];
 			attribute<UInt8>        AantalItersInLaterSeq := ../AantalItersInLaterSeq[org_rel];
+			attribute<UInt8>        ItersNaXZichtjaar     := ../ItersNaXZichtjaar[org_rel], Descr = "Moet mee, want Sequence_T leest deze kolom op de unit die het krijgt doorgegeven, en dat is voor de vervolgsequenties deze deelverzameling.";
+			attribute<Bool>         DoetMeeNaXZichtjaar   := ../DoetMeeNaXZichtjaar[org_rel];
 			attribute<AllocRegiosK> AllocRegio_rel        := ../AllocRegio_rel[org_rel];
 			attribute<String>       Label                 := ../Label[org_rel];
 			attribute<String>       Sector_name           := ../Sector_name[org_rel];
@@ -267,6 +310,8 @@ container ModelParameters : using = "Units;Geography;SourceData/RegioIndelingen"
 			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
 		}
 		
-		parameter<UInt32> nrAttr := 5, Descr ="Aantal kolommen per rij in Elements/Text: name, AllocRegio, UseInLaterSeq, AantalIters, AantalItersInLaterSeq. Wordt gebruikt om de Text-array te indexeren (id * nrAttr + kolomnr).";
+		parameter<UInt32> nrAttr := 6, Descr ="Aantal kolommen per rij in Elements/Text: name, AllocRegio, UseInLaterSeq, AantalIters, AantalItersInLaterSeq, ItersNaXZichtjaar. Wordt gebruikt om de Text-array te indexeren (id * nrAttr + kolomnr).
+
+					Klopt dit getal niet met het werkelijke aantal kolommen, dan schuift elke kolom op zonder foutmelding. De IntegrityCheck op ItersNaXZichtjaar vangt dat af, want de laatste kolom is de eerste die dan onzin oplevert.";
 	}
 }
