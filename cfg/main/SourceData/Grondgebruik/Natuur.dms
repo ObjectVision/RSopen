@@ -821,6 +821,22 @@ container Natuur
 							/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte'
 					, Descr = "Idem voor bestaand open water. De waterstroom haakt daaraan aan en niet aan de natuur: nieuw open water voor waterbuffering hoort aan bestaande plassen, sloten en boezems vast te zitten, en bouwsteen 9b is bestaand open water.";
 
+					attribute<float32> Veen_Aandeel_100m (rdc_100m) := mean(float32(IsVeenCel), AdminDomain/rdc_100m_rel)
+					, Descr = "Het aandeel veengebied in de 100m-cel. Alleen nodig om de diepte hieronder binnen het veen te normaliseren; buiten het veengebied doet de dieptemaat niet mee.";
+
+					attribute<float32> Diepte_100m (rdc_100m) := mean(MakeDefined(/SourceData/Water/Dieptekaart, 0[Meter])[float32], AdminDomain/rdc_100m_rel)
+					, Descr = "De overstromingsdiepte, gemiddeld per 100m-cel, als maat voor laag liggen. Dat is dezelfde grootheid waarmee de rivierenlevering haar natheidsrangorde maakt, zie Landschap/Rivieren/Diepte_Cel.
+
+								Het is een overstromingskaart en geen hoogtekaart, en dat is een bewuste benadering: er zit geen maaiveldhoogte in de configuratie. Voor de diepe droogmakerijen waar bouwsteen 9a over gaat lopen de twee sterk samen, want wat diep ligt loopt bij een doorbraak diep onder. Keuze bevestigd op 2026-09-03 in #768.
+
+								Null betekent hier niet onbekend maar niet-overstroombaar, en dat is ondiep; vandaar MakeDefined op nul en niet op null.";
+
+					parameter<float32> Diepte_Max := max(Veen_Aandeel_100m > 0f ? Diepte_100m : 0f)
+					, Descr = "De diepste 100m-cel binnen het veengebied, als schaal voor de normalisatie. Buiten het veen genomen zou de schaal door de rivieren en de kust bepaald worden en zou het veen onderin het bereik verdwijnen.";
+
+					attribute<float32> Diepte_Norm_100m (rdc_100m) := Diepte_100m / max_elem(Diepte_Max, 0.001f)
+					, Descr = "De diepte tussen 0 en 1, waarbij 1 de diepste veencel is. De max_elem vangt af dat de deling stukloopt als er nergens diepte is; dan wordt de term overal nul en beslist de aanhaking plus de ruis, precies zoals voor #768.";
+
 					container Ruis :=
 						for_each_nedv(
 							VeenType/name
@@ -915,10 +931,41 @@ container Natuur
 					{
 						attribute<INL_Beheertype> INL_Beheertype_rel := const(null_b, ., INL_Beheertype)
 						, Descr = "Bewust overal null. Een bouwsteen is geen beheertype; welk beheertype er binnen de bouwsteen komt is trap 2.";
+						attribute<bool> IsNieuwWater (.) := code == '9a'
+						, IntegrityCheck = "sum(uint32(this)) == 1"
+						, Descr = "Bouwsteen 9a, nieuw open water voor waterbuffering in diepe droogmakerijen. De telling bewaakt dat er precies een is; een hernummering zoals #762 er een aankondigt zou deze regel anders stil op nul zetten.";
+
+						attribute<bool> IsBestaandWater (.) := code == '9b'
+						, IntegrityCheck = "sum(uint32(this)) == 1"
+						, Descr = "Bouwsteen 9b, bestaand open water met extra buffercapaciteit. Zelfde telling als hierboven.";
+
+						attribute<string> ZeefPad (.) :=
+							  IsBestaandWater ? 'Zeef_Bouwsteen && Basisjaar/IsWater'
+							: IsNieuwWater    ? 'Zeef_Bouwsteen && !Basisjaar/IsWater'
+							:                   'Zeef_Bouwsteen'
+						, Descr = "Waar deze bouwsteen mag landen. Sinds #768 staan 9a en 9b niet meer op dezelfde zeef als de rest.
+
+									9b beschrijft bestaand open water met extra buffercapaciteit en mag daarom alleen landen op water dat er al ligt. Tot #768 kon hij overal in het veengebied terechtkomen, en dan zou aanzetten van VariantK/ExogeenWaterOpleggen nieuw water maken op droge grond waar de levering bestaand water bedoelde.
+
+									9a is juist het nieuwe open water en landt daarom buiten het bestaande water. Waar binnen die ruimte volgt uit de geschiktheid, zie AanhakenPad en DiepteTermPad.
+
+									De overige tien bouwstenen kunnen nog steeds op bestaand water landen. Of dat mag is een open vraag in #660 en niet hier beslist.";
+
+						attribute<string> AanhakenPad (.) := IsNieuwWater || IsBestaandWater ? 'Aanhaken_Water_100m' : 'Aanhaken_Natuur_100m'
+						, Descr = "Waar deze bouwsteen bij aanhaakt: de waterbouwstenen bij bestaand open water, de rest bij bestaande natuur. Zelfde onderscheid dat VeenType/AanhakenPad bij de typenallocatie al maakt.";
+
+						attribute<string> DiepteTermPad (.) := IsNieuwWater ? 'Diepte_Gewicht * Diepte_Norm_100m' : '0f'
+						, Descr = "Alleen 9a krijgt de diepte mee, want daar gaat het om nieuw open water op de diepste plekken. Zie Diepte_Norm_100m voor de maat en ModelParameters/Natuur/Trekking/Veen/Diepte_Gewicht voor het gewicht (#768).";
+
+						attribute<string> NoemerPad (.) := IsNieuwWater ? '(1f + Diepte_Gewicht + Ruis_Amplitude)' : '(1f + Ruis_Amplitude)'
+						, Descr = "Waar de geschiktheid door gedeeld wordt om tussen 0 en 1 te blijven, zoals NatuurAlloc_T verlangt. Loopt mee met welke termen de bouwsteen draagt.";
 					}
 
 					parameter<string> Cluster_Straal_Bouwsteen := /ModelParameters/Natuur/Trekking/Veen/Cluster_Straal_Bouwsteen
 					, Descr = "Over welke straal de geschiktheid van trap 1 wordt uitgesmeerd, en daarmee hoe groot de bouwsteenvlekken worden. Ruimer dan de 500 m van de typenallocatie, met opzet: een veenkoepellandschap of een doorstroommoerasbos is een landschap en hoort een aaneengesloten gebied te zijn, met daarbinnen een fijner mozaiek van beheertypen. Zouden beide trappen dezelfde straal krijgen, dan hebben de bouwsteenvlekken en de typevlekken dezelfde korrel en is het onderscheid tussen de twee trappen zinloos.";
+
+					parameter<float32> Diepte_Gewicht := /ModelParameters/Natuur/Trekking/Veen/Diepte_Gewicht
+					, Descr = "Hoe zwaar de diepte meeweegt in de geschiktheid van bouwsteen 9a. Staat hier als lokale parameter naast Ruis_Amplitude, want de geschiktheidsexpressie wordt per bouwsteen als tekst opgebouwd en die tekst wordt binnen deze container opgelost.";
 
 					parameter<uint32> Seed_Bouwsteen := /ModelParameters/Natuur/Trekking/Veen/Seed_Bouwsteen
 					, Descr = "Eigen seed voor trap 1, zodat de bouwsteentrekking niet samenvalt met die van de typen in Ruis. Per bouwsteen een eigen trekking, seed plus het rijnummer in BouwsteenType.";
@@ -943,7 +990,7 @@ container Natuur
 					container Geschiktheid_Bouwsteen :=
 						for_each_nedv(
 							BouwsteenType/name
-							, 'Zeef_Bouwsteen ? ((Aanhaken_Natuur_100m + Ruis_Amplitude * Ruis_Bouwsteen/' + BouwsteenType/name + ') / (1f + Ruis_Amplitude))[AdminDomain/rdc_100m_rel] : null_f'
+							, BouwsteenType/ZeefPad + ' ? ((' + BouwsteenType/AanhakenPad + ' + ' + BouwsteenType/DiepteTermPad + ' + Ruis_Amplitude * Ruis_Bouwsteen/' + BouwsteenType/name + ') / ' + BouwsteenType/NoemerPad + ')[AdminDomain/rdc_100m_rel] : null_f'
 							, AdminDomain
 							, float32
 						)
@@ -985,6 +1032,20 @@ container Natuur
 								Een tweede trap die de opgave van een vol peilgebied elders binnen het deelgebied laat landen heeft hier op 3 september 2026 een halve dag gestaan, naar het voorbeeld van de overloop die #660 voor de typenallocatie had gebouwd. Deltares heeft beide diezelfde dag laten vervallen: de verdeling van bouwstenen binnen een peilgebied volgt uit de water- en bodemkundige eigenschappen van dat gebied, dus een opgave die daar niet past hoort niet ergens anders te gaan liggen. Wat niet past blijft liggen. Zie #761.
 
 								Dat het nauwelijks meer kost komt door #768. Sinds de pandentoets uit staat is het opleggingsmasker uit #641 de enige uitsluiting, en dat is precies de afbakening die ClaimReferentieOppExclBebouwd als referentieoppervlak gebruikt. Referentieoppervlak en kandidaatruimte vallen daarmee samen, en omdat de twaalf geleverde fracties per peilgebied optellen tot ongeveer 0,907 past de opgave er per constructie in. Gemeten op 2026-09-03: opgave 441.808,8 ha, kandidaatruimte 476.792,6 ha, en een tekort van 311,3 ha ofwel 0,07 procent. Dat restant is afrondingsgruis, want MaxClaims kapt elke opgave per peilgebied per bouwsteen af op hele cellen van 0,0625 ha; het opruimen daarvan was het enige dat de tweede trap nog deed.";
+
+					// ---- de bouwsteenkaart als uitlevering, #764 ----
+
+					parameter<string> Bouwsteenkaart_Pad := '%LocalDataProjDir%/Indicatoren/Veenbouwstenen_NbSGenuanceerd_' + /ModelParameters/StudyArea + '.tif'
+					, Descr = "Waar de bouwsteenkaart heen gaat. Niet onder een casusmap en niet per zichtjaar, want deze kaart is geen uitkomst van de allocatie per zichtjaar: trap 1 verdeelt de aangeleverde bouwsteenfracties eenmalig over de peilgebieden en die verdeling verandert daarna niet meer. Alleen NbSGenuanceerd heeft een veenlevering, dus de variantnaam staat vast in het pad.";
+
+					attribute<BouwsteenType> Write_Bouwsteenkaart (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Bouwsteen_rel : null_b
+					, StorageName = "=Bouwsteenkaart_Pad"
+					, StorageType = "gdalwrite.grid"
+					, Descr = "De gealloceerde bouwsteen per cel, weggeschreven voor team effectbepaling (#764). Zij hebben naast het natuurbeheertype ook de hydrologische omstandigheden nodig, en die zijn uit de bouwsteen af te leiden.
+
+								Null buiten het veengebied en op de cellen die in het type Rest vallen, dus waar de opgave van het peilgebied niet toereikend was. De klassewaarden zijn de rijnummers van BouwsteenType, dat name, code en Label draagt, dus de legenda volgt uit de configuratie.
+
+								Wegschrijven alleen, zonder lees-terug-schakelaar en zonder fingerprint. De kaart is een afgeleide van de allocatie en hoort dus mee te veranderen zodra de levering of de zeef verandert; een ontkoppeld bestand zou hier stil een oude verdeling kunnen opleveren.";
 
 					attribute<Classifications/Modellering/BouwregimeK> Bouwregime_uitBouwsteen (AdminDomain) :=
 						MakeDefined(BouwsteenType/BouwregimeK_rel[Bouwsteen_rel], Classifications/Modellering/BouwregimeK/V/Bouwen)
@@ -1080,8 +1141,21 @@ container Natuur
 					parameter<float32> Ordening_Max    := max(Ordening_Cel);
 					parameter<float32> Ordening_Bereik := Ordening_Max - min(Ordening_Cel) + 1f;
 
-					attribute<float64> Sleutel (BouwsteenCel) := float64(uint32(Regio_Cel)) + float64((Ordening_Max - Ordening_Cel) / Ordening_Bereik)
-					, Descr = "Sorteersleutel: het regionummer als geheel deel en de omgekeerde ordening als breukdeel, strikt kleiner dan 1. Oplopend sorteren geeft daarmee per regio een aaneengesloten blok. Zelfde constructie als bij de rivierenlevering, want GeoDMS kent geen rangschikking per groep.";
+					attribute<bool> HeeftPand_Cel (BouwsteenCel) := MakeDefined(/BaseData/Omgeving/Opleggingsmasker/HeeftPanden[BouwsteenCel/AdminDomain_rel], FALSE)
+					, Descr = "Staat er een BAG-pand in deze cel? Dezelfde toets die tot #768 de allocatie van bebouwde cellen weghield. Sinds die toets uit staat is hij hier vrij voor iets nuttigers: de bebouwde fractie van de bouwsteen op de werkelijke bebouwing leggen.";
+
+					attribute<float32> Fr_Bebouwd_Cel (BouwsteenCel) := Fr_perUitkomst/Bebouwd[Bouwsteen_Cel]
+					, Descr = "Het bebouwde aandeel van de bouwsteen die op deze cel ligt. Nul bij de vier sloopbouwstenen en bij 3b en 4b; daar heeft voorrang voor pandcellen geen zin en zou hij alleen de eerste band van iets anders naar de bebouwing trekken.";
+
+					attribute<float64> PandVoorrang (BouwsteenCel) := HeeftPand_Cel && Fr_Bebouwd_Cel > 0f ? 0d : 0.5d
+					, Descr = "De grove helft van de sorteersleutel: cellen met een pand voorop, maar alleen binnen bouwstenen die uberhaupt een bebouwd aandeel hebben. Zie Sleutel voor hoe dit uitpakt.";
+
+					attribute<float64> Sleutel (BouwsteenCel) := float64(uint32(Regio_Cel)) + PandVoorrang + 0.5d * float64((Ordening_Max - Ordening_Cel) / Ordening_Bereik)
+					, Descr = "Sorteersleutel: het regionummer als geheel deel en het breukdeel strikt kleiner dan 1. Oplopend sorteren geeft daarmee per regio een aaneengesloten blok. Zelfde constructie als bij de rivierenlevering, want GeoDMS kent geen rangschikking per groep.
+
+								Het breukdeel bestaat sinds #768 uit twee delen. Voorop de pandvoorrang, een halve eenheid, en daarachter de gladde ordening geschaald op een halve eenheid. Cellen met een pand komen daardoor als groep voorop en houden binnen die groep hun eigen ordening; samen blijft het onder de een, wat de regioblokken heel houdt.
+
+								Waarom dat mag en waarom het nuttig is. Bebouwd staat sinds diezelfde wijziging vooraan in UitkomstType en krijgt dus de laagste band. Die band valt daarmee op de cellen waar werkelijk bebouwing staat in plaats van op een willekeurig deel van de bouwsteen. Het aandeel verandert niet, alleen de ligging. Past de band niet op alle pandcellen, en dat is de regel want er is meer bebouwing dan vijf procent, dan krijgen de overige pandcellen gewoon de volgende band en blijft de bebouwing eronder staan, precies zoals #768 het beschrijft.";
 
 					attribute<uint64> Rang_Globaal   (BouwsteenCel) := invert(index(Sleutel))[uint64];
 					attribute<uint64> Aantal_Cellen  (Regio)        := pcount(Regio_Cel);

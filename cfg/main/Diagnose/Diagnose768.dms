@@ -47,6 +47,9 @@ container Diagnose768
 	attribute<bool> MoetSlopen  (CompactedAdminDomain) := VD/Bouwregime/MoetSlopen,                  Descr = "Vraagt het bouwregime sloop? Dit is de uitzondering die #768 maakt: expliciet volgens de landschapsteams.";
 	attribute<bool> MagOpleggen (CompactedAdminDomain) := VD/Sloop/MagOpleggen,                      Descr = "Het opleggingsmasker uit #641: buiten bestaand bebouwd gebied en niet over exogeen grondgebruik. Dit is N.B. 2 van #768.";
 
+	attribute<bool> HeeftPanden_AD (AdminDomain) := MakeDefined(/BaseData/Omgeving/Opleggingsmasker/HeeftPanden, FALSE)
+	, Descr = "Dezelfde pandentoets op het volle domein, want de uitkomst van trap 2 staat daarop en niet op het compacted domain.";
+
 	attribute<bool> HeeftPanden (CompactedAdminDomain) := MakeDefined(/BaseData/Omgeving/Opleggingsmasker/HeeftPanden[AD_rel], FALSE)
 	, Descr = "Staat er een BAG-pand in de cel? Dit is de toets waarmee de natuurallocatie tot #768 uitweek naar een onbebouwde cel.";
 
@@ -116,6 +119,33 @@ container Diagnose768
 	parameter<float32> Ban_OpPand_Zand := sum(Ban * float32(Rb_Zand && Opgelegd && HeeftPanden && !Gesloopt));
 	parameter<float32> Ban_OpPand_Veen := sum(Ban * float32(Rb_Veen && Opgelegd && HeeftPanden && !Gesloopt));
 
+	// ---- 9a en 9b na de zeefwijziging van #768 ----
+
+	unit<uint8> BS := Veen/BouwsteenType;
+	attribute<BS>   Bouwsteen (AdminDomain) := Veen/Bouwsteen_rel;
+	attribute<bool> IsWater   (AdminDomain) := /SourceData/Grondgebruik/Natuur/Basisjaar/IsWater;
+	parameter<BS>   BS_9a := rlookup('9a', BS/code), IntegrityCheck = "IsDefined(this)";
+	parameter<BS>   BS_9b := rlookup('9b', BS/code), IntegrityCheck = "IsDefined(this)";
+
+	// ---- valt de bebouwd-band van trap 2 op werkelijke bebouwing, #768 ----
+
+	unit<uint32> UT := Veen/UitkomstType;
+	parameter<UT>   UT_Bebouwd := rlookup('Bebouwd', UT/Typenaam), IntegrityCheck = "IsDefined(this)";
+	attribute<bool> IsBandBebouwd (AdminDomain) := Veen/Uitkomst_rel == UT_Bebouwd;
+
+	parameter<float32> Opp_BandBebouwd        := sum(float32(IsBandBebouwd)) * Cel, Descr = "Het hele bebouwde aandeel dat trap 2 uitdeelt. Dit hoort niet te veranderen door de wijziging: de fractie is dezelfde, alleen de ligging verschuift.";
+	parameter<float32> Opp_BandBebouwd_OpPand := sum(float32(IsBandBebouwd && HeeftPanden_AD)) * Cel, Descr = "Daarvan het deel dat op een cel met een BAG-pand valt. Voor #768 was dat toeval, nu hoort het vrijwel alles te zijn.";
+	parameter<float32> Aandeel_BandOpPand     := Opp_BandBebouwd_OpPand / max_elem(Opp_BandBebouwd, 0.001f), Descr = "Hetzelfde als fractie; dit is het getal waarop de wijziging wordt afgerekend.";
+
+	parameter<float32> Tekort_9a  := float32(sum(Veen/Alloc_Bouwsteen/Controle/Tekort/BS9a)), Descr = "Wat bouwsteen 9a niet kwijt kon, over alle peilgebieden.";
+	parameter<float32> Tekort_9b  := float32(sum(Veen/Alloc_Bouwsteen/Controle/Tekort/BS9b)), Descr = "Idem 9b. Sinds #768 mag die alleen op bestaand open water landen, dus dit getal meet of de aangeleverde 9b-fractie past bij het water dat er werkelijk ligt.";
+	parameter<float32> Tekort_Rest := Trap1_Tekort - Tekort_9a - Tekort_9b, Descr = "Het tekort van de overige tien bouwstenen samen. Dat is het afrondingsgruis dat er voor #768 ook al was.";
+
+	parameter<float32> Opp_9a_OpWater := sum(float32(Bouwsteen == BS_9a &&  IsWater)) * Cel, Descr = "Hoort nul te zijn: 9a is nieuw open water en landt buiten het bestaande water.";
+	parameter<float32> Opp_9a_Droog   := sum(float32(Bouwsteen == BS_9a && !IsWater)) * Cel;
+	parameter<float32> Opp_9b_OpWater := sum(float32(Bouwsteen == BS_9b &&  IsWater)) * Cel;
+	parameter<float32> Opp_9b_Droog   := sum(float32(Bouwsteen == BS_9b && !IsWater)) * Cel, Descr = "Hoort nul te zijn: 9b beschrijft bestaand open water.";
+
 	container Toets
 	: Descr = "De drie uitspraken van #768 als toetsregels met een verwachting vooraf, in dezelfde vorm als Diagnose684/Toets. Elke regel is OK of FOUT; de metingen eronder dragen geen oordeel."
 	{
@@ -156,6 +186,16 @@ container Diagnose768
 		parameter<string>  R4_Oordeel     := R4_Gemeten_Won < Marge && R4_Gemeten_Ban < Marge ? 'OK' : 'FOUT'
 		, Descr = "De uitzondering van #768 afgebakend: alleen veen (kolom J van de bouwstenentabel) en het rivierensloopgebied uit #620 mogen slopen. Verwacht nul woningen en nul banen daarbuiten.";
 
+		// --- regel 5 en 6: de waterbouwstenen staan waar ze horen, #768 ---
+
+		parameter<float32> R5_Gemeten := Opp_9b_Droog;
+		parameter<string>  R5_Oordeel := R5_Gemeten < 0.1f ? 'OK' : 'FOUT'
+		, Descr = "Bouwsteen 9b landt alleen op bestaand open water. Verwacht nul hectare daarbuiten.";
+
+		parameter<float32> R6_Gemeten := Opp_9a_OpWater;
+		parameter<string>  R6_Oordeel := R6_Gemeten < 0.1f ? 'OK' : 'FOUT'
+		, Descr = "Bouwsteen 9a is het nieuwe open water en landt dus niet op water dat er al ligt. Verwacht nul hectare erop.";
+
 		parameter<String> Uitdraai :=
 			  'regel;verwachting;gemeten;oordeel'
 			+ '|oplegging_wijkt_niet_voor_pand_ha;0;'   + string(R1_Gemeten)     + ';' + R1_Oordeel
@@ -164,6 +204,8 @@ container Diagnose768
 			+ '|oplegging_in_uitzondering_ha;0;'        + string(R3_Gemeten_Ha)  + ';' + R3_Oordeel
 			+ '|sloop_buiten_veen_en_rivieren_won;0;'   + string(R4_Gemeten_Won) + ';' + R4_Oordeel
 			+ '|sloop_buiten_veen_en_rivieren_ban;0;'   + string(R4_Gemeten_Ban) + ';' + R4_Oordeel
+			+ '|9b_buiten_bestaand_water_ha;0;'         + string(R5_Gemeten)     + ';' + R5_Oordeel
+			+ '|9a_op_bestaand_water_ha;0;'            + string(R6_Gemeten)     + ';' + R6_Oordeel
 		, StorageName = "='%LocalDataProjDir%/Diagnose/768_toets.txt'"
 		, StorageType = "str";
 	}
@@ -198,6 +240,14 @@ container Diagnose768
 		+ '|op_pandcel_blijft_zand_ban;'             + string(Ban_OpPand_Zand)
 		+ '|op_pandcel_blijft_veen_won;'             + string(Won_OpPand_Veen)
 		+ '|op_pandcel_blijft_veen_ban;'             + string(Ban_OpPand_Veen)
+		+ '|opp_9a_droog_ha;'                        + string(Opp_9a_Droog)
+		+ '|opp_9b_opwater_ha;'                      + string(Opp_9b_OpWater)
+		+ '|tekort_9a_ha;'                           + string(Tekort_9a)
+		+ '|tekort_9b_ha;'                           + string(Tekort_9b)
+		+ '|tekort_overige_ha;'                      + string(Tekort_Rest)
+		+ '|band_bebouwd_ha;'                        + string(Opp_BandBebouwd)
+		+ '|band_bebouwd_op_pand_ha;'                + string(Opp_BandBebouwd_OpPand)
+		+ '|band_bebouwd_aandeel_op_pand;'           + string(Aandeel_BandOpPand)
 	, StorageName = "='%LocalDataProjDir%/Diagnose/768_meting.txt'"
 	, StorageType = "str"
 	, ExplicitSuppliers = "Toets/Uitdraai"
