@@ -1,0 +1,175 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De basisjaarkaart van het landgebruik, in twee routes achter ModelParameters/Landgebruik_Basis: de CBS-bodemstatistiek
+// (BBG) zoals het altijd was, en de stand-administratie op LGN met natuurbeheertypen en de BRP als verbijzondering (#751).
+// Daarnaast de functievlaggen uit de bodemstatistiek die de geschiktheden lezen.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Landgebruik : using = "Classifications/Actor;Classifications/Grondgebruik"
+, Descr = "De basisjaarkaart van het landgebruik en de stand-administratie waar die op rust. Zie #751.
+
+			Twee routes, gekozen door ModelParameters/Landgebruik_Basis. De BBG-route is de oude: de CBS-bodemstatistiek
+			bepaalt de klasse per cel, met de BRP en LGN als achtervang voor de landbouw. De LGN-route is de
+			stand-administratie: LGN als fysieke basis, verbijzonderd met een natuurbeheertype waar LGN natuur of water
+			ziet en met een landbouwtype uit de BRP waar LGN landbouw ziet. De uitkomst van die route is Type, een
+			LandgebruikType per cel, en LU_Basisjaar_LGN is daar de landgebruikskaart-klasse van.
+
+			LU_Basisjaar is wat de rest van het model leest, in beide routes. De functievlaggen IsWerklocatie tot en met
+			IsBouwterrein blijven op de bodemstatistiek staan: die zijn functie, en daar is LGN geen bron voor."
+{
+	// ---- de CBS-bodemstatistiek: bron van de BBG-route en van de functievlaggen ----
+
+	attribute<CBSKlasse> gg_CBS (AdminDomain) := ='SourceData/Grondgebruik/BBG/dominant/Per_AdminDomain/Y'+ModelParameters/BBG_Year
+	, Descr = "CBS grondgebruik klasse in het basisjaar"
+	{
+		attribute<CBSKlasse/Aggr> Per_Aggr (AdminDomain) := CBSKlasse/Aggr_rel[.], Descr = "Aggregatie van CBS grondgebruik klassen naar de aggregatie klasse";
+	}
+
+	attribute<Bool> IsWerklocatie (AdminDomain) := CBSKlasse/IsWerklocatie[gg_CBS], Descr = "Is het een werklocatie volgens CBS definitie?";
+	attribute<Bool> IsWoonlocatie (AdminDomain) := CBSKlasse/IsWoonlocatie[gg_CBS], Descr = "Is het een woonlocatie volgens CBS definitie?";
+	attribute<Bool> IsZeehaven    (AdminDomain) := SourceData/Grondgebruik/IBIS/IsZeehaven_AdminDomain, Descr = "Is het een zeehaven volgens IBIS definitie?";
+	attribute<Bool> IsGrootWater  (AdminDomain) := CBSKlasse/IsGrootWater[gg_CBS], Descr = "Is het groot water volgens CBS definitie?";
+	attribute<Bool> IsGroen       (AdminDomain) := CBSKlasse/IsGroen[gg_CBS], Descr = "Is het groen volgens CBS definitie?";
+	attribute<Bool> IsBouwterrein (AdminDomain) := gg_CBS == CBSKlasse/V/bouwterrein, Descr = "Is het bouwterrein volgens CBS definitie?";
+
+	// ---- landbouw als gewasklasse: de BRP met LGN als achtervang, voor beide routes ----
+
+	attribute<LU_ModelType> LU_Landbouw_BRP (AdminDomain) := Classifications/Landbouw/BRPGewasType/LU_ModelType_rel[SourceData/Landbouw/BRP/BRPGewasType_rel]
+	, Descr = "Landbouw klasse op basis van de Basisregistratie Gewaspercelen, het gewas per perceel zoals de teler het opgeeft. Null waar geen perceel ligt en waar de gewascode geen tegenhanger heeft in de klassen van Actor/LandbouwKlasses. De tif draagt de gewascode; de vertaling naar de klasse staat in Classifications/Landbouw/BRPGewasType en werkt dus meteen door.";
+	attribute<LU_ModelType> LU_Landbouw_LGN (AdminDomain) := LGNKlasse/LU_ModelType_rel[LGN], Descr = "Landbouw klasse op basis van LGN";
+	attribute<LU_ModelType> LU_Landbouw     (AdminDomain) := MakeDefined(LU_Landbouw_BRP, LU_Landbouw_LGN)
+	, Descr = "Landbouw klasse, eerst op basis van de BRP en anders op basis van LGN.
+
+				Stond tot 4 september 2026 op de voedergewassenkaart uit 2014 in plaats van de BRP; zie #751 voor waarom die eruit ging en wat het scheelt. De vorm is onveranderd gebleven: een perceelsbron die het eerste woord heeft en LGN als achtervang daar waar die bron zwijgt.
+
+				Dit is de gewasklasse, dus aardappelen, bieten, granen. Die detaillering is wat de landbouwallocatie en de landbouwstand in het basisjaar nodig hebben; het stabiele landbouwtype van de stand-administratie staat hieronder in LandbouwType_rel.";
+
+	// ---- de BBG-route ----
+
+	attribute<LU_ModelType> LU_CBS   (AdminDomain) := CBSKlasse/LU_ModelType_rel[gg_CBS], Descr = "Landgebruik ModelType klasse op basis van CBS grondgebruik";
+	attribute<LU_ModelType> LU_Basisjaar_BBG0   (AdminDomain) := MakeDefined(LU_CBS, LU_Landbouw), Descr = "Landgebruik ModelType klasse, eerst op basis van CBS, anders op basis van landbouw";
+	attribute<LU_ModelType> LU_Basisjaar_BBG1   (AdminDomain) := IsNull(LU_Basisjaar_BBG0) && gg_CBS == CBSKlasse/v/Overig_agrarisch_terrein ? LU_ModelType/v/Landbouw_gg_vee : LU_Basisjaar_BBG0, Descr = "Is LU_Basisjaar_BBG0 undefined en als het een overige agrarisch gebruik is volgens CBS, dan grondgebonden vee. Anders LU_Basisjaar_BBG0";
+	attribute<LU_ModelType> LU_Basisjaar_BBG (AdminDomain) := MakeDefined(LU_Basisjaar_BBG1, LU_ModelType/v/overig_Totaal), Descr = "De basisjaarkaart langs de BBG-route. Als LU_Basisjaar_BBG1 undefined is, dan overig. Anders LU_Basisjaar_BBG1. Heette tot 4 september 2026 LU_Basisjaar.";
+
+	// ---- de LGN-route: de stand-administratie ----
+
+	attribute<LGNKlasse> LGN (AdminDomain) := SourceData/Grondgebruik/LGN/m25, Descr = "De fysieke bedekking volgens LGN van ModelParameters/LGN_Year, de basis van de stand-administratie.";
+	attribute<Bool> LGN_IsNatuurOfWater (AdminDomain) := MakeDefined(LU_Landbouw_LGN == LU_ModelType/V/Natuur_Totaal || LU_Landbouw_LGN == LU_ModelType/V/Water_Totaal, FALSE)
+	, Descr = "Ziet LGN hier natuur of water? Dan komt het type uit de beheertypenkaart, en anders uit LGN zelf; de BRP komt er niet aan te pas. Beslist op de kolom LU_ModelType van de LGN-tabel en niet op IsNatuur_hedonisch: die hedonische vlag telt riet (42), moerasbos (43) en natuurlijk beheerd agrarisch grasland (45) als natuur, terwijl het model ze als natte teelt en extensieve landbouw kent, net als hun BRP-tegenhangers 331 en 332. Hier tellen ze dus als landbouw.";
+	attribute<Bool> LGN_VerbijzonderMetBeheertype (AdminDomain) := LGN_IsNatuurOfWater || MakeDefined(LGNKlasse/code[LGN] == 42w || LGNKlasse/code[LGN] == 43w || LGNKlasse/code[LGN] == 45w, FALSE)
+	, Descr = "Mag de beheertypenkaart deze cel een type geven? Natuur en water volgens LGN, plus drie klassen die LGN op de grens zet: 42 rietvegetatie, 43 bos in moerasgebied en 45 natuurlijk beheerd agrarisch grasland. Het model kent die drie als natte teelt en extensieve landbouw, en zonder beheertype blijven ze dat; ligt er wel een beheertype, dan is het rietmoeras N05, broekbos N14 of kruidenrijk grasland N12 en wint de natuurkant. Gemeten op 2026-09-04: zonder deze regel viel N12.02 kruiden- en faunarijk grasland van 59.555 naar 22.523 ha omdat het onder LGN 45 ligt.";
+	attribute<Bool> LGN_IsBebouwd       (AdminDomain) := MakeDefined(LGNKlasse/isBebouwd[LGN], FALSE), Descr = "Ziet LGN hier bebouwing of verharding? Dan blijft dat zo, ook als er een BRP-perceel over ligt, want een erf is geen weiland.";
+
+	attribute<INL_Beheertype> Beheertype_Bron (AdminDomain) := = ModelParameters/Beheertype_Basisjaar_Bron == 'NVK'
+																? 'SourceData/Grondgebruik/NVK/Huidig/INL_Beheertype_25m'
+																: 'SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/INL_Beheertype_rel_AD'
+	, Descr = "De beheertypenkaart, nog zonder masker: de MNP-planpotentieelkaart of de NVK-kaart huidig, gekozen in ModelParameters/Beheertype_Basisjaar_Bron. Komt de provinciale kaart 2025 via WUR binnen, dan hoort die hier als derde tak.";
+	attribute<INL_Beheertype> Beheertype_Tweede (AdminDomain) := = ModelParameters/Beheertype_Basisjaar_Bron == 'NVK'
+																? 'SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/INL_Beheertype_rel_AD'
+																: 'SourceData/Grondgebruik/NVK/Huidig/INL_Beheertype_25m'
+	, Descr = "De andere beheertypenkaart, als eerste aanvulling waar de gekozen bron zwijgt. De twee kaarten zwijgen vrijwel op dezelfde plekken (1.032 ha verschil, gemeten in #652), dus dit vult weinig; de heuristiek hieronder doet het werk.";
+
+	attribute<Bool> IsVeenOfMoerig (AdminDomain) := MakeDefined(SourceData/Bodem/BOFEK/IsVeenOfMoerig_grid, FALSE), Descr = "Veen of moerige grond volgens BOFEK 2020, de sleutel tussen de droge en de natte lezing van de heuristiek.";
+	attribute<INL_Beheertype> Beheertype_Heuristiek (AdminDomain) :=
+		  LU_Landbouw_LGN == LU_ModelType/V/Water_Totaal
+			? MakeDefined(BeheertypeHeuristiek/PerCBS_Water[gg_CBS], BeheertypeHeuristiek/PerLGN_Droog[LGN])
+			: IsVeenOfMoerig ? BeheertypeHeuristiek/PerLGN_Nat[LGN] : BeheertypeHeuristiek/PerLGN_Droog[LGN]
+	, Descr = "Het beheertype dat het meest waarschijnlijk is als geen kaart iets zegt: voor water de functieklasse van de bodemstatistiek (zee, afgesloten zeearm, rivier, plas) en anders zoet of zout volgens LGN; voor de begroeiing de LGN-klasse, nat of droog gelezen naar BOFEK. Zie Classifications/Grondgebruik/BeheertypeHeuristiek voor de tabellen en de aannames.";
+	attribute<INL_Beheertype> Beheertype_Aangevuld (AdminDomain) := MakeDefined(MakeDefined(Beheertype_Bron, Beheertype_Tweede), LGN_IsNatuurOfWater ? Beheertype_Heuristiek : null_b[INL_Beheertype]), Descr = "Bron, dan de andere kaart, dan de heuristiek. De heuristiek alleen waar LGN zelf natuur of water ziet: riet, moerasbos en natuurlijk beheerd grasland zonder beheertype blijven landbouw.";
+	attribute<INL_Beheertype> Beheertype_Gekozen   (AdminDomain) := = ModelParameters/Beheertype_GatenVullen ? 'Beheertype_Aangevuld' : 'Beheertype_Bron';
+	attribute<INL_Beheertype> Beheertype      (AdminDomain) := LGN_VerbijzonderMetBeheertype ? Beheertype_Gekozen : null_b[INL_Beheertype]
+	, Descr = "Het natuurbeheertype van de bestaande natuur en het bestaande water in het basisjaar: de bron waar LGN natuur of water ziet (of riet, moerasbos of natuurlijk grasland, zie LGN_VerbijzonderMetBeheertype), en anders niets. Dat masker is wat de planpotentieelkaart van de MNP tot een huidig-kaart maakt. SourceData/Grondgebruik/Natuur/Basisjaar/INL_Beheertype_rel_AD verwijst hierheen.";
+
+	attribute<LandbouwType> LandbouwType_rel_BRP (AdminDomain) := Classifications/Landbouw/BRPGewasType/LandbouwType_rel[SourceData/Landbouw/BRP/BRPGewasType_rel], Descr = "Het landbouwtype uit de BRP, via de kolom LandbouwType in Classifications/Landbouw/BRPGewasType. Null waar geen perceel ligt of het gewas geen landbouw is.";
+	attribute<LandbouwType> LandbouwType_rel_LGN (AdminDomain) := LGNKlasse/LandbouwType_rel[LGN], Descr = "Het landbouwtype uit LGN, via de kolom LandbouwType in Classifications/Grondgebruik/LGNKlasse. Null voor elke LGN-klasse die geen landbouw is.";
+	attribute<LandbouwType> LandbouwType_rel (AdminDomain) := LGN_IsNatuurOfWater || LGN_IsBebouwd || IsDefined(Beheertype) ? null_b[LandbouwType] : MakeDefined(LandbouwType_rel_BRP, LandbouwType_rel_LGN)
+	, Descr = "Het landbouwtype van de cel: de BRP waar een perceel ligt, anders LGN, en helemaal niets waar LGN natuur, water of bebouwing ziet of waar de beheertypenkaart al een type gaf. LGN beslist dus de categorie en de BRP verbijzondert erbinnen; een perceel dat over een bos of een erf heen is ingetekend maakt daar geen landbouw van.";
+
+	attribute<LandgebruikType> Type (AdminDomain) :=
+		  IsDefined(Beheertype)   ? invert(LandgebruikType/INL_Beheertype_rel)[Beheertype]
+		: IsDefined(LandbouwType_rel) ? invert(LandgebruikType/LandbouwType_rel)[LandbouwType_rel]
+		:                           invert(LandgebruikType/LGNKlasse_rel)[LGN]
+	, Descr = "De stand-administratie in het basisjaar: een LandgebruikType per cel. Beheertype gaat voor, dan landbouwtype, dan de LGN-klasse zelf. Elke cel met een LGN-waarde krijgt zo precies een type. Dit is de laag die als stand mee de allocatie in hoort te gaan en waar de indicatoren hun bron in vinden; zie Classifications/Grondgebruik/LandgebruikType voor wat erin zit en wat er bewust niet in zit.";
+
+	attribute<Bool> LGN_IsHoofdinfra (AdminDomain) := MakeDefined(LGNKlasse/code[LGN] == 251w, FALSE), Descr = "LGN-klasse 251, hoofdinfrastructuur en spoorbaanlichamen. De enige LGN-klasse die op Infra_Totaal hoort; de LGN-tabel geeft haar geen LU_ModelType omdat de BBG-route infra uit de bodemstatistiek haalt.";
+	attribute<LU_ModelType> LU_Basisjaar_LGN0 (AdminDomain) := LGN_IsHoofdinfra
+																? LU_ModelType/V/Infra_Totaal
+																: MakeDefined(LandgebruikType/IsLandbouw[Type], FALSE)
+																	? MakeDefined(LU_Landbouw, LandgebruikType/LU_ModelType_rel[Type])
+																	: LandgebruikType/LU_ModelType_rel[Type]
+	, Descr = "De landgebruikskaart-klasse van de stand-administratie. Op landbouwcellen de gewasklasse uit LU_Landbouw, want de landbouwstand en de landbouwallocatie rekenen in gewassen; elders de klasse van het type zelf. Hoofdinfrastructuur wordt Infra, zoals in de BBG-route. Bebouwing heeft in LGN geen LU_ModelType en blijft hier leeg: de dominantieregel van de landgebruikskaart zet daar wonen, werken of verblijfsrecreatie neer op gezag van de BAG- en LISA-standen.";
+	attribute<LU_ModelType> LU_Basisjaar_LGN  (AdminDomain) := MakeDefined(LU_Basisjaar_LGN0, LU_ModelType/v/overig_Totaal), Descr = "De basisjaarkaart langs de LGN-route, met Overig waar geen klasse volgt, net als in de BBG-route.";
+
+	attribute<LU_ModelType> LU_Basisjaar (AdminDomain) := = ModelParameters/Landgebruik_Basis == 'LGN' ? 'LU_Basisjaar_LGN' : 'LU_Basisjaar_BBG'
+	, Descr = "De basisjaarkaart van het landgebruik die de rest van het model leest. Welke route: ModelParameters/Landgebruik_Basis.";
+
+	container Controle
+	: Descr = "De controlegetallen van de stand-administratie en van de twee routes naast elkaar. Bedoeld om te lezen voordat Landgebruik_Basis omgaat, en om te zien wat de beheertypenkaart wel en niet dekt."
+	{
+		attribute<Bool> SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain;
+
+		parameter<Ha> Areaal_Studiegebied      := sum(SA ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_MetBeheertype     := sum(SA && LandgebruikType/Deel_rel[Type] == LandgebruikType/Deel/V/Beheertype ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen waarvan het type een natuurbeheertype is.";
+		parameter<Ha> Areaal_MetLandbouwtype   := sum(SA && LandgebruikType/Deel_rel[Type] == LandgebruikType/Deel/V/Landbouw   ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen waarvan het type een landbouwtype is.";
+		parameter<Ha> Areaal_UitLGN            := sum(SA && LandgebruikType/Deel_rel[Type] == LandgebruikType/Deel/V/LGN        ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen die op de LGN-klasse zelf staan: bebouwing, infrastructuur, en natuur en water zonder beheertype.";
+		parameter<Ha> Areaal_ZonderType        := sum(SA && !IsDefined(Type) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoort nul te zijn binnen het studiegebied, want LGN dekt het hele land.";
+		parameter<Ha> Areaal_NatuurOfWater_LGN := sum(SA && LGN_IsNatuurOfWater ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Natuur en water volgens LGN.";
+		parameter<Ha> Areaal_NatuurOfWater_ZonderBeheertype := sum(SA && LGN_IsNatuurOfWater && !IsDefined(Beheertype) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Daarvan het deel waar de beheertypenkaart zwijgt. Dit is het gat dat een betere beheertypenbron moet dichten.";
+		parameter<Ha> Areaal_Beheertype_UitBron       := sum(SA && IsDefined(Beheertype) && IsDefined(Beheertype_Bron) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Beheertype uit de gekozen bron.";
+		parameter<Ha> Areaal_Beheertype_UitTweede     := sum(SA && IsDefined(Beheertype) && !IsDefined(Beheertype_Bron) && IsDefined(Beheertype_Tweede) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Aangevuld uit de andere beheertypenkaart.";
+		parameter<Ha> Areaal_Beheertype_UitHeuristiek := sum(SA && IsDefined(Beheertype) && !IsDefined(Beheertype_Bron) && !IsDefined(Beheertype_Tweede) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Aangevuld uit de heuristiek. Nul met Beheertype_GatenVullen uit.";
+		parameter<Ha> Areaal_LandbouwUitBRP    := sum(SA && IsDefined(LandbouwType_rel) && IsDefined(LandbouwType_rel_BRP) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Landbouwtype dat van de BRP komt.";
+		parameter<Ha> Areaal_LandbouwUitLGN    := sum(SA && IsDefined(LandbouwType_rel) && !IsDefined(LandbouwType_rel_BRP) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Landbouwtype dat van de LGN-achtervang komt.";
+		parameter<Ha> Areaal_BRPOverruledDoorLGN := sum(SA && IsDefined(LandbouwType_rel_BRP) && (LGN_IsNatuurOfWater || LGN_IsBebouwd || IsDefined(Beheertype)) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "BRP-percelen waar LGN natuur, water of bebouwing ziet en het perceel dus niet telt. Grotendeels code 335 natuurterreinen en natuurlijk grasland op natuurgrond.";
+		parameter<Ha> Areaal_Verschil_BBG_LGN  := sum(SA && LU_Basisjaar_BBG != LU_Basisjaar_LGN ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waar de twee routes een andere LU_ModelType geven. Dit is de omvang van de omschakeling.";
+
+		parameter<String> Tabel_Kerngetallen :=
+			  'post;ha'
+			+ '|studiegebied;'                        + string(Areaal_Studiegebied)
+			+ '|type_uit_beheertypenkaart;'           + string(Areaal_MetBeheertype)
+			+ '|type_uit_landbouwtypologie;'          + string(Areaal_MetLandbouwtype)
+			+ '|type_uit_lgn;'                        + string(Areaal_UitLGN)
+			+ '|zonder_type;'                         + string(Areaal_ZonderType)
+			+ '|natuur_of_water_volgens_lgn;'         + string(Areaal_NatuurOfWater_LGN)
+			+ '|daarvan_zonder_beheertype;'           + string(Areaal_NatuurOfWater_ZonderBeheertype)
+			+ '|beheertype_uit_bron;'                 + string(Areaal_Beheertype_UitBron)
+			+ '|beheertype_uit_tweede_kaart;'         + string(Areaal_Beheertype_UitTweede)
+			+ '|beheertype_uit_heuristiek;'           + string(Areaal_Beheertype_UitHeuristiek)
+			+ '|landbouwtype_uit_brp;'                + string(Areaal_LandbouwUitBRP)
+			+ '|landbouwtype_uit_lgn;'                + string(Areaal_LandbouwUitLGN)
+			+ '|brp_perceel_overruled_door_lgn;'      + string(Areaal_BRPOverruledDoorLGN)
+			+ '|verschil_bbg_lgn_route;'              + string(Areaal_Verschil_BBG_LGN)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/751_kerngetallen.txt'", StorageType = "str"
+		, Descr = "De kerngetallen van de stand-administratie in het basisjaar, als een tabel om op te vragen.";
+
+		attribute<Ha> Areaal_PerType    (LandgebruikType) := sum(SA ? AdminDomain/NrHaPerCell : 0[Ha], Type), Descr = "Het areaal per type in het basisjaar.";
+		attribute<Ha> Areaal_PerLU_BBG  (LU_ModelType)    := sum(SA ? AdminDomain/NrHaPerCell : 0[Ha], LU_Basisjaar_BBG), Descr = "De basisjaarkaart per klasse langs de BBG-route.";
+		attribute<Ha> Areaal_PerLU_LGN  (LU_ModelType)    := sum(SA ? AdminDomain/NrHaPerCell : 0[Ha], LU_Basisjaar_LGN), Descr = "Idem langs de LGN-route.";
+
+		parameter<String> Tabel_PerLU :=
+			  'lu_modeltype;ha_bbg;ha_lgn|'
+			+ AsList(LU_ModelType/name + ';' + string(Areaal_PerLU_BBG) + ';' + string(Areaal_PerLU_LGN), '|')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/751_routes_per_lu.txt'", StorageType = "str"
+		, Descr = "De twee routes naast elkaar per klasse. Schrijft naar LocalData/Diagnose zodat de getallen na een run terug te lezen zijn.";
+		parameter<String> Tabel_PerType :=
+			  'landgebruiktype;ha|'
+			+ AsList(LandgebruikType/name + ';' + string(Areaal_PerType), '|')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/751_areaal_per_type.txt'", StorageType = "str";
+	}
+
+	container NabijGrootWaterInBBG
+	{
+		attribute<Bool>    IsGrootWater    (AdminDomain) := ../IsGrootWater, Descr = "Is het groot water volgens CBS definitie?";
+		attribute<Float32> Smoothed_srcsrc (AdminDomain) := potential(IsGrootWater[float32], Distmatrices/Impl_25m/pot500m/PotRange/rev_dist_scaled ), Descr = "Smoothing van groot water met een bereik van 500m";
+		attribute<Float32> Smoothed0       (AdminDomain) := Smoothed_srcsrc * BaseData/Omgeving/OV_Reistijd/TotRailHalte/Smoothed, Descr = "Vermenigvuldigen met nabijheid treinstation om gebieden te benadrukken die zowel nabij groot water als nabij een treinstation liggen";
+		attribute<Float32> Smoothed        (AdminDomain) := Smoothed0  / max(Smoothed0), Descr = "Normaliseren op de maximale waarde";
+	}
+}
