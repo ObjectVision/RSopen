@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Stelt uit de ruwe indicatorenuitvoer in LocalData een opleveringsmap samen.
 
@@ -71,6 +71,124 @@ $varianten = [ordered]@{
     'WLO_hoog_NbSMax'         = 'NbSMax'
 }
 if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
+
+# Wat elk geleverd bestand is, in een zin, met de eenheid erbij. De sleutel is de bestandsnaam
+# zonder zichtjaar en zonder extensie; Schoon() haalt de modelstaart er al af. Het derde veld is de
+# classificatie waarvan de kaart de klassenummers draagt, en dat veld stuurt tegelijk welke legenda
+# er als <bestandsnaam>_meta.txt naast komt te liggen. Een naam die hier ontbreekt wordt onderaan de
+# LEESMIJ gemeld, zodat een nieuwe indicator niet ongemerkt zonder beschrijving de deur uit gaat.
+$Beschrijving = [ordered]@{
+    'Landgebruikskaart'                                                                              = @('klasse', 'LU_ModelType', 'Het landgebruik per cel in dit zichtjaar, de hoofdkaart van de doorrekening')
+    'Landgebruikskaart_Basisjaar'                                                                    = @('klasse', 'LU_ModelType', 'Dezelfde kaart voor het basisjaar, als referentie voor alle veranderingen')
+    'Landgebruikskaart_bij_tov_PrevYear'                                                             = @('klasse', 'LU_ModelType', 'Welke klasse er in een cel is bijgekomen sinds het vorige zichtjaar')
+    'Landgebruikskaart_af_tov_PrevYear'                                                              = @('klasse', 'LU_ModelType', 'Welke klasse er in een cel is verdwenen sinds het vorige zichtjaar')
+    'LandgebruikskaartNL2120'                                                                        = @('klasse', 'LU_NL2120', 'Hetzelfde landgebruik in de indeling van 92 klassen, met natuur uitgesplitst naar beheertype')
+    'BT_Exogeen'                                                                                     = @('klasse', 'INL_Beheertype', 'Het natuurbeheertype dat de landschapsteams hier opleggen, leeg waar niets is opgelegd')
+    'Verstedelijking'                                                                                = @('0 of 1', '', 'Cellen die sinds het basisjaar stedelijk zijn geworden')
+    'VerstedelijkingInABCD'                                                                          = @('klasse', 'ABCD_subK', 'Dezelfde verstedelijking, ingedeeld naar de ABCD-zone waarin zij landt')
+    'VerstedelijkingOpVruchtbareLandbouwgronden'                                                     = @('0 of 1', '', 'Nieuwe verstedelijking op grond die als vruchtbaar landbouwland is aangemerkt')
+    'NieuweNatuur'                                                                                   = @('0 of 1', '', 'Cellen die sinds het basisjaar natuur zijn geworden')
+    'NieuweNatuurOpVruchtbareLandbouwgronden'                                                        = @('0 of 1', '', 'Nieuwe natuur op grond die als vruchtbaar landbouwland is aangemerkt')
+    'VerdwenenNatuur'                                                                                = @('0 of 1', '', 'Cellen die in het basisjaar natuur waren en dat nu niet meer zijn')
+    'VerdwenenLandbouw'                                                                              = @('0 of 1', '', 'Cellen die in het basisjaar landbouw waren en dat nu niet meer zijn')
+    'VerdwenenVruchtbareLandbouw'                                                                    = @('0 of 1', '', 'Idem, beperkt tot de gronden die als vruchtbaar zijn aangemerkt')
+    'WaterbergingVeen'                                                                               = @('0 of 1', '', 'Cellen die zijn ingericht als seizoensbergingsgebied in het veen')
+    'WaterbergingVeenOpVruchtbareLandbouwgronden'                                                    = @('0 of 1', '', 'Diezelfde bergingsgebieden op vruchtbaar landbouwland')
+    'Dichtheid_Wonen'                                                                                = @('woningen per ha', '', 'Woningdichtheid van de bestaande en de nieuwe voorraad samen')
+    'Dichtheid_NieuwWonen_WonHa'                                                                     = @('woningen per ha', '', 'Woningdichtheid van alleen wat er sinds het basisjaar is bijgebouwd')
+    'Dichtheid_NieuwWerken_JobHa'                                                                    = @('banen per ha', '', 'Banendichtheid van alleen de werklocaties die sinds het basisjaar zijn bijgekomen')
+    'Dichtheid_Werken_Banen_m2'                                                                      = @('banen per m2', '', 'Banen per vierkante meter werklocatie')
+    'Dichtheid_Werken_Pandfootprint_ha'                                                              = @('m2 per ha', '', 'Bebouwd grondvlak per hectare werklocatie')
+    'PandFootprint_Wonen'                                                                            = @('m2', '', 'Grondvlak van de woonbebouwing in de cel')
+    'PandFootprint_Werken'                                                                           = @('m2', '', 'Grondvlak van de bebouwing op werklocaties in de cel')
+    'Verharding'                                                                                     = @('aandeel 0 tot 1', '', 'Aandeel van het bebouwde oppervlak dat verhard is')
+    'Verharding_fractie'                                                                             = @('aandeel 0 tot 1', '', 'Dezelfde verharding als fractie van de hele cel')
+    'KostenWoningbouw_Bouwkosten_Eur'                                                                = @('euro', '', 'Bouwkosten van de nieuwbouw in deze cel, niet verdisconteerd')
+    'KostenWoningbouw_Bouwkosten_NCW_Eur'                                                            = @('euro', '', 'Dezelfde bouwkosten als netto contante waarde')
+    'KostenWoningbouw_Regulier_Eur'                                                                  = @('euro', '', 'Grondproductie: bouw- en woonrijp maken, voorzieningen en planproces')
+    'KostenWoningbouw_Alternatief'                                                                   = @('klasse', 'InrichtingsalternatiefK', 'Welk inrichtingsalternatief voor bodemdaling hier is gekozen')
+    'KostenWoningbouw_Bouwwijze'                                                                     = @('klasse', 'BouwwijzeK', 'Welke bouwwijze hier is toegepast, van geen maatregelen tot drijvend bouwen')
+    'KostenWoningbouw_MeerkostenBodemdaling_Eur'                                                     = @('euro', '', 'Extra kosten die aan bodemdaling zijn toe te schrijven')
+    'KostenWoningbouw_MeerkostenBodemdaling_NCW_Eur'                                                 = @('euro', '', 'Diezelfde meerkosten als netto contante waarde')
+    'KostenWoningbouw_MeerkostenBouwwijze_Eur'                                                       = @('euro', '', 'Extra kosten van de gekozen bouwwijze, nul zolang de kentallen ontbreken')
+    'KostenWoningbouw_BeheerEnOnderhoud_Eur'                                                         = @('euro', '', 'Beheer en onderhoud van de nieuwbouw over de periode')
+    'Woningwaarde_Nieuwbouw_Eur'                                                                     = @('euro', '', 'Marktwaarde van de woningen die hier zijn bijgebouwd')
+    'Woningwaarde_Nieuwbouw_NCW_Eur'                                                                 = @('euro', '', 'Diezelfde waarde als netto contante waarde')
+    'GesloopteWoningen_NieuweNatuur'                                                                 = @('woningen', '', 'Woningen die wijken voor nieuwe natuur')
+    'GesloopteWoningen_WaterbergingVeen'                                                             = @('woningen', '', 'Woningen die wijken voor seizoensberging in het veen')
+    'GesloopteWoningen_OverigeBouwstenen'                                                            = @('woningen', '', 'Woningen die wijken voor de overige ruimtelijke bouwstenen')
+    'GesloopteBanen_NieuweNatuur'                                                                    = @('banen', '', 'Banen die wijken voor nieuwe natuur')
+    'GesloopteBanen_WaterbergingVeen'                                                                = @('banen', '', 'Banen die wijken voor seizoensberging in het veen')
+    'GesloopteBanen_OverigeBouwstenen'                                                               = @('banen', '', 'Banen die wijken voor de overige ruimtelijke bouwstenen')
+    'Sloopkosten_NieuweNatuur_Eur'                                                                   = @('euro', '', 'Kosten van het slopen van de bebouwing die voor nieuwe natuur wijkt')
+    'Sloopkosten_WaterbergingVeen_Eur'                                                               = @('euro', '', 'Idem voor seizoensberging in het veen')
+    'Sloopkosten_OverigeBouwstenen_Eur'                                                              = @('euro', '', 'Idem voor de overige bouwstenen')
+    'Sloopkosten_NieuweNatuur_NCW_Eur'                                                               = @('euro', '', 'Diezelfde sloopkosten als netto contante waarde')
+    'Sloopkosten_WaterbergingVeen_NCW_Eur'                                                           = @('euro', '', 'Diezelfde sloopkosten als netto contante waarde')
+    'Sloopkosten_OverigeBouwstenen_NCW_Eur'                                                          = @('euro', '', 'Diezelfde sloopkosten als netto contante waarde')
+    'Uitkoopkosten_NieuweNatuur_Eur'                                                                 = @('euro', '', 'Verwerving van het vastgoed dat voor nieuwe natuur wijkt')
+    'Uitkoopkosten_WaterbergingVeen_Eur'                                                             = @('euro', '', 'Idem voor seizoensberging in het veen')
+    'Uitkoopkosten_OverigeBouwstenen_Eur'                                                            = @('euro', '', 'Idem voor de overige bouwstenen')
+    'Uitkoopkosten_NieuweNatuur_NCW_Eur'                                                             = @('euro', '', 'Diezelfde verwervingskosten als netto contante waarde')
+    'Uitkoopkosten_WaterbergingVeen_NCW_Eur'                                                         = @('euro', '', 'Diezelfde verwervingskosten als netto contante waarde')
+    'Uitkoopkosten_OverigeBouwstenen_NCW_Eur'                                                        = @('euro', '', 'Diezelfde verwervingskosten als netto contante waarde')
+    'CarbonStorageSequestration_stock_tonCO2'                                                        = @('ton CO2', '', 'Koolstof die in dit zichtjaar in bodem en begroeiing ligt opgeslagen')
+    'CarbonStorageSequestration_stock_FromBaseYear_tonCO2'                                           = @('ton CO2', '', 'Verandering van die voorraad sinds het basisjaar, positief betekent aangroei')
+    'CarbonStorageSequestration_seq_ThisPeriod_tonCO2'                                               = @('ton CO2', '', 'Vastlegging in deze periode, opgebouwd na een verandering van landgebruik')
+    'CarbonStorageSequestration_ongedekt_Cumulatief_tonCO2'                                          = @('ton CO2', '', 'Veenoxidatie die buiten het koolstofsaldo valt omdat de voorraad daar al leeg is')
+    'SOMERS_CO2_Emissies_kg_Mediaan_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Veenoxidatie sinds het startjaar volgens SOMERS, middenschatting')
+    'SOMERS_CO2_Emissies_kg_Minimum_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Dezelfde oxidatie, ondergrens van de bandbreedte')
+    'SOMERS_CO2_Emissies_kg_Maximum_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Dezelfde oxidatie, bovengrens van de bandbreedte')
+    'Piekbuiberging_Gedekt_m3_per500m'                                                               = @('m3', '', 'Hoeveel regenwater van een piekbui in dit blok van 500 meter wordt geborgen')
+    'Piekbuiberging_Ongedekt_m3_per500m'                                                             = @('m3', '', 'Hoeveel er in datzelfde blok blijft liggen')
+    'Piekbuiberging_Dekkingsgraad_per500m'                                                           = @('aandeel 0 tot 1', '', 'Het geborgen deel van de opgave in dit blok')
+    'Overstromingsschade_Hoofdwatersysteem_Binnendijks'                                              = @('euro', '', 'Verwachte jaarlijkse schade achter de primaire keringen')
+    'Overstromingsschade_Hoofdwatersysteem_Buitendijks'                                              = @('euro', '', 'Verwachte jaarlijkse schade in het buitendijkse gebied')
+    'Overstromingsschade_Regionaalwatersysteem_Binnendijks'                                          = @('euro', '', 'Verwachte jaarlijkse schade uit het regionale watersysteem')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Binnendijks'                                          = @('euro', '', 'Dezelfde schade, berekend met de schadefuncties van SSM')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Buitendijks'                                          = @('euro', '', 'Dezelfde schade, berekend met de schadefuncties van SSM')
+    'SSM_Overstromingsschade_Regionaalwatersysteem_Binnendijks'                                      = @('euro', '', 'Dezelfde schade, berekend met de schadefuncties van SSM')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Binnendijks_NCW'                                      = @('euro', '', 'Diezelfde schade als netto contante waarde')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Buitendijks_NCW'                                      = @('euro', '', 'Diezelfde schade als netto contante waarde')
+    'SSM_Overstromingsschade_Regionaalwatersysteem_Binnendijks_NCW'                                  = @('euro', '', 'Diezelfde schade als netto contante waarde')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Binnendijks_Basisjaar'                                = @('euro', '', 'De SSM-schade in het basisjaar, als vergelijkingsbasis')
+    'BereikbaarheidGroen_Fractie'                                                                    = @('m2', '', 'Groen binnen 300 meter, uitgedrukt per woning')
+    'Bereikbaarheid_Groen_BBG_Nationaal_Tot300m_Fractie_Groenaanbod_meter2'                          = @('m2', '', 'Het groenaanbod zelf binnen 300 meter, zonder deling door woningen')
+    'Bereikbaarheid_Groen_BBG_Nationaal_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2' = @('m2', '', 'Groen binnen 300 meter per woning, landelijk gemeten')
+    'Bereikbaarheid_Groen_BBG_Kust_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'      = @('m2', '', 'Dezelfde maat, alleen voor het landschap Kust')
+    'Bereikbaarheid_Groen_BBG_Rivieren_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'  = @('m2', '', 'Dezelfde maat, alleen voor het landschap Rivieren')
+    'Bereikbaarheid_Groen_BBG_Veen_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'      = @('m2', '', 'Dezelfde maat, alleen voor het landschap Veen')
+    'Bereikbaarheid_Groen_BBG_Zand_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'      = @('m2', '', 'Dezelfde maat, alleen voor het landschap Zand')
+    'Bereikbaarheid_Groen_BBG_Overig_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'    = @('m2', '', 'Dezelfde maat, voor het gebied buiten de vier landschappen')
+    'Mortaliteit_NDVI_500m'                                                                          = @('index 0 tot 1', '', 'Hoeveel groen er binnen 500 meter staat, gemeten als NDVI')
+    'Mortaliteit_NDVI_VeranderingOpLocatie'                                                          = @('index', '', 'Verandering van dat groen sinds het basisjaar')
+    'Mortaliteit_SterfteAfname_PerPeriode'                                                           = @('sterfgevallen', '', 'Vermeden sterfgevallen in deze periode dankzij meer groen')
+    'Mortaliteit_SterfteAfname_Cumulatief'                                                           = @('sterfgevallen', '', 'Vermeden sterfgevallen opgeteld sinds het basisjaar')
+    'WaardeVeranderingDoorGroenVerandering_Woningen'                                                 = @('euro', '', 'Waardeverandering van de woningen door verandering van het groen in de buurt')
+    'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen'                                        = @('euro', '', 'Datzelfde effect bij woningen die er in het basisjaar al stonden')
+    'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen'                                        = @('euro', '', 'Datzelfde effect bij woningen die er sindsdien zijn bijgekomen')
+    'WaardeVeranderingDoorGroenVerandering_Woningen_NCW'                                             = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
+    'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW'                                    = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
+    'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW'                                    = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
+    'NationaleIndicatoren'                                                                           = @('tabel', '', 'Alle indicatoren op een regel, voor het gekozen schaalniveau')
+    'Indicatoren_Landschap'                                                                          = @('tabel, ha en euro', '', 'Dezelfde indicatoren per landschap: Kust, Rivieren, Veen, Zand en Overig')
+    'Landgebruik_Areaal'                                                                             = @('tabel, ha', 'LU_ModelType', 'Areaal per landgebruiksklasse in basisjaar en zichtjaar, met het verschil')
+    'LandgebruikNL2120_Areaal'                                                                       = @('tabel, ha', 'LU_NL2120', 'Areaal per klasse in de indeling van 92 klassen')
+    'BT_Exogeen_Areaal'                                                                              = @('tabel, ha', 'INL_Beheertype', 'Hoeveel hectare de landschapsteams per natuurbeheertype opleggen')
+    'Bouwwijze_Areaal'                                                                               = @('tabel, ha', 'BouwwijzeK', 'Hoeveel hectare nieuwbouw er per bouwwijze staat')
+    'ClaimRealisatie_NL'                                                                             = @('tabel, verhouding', '', 'Gerealiseerde stand gedeeld door de claim, landelijk')
+    'ClaimRealisatie_Provincie'                                                                      = @('tabel, verhouding', '', 'Dezelfde verhouding per provincie')
+    'ClaimRealisatie_COROP'                                                                          = @('tabel, verhouding', '', 'Dezelfde verhouding per COROP-gebied')
+    'ClaimRealisatie_NVM'                                                                            = @('tabel, verhouding', '', 'Dezelfde verhouding per NVM-woningmarktgebied')
+    'Bereikbaarheid_Banen'                                                                           = @('geopackage, banen', '', 'Bereikbare banen per gebied, met de geometrie erbij')
+    'Verharding_Basisjaar_fractie'                                                                 = @('aandeel 0 tot 1', '', 'De verharding in het basisjaar, als fractie van de cel, voor alle varianten gelijk')
+    'Veenbouwstenen_NbSGenuanceerd'                                                                = @('klasse', '', 'De veenbouwstenen zoals team Veen ze heeft aangeleverd, invoer en geen modeluitkomst')
+}
+
+# Waar de legenda's staan die de configuratie schrijft. Ze komen uit Export/Legendas en zijn
+# variantonafhankelijk, dus een enkele GeoDmsRun op /Indicatoren/<casus>/Zichtjaren/Export/Legendas/Schrijf
+# volstaat voor een hele levering.
+$LegendaBron = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren\Legendas'
 $Issue = $Issue.TrimStart('#')
 
 function Schoon([string]$Naam) {
@@ -266,6 +384,32 @@ if (Test-Path "$Bron\Basisjaar") {
         ForEach-Object { [void](Kopieer $_ (Join-Path $Doel 'Basisjaar')) }
 }
 
+# De legenda's naast de kaarten die klassenummers dragen. Een GeoTIFF draagt alleen het getal, dus
+# zonder deze bestandjes is zo'n kaart bij de ontvanger niet te lezen. Ontbreekt de bron, dan gaat de
+# levering gewoon door en staat de waarschuwing in de LEESMIJ.
+$metaGeschreven = 0
+$metaGemist     = @()
+Get-ChildItem $Doel -Recurse -File -Filter '*.tif' | ForEach-Object {
+    $kaal = $_.BaseName -replace '_Y2[0-9]{3}', ''
+    $d = $Beschrijving[$kaal]
+    if ($d -and $d[1]) {
+        $bron = Join-Path $LegendaBron ($d[1] + '.csv')
+        if (Test-Path $bron) {
+            $uit = Join-Path $_.DirectoryName ($_.BaseName + '_meta.txt')
+            @("Legenda bij $($_.Name)", "Classificatie: $($d[1])", '') +
+                (Get-Content $bron) | Set-Content $uit -Encoding UTF8
+            $metaGeschreven++
+        } elseif ($metaGemist -notcontains $d[1]) {
+            $metaGemist += $d[1]
+        }
+    }
+}
+if ($metaGeschreven) { Write-Host "  $metaGeschreven legendabestanden geschreven" }
+if ($metaGemist) {
+    Write-Warning ("Legenda ontbreekt voor: " + ($metaGemist -join ', ') +
+        ". Draai eerst GeoDmsRun op /Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/Legendas/Schrijf.")
+}
+
 # Wat er in de LEESMIJ komt te staan, komt uit de doelmap zelf en niet uit de variantentabel bovenin.
 # Een levering wordt in stappen gevuld, dus wat deze run heeft gekopieerd is niet hetzelfde als wat de
 # ontvanger straks ziet. Basisjaar is geen variant en staat apart in de indeling.
@@ -315,6 +459,33 @@ $regels += "  ClaimRealisatie_<niveau>.csv geeft per regio de gerealiseerde stan
 $regels += "  claim. Het verschil tussen de niveaus maakt overflow zichtbaar: staat een regio op NVM"
 $regels += "  boven de 1 terwijl COROP eromheen op 1 uitkomt, dan is de claim binnen die grotere regio"
 $regels += "  verschoven en niet landelijk overschreden."
+$regels += ""
+$regels += "WAT ER IN DE BESTANDEN STAAT"
+$regels += "  De namen hieronder staan zonder zichtjaar. Een kaart heet in de map"
+$regels += "  <naam>_Y2120.tif; dezelfde naam in kaarten_tijdreeks draagt een ander jaartal en"
+$regels += "  betekent hetzelfde. Bij een naam met een classificatie ligt een <bestandsnaam>_meta.txt"
+$regels += "  met de nummers en de bijbehorende klassenamen."
+$regels += ""
+$gevonden = @{}
+Get-ChildItem $Doel -Recurse -File | Where-Object { $_.Extension -in '.tif', '.csv', '.gpkg' } |
+    ForEach-Object { $gevonden[($_.BaseName -replace '_Y2[0-9]{3}', '')] = $true }
+foreach ($k in $Beschrijving.Keys) {
+    if (-not $gevonden.ContainsKey($k)) { continue }
+    $d = $Beschrijving[$k]
+    $eenheid = if ($d[1]) { "$($d[0]), $($d[1])" } else { $d[0] }
+    $regels += "  $k  [$eenheid]"
+    $regels += "      $($d[2])"
+}
+$zonder = @($gevonden.Keys | Where-Object { -not $Beschrijving.Contains($_) } | Sort-Object)
+if ($zonder.Count -gt 0) {
+    $regels += ""
+    $regels += "  LET OP: voor deze bestanden staat geen beschrijving in MaakOplevering.ps1:"
+    foreach ($z in $zonder) { $regels += "    $z" }
+}
+$regels += ""
+$regels += "  De veranderkaarten NieuweNatuur, VerdwenenNatuur, Verstedelijking en WaterbergingVeen"
+$regels += "  dragen per cel een 0 of een 1 en geen oppervlak. Het areaal in hectare staat in de"
+$regels += "  indicatorentabellen; een cel is 25 bij 25 meter, dus 0,0625 ha."
 $regels += ""
 $regels += "LET OP BIJ HET LEZEN"
 $regels += "  De sloopindicatoren zijn geen tijdreeks. Ze worden geteld uit de stand in het"
