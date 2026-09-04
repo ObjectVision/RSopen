@@ -29,7 +29,12 @@
 param(
     [string] $Bron      = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren',
     # Standaard naar de gedeelde projectmap, zodat de levering meteen bij het team staat.
-    [string] $Doel      = 'C:\Users\JipClaassens\Objectvision\Object Vision - General\LocalData\RSOpen_NL2120\Productierun_20260829\Indicatoren',
+    # Let op twee dingen bij het bijwerken van dit pad. De projectmap staat sinds begin
+    # september op E: en niet meer onder de gebruikersmap op C:; het oude pad bestond niet
+    # meer, en omdat het script zijn doelmap met -Force aanmaakt zou een levering daar stil
+    # buiten de cloudmap zijn beland. En de gecureerde levering hoort in Oplevering, naast
+    # de ruwe mappen Allocatie, Indicatoren en VariantData van de betreffende run.
+    [string] $Doel      = 'E:\Objectvision\Object Vision - General\LocalData\RSOpen_NL2120\Productierun_20260903\Oplevering',
     [string] $Zichtjaar = 'Y2120',
     # Het issue waaronder deze oplevering valt. Verandert per levering, dus een parameter en geen
     # regel tekst onderin het script.

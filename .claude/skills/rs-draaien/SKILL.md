@@ -66,6 +66,35 @@ Zelfde reden om een lus met GeoDmsRun-aanroepen niet tegen een tijdslimiet aan t
 
 De grens van deze trap: exit 0 op een groot attribuut zonder IntegrityCheck bewijst alleen parse, naamresolutie en domeincheck, dus UpdateMetaInfo. Een keten over negen miljoen cellen die in 0,002 s klaar is, is niet gematerialiseerd. Kijk altijd naar de rekentijd voordat je conclusies trekt. TIFFOpen-fouten op ontkoppelde bestanden vuren wel al bij UpdateMetaInfo, want die lezen de header.
 
+### Bij een meta-expressie moet je elke tak instantieren
+
+Een meta-expressie, `:= =` gevolgd door een keuze tussen expressiestrings, kiest zijn tak bij het instantieren. Er komt dus maar een tak in de boom te hangen, en de andere wordt niet eens geparseerd. Toets je een willekeurige instantiatie, dan zegt exit 0 alleen iets over de tak die daar gekozen werd.
+
+Op 2026-09-04 blokkeerde dat de productierun drie pogingen lang. `IsRestrictief_OokBinnenPlancapaciteit` in de zichtjaar-zeef verwees naar een item dat door #759 was verwijderd, maar alleen in de tak voor werken met de kantoorverdikking aan. Nijverheid, Logistiek en Detailhandel namen de `const(FALSE)`-tak en gaven alle drie exit 0 met nul foutregels. Alleen Zak_dienstverlening viel om. De agent die de wijziging maakte had getoetst en een schone uitslag gezien.
+
+Zoek voor je toetst dus eerst op welke schakelaars en namen de expressie vertakt, en draai een instantiatie per tak:
+
+```powershell
+foreach ($sub in 'Zak_dienstverlening','Nijverheid','Logistiek','Detailhandel') {
+  $Item = '/VariantData/BAU/Zeef/Y2040/SectorxSubsectoren/Werken/'+$sub+'/IsBeschikbaar'
+  ...
+}
+```
+
+Dezelfde redenering geldt voor de sectorpoorten die overal in de templates zitten, zoals `Sector_name == lowercase('Werken')`, en voor schakelaars uit `ModelParameters` en `VariantK`. Een tak die in de geteste variant uitstaat is ongetoetste code.
+
+Let er daarbij op dat exit 0 op zo'n resolve-check nog steeds alleen UpdateMetaInfo bewijst. De vier subsectoren hierboven deden er elk zes seconden over, en dat is te snel om gerekend te hebben; de bevestiging kwam pas uit een `@statistics` op het onderliggende item.
+
+### Meerdere items in een aanroep
+
+`GeoDmsRun` neemt elk argument dat niet met `@` of `/` begint als itempad en werkt ze na elkaar af in hetzelfde proces. Elk item krijgt een eigen paar regels `{ Updating::[[item]]` en `} Updating::[[item]] (n secs)` in het log, dus de rekentijd per item blijft leesbaar. Faalt een item, dan loopt de lus door met het volgende, en het proces eindigt met exit 1 en een `[E]`-regel voor het gefaalde item.
+
+Gemeten op 2026-09-04 op 20.17.0.m met twee bestaande items en een opzettelijk ontbrekend derde: 2,4 s, exit 1, twee Updating-paren, een foutregel.
+
+Dit is de manier om werk te delen dat verschillende casussen gemeen hebben, zoals de indicatorenexport van BAU, BAU2 en NbSGenuanceerd voor hetzelfde zichtjaar: alles onder `SourceData`, `BaseData` en `Classifications` wordt dan een keer ingelezen. `batch/RunIndicatoren.ps1` doet dat achter `-Gebundeld`. Twee kanttekeningen. Er is een exitcode voor alle items samen, dus de status per item moet uit het log komen. En of de engine de gedeelde tussenresultaten tussen twee items in het geheugen houdt is niet gemeten; een item dat klaar is laat zijn interest los, dus dat hangt af van wat er nog aan de volgende items hangt. De eerste gebundelde export is daarvoor de meting.
+
+Kies dit boven een verzamelitem met `ExplicitSuppliers` in de configuratie wanneer de items naar gedeelde paden schrijven of wanneer niet alle casussen uit de lijst mee moeten: het verzamelitem trekt alles gelijktijdig en over de hele lijst, de commandoregel precies wat je opgeeft en na elkaar.
+
 ## Trap 2: klopt het (seconden tot minuten)
 
 Een assertie is een `IntegrityCheck` op het onderliggende item, met de exitcode als testuitslag:

@@ -231,6 +231,9 @@ Gevaarlijker is het geval waarin de eenheden toevallig tegen elkaar wegvallen: d
 
 Aanleiding 2026-08-28: `Banen_InWoongebied / Woningen_InWoongebied` in `BaseData/VerzorgendBijWonen.dms` was met `float32()` gebouwd en droeg daardoor `Job/Woning` mee, terwijl de declaratie `Float32` zei. De botsing kwam pas boven in `max_elem` in de allocatie, vier minuten rekenen verderop.
 
+De omgekeerde fout kost een allocatie. `nth_element_weighted` eist dat het gewicht dezelfde metriek draagt als het doel, en in de allocatie is dat doel de claim in `Job`, `Woning` of `meter3`. Wie het gewicht met `[float32]` dimensieloos maakt krijgt `Values mismatch between Values of fourth argument ( : float32) and Values of second argument ( Job: float32)`, gemeld op `Afkapgrens0` in `IterSubsector_T`, dus op de zaaglijn en niet op het item dat de metriek verloor. Gemeten op 2026-09-04 bij #770, waar de potentiele stand per cel een cast kreeg om hem met een dimensieloze vloer te kunnen combineren; de reparatie is de vloer in de eenheid van de stand zetten met `value(..., ValUnit)` en de stand zijn metriek laten houden.
+
+Vraag bij zo'n cast dus altijd wie de uitkomst leest. Een item dat alleen in een verhouding eindigt mag dimensieloos zijn, een item dat als gewicht of als claim de allocatie in gaat niet.
 ## Rasters die niet op het modelraster liggen
 
 GeoDMS leest een raster op georeferentie, niet positioneel, en rondt een niet-gehele celoffset af naar de dichtstbijzijnde cel. Dat gaat goed zolang alle lagen dezelfde afronding krijgen, maar het levert een GridStorageManager-waarschuwing op en het is niet zichtbaar in de uitkomst.
@@ -338,3 +341,23 @@ Twee dingen gaan er tegelijk mis, en het tweede is het venijnigst. De term verdw
 Zo ging het bij `#741`. In de piekbuiberging-indicator telde `Wonen/Totaal` zeven bergingsmaatregelen op, en `OpGrasUitgeefbaar/Resultaat` droeg sinds 7 januari 2026 een slash aan het eind. De wadi's en het doorlatend groen op gras zaten daardoor acht maanden lang niet in het aanbod van wonen: gemeten 121,1 in plaats van 140,2 mln m3 op zichtjaar 2120. En op de 11.257 cellen zonder openbaar gras viel de hele cel weg, inclusief daken en halfverharding. De werken-tak had dezelfde optelling zonder de slash en was in orde, wat het verschil pas zichtbaar maakte toen het aanbod per maatregel werd uitgesplitst.
 
 Zo vang je hem: splits een samengestelde som uit naar zijn termen en leg de som van de delen naast het geheel. Wijken die af, dan telt de som iets anders dan je leest. Een grep op `Resultaat/ +` of algemener op een slash gevolgd door spatie-plus kost niets en vindt het patroon rechtstreeks.
+
+## De pijl volgt een alias-unit tot de onderliggende unit
+
+`a -> b` zoekt `b` op in de waarde-eenheid van `a`. Is die eenheid een alias, zoals `unit<UInt32> UrbanContourK := Classifications/Modellering/UrbanContourK { attribute<String> RefSrc := ... }`, dan is de waarde-eenheid die GeoDMS vasthoudt de onderliggende classificatie en niet de alias. Een subitem dat alleen op de alias staat, zoals die `RefSrc`, is via de pijl dus onvindbaar: `Unknown identifier 'RefSrc'`. `PropValue(attr, 'ValuesUnit')` laat het zien, die geeft het pad van de onderliggende unit terug. Indexeren via de alias zelf werkt wel: `Impl/UrbanContourK/RefSrc[waarden]`.
+
+Gemeten op 2026-09-04, GeoDms20.17.0.m, bij #775. De assen van een `combine` worden generiek afgelezen met `SubItem_PropValues(unit, 'name')`, dat ook de aangemaakte `first_rel`, `second_rel` enzovoort noemt, en `unique(unit/first_rel)/values -> RefSrc`. Dat werkte voor elke as behalve de twee die een alias van een classificatie waren; die zijn eigen units geworden met de namen van de classificatie. Let bij `SubItem_PropValues` op twee dingen: een alias `X := Y` heeft zelf geen subitems, dus lees eerst `PropValue(X, 'Expr')` en volg de naam; en het pad in `ValuesUnit` is relatief met puntjes (`..../Impl/A`) die alleen aan het begin van een pad werken, niet middenin.
+
+## Een ontbrekend ontkoppeld bestand meldt zich als een onbekend subitem, ver van de plek
+
+Een `.mmd` die niet bestaat geeft geen leesfout maar `Unknown identifier` op het subitem dat eruit zou komen. Het item bestaat namelijk pas zodra de storage is gelezen, en zonder bestand blijft de container leeg. De melding wijst dus naar de lezer en niet naar het bestand, en de cascade daarna kan tientallen regels verderop liggen.
+
+Gemeten op 2026-09-04 in een testkopie met een selectief geseede `%LocalDataProjDir%`. Drie keer achter elkaar viel de allocatie om met een melding die niets met de oorzaak te maken had:
+
+| ontbrekend | melding | waar hij opdook |
+|---|---|---|
+| `Vastgoed/VolledigeTabel_<datum>/WP5/AlleStatussen_Toekomst_*.mmd` | `Unknown identifier 'WP5_rel'` | in de IntegrityCheck van de BAG-pandtypering |
+| `BaseData/Vastgoed/WP2xVSSH_Proxy/<regio>/*.mmd` | `Unknown identifier 'eengezins_VrijeSector_Proxy'` | in de woningclaim per allocatieregio |
+| beide | `Unknown identifier 'Districts'` in elke iteratie | in `Iter_Allocatie/VindAangeslotenCellen`, want `district_8` kreeg een invoer die niet gerekend kon worden |
+
+Loop bij een `Unknown identifier` op een gegenereerd subitem dus eerst de ontkoppelde bestanden na voordat je de expressie gaat lezen. `Get-ChildItem` op de map van de storage kost seconden; het zoeken naar een naamfout in een template die het al maanden doet kost een middag.
