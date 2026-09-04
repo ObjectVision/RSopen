@@ -27,19 +27,30 @@ Template PerSectorxSubsector_T
 	
 	attribute<Float32> Basisjaar     (CompactedAdminDomain) := ='StateBasisjaar/'+Sector/xSubsector/name[id]+ ' * float32(IsBeschikbaar_basisjaar)';
 
+	parameter<String>  ValUnit_ref := Sector/xSubsector/ValUnit_ref[id], Descr = "De eenheid van de stand van deze subsector: Job, Woning, meter3, MW of Ha.";
+	unit<Float32>      ValUnit     := = ValUnit_ref;
+
 	parameter<Bool>    IsKantoorVerdikking := /ModelParameters/Werken/KantoorVerdikkingInBestaand && lowercase(Sector/xSubsector/Sector_name[id]) == lowercase('Werken') && lowercase(Sector/xSubsector/Subsector_name[id]) == lowercase('Zak_dienstverlening'), Descr = "Geldt de potentieelvloer van #668 voor deze subsector? Alleen zakelijke dienstverlening, en alleen met de schakelaar aan.";
-	parameter<Bool>    IsWaterberging := lowercase(Sector/xSubsector/Sector_name[id]) == lowercase('Waterberging');
-	attribute<Float32> Potentieel                         (CompactedAdminDomain) := = IsWaterberging
-		? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, MakeDefined((/BaseData/Suitabilities/Waterberging/Diepte * AdminDomain/NrMeter2PerCell)[float32], 0f))'
-		: '(Density/Per_CompactedAllocDomain/'+Zichtjaar_name+'/SectorxSubsectoren/'+Sector/xSubsector/name[id]+'/Zichtjaar[CompactedAdminDomain/CompactedAllocDomain_rel] * AdminDomain/NrHaPerCell)[float32]'
-	, Descr = "Het reguliere potentieel van de cel. Voor wonen en werken is dat de dichtheid van de hectare waarin hij ligt, maal zijn oppervlak van 0,0625 hectare: de dichtheid is een omgevingsgemiddelde op het schattingsgrid van 100 meter en wordt hier uitgesmeerd, en dat is de richting die mag. Voor waterberging is het sinds #770 de bergbare waterschijf van de cel zelf maal 625 m2, dus m3 per cel; tot dan het hectaregemiddelde van die schijf, waardoor een toegelaten cel niet zijn eigen volume kreeg maar dat van zijn buren, en de bergingsboekhouding per cluster niet op de kaart sloot. Cellen zonder schijf, waaronder die boven Maximum_Waterschijf, tellen 0, net als in de oude som. De cast naar float32 strijkt de metriek (Job, Woning, m3) weg, zodat max_elem met de vloer kan rekenen; de afnemers lezen dit item toch als kale float32.";
-	attribute<Float32> Vloer                              (CompactedAdminDomain) := = IsKantoorVerdikking
-		? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/KantoorDominantie/WerkBanenWaarKantoorDominant) / (1f + VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+'])'
-		: 'const(0f, CompactedAdminDomain)'
-	, Descr = "Potentieelvloer voor bestaande kantoorcellen (#668): op een cel van 25 meter waar kantoor de werkstand domineert geldt minimaal de eigen werkstand maal de verdikkingsfactor, de capaciteit die bureaudeling in situ vrijspeelt. De factor is 1 gedeeld door (1 plus de groeifactor van de kantoorcoefficient), dus 1,143 bij 17,5 tegenover 20 m2 per baan; daarmee ligt de vloer altijd 14,3 procent boven de stand van de cel en komt zij door de dichtheidsdrempel van 10 procent in de zeef. Elders 0, zodat max_elem daar niets doet.
+	parameter<Bool>    IsWaterberging      := lowercase(Sector/xSubsector/Sector_name[id]) == lowercase('Waterberging');
+
+	attribute<ValUnit> Potentieel (CompactedAdminDomain) := = IsWaterberging
+		? 'value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, MakeDefined((/BaseData/Suitabilities/Waterberging/Diepte * AdminDomain/NrMeter2PerCell)[float32], 0f)), ValUnit)'
+		: 'Density/Per_CompactedAllocDomain/'+Zichtjaar_name+'/SectorxSubsectoren/'+Sector/xSubsector/name[id]+'/Zichtjaar[CompactedAdminDomain/CompactedAllocDomain_rel] * AdminDomain/NrHaPerCell'
+	, Descr = "Het potentieel van de cel, in de eenheid van de stand. Voor wonen en werken is dat de dichtheid van de hectare waarin de cel ligt, maal zijn oppervlak van 0,0625 hectare: die dichtheid is een omgevingsgemiddelde op het schattingsgrid van 100 meter en wordt hier uitgesmeerd, en dat is de richting die mag.
+
+				Voor waterberging is het sinds #770 de bergbare waterschijf van de cel zelf maal 625 m2, dus m3 per cel. Tot dan was het het hectaregemiddelde van die schijf, waardoor een toegelaten cel niet zijn eigen volume kreeg maar dat van zijn buren, inclusief de cellen onder een meter die de zeef er per cel uithaalt; de bergingsboekhouding sloot daardoor per cluster niet op de kaart. Cellen zonder schijf tellen nul, net als in de oude som, waar sum de nullen oversloeg.
+
+				De eenheid moet meekomen. De allocatie zeeft met nth_element_weighted, en dat eist dat het gewicht (deze stand) dezelfde metriek draagt als de claim; een cast naar kale float32 breekt daar de zaaglijn van elke subsector. Zie de valkuil over float32(x) tegenover x[float32].";
+
+	attribute<ValUnit> Vloer (CompactedAdminDomain) := = IsKantoorVerdikking
+		? 'value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/KantoorDominantie/WerkBanenWaarKantoorDominant) / (1f + VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+']), ValUnit)'
+		: 'const(0[ValUnit], CompactedAdminDomain)'
+	, Descr = "Potentieelvloer voor bestaande kantoorcellen (#668): op een cel van 25 meter waar kantoor de werkstand domineert geldt minimaal de eigen werkstand maal de verdikkingsfactor, de capaciteit die bureaudeling in situ vrijspeelt. De factor is 1 gedeeld door (1 plus de groeifactor van de kantoorcoefficient), dus 1,143 bij 17,5 tegenover 20 m2 per baan; daarmee ligt de vloer altijd 14,3 procent boven de stand van de cel en komt zij door de dichtheidsdrempel van 10 procent in de zeef. Elders nul, zodat max_elem daar niets doet.
 
 				Tot #770 stond deze vloer in de dichtheid op 100 meter (DichtheidZichtjaar_T/Src/Werken/Banen_perHa): de werkstand van de dominante cellen van een hectare werd over de hele hectare uitgesmeerd en daarna per cel van 25 meter weer maal 0,0625 genomen. Zodra de saldotoets per cel rekent werkt dat niet meer: een pandcel met 100 banen in een hectare met vier zulke cellen kreeg een potentieel van 28,6 en haalde de toets nooit, terwijl de lege buurcellen de vloer kregen zonder dominant te zijn. De vloer is een celgrootheid en staat daarom hier.";
-	attribute<Float32> PotentieelMetVloer                 (CompactedAdminDomain) := max_elem(Potentieel, Vloer);
+
+	attribute<ValUnit> PotentieelMetVloer (CompactedAdminDomain) := = IsKantoorVerdikking ? 'max_elem(Potentieel, Vloer)' : 'Potentieel';
+
 	attribute<Float32> Zichtjaar                          (CompactedAdminDomain) := PotentieelMetVloer * float32(IsBeschikbaar_zichtjaar);
 	attribute<Float32> Zichtjaar_BeschikbaarheidBasisjaar (CompactedAdminDomain) := PotentieelMetVloer * float32(IsBeschikbaar_basisjaar);
 	attribute<Float32> StandInBereik                      (CompactedAdminDomain) := = 'Per_Sector/'+Sector/xSubsector/Sector_name[id]+'/Basisjaar_Ongemaskeerd * float32(IsBeschikbaar_basisjaar)'
