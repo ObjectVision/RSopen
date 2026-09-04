@@ -22,15 +22,117 @@ container Landbouw : using = "Classifications/Landbouw"
 	,	url         = "https://basisregistratieondergrond.nl/inhoud-bro/registratieobjecten/modellen/geotop-gtm/"
 	,	StorageName = "%RS_Lb_DataDir%/landgebruik/peat_thickness_regridded.tif";
 	
-	attribute<VoederCategorie> Voedergewas_Categorie_2014_Import (rdc_25m)
-	:	Descr       = "gewassen 6 Categorieën"
-	,	Source      = "Aanlevering LEI op 10 april 2015 Bron14"
-					  "BRP en de landbouwtelling van 2014 "
-	,	url         = "%RS_Lb_DataDir%/Landgebruik/voedergew2014.txt"
-	,	StorageName = "%RS_Lb_DataDir%/Landgebruik/voedergew2014_categorie.tif";
-	
-	attribute<VoederCategorie> Voedergewas_Categorie_2014 (rdc_25m):= MakeDefined(voedergewas_Categorie_2014_Import, 4[VoederCategorie]);
-	
+	container BRP
+	: Descr = "De Basisregistratie Gewaspercelen, het gewas per perceel zoals de teler het opgeeft. Vervangt sinds #751 de voedergewassenkaart uit 2014.
+
+				Waarom die eruit ging. Dat was een aanlevering van LEI van 10 april 2015 op basis van de BRP en de
+				landbouwtelling van 2014, opgeslagen als voedergew2014_categorie.tif, en zij bepaalde de klasse op
+				740.798 ha. Op een vijfde daarvan, 148.918 ha, registreert de BRP 2025 bouwland waar die kaart
+				grasland zegt. De herkomst van het bestand lag bovendien niet vast; alleen de zes categorien en het
+				jaartal waren bekend.
+
+				Wat ervoor in de plaats komt en wat niet. De BRP geeft het gewas per perceel, jaarlijks, met een
+				bekende herkomst. Wat zij niet geeft is de melkveedichtheid, en dat was precies wat de oude kaart als
+				enige leverde. De driedeling extensief, standaard en intensief is daarom losgelaten; zie
+				Classifications/Landbouw/BRPGewas voor de koppeling en voor wat er met GG_vee_intensief gebeurt.
+
+				De BRP is geen vlakdekkende kaart: zij bevat alleen percelen die voor subsidie zijn opgegeven, op 25
+				meter gerasterd 1.853.847 ha van de 3.509.101 ha studiegebied. Zij vervangt CBS dus niet als
+				poortwachter en LGN niet als achtervang. De volgorde in BaseData/Grondgebruik blijft CBS, dan deze
+				bron, dan LGN.
+
+				Het bestand staat in de wortel van %sourceDataDir% en niet onder %RS_Lb_DataDir%/Landgebruik, waar
+				het thuis zou horen. Verplaatsen kan niet zomaar: die schijf synchroniseert met Nextcloud en is
+				schrijf-eenmaal, dus een verhuizing is een bewuste actie van de beheerder en geen opruimwerk."
+	{
+		container Bron
+		:	StorageName     = "='%sourceDataDir%/brpgewaspercelen_definitief_'+/ModelParameters/BRP_Year+'.gpkg'"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "TRUE"
+		,	Source          = "RVO, Basisregistratie Gewaspercelen, definitieve versie"
+		,	url             = "https://www.rvo.nl/onderwerpen/basisregistratie-gewaspercelen-brp"
+		,	DialogData      = "rdc_meter"
+		{
+			unit<uint32> perceel
+			:	SqlString = "select gewascode, geom from brp_gewas where category <> 'Landschapselement' order by ST_Area(geom) desc"
+			,	Descr = "De percelen, zonder de landschapselementen en op volgorde van groot naar klein.
+
+						De landschapselementen, ruim een miljoen van de 2,33 miljoen records, zijn houtwallen,
+						bomenrijen en slootkanten. Ze liggen als kleine polygonen binnen de percelen en zijn op 25
+						meter niet zinvol te rasteren, dus ze vallen hier weg; er blijven 1.329.752 percelen over.
+
+						De volgorde is er tegen de nesting: poly2grid laat de polygoon winnen die als laatste aan de
+						beurt is, dus met groot naar klein wint een klein perceel binnen een groter. Zie de skill
+						geodms-valkuilen.
+
+						LET OP: deze string moet letterlijk blijven en mag geen =-expressie worden. De fingerprint van
+						de tif leest zijn tekst met PropValue, en PropValue geeft de expressietekst en niet de
+						uitkomst. Interpoleert de string ooit een parameter of een %placeholder%, dan blijft die tekst
+						gelijk terwijl de werkelijke query verandert, en beweegt de fingerprint niet mee. Moet er toch
+						iets variabels in, zet die waarde dan als eigen sleutel in Fingerprint_Gewascode.";
+		}
+
+		attribute<Int32> Calc_Gewascode (rdc_25m) := Bron/perceel/gewascode[poly2grid(Bron/perceel/geometry, rdc_25m)]
+		, Descr = "De gewascode per cel, null waar geen perceel ligt. Int32 omdat de kolom als MEDIUMINT binnenkomt.";
+
+		parameter<String> FileName_Gewascode := '%LocalDataProjDir%/BaseData/Landbouw/BRP_Gewascode_25m_'+/ModelParameters/BRP_Year+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+
+		parameter<String> Fingerprint_Gewascode :=
+			  'brp_year='          + /ModelParameters/BRP_Year
+			+ ';sql='              + PropValue(Bron/perceel, 'SqlString')
+			+ ';study_area='       + /ModelParameters/StudyArea
+			+ ';grid_size='        + string(rdc_25m/gridsize)
+		, Descr = "De volledige lijst invoeren die de tif bepaalt. brp_year bepaalt via de bestandsnaam welk gpkg wordt gelezen.
+
+					De sleutel sql draagt de letterlijke tekst van de SqlString, en dat is geen franje. Die string
+					bepaalt welke percelen meedoen en in welke volgorde ze worden gerasterd, en dat laatste beslist bij
+					overlap wie wint. Zou hij er niet in staan, dan verandert een aanpassing eraan de uitkomst zonder
+					dat de fingerprint meebeweegt, wordt de tif dus niet opnieuw gemaakt, en zwijgt ook de areaaltoets
+					hieronder, want die hangt aan de maakkant. Precies dat stille geval is bij #613 misgegaan, waar een
+					gewijzigde window function 1.500 van de 12.233 ha wegnam met exitcode 0.
+
+					De koppeling naar LU_ModelType staat er bewust niet in: de tif draagt de rauwe gewascode en de
+					vertaling gebeurt na het lezen, dus een wijziging in BRPGewas werkt meteen door zonder dat de tif
+					opnieuw hoeft. Verplaatst iemand die vertaling ooit naar de schrijfkant, dan hoort de tabel wel in
+					deze lijst.";
+
+		container Decoupling_Gewascode := /Templates/DecoupledFile_T(FileName_Gewascode, Fingerprint_Gewascode);
+
+		attribute<Int32> Make_Gewascode (rdc_25m) := Calc_Gewascode, StorageName = "=FileName_Gewascode", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_Gewascode/Write_Fingerprint;Controle/Ratio"
+		, Descr = "Schrijft de gerasterde gewascode eenmalig weg. Het rasteren kost ongeveer een minuut en leest 2,9 GB van de gesynchroniseerde schijf; ontkoppelen scheelt dat bij elke volgende aanroep.";
+
+		attribute<Int32> Read_Gewascode (rdc_25m) : StorageName = "=FileName_Gewascode", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+
+		attribute<Int32> Gewascode (rdc_25m) := = Decoupling_Gewascode/MayReuse ? 'Read_Gewascode' : 'Make_Gewascode'
+		, Descr = "Vraag Decoupling_Gewascode/Explanation op als je wilt weten waarom de tif wel of niet opnieuw wordt gemaakt.";
+
+		attribute<Classifications/Actor/LU_ModelType> LU_ModelType_rel (rdc_25m) :=
+			/Classifications/Landbouw/BRPGewas/LU_ModelType_rel[rlookup(Gewascode, /Classifications/Landbouw/BRPGewas/code)]
+		, Descr = "De landbouwklasse van het model per cel, null waar geen perceel ligt en null waar de gewascode geen tegenhanger heeft in de twaalf klassen van Actor/LandbouwKlasses.
+
+					De vertaling gebeurt hier, na het lezen, en niet in de tif. Dat is bewust: de tif draagt de rauwe
+					gewascode, dus een wijziging in BRPGewas werkt meteen door en hoeft niet in de fingerprint. Zou de
+					tif de vertaalde klasse dragen, dan was die koppeling wel een determinant en leverde een wijziging
+					aan de tabel stil een verouderd bestand.";
+
+		container Controle
+		: Descr = "Areaaltoets op het rasteren, naast de fingerprint. Een fingerprintsleutel vangt een gewijzigde SqlString niet: verandert daar de sorteervolgorde of een filter, dan blijft de sleutel gelijk terwijl het raster verschuift. Bij #613 verdween zo 1.500 van de 12.233 ha met exitcode 0. Deze toets legt het gerasterde areaal naast het polygoonareaal en valt om zodra die twee uit elkaar lopen."
+		{
+			parameter<Ha> Areaal_Vector := sum(area(Bron/perceel/geometry, meter2_f64)[Ha])
+			, Descr = "Het areaal van alle percelen samen, rechtstreeks uit de polygonen.";
+
+			parameter<Ha> Areaal_Raster := sum(IsDefined(Calc_Gewascode) ? rdc_25m/NrHaPerCell : 0[Ha])
+			, Descr = "Hetzelfde areaal zoals het model het op 25 meter gerasterd heeft.";
+
+			parameter<float32> Ratio := Areaal_Raster / Areaal_Vector
+			, IntegrityCheck = "abs(this - 1f) < 0.01f"
+			, Descr = "De verhouding tussen die twee, gemeten op 2026-09-04 op 0,99994. Het rasteren kost dus 0,006 procent, want percelen zijn groot ten opzichte van een cel van 25 meter en wat aan de ene rand afvalt komt er aan de andere bij. De marge van een procent is daarmee ruim, en toch scherp genoeg voor het soort fout dat hij moet vangen: bij #613 verdween twaalf procent.
+
+						Deze toets hangt via ExplicitSuppliers aan Make_Gewascode en vuurt dus alleen wanneer de tif werkelijk wordt gemaakt. Dat is bewust, want aan de leeskant zou hij het gpkg bij elke run opnieuw openen en daarmee het ontkoppelen zinloos maken. Het betekent wel dat hij de fingerprint niet vervangt maar aanvult: wat de sleutel niet ziet leidt niet tot een remake, en dan zwijgt deze toets ook. Daarom staat de SqlString in de sleutel.";
+		}
+	}
+
 
 	container WUR_Kansenkaarten
 	{
