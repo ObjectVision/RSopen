@@ -9,17 +9,19 @@
 // de natuurstroom komt in Zichtjaar/Grondgebruik/CC terecht. Een cel die natte teelt of vernat grasland wordt houdt
 // daarmee de koolstofklasse van het basisjaar. Zowel CarbonStorageSequestration_T als Methaan_T hangen aan die klasse.
 //
-// Dit harnas reproduceert de voorrangsregel van VeenKental/PerHa_jaar op de cellen van de landbouwstroom, in twee
+// Dit harnas reproduceert de voorrangsregel van VeenKental/PerHa_jaar op de cellen van de landbouwstroom, in drie
 // lezingen naast elkaar:
-//   NU  : de klasse van het basisjaar, dus wat het model vandaag boekt;
-//   ZOU : de klasse die bij het opgelegde landgebruik hoort, dus NbSLandgebruik/CarbonClass_rel.
-// Daarnaast staat er wat team Veen zelf voor deze bouwstenen opgeeft, als derde kolom.
+//   NU   : de klasse van het basisjaar, dus wat het model boekte voordat #778 was gerepareerd;
+//   ZOU  : de klasse die bij het opgelegde landgebruik hoort, dus NbSLandgebruik/CarbonClass_rel. Dat is wat het model
+//          doet met Koolstof_KentalUitBouwsteencomponent op FALSE;
+//   COMP : het kental van de bouwsteencomponent zelf, wat het model doet met die schakelaar op TRUE.
+// Daarnaast staat er wat team Veen voor de zuivere bouwstenen opgeeft, als vierde kolom.
 //
 // De reproductie is exact voor cellen die niet in dit zichtjaar stedelijk worden gealloceerd; die tak (IsStedelijk uit
 // de stand) zit hier bewust niet in, zodat het harnas geen allocatie hoeft te draaien. De kernmeting is
 // ha_lb_zonder_koolstofklasse: hoeveel hectare krijgt een landbouwklasse opgelegd terwijl de koolstofindicator er
-// geen klasse voor ziet. Die hoort gelijk te zijn aan ha_landbouwstroom_opgelegd zolang CarbonClass_rel alleen
-// Natuur_BT leest.
+// geen klasse voor ziet. Voor de reparatie was dat 194.375 ha; sindsdien hoort het nul te zijn, en de IntegrityCheck
+// op ExogeenOpleggen/CarbonClass_rel bewaakt dat ook aan de andere kant.
 //
 // Vaste variant NbSGenuanceerd, want alleen daar bestaat een veenlevering. De drooglegging komt uit Y2040, het eerste zichtjaar; die is in
 // elk zichtjaar na het basisjaar dezelfde, want VariantK legt een eindtoestand op.
@@ -91,6 +93,9 @@ container Diagnose778
 	attribute<bool> VeenKentalGeldt (AdminDomain) := OpVeenbodem || InSOMERS
 	, Descr = "Het regime uit CarbonStorageSequestration_T, met Koolstof_VeenVastleggingUitBouwstenen op TRUE en NbSGenuanceerd als NbS-variant.";
 
+	attribute<bool> HoogNLTelt (AdminDomain) := /ModelParameters/Advanced/Koolstof_OxidatieBuitenSOMERSOokHoogNL || !Hoog_NL
+	, Descr = "Boekt de emissiefactor hier, gegeven de schakelaar voor hoog Nederland? Volgt de schakelaar en veronderstelt hem niet, anders loopt het harnas uit de pas zodra die omgaat.";
+
 	attribute<float32> EF (AdminDomain) := OpMoerigeBodem
 											? /ModelParameters/Advanced/Koolstof_EF_Moerig_tonCO2_ha_jaar
 											: /ModelParameters/Advanced/Koolstof_EF_Veen_tonCO2_ha_jaar;
@@ -106,15 +111,15 @@ container Diagnose778
 		  !HeeftLB || !VeenKentalGeldt          ? 0f
 		: (Veenvormend_Nu || Water_Nu)          ? 0f
 		: IsVernatVeenweide                     ? VBG/CO2_VernatteVeenweide
-		: !Hoog_NL                              ? EF
+		: HoogNLTelt                            ? EF
 		:                                         0f
-	, Descr = "Wat het model vandaag op deze cel boekt, in ton CO2 per hectare per jaar. De bebouwingstak is weggelaten: die vergelijkt de klasse van nu met die van het basisjaar en die zijn hier per constructie gelijk.";
+	, Descr = "Wat het model voor de reparatie van #778 op deze cel boekte, in ton CO2 per hectare per jaar. De bebouwingstak is weggelaten: die vergelijkt de klasse van nu met die van het basisjaar en die zijn hier per constructie gelijk.";
 
 	attribute<float32> CO2_Zou (AdminDomain) :=
 		  !HeeftLB || !VeenKentalGeldt          ? 0f
 		: (Veenvormend_Zou || Water_Zou)        ? 0f
 		: IsVernatVeenweide                     ? VBG/CO2_VernatteVeenweide
-		: !Hoog_NL                              ? EF
+		: HoogNLTelt                            ? EF
 		:                                         0f
 	, Descr = "Hetzelfde met de klasse van het opgelegde landgebruik.";
 
@@ -129,6 +134,17 @@ container Diagnose778
 		: VBG/CH4_ton_CO2eq_ha_jaar[CC_Zou_Def] > 0f ? VBG/CH4_ton_CO2eq_ha_jaar[CC_Zou_Def]
 		: IsVernatVeenweide ? VBG/CH4_VernatteVeenweide
 		: 0f;
+
+	// ---- de derde lezing, en sinds de reparatie van #778 is dit wat het model doet ----
+
+	attribute<float32> CO2_Component (AdminDomain) :=
+		  !HeeftLB || !VeenKentalGeldt ? 0f
+		: MakeDefined(NbSLG/CO2_ton_ha_jaar[NbSLG/PerLU_ModelType[LB]], 0f)
+	, Descr = "Het kental van de bouwsteencomponent zelf. Voor natte teelt het getal van bouwsteen 3b en 4b, die voor honderd procent natte teelt zijn, en niet dat van de klasse waarin het landgebruik valt.";
+
+	attribute<float32> CH4_Component (AdminDomain) :=
+		  !HeeftLB || !OpVeenbodem ? 0f
+		: MakeDefined(NbSLG/CH4_ton_CO2eq_ha_jaar[NbSLG/PerLU_ModelType[LB]], 0f);
 
 	// ---- de kentallen van team Veen zelf, voor de derde kolom ----
 
@@ -180,6 +196,11 @@ container Diagnose778
 	parameter<float32> kton_ch4_tv_nt  := sum(float32(IsNatteTeelt && OpVeenbodem) * TV_CH4_NatteTeelt * CelHa) / 1000f;
 
 	parameter<float32> kton_ch4_nu_vg  := sum(float32(IsVernatGras) * CH4_Nu  * CelHa) / 1000f;
+
+	parameter<float32> kton_co2_comp_nt := sum(float32(IsNatteTeelt) * CO2_Component * CelHa) / 1000f;
+	parameter<float32> kton_co2_comp_vg := sum(float32(IsVernatGras) * CO2_Component * CelHa) / 1000f;
+	parameter<float32> kton_ch4_comp_nt := sum(float32(IsNatteTeelt) * CH4_Component * CelHa) / 1000f;
+	parameter<float32> kton_ch4_comp_vg := sum(float32(IsVernatGras) * CH4_Component * CelHa) / 1000f;
 	parameter<float32> kton_ch4_zou_vg := sum(float32(IsVernatGras) * CH4_Zou * CelHa) / 1000f;
 	parameter<float32> kton_ch4_tv_vg  := sum(float32(IsVernatGras && OpVeenbodem) * TV_CH4_VernatGras * CelHa) / 1000f;
 
@@ -221,6 +242,10 @@ container Diagnose778
 		+ '|kton_ch4_jr_zou_natteteelt;' + string(kton_ch4_zou_nt)
 		+ '|kton_ch4_jr_tv_natteteelt;'  + string(kton_ch4_tv_nt)
 		+ '|kton_ch4_jr_nu_vernatgras;'  + string(kton_ch4_nu_vg)
+		+ '|kton_co2_jr_comp_natteteelt;' + string(kton_co2_comp_nt)
+		+ '|kton_co2_jr_comp_vernatgras;' + string(kton_co2_comp_vg)
+		+ '|kton_ch4_jr_comp_natteteelt;' + string(kton_ch4_comp_nt)
+		+ '|kton_ch4_jr_comp_vernatgras;' + string(kton_ch4_comp_vg)
 		+ '|kton_ch4_jr_zou_vernatgras;' + string(kton_ch4_zou_vg)
 		+ '|kton_ch4_jr_tv_vernatgras;'  + string(kton_ch4_tv_vg)
 		+ '|kton_ch4_jr_water_gemist;'   + string(kton_ch4_water_mis)

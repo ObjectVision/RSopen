@@ -119,8 +119,27 @@ Template CarbonStorageSequestration_T
 
 	attribute<bool> IsWaterklasse (AdminDomain) := MakeDefined(CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 16b || CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 17b || CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 19b, FALSE), Descr = "Open water. De aangeleverde tabel zet grote wateren op nul en geeft sloten alleen methaan, dus hier geen CO2.";
 
-	attribute<bool> IsVeenvormendNu (AdminDomain) := MakeDefined(VeenKentallen/IsVeenvormend[Zichtjaar/Grondgebruik/CC], FALSE)
-	, Descr = "Is het landgebruik hier een veenvormende klasse geworden? Dan boekt deze post niets meer. De emissiefactor beschrijft een gedraineerde veenbodem onder het huidige gebruik en niet een vernat moeras; hem daar laten doorlopen zou de vernatting van veen buiten de veenweidepercelen als uitstoot in de boeken zetten en bovendien via Oxidatie/Actief de vastlegging bevriezen op precies de cellen waar het veen weer aangroeit.";
+	// #778: de bouwsteencomponent van deze cel, voor zover de veenlevering er een landbouwklasse oplegt. De klasse is
+	// voor deze twee te grof: natte teelt komt via Rietteelt uit op koolstofklasse 18, en die draagt het kental van
+	// bouwsteen 5, een mozaiek dat maar voor 0,30 uit natte teelt bestaat. De component is de fijnere sleutel en is
+	// sinds trap 2 van #684 per cel bekend. Zie de schakelaar Koolstof_KentalUitBouwsteencomponent.
+	unit<uint8> NbSLandgebruik := /Classifications/Grondgebruik/NbSVeen/NbSLandgebruik;
+
+	attribute<NbSLandgebruik> Component_rel (AdminDomain) := NbSLandgebruik/PerLU_ModelType[ThisVariantData/ExogeenOpleggen/Landbouw_Effectief]
+	, Descr = "Welk hoofdtype landgebruik van de bouwstenentabel legt de veenlevering hier op? Null buiten de landbouwstroom, en dus null in elke variant zonder veenlevering.";
+
+	attribute<bool> HeeftComponentKental (AdminDomain) := = /ModelParameters/Advanced/Koolstof_KentalUitBouwsteencomponent
+															? 'MakeDefined(NbSLandgebruik/HeeftComponentKental[Component_rel], FALSE)'
+															: 'const(FALSE, AdminDomain)'
+	, Descr = "Rekent deze cel met het kental van haar bouwsteencomponent in plaats van met dat van haar koolstofklasse? Staat de schakelaar uit, dan is dit overal FALSE en gedraagt de cel zich als voor #778: natte teelt is dan een veenvormende rietklasse.";
+
+	attribute<float32> ComponentKental_CO2 (AdminDomain) := NbSLandgebruik/CO2_ton_ha_jaar[Component_rel]
+	, Descr = "Het CO2-kental van de component, in ton per hectare per jaar en positief is uitstoot. Voor natte teelt 1, voor vernat kruidenrijk grasland 4,02 en voor vernat productiegrasland 7.";
+
+	attribute<bool> IsVeenvormendNu (AdminDomain) := MakeDefined(VeenKentallen/IsVeenvormend[Zichtjaar/Grondgebruik/CC], FALSE) && !HeeftComponentKental
+	, Descr = "Is het landgebruik hier een veenvormende klasse geworden? Dan boekt deze post niets meer. De emissiefactor beschrijft een gedraineerde veenbodem onder het huidige gebruik en niet een vernat moeras; hem daar laten doorlopen zou de vernatting van veen buiten de veenweidepercelen als uitstoot in de boeken zetten en bovendien via Oxidatie/Actief de vastlegging bevriezen op precies de cellen waar het veen weer aangroeit.
+
+				De aftrek van HeeftComponentKental is nieuw met #778 en is de kern van die schakelaar. Koolstofklasse 18 dekt twee dingen die zich op veen tegengesteld gedragen: rietmoeras als natuurbeheertype vormt veen, rietteelt als gewas is volgens de kentallen van team Veen een netto bron. De klasse kan die twee niet uit elkaar houden, de opleggingsstroom wel. Zonder deze aftrek zou een cel die natte teelt wordt zowel de vastlegging van een veenmoeras krijgen als het verhoogde maximum van 930 ton C per hectare.";
 
 	// De stedelijke toets moet langs twee wegen. Sector/IsStedelijk, waar Zichtjaar/Grondgebruik/IsStedelijk op
 	// rust, staat alleen op cellen met een gealloceerde stedelijke sector; bestaande bebouwing die in dit zichtjaar
@@ -153,14 +172,22 @@ Template CarbonStorageSequestration_T
 		attribute<bool> GeenUitstoot (AdminDomain) := IsVeenvormendNu || IsWaterklasse || (IsBebouwdNu && !IsBebouwdInBasisjaar)
 		, Descr = "De drie redenen waarom een cel binnen het regime geen uitstoot boekt, in de volgorde waarin ze gaan voor de twee kentallen hieronder.";
 
-		attribute<bool> KrijgtVernatKental (AdminDomain) := !GeenUitstoot && IsVernatVeenweide
-		, Descr = "Krijgt deze cel het kental van de vernatte veenweide? Dit is de post die in de plaats van SOMERS komt, en dus het getal dat telt bij de vraag wat de overstap kost of oplevert.";
+		attribute<bool> KrijgtComponentKental (AdminDomain) := !GeenUitstoot && HeeftComponentKental
+		, Descr = "Krijgt deze cel het kental van haar bouwsteencomponent? Dat is de scherpste sleutel die er is en gaat daarom voor op de twee hieronder: de levering zegt hier met zoveel woorden dat deze cel natte teelt of vernat grasland wordt, en de bouwstenentabel geeft voor precies die componenten een getal. Nieuw met #778.";
 
-		attribute<bool> KrijgtEF (AdminDomain) := !GeenUitstoot && !IsVernatVeenweide
+		attribute<bool> KrijgtVernatKental (AdminDomain) := !GeenUitstoot && !HeeftComponentKental && IsVernatVeenweide
+		, Descr = "Krijgt deze cel het kental van de vernatte veenweide? Dit is de post die in de plaats van SOMERS komt, en dus het getal dat telt bij de vraag wat de overstap kost of oplevert.
+
+					Sinds #778 alleen nog waar de component onbekend is. Dat kental is het met areaal gewogen gemiddelde van bouwsteen 3a, 3b, 4a en 4b, een omweg die nodig was zolang het model niet wist welke van de vier op de cel lag. Waar de veenlevering dat wel zegt is het gemiddelde de slechtere schatting, en blijft dit de terugval voor het vernatte perceel dat geen bouwsteencomponent krijgt.";
+
+		attribute<bool> KrijgtEF (AdminDomain) := !GeenUitstoot && !HeeftComponentKental && !IsVernatVeenweide
 													&& (/ModelParameters/Advanced/Koolstof_OxidatieBuitenSOMERSOokHoogNL || !Hoog_NL)
-		, Descr = "Krijgt deze cel de emissiefactor, dus is dit gedraineerd veen zonder bouwsteen? Hoog Nederland alleen als de schakelaar daarvoor aanstaat, dezelfde als bij de emissiefactorpost.";
+		, Descr = "Krijgt deze cel de emissiefactor, dus is dit gedraineerd veen zonder bouwsteen? Hoog Nederland alleen als de schakelaar daarvoor aanstaat, dezelfde als bij de emissiefactorpost.
 
-		attribute<float32> PerHa_jaar (AdminDomain) := KrijgtVernatKental ? VeenKentallen/CO2_VernatteVeenweide
+					De aftrek van HeeftComponentKental haalt hier de grootste fout van #778 weg: 21.299 ha die de veenlevering als natte teelt aanwijst boekte de emissiefactor voor gedraineerd veen, omdat de landbouwstroom geen koolstofklasse kreeg en de cel dus als gedraineerd grasland in de boeken stond.";
+
+		attribute<float32> PerHa_jaar (AdminDomain) := KrijgtComponentKental ? ComponentKental_CO2
+													: KrijgtVernatKental ? VeenKentallen/CO2_VernatteVeenweide
 													: KrijgtEF           ? EF_ton_ha_jaar
 													:                      0f
 		, Descr = "Het CO2-kental van deze cel in ton per hectare per jaar, positief is uitstoot. De drie vlaggen hierboven zijn de voorrangsregel.
@@ -180,6 +207,7 @@ Template CarbonStorageSequestration_T
 		parameter<Ha>   Areaal         := sum(VeenKentalGeldt && PerHa_jaar != 0f ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Op hoeveel hectare deze post werkelijk uitstoot boekt.";
 		parameter<Ha>   Areaal_Vernat  := sum(VeenKentalGeldt && KrijgtVernatKental ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan vernat veenweideperceel, de hectares waar dit kental werkelijk in de plaats van SOMERS komt. Op de vlag en niet op IsVernatVeenweide zelf: een vernat perceel dat een veenvormende klasse is geworden telt hier niet mee, want daar gaat het kental van die klasse voor. Van de 171.112 hectare vernat perceel in NbSGenuanceerd is dat ongeveer de helft.";
 		parameter<Ha>   Areaal_EF      := sum(VeenKentalGeldt && KrijgtEF ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan gedraineerd veen zonder bouwsteen, dat de emissiefactor krijgt.";
+		parameter<Ha>   Areaal_Component := sum(VeenKentalGeldt && KrijgtComponentKental ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan natte teelt of vernat grasland uit de veenbouwstenen, dat het kental van zijn eigen component krijgt (#778). Nul zodra Koolstof_KentalUitBouwsteencomponent uitstaat, en nul in elke variant zonder veenlevering.";
 	}
 
 	container BuitenSOMERS

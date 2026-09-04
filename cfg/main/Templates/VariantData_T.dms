@@ -294,8 +294,6 @@ Template VariantData_T
 		
 		attribute<LU_ModelType>   Water              (AdminDomain) := INL_Beheertype/LU_ModelType_rel[Water_BT];
 		
-		attribute<CarbonClass>    CarbonClass_rel    (AdminDomain) := INL_Beheertype/carbonclass_rel[Natuur_BT];
-		// attribute<CarbonClass>  CarbonClass_rel    (AdminDomain) := INL_Beheertype/carbonclass_rel[Natuur_BT];
 
 		// attribute<LU_ModelType> RetentieGebied (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/WBS ? '(Classifications/Actor/LU_ModelType/V/Water_Totaal / uint8(/SourceData/Water/Waterberging/IsReservoir))[Classifications/Actor/LU_ModelType]' : 'const(null_b, AdminDomain)';
 		// attribute<LU_ModelType> Natuur         (AdminDomain) := = Variant_rel == VariantParameters/VariantK/V/WBS ? '/SourceData/Grondgebruik/NVK/HDB2050_25m_diff' : '/SourceData/Grondgebruik/NVK/BAU2050_25m_diff';
@@ -312,6 +310,17 @@ Template VariantData_T
 
 		parameter<bool> NeemWaterMee := VariantParameters/VariantK/ExogeenWaterOpleggen[Variant_rel], Descr = "Doet de waterstroom mee in de oplegging? Zie de toelichting bij de variantparameter.";
 
+		// #778: de drie stromen hebben elk een lezer buiten de landgebruikskaart nodig, en die lazen tot nu toe alleen
+		// de natuur. De twee items hieronder leggen vast wie er op een cel wint, in precies dezelfde volgorde als
+		// Totaal_org, zodat de koolstofklasse en de NDVI niet van de kaart kunnen afwijken.
+		attribute<INL_Beheertype> Beheertype_Effectief (AdminDomain) := NeemWaterMee ? MakeDefined(Natuur_BT, Water_BT) : Natuur_BT
+		, Descr = "Het beheertype dat deze cel van de oplegging krijgt: de natuurstroom, en waar die leeg is de waterstroom zodra NeemWaterMee aanstaat. Null waar de oplegging geen beheertype geeft, dus ook op elke cel van de landbouwstroom.";
+
+		attribute<LU_ModelType> Landbouw_Effectief (AdminDomain) := IsDefined(Beheertype_Effectief) ? null_b : Landbouw
+		, Descr = "De landbouwstroom op de cellen waar hij ook werkelijk de uitkomst bepaalt, dus na aftrek van de overlap met natuur en water. Die overlap is klein: gemeten op 2026-09-04 in NbSGenuanceerd 3.086 van de 197.461 ha.
+
+					Dit is het item voor elke lezer die wil weten dat de cel natte teelt of vernat grasland wordt. Landbouw hierboven zegt alleen dat de bouwsteen dat aanwijst; hier staat of het ook zo op de kaart komt.";
+
 		attribute<LU_ModelType> Totaal_org  (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? MakeDefined(NeemWaterMee ? MakeDefined(Natuur, Water) : Natuur, Landbouw) : null_b
 		, Descr = "Wat het model werkelijk oplegt. De natuurstroom altijd, de waterstroom alleen als NeemWaterMee aanstaat.
 
@@ -322,6 +331,24 @@ Template VariantData_T
 					comment, zodat zichtbaar is wat er gekozen wordt en het verschil te meten valt. Waar natuur en water elkaar
 					raken wint de natuur, conform de volgorde van MakeDefined.";
 		attribute<LU_ModelType> Totaal      (AdminDomain) := Totaal_org, Descr = "Dit is de as opleggen, en verder niets. Twee andere containers hangen eraan maar zijn er niet hetzelfde als: de zeef leest dit om de cel op slot te zetten (Zeef_T/IsRestrictief_DoorExogeenopleggen, voor alle sectoren), en container Sloop leest dit om de bestaande stand te legen. Wie wil weten wat er gesloopt wordt moet daar zijn, niet hier.";
+
+		// #778: de koolstofklasse van wat hier wordt opgelegd. Dit item stond tot 4 september 2026 op alleen Natuur_BT,
+		// waardoor de landbouwstroom en de waterstroom onzichtbaar waren voor de koolstof- en de methaanindicator: die
+		// cellen kregen wel een ander landgebruik op de kaart maar hielden de koolstofklasse van het basisjaar. Gemeten
+		// in NbSGenuanceerd ging het om 194.375 ha, waarvan 21.299 ha natte teelt die daardoor de emissiefactor voor
+		// gedraineerd veen boekte. Zie #778 voor de meting en voor wat er met het kental van die cellen hoort te
+		// gebeuren; dat laatste is een aparte vraag en loopt via Koolstof_KentalUitBouwsteencomponent.
+		attribute<CarbonClass> CC_UitBeheertype (AdminDomain) := INL_Beheertype/carbonclass_rel[Beheertype_Effectief]
+		, Descr = "De koolstofklasse van de natuur- en waterstroom, via de koppeling die INL_Beheertype al legt.";
+
+		attribute<CarbonClass> CC_UitLandbouw (AdminDomain) := /Classifications/Grondgebruik/CarbonClass_rel[/Classifications/Actor/LU_ModelType/LGNKlasse_rel[Landbouw_Effectief]]
+		, Descr = "Idem voor de landbouwstroom, via de LGN-klasse van het landgebruik. Voor de drie bouwsteencomponenten geeft die weg dezelfde klassen als de curated kolom in Classifications/Grondgebruik/NbSVeen/NbSLandgebruik/CC_code, dus 18 voor natte teelt en 24 voor de twee graslanden; de LGN-weg is gekozen omdat hij ook werkt voor een landgebruiksklasse die geen bouwsteencomponent is.";
+
+		attribute<CarbonClass> CarbonClass_rel (AdminDomain) := MakeDefined(CC_UitBeheertype, CC_UitLandbouw)
+		, IntegrityCheck = "all(IsNull(Totaal) || IsDefined(CarbonClass_rel))"
+		, Descr = "De koolstofklasse die bij Totaal hoort, in dezelfde voorrangsvolgorde. Gelezen door Templates/Indicatoren/CarbonStorageSequestration_T als CC_Exogeen, en van daaruit ook door Methaan_T.
+
+					De IntegrityCheck is de bewaking die er niet was: elke cel waar het model iets oplegt hoort ook een koolstofklasse te hebben. Komt er een vierde stroom bij, dan valt deze check om in plaats van dat de indicator stil de oude klasse aanhoudt.";
 
 		parameter<UInt32> CountCellenOplegging := count(Totaal);
 		
