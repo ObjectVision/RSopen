@@ -20,23 +20,267 @@ container Diagnose759
 , Descr = "Meetharnas voor #759: de tredeladder van een subsector als tif, voor de celsgewijze vergelijking voor en na een ingreep in de trede of haar bronnen. Zet Diag759Tag voor de oude stand, draai zonder tag voor de nieuwe, en vergelijk de twee tifs buiten GeoDMS."
 {
 	parameter<String> Tag       := replace_value(expand(., '%env:Diag759Tag%'), 'env:Diag759Tag', 'nieuw'), Descr = "Onderscheidt de uitdraai van de oude en de nieuwe codestand in de bestandsnaam.";
-	parameter<String> Variant   := 'BAU';
-	parameter<String> Subsector := 'Wonen/eengezins_VrijeSector';
-	parameter<String> Pad       := '/VariantData/'+Variant+'/Trede/SectorxSubsectoren/'+Subsector+'/Impl/Klasse';
+	container Ladders
+	: Descr = "De tredeladder van een aantal subsectoren als tif op AdminDomain, met de klassenlijst ernaast. Vier ladders met verschillende assen, zodat een ingreep in de opbouw van de ladder (#775) op meer dan een combinatie wordt getoetst."
+	{
+		unit<uint32> Set : nrofrows = 4
+		{
+			attribute<String> Variant   : ['BAU', 'BAU', 'BAU', 'NbSGenuanceerd'];
+			attribute<String> Subsector : ['Wonen/eengezins_VrijeSector', 'Werken/Zak_dienstverlening', 'Werken/Nijverheid', 'Wonen/eengezins_VrijeSector'];
+			attribute<String> name      := replace(Variant+'_'+Subsector, '/', '_');
+		}
+		container PerSet := for_each_ne(Set/name, 'Ladder_T('+quote(Set/Variant)+','+quote(Set/Subsector)+','+quote(Set/name)+')');
 
-	unit<UInt32> Klasse := = Pad;
+		Template Ladder_T
+		{
+			parameter<String> Variant;
+			parameter<String> Subsector;
+			parameter<String> Naam;
+			parameter<String> Pad := '/VariantData/'+Variant+'/Trede/SectorxSubsectoren/'+Subsector+'/Impl/Klasse';
 
-	attribute<UInt16> Ladder (AdminDomain) := = 'uint16('+Pad+'/Per_AdminDomain)', Descr = "De gekozen trede per cel van 25 meter, als klasse-index. Null buiten het studiegebied.";
+			unit<UInt32> Klasse := = Pad;
 
-	attribute<UInt16> Write_Ladder (AdminDomain) := Ladder
-	, StorageName = "='%LocalDataProjDir%/Diagnose/759_ladder_'+Tag+'.tif'"
-	, StorageType = "gdalwrite.grid";
+			attribute<UInt16> Ladder (AdminDomain) := = 'uint16('+Pad+'/Per_AdminDomain)', Descr = "De gekozen trede per cel van 25 meter, als klasse-index. Null buiten het studiegebied.";
 
-	parameter<String> Klassen := AsList(Klasse/name, ';')
-	, StorageName = "='%LocalDataProjDir%/Diagnose/759_klassen_'+Tag+'.txt'"
-	, StorageType = "str"
-	, Descr = "De klassenamen op volgorde van index, om de tif te kunnen lezen.";
+			attribute<UInt16> Write_Ladder (AdminDomain) := Ladder
+			, StorageName = "='%LocalDataProjDir%/Diagnose/759_ladder_'+Naam+'_'+Tag+'.tif'"
+			, StorageType = "gdalwrite.grid";
 
+			parameter<String> Klassen := AsList(Klasse/name, ';')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/759_klassen_'+Naam+'_'+Tag+'.txt'"
+			, StorageType = "str"
+			, Descr = "De klassenamen op volgorde van index, om de tif te kunnen lezen.";
+		}
+	}
+
+	container LadderExpressies
+	: Descr = "De ladderexpressie van elke variant x subsector uit Trede_T/Impl/Assen (#775), als tekst. Goedkoop, want dit is metadata: het bewijst voor alle ladders tegelijk dat de assen worden gevonden en dat de mixed-radix som een geldige expressie is, zonder een cel te rekenen."
+	{
+		unit<uint32> VxS := combine(/VariantParameters/VariantK, /Classifications/Actor/Sector/xSubsector)
+		{
+			attribute<String> Variant   := /VariantParameters/VariantK/name[first_rel];
+			attribute<String> Subsector := /Classifications/Actor/Sector/xSubsector/name[second_rel];
+			attribute<String> Expr      := = 'union_data(., '+asItemList('/VariantData/'+Variant+'/Trede/SectorxSubsectoren/'+Subsector+'/Impl/Assen/LadderExpr')+')';
+			attribute<String> Cards     := = 'union_data(., '+asItemList('AsList(string(/VariantData/'+Variant+'/Trede/SectorxSubsectoren/'+Subsector+'/Impl/Assen/As/Card), ''x'')')+')';
+			attribute<String> NrKlassen := = 'union_data(., '+asItemList('string(#/VariantData/'+Variant+'/Trede/SectorxSubsectoren/'+Subsector+'/Impl/Klasse)')+')';
+			attribute<String> Vlaggen   := = 'union_data(., '+asItemList('/VariantData/'+Variant+'/Trede/SectorxSubsectoren/'+Subsector+'/Impl/Assen/VlagExprs')+')';
+			attribute<String> Regel     := Variant+'/'+Subsector+';'+NrKlassen+';'+Cards+';'+Expr+';'+Vlaggen;
+		}
+		parameter<String> Uitdraai := 'variant/subsector;klassen;kardinaliteit_per_as;ladderexpressie;vlagexpressies_per_as\n' + AsList(VxS/Regel, '\n')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/759_ladderexpressies_'+Tag+'.txt'"
+		, StorageType = "str";
+	}
+	container ZeefWerken
+	: Descr = "De zichtjaar-zeef van de werksubsectoren (#770): IsRestrictief per subsector als tif op AdminDomain en een telling van cellen en hectares, voor de vergelijking voor en na het omzetten van IsRestrictief_OokBinnenPlancapaciteit naar 25 meter. Het zichtjaar komt uit de omgevingsvariabele Diag759Jaar, standaard Y2040."
+	{
+		parameter<String> Zichtjaar := replace_value(expand(., '%env:Diag759Jaar%'), 'env:Diag759Jaar', 'Y2040');
+		parameter<String> Variant   := 'BAU';
+		parameter<String> Subsectoren := AsList(/Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/Subsector_name, ';')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/759_werken_subsectoren.txt'"
+		, StorageType = "str", Descr = "De namen van de werksubsectoren, zodat een aanroep de items hieronder kan opsommen.";
+
+		attribute<UInt8> Write_Dominant (AdminDomain) := uint8(/BaseData/Omgeving/KantoorDominantie/IsKantoorDominant)
+		, StorageName = "%LocalDataProjDir%/Diagnose/759_kantoordominant.tif", StorageType = "gdalwrite.grid", Descr = "Het masker van dominante kantoorcellen, om de zeeftifs van voor en na op te splitsen.";
+
+		container PerSubsector := for_each_ne(/Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/Subsector_name, 'ZeefSubsector_T('+quote(/Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/Subsector_name)+')');
+
+		Template ZeefSubsector_T
+		{
+			parameter<String> ss;
+			parameter<String> PadZeef := '/VariantData/'+Variant+'/Zeef/'+Zichtjaar+'/SectorxSubsectoren/Werken/'+ss;
+
+			attribute<Bool>  Restrictief             (CompactedAdminDomain) := = PadZeef+'/IsRestrictief';
+			attribute<Bool>  Restrictief_AdminDomain (AdminDomain)          := Restrictief[CompactedAdminDomain/Per_AdminDomain], Descr = "Buiten het compacted domain FALSE, want een bool kent geen null.";
+			attribute<UInt8> Write_Restrictief       (AdminDomain)          := uint8(Restrictief_AdminDomain)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/759_zeef_'+Zichtjaar+'_'+ss+'_'+Tag+'.tif'"
+			, StorageType = "gdalwrite.grid";
+
+			attribute<Bool>  Dominant (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/KantoorDominantie/IsKantoorDominant), Descr = "De dominante kantoorcellen van #668, om te zien of de zeef ze doorlaat.";
+			parameter<String> Telling := 'cellen_restrictief;ha_restrictief;cellen_beschikbaar;cellen_dominant;dominant_beschikbaar
+'
+				+ string(sum(uint32(Restrictief))) + ';'
+				+ string(float32(sum(uint32(Restrictief))) * AdminDomain/NrHaPerCell) + ';'
+				+ string(sum(uint32(!Restrictief))) + ';'
+				+ string(sum(uint32(Dominant))) + ';'
+				+ string(sum(uint32(Dominant && !Restrictief)))
+			, StorageName = "='%LocalDataProjDir%/Diagnose/759_zeef_'+Zichtjaar+'_'+ss+'_'+Tag+'.txt'"
+			, StorageType = "str";
+
+			container DecompositieBasisjaar
+			: Descr = "Per term van de basisjaar-zeef van deze subsector het aantal dominante kantoorcellen waarop de term waar is, plus de drie groepen met hun planvrijstelling. Om te zien welke basisjaarterm de verdikking van #668 tegenhoudt."
+			{
+				parameter<String> PadBasis := '/VariantData/'+Variant+'/Zeef/Basisjaar/Werken/'+ss;
+				attribute<Bool> IsEvidentBenutBinnenPlancapaciteit (CompactedAdminDomain) := = PadBasis+'/Impl/IsEvidentBenutBinnenPlancapaciteit';
+				attribute<Bool> IsEvidentBenutBuitenPlancapaciteit (CompactedAdminDomain) := = PadBasis+'/Impl/IsEvidentBenutBuitenPlancapaciteit';
+				attribute<Bool> IsEvidentBenut_obv_BGT (CompactedAdminDomain) := = PadBasis+'/Impl/IsEvidentBenut_obv_BGT';
+				attribute<Bool> IsEvidentBenutBinnenPlancapaciteit_obv_BBG (CompactedAdminDomain) := = PadBasis+'/Impl/IsEvidentBenutBinnenPlancapaciteit_obv_BBG';
+				attribute<Bool> IsEvidentBenutBuitenPlancapaciteit_obv_BBG (CompactedAdminDomain) := = PadBasis+'/Impl/IsEvidentBenutBuitenPlancapaciteit_obv_BBG';
+				attribute<Bool> IsWettelijkVerbod (CompactedAdminDomain) := = PadBasis+'/Impl/IsWettelijkVerbod';
+				attribute<Bool> TeGevaarlijk (CompactedAdminDomain) := = PadBasis+'/Impl/TeGevaarlijk';
+				attribute<Bool> GeenToegestaneBouwwijzeVoldoet (CompactedAdminDomain) := = PadBasis+'/Impl/GeenToegestaneBouwwijzeVoldoet';
+				attribute<Bool> OpSlotDoorLandschap (CompactedAdminDomain) := = PadBasis+'/Impl/OpSlotDoorLandschap';
+				attribute<Bool> ReserverenVoorRivierAfvoer (CompactedAdminDomain) := = PadBasis+'/Impl/ReserverenVoorRivierAfvoer';
+				attribute<Bool> IsAutowegInclKlaverbladen (CompactedAdminDomain) := = PadBasis+'/Impl/IsAutowegInclKlaverbladen';
+				attribute<Bool> IsDierentuinOpenluchtMuseum (CompactedAdminDomain) := = PadBasis+'/Impl/IsDierentuinOpenluchtMuseum';
+				attribute<Bool> IsStichtseRotonde (CompactedAdminDomain) := = PadBasis+'/Impl/IsStichtseRotonde';
+				attribute<Bool> TeHoogEnergielabel (CompactedAdminDomain) := = PadBasis+'/Impl/TeHoogEnergielabel';
+				attribute<Bool> TeSlap (CompactedAdminDomain) := = PadBasis+'/Impl/TeSlap';
+				attribute<Bool> TeNat (CompactedAdminDomain) := = PadBasis+'/Impl/TeNat';
+				attribute<Bool> TeHogeBeheerKostenInfra (CompactedAdminDomain) := = PadBasis+'/Impl/TeHogeBeheerKostenInfra';
+				attribute<Bool> TeZettingsgevoelig (CompactedAdminDomain) := = PadBasis+'/Impl/TeZettingsgevoelig';
+				attribute<Bool> IsMooiLandschap (CompactedAdminDomain) := = PadBasis+'/Impl/IsMooiLandschap';
+				attribute<Bool> IsZeerMooiLandschap (CompactedAdminDomain) := = PadBasis+'/Impl/IsZeerMooiLandschap';
+				attribute<Bool> IsInNatura2000Buffer (CompactedAdminDomain) := = PadBasis+'/Impl/IsInNatura2000Buffer';
+				attribute<Bool> IsWoonlocatieNietVanGemeenteOfCorporatie (CompactedAdminDomain) := = PadBasis+'/Impl/IsWoonlocatieNietVanGemeenteOfCorporatie';
+				attribute<Bool> IsRestrictiefBuitenHardePlancapaciteit (CompactedAdminDomain) := = PadBasis+'/Impl/IsRestrictiefBuitenHardePlancapaciteit';
+				attribute<Bool> IsMilieuCatBedrijvigheidNabij_AlleenHardPlan (CompactedAdminDomain) := = PadBasis+'/Impl/IsMilieuCatBedrijvigheidNabij_AlleenHardPlan';
+				attribute<Bool> IsEigendomVanNatuurOrganisatie (CompactedAdminDomain) := = PadBasis+'/Impl/IsEigendomVanNatuurOrganisatie';
+				attribute<Bool> IsEigendomVanWaterschap (CompactedAdminDomain) := = PadBasis+'/Impl/IsEigendomVanWaterschap';
+				attribute<Bool> IsZeehaven (CompactedAdminDomain) := = PadBasis+'/Impl/IsZeehaven';
+				attribute<Bool> IsNietNabijOV (CompactedAdminDomain) := = PadBasis+'/Impl/IsNietNabijOV';
+				attribute<Bool> IsMilieuCatBedrijvigheidNabij_OokZachtPlan (CompactedAdminDomain) := = PadBasis+'/Impl/IsMilieuCatBedrijvigheidNabij_OokZachtPlan';
+				attribute<Bool> HeeftHardePlannenDezeSector (CompactedAdminDomain) := = PadBasis+'/Impl/HeeftHardePlannenDezeSector';
+				attribute<Bool> HeeftPlannenDezeSector (CompactedAdminDomain) := = PadBasis+'/Impl/HeeftPlannenDezeSector';
+				attribute<Bool> IsRestrictief_Overal (CompactedAdminDomain) := = PadBasis+'/IsRestrictief_Overal';
+				attribute<Bool> IsRestrictief_BuitenHardePlancapaciteit (CompactedAdminDomain) := = PadBasis+'/IsRestrictief_BuitenHardePlancapaciteit';
+				attribute<Bool> IsRestrictief_BuitenPlancapaciteit (CompactedAdminDomain) := = PadBasis+'/IsRestrictief_BuitenPlancapaciteit';
+				attribute<Bool> IsRestrictief (CompactedAdminDomain) := = PadBasis+'/IsRestrictief';
+				parameter<String> Telling := 'term;dominant_en_term_waar
+'
+					+ 'IsEvidentBenutBinnenPlancapaciteit;' + string(sum(uint32(Dominant && IsEvidentBenutBinnenPlancapaciteit))) + '
+'
+					+ 'IsEvidentBenutBuitenPlancapaciteit;' + string(sum(uint32(Dominant && IsEvidentBenutBuitenPlancapaciteit))) + '
+'
+					+ 'IsEvidentBenut_obv_BGT;' + string(sum(uint32(Dominant && IsEvidentBenut_obv_BGT))) + '
+'
+					+ 'IsEvidentBenutBinnenPlancapaciteit_obv_BBG;' + string(sum(uint32(Dominant && IsEvidentBenutBinnenPlancapaciteit_obv_BBG))) + '
+'
+					+ 'IsEvidentBenutBuitenPlancapaciteit_obv_BBG;' + string(sum(uint32(Dominant && IsEvidentBenutBuitenPlancapaciteit_obv_BBG))) + '
+'
+					+ 'IsWettelijkVerbod;' + string(sum(uint32(Dominant && IsWettelijkVerbod))) + '
+'
+					+ 'TeGevaarlijk;' + string(sum(uint32(Dominant && TeGevaarlijk))) + '
+'
+					+ 'GeenToegestaneBouwwijzeVoldoet;' + string(sum(uint32(Dominant && GeenToegestaneBouwwijzeVoldoet))) + '
+'
+					+ 'OpSlotDoorLandschap;' + string(sum(uint32(Dominant && OpSlotDoorLandschap))) + '
+'
+					+ 'ReserverenVoorRivierAfvoer;' + string(sum(uint32(Dominant && ReserverenVoorRivierAfvoer))) + '
+'
+					+ 'IsAutowegInclKlaverbladen;' + string(sum(uint32(Dominant && IsAutowegInclKlaverbladen))) + '
+'
+					+ 'IsDierentuinOpenluchtMuseum;' + string(sum(uint32(Dominant && IsDierentuinOpenluchtMuseum))) + '
+'
+					+ 'IsStichtseRotonde;' + string(sum(uint32(Dominant && IsStichtseRotonde))) + '
+'
+					+ 'TeHoogEnergielabel;' + string(sum(uint32(Dominant && TeHoogEnergielabel))) + '
+'
+					+ 'TeSlap;' + string(sum(uint32(Dominant && TeSlap))) + '
+'
+					+ 'TeNat;' + string(sum(uint32(Dominant && TeNat))) + '
+'
+					+ 'TeHogeBeheerKostenInfra;' + string(sum(uint32(Dominant && TeHogeBeheerKostenInfra))) + '
+'
+					+ 'TeZettingsgevoelig;' + string(sum(uint32(Dominant && TeZettingsgevoelig))) + '
+'
+					+ 'IsMooiLandschap;' + string(sum(uint32(Dominant && IsMooiLandschap))) + '
+'
+					+ 'IsZeerMooiLandschap;' + string(sum(uint32(Dominant && IsZeerMooiLandschap))) + '
+'
+					+ 'IsInNatura2000Buffer;' + string(sum(uint32(Dominant && IsInNatura2000Buffer))) + '
+'
+					+ 'IsWoonlocatieNietVanGemeenteOfCorporatie;' + string(sum(uint32(Dominant && IsWoonlocatieNietVanGemeenteOfCorporatie))) + '
+'
+					+ 'IsRestrictiefBuitenHardePlancapaciteit;' + string(sum(uint32(Dominant && IsRestrictiefBuitenHardePlancapaciteit))) + '
+'
+					+ 'IsMilieuCatBedrijvigheidNabij_AlleenHardPlan;' + string(sum(uint32(Dominant && IsMilieuCatBedrijvigheidNabij_AlleenHardPlan))) + '
+'
+					+ 'IsEigendomVanNatuurOrganisatie;' + string(sum(uint32(Dominant && IsEigendomVanNatuurOrganisatie))) + '
+'
+					+ 'IsEigendomVanWaterschap;' + string(sum(uint32(Dominant && IsEigendomVanWaterschap))) + '
+'
+					+ 'IsZeehaven;' + string(sum(uint32(Dominant && IsZeehaven))) + '
+'
+					+ 'IsNietNabijOV;' + string(sum(uint32(Dominant && IsNietNabijOV))) + '
+'
+					+ 'IsMilieuCatBedrijvigheidNabij_OokZachtPlan;' + string(sum(uint32(Dominant && IsMilieuCatBedrijvigheidNabij_OokZachtPlan))) + '
+'
+					+ 'HeeftHardePlannenDezeSector;' + string(sum(uint32(Dominant && HeeftHardePlannenDezeSector))) + '
+'
+					+ 'HeeftPlannenDezeSector;' + string(sum(uint32(Dominant && HeeftPlannenDezeSector))) + '
+'
+					+ 'IsRestrictief_Overal;' + string(sum(uint32(Dominant && IsRestrictief_Overal))) + '
+'
+					+ 'IsRestrictief_BuitenHardePlancapaciteit;' + string(sum(uint32(Dominant && IsRestrictief_BuitenHardePlancapaciteit))) + '
+'
+					+ 'IsRestrictief_BuitenPlancapaciteit;' + string(sum(uint32(Dominant && IsRestrictief_BuitenPlancapaciteit))) + '
+'
+					+ 'IsRestrictief;' + string(sum(uint32(Dominant && IsRestrictief))) + '
+'
+					+ 'dominant;' + string(sum(uint32(Dominant)))
+				, StorageName = "='%LocalDataProjDir%/Diagnose/759_zeef_'+Zichtjaar+'_'+ss+'_basisjaar_'+Tag+'.txt'"
+				, StorageType = "str";
+			}
+			container Decompositie
+			: Descr = "Per term van IsRestrictief het aantal dominante kantoorcellen waarop die term waar is, om te zien wat die cellen dichthoudt. Alle termen staan sinds #770 op CompactedAdminDomain."
+			{
+				parameter<String> BasisjaarItem := = PadZeef+'/BasisjaarZeefItem';
+				attribute<Bool> Basisjaarzeef     (CompactedAdminDomain) := = '/VariantData/'+Variant+'/Zeef/Basisjaar/Werken/'+ss+'/'+BasisjaarItem;
+				attribute<Bool> SloopBinnenPlan   (CompactedAdminDomain) := = PadZeef+'/Impl/TeHoogBouwjaarBinnenHardePlancapaciteit';
+				attribute<Bool> SloopBuitenPlan   (CompactedAdminDomain) := = PadZeef+'/Impl/TeHoogBouwjaarBuitenHardePlancapaciteit';
+				attribute<Bool> Exogeen           (CompactedAdminDomain) := = PadZeef+'/IsRestrictief_DoorExogeenopleggen';
+				attribute<Bool> OokBinnenPlan     (CompactedAdminDomain) := = PadZeef+'/IsRestrictief_OokBinnenPlancapaciteit';
+				attribute<Bool> Saldotoets        (CompactedAdminDomain) := = PadZeef+'/Impl/TeKleineDichtheidsToenameSubsector';
+				attribute<Bool> IbisVol           (CompactedAdminDomain) := = PadZeef+'/Src/HeeftGeenRuimteOpBedrijventerrein';
+				attribute<Bool> Verdikkingscel    (CompactedAdminDomain) := = PadZeef+'/Impl/IsVerdikkingsCel';
+				parameter<String> Telling := 'term;dominant_en_term_waar
+'
+					+ 'basisjaarzeef;'   + string(sum(uint32(Dominant && Basisjaarzeef))) + '
+'
+					+ 'sloop_binnen_plan;' + string(sum(uint32(Dominant && SloopBinnenPlan))) + '
+'
+					+ 'sloop_buiten_plan;' + string(sum(uint32(Dominant && SloopBuitenPlan))) + '
+'
+					+ 'exogeen;'         + string(sum(uint32(Dominant && Exogeen))) + '
+'
+					+ 'ook_binnen_plan;' + string(sum(uint32(Dominant && OokBinnenPlan))) + '
+'
+					+ 'saldotoets;'      + string(sum(uint32(Dominant && Saldotoets))) + '
+'
+					+ 'ibis_vol;'        + string(sum(uint32(Dominant && IbisVol))) + '
+'
+					+ 'verdikkingscel;'  + string(sum(uint32(Dominant && Verdikkingscel))) + '
+'
+					+ 'alleen_basisjaarzeef;' + string(sum(uint32(Dominant && Restrictief && Basisjaarzeef && !SloopBinnenPlan && !SloopBuitenPlan && !Exogeen && !OokBinnenPlan))) + '
+'
+					+ 'restrictief;'     + string(sum(uint32(Dominant && Restrictief)))
+				, StorageName = "='%LocalDataProjDir%/Diagnose/759_zeef_'+Zichtjaar+'_'+ss+'_decompositie_'+Tag+'.txt'"
+				, StorageType = "str";
+			}
+		}
+	}
+
+	container Waterberging
+	: Descr = "Het bergingspotentieel van waterberging in het zichtjaar, als som over het compacted domain en als aantal cellen met potentieel, om de omzetting van de bergingsdichtheid van hectaregemiddelde naar celwaarde (#770) voor en na te leggen."
+	{
+		parameter<String> Zichtjaar := ZeefWerken/Zichtjaar;
+		parameter<String> Variant   := ZeefWerken/Variant;
+		attribute<Float32> Potentieel  (CompactedAdminDomain) := = '/VariantData/'+Variant+'/PotentieleState/'+Zichtjaar+'/Per_SectorxSubsectoren/Waterberging/Totaal/Zichtjaar';
+		attribute<Bool>    Beschikbaar (CompactedAdminDomain) := = '/VariantData/'+Variant+'/Zeef/'+Zichtjaar+'/SectorxSubsectoren/Waterberging/Totaal/IsBeschikbaar';
+		parameter<String> Telling := 'maat;waarde
+'
+			+ 'potentieel_m3_totaal;'        + string(sum(float64(MakeDefined(Potentieel, 0f)))) + '
+'
+			+ 'potentieel_m3_op_beschikbaar;' + string(sum(Beschikbaar ? float64(MakeDefined(Potentieel, 0f)) : 0d)) + '
+'
+			+ 'cellen_beschikbaar;'          + string(sum(uint32(Beschikbaar))) + '
+'
+			+ 'cellen_met_potentieel;'       + string(sum(uint32(MakeDefined(Potentieel, 0f) > 0f))) + '
+'
+			+ 'cellen_beschikbaar_zonder_potentieel;' + string(sum(uint32(Beschikbaar && !(MakeDefined(Potentieel, 0f) > 0f))))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/759_waterberging_'+Zichtjaar+'_'+Tag+'.txt'"
+		, StorageType = "str";
+	}
 	container Zeef
 	: Descr = "Stap 2 van #759: de drie shapefile-lagen die de basisjaar-zeef leest. Oud is de rasterisatie op 100 meter uitgesmeerd naar 25 meter, nieuw is de rasterisatie op 25 meter zelf. Per laag een tekstbestand met cellen_oud;cellen_nieuw;alleen_oud;alleen_nieuw;verschil_ha, geteld over heel AdminDomain. TeNat staat er niet meer bij: die bron heeft sinds #759 alleen nog een rasterisatie op 25 meter."
 	{
