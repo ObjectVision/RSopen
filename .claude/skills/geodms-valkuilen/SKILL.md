@@ -94,6 +94,22 @@ attribute<String> Term := '... * BedrijvenSamenstelling/Dekking';
 
 Zet in de `Descr` waarom de factor er staat, anders haalt de volgende lezer hem weg als overbodig en is de toets weer dood. Toets zo'n constructie altijd met een kanarie: maak de tabel kapot en stel vast dat het gegenereerde item exit 1 geeft, niet alleen het tabelitem.
 
+### Een toets naast de graaf is de regel en niet de uitzondering
+
+Bij `#772` zijn alle 233 IntegrityChecks in de configuratie geteld op de vraag of ze een afnemer hebben. Tweeëntwintig hadden er geen enkele, en zeventien van de 233 staan in een container die letterlijk `Controle` of `Checks` heet, waarvan zes zonder afnemer. Dat is de soort: iemand zet de eigenschap netjes apart zodat de gewone code er niet vuiler van wordt, en juist die scheiding haalt hem uit de graaf. Vraag je dus bij elke nieuwe toets in zo'n container af wie het item leest, voordat je hem schrijft.
+
+Er zijn twee haken, en welke je nodig hebt hangt af van waar de afnemer staat.
+
+Staat er een gewoon item in de keten dat wel wordt opgevraagd, noem de toets dan in zijn `ExplicitSuppliers`. Dat is het goedkoopst en het laat de toets staan waar hij staat. Let op de richting: hang de haak aan een item BENEDEN de toets in de keten, anders krijg je een kringverwijzing.
+
+Is er geen zo'n item, bijvoorbeeld omdat de afnemers via `for_each` uit strings worden opgebouwd, gebruik dan de `Dekking`-vorm hierboven: een `parameter := 1f` die de toetsen als `ExplicitSuppliers` noemt, meevermenigvuldigd in de gegenereerde expressie. Zet de toetsen dan niet op die parameter zelf maar laat ze aparte items, anders zegt de foutmelding niet welke eigenschap het begeeft.
+
+Twee dingen die zo'n kanarie goedkoop maken, gemeten op 2026-09-04 met GeoDms20.17.0.m.
+
+GeoDMS werkt een leverancier bij VOORDAT het gevraagde item zelf wordt uitgerekend. Een kapotte toets valt dus om zodra zijn eigen data klaar is, niet na de hele keten: de kanarie op `Vlak/Som` in de bodemdalingkosten gaf exit 1 na 1,5 s, ruim voor de kostenketen waar hij aan hangt. Je hoeft een kanarie dus niet te ontzien omdat het gevraagde item duur is.
+
+Het log helpt niet als je de toets heel laat. Er staan alleen `Updating::`-regels voor het gevraagde item zelf en niet voor de items eronder, dus uit een geslaagde run is niet af te lezen welke toetsen zijn meegelopen. In de foutcontext staat de keten wel volledig, van `Updating::[[<gevraagd item>]]` naar `Update(<item met de toets>)`. Kapot maken is daarmee de enige manier om te zien of de haak pakt.
+
 ## Een uitdraai die niet meedraait blijft stil staan
 
 Hetzelfde mechanisme, maar dan verraderlijker, want hier is er wel een bestand: alleen een oud.
