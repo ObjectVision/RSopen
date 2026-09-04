@@ -17,7 +17,17 @@ param(
     [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\indicatoren',
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
-    [string[]] $Zichtjaren = @('Y2120')
+    [string[]] $Zichtjaren = @('Y2120'),
+
+    # Op welke regio-indeling de indicatorentabellen aggregeren. Stuurt
+    # ModelParameters/Advanced/IndicatorRegio_ref. Zonder deze parameter viel de
+    # configuratie stil terug op NL, en dan komen alle tabellen landsdekkend uit
+    # terwijl je per landschap wilde leveren. De landelijke tabel komt sinds #705
+    # hoe dan ook mee, dus 'Landschap' levert beide en hoeft niet apart nog eens
+    # op 'NL' gedraaid te worden.
+    [ValidateSet('NL','Provincie','COROP','Gemeente','NVM','Landschap',
+                 'Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand')]
+    [string]   $IndicatorRegio = 'NL'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +37,7 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Forc
 $env:StandAllocatieOntkoppeld = 'TRUE'
 $env:VariantDataOntkoppeld    = 'TRUE'
 $env:AlleenEindjaar           = 'FALSE'
+$env:IndicatorRegio           = $IndicatorRegio
 Remove-Item Env:\LocalDataProjDir -ErrorAction SilentlyContinue
 
 $status = Join-Path $LogDir 'status.tsv'
@@ -37,6 +48,7 @@ function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 
 $totaal = [Diagnostics.Stopwatch]::StartNew()
 Write-Regel "varianten : $($Varianten -join ', ')"
 Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"
+Write-Regel "regio     : $IndicatorRegio (de landelijke tabel komt hoe dan ook mee, #705)"
 
 foreach ($v in $Varianten) {
     foreach ($y in $Zichtjaren) {
