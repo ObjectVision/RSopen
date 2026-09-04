@@ -85,6 +85,16 @@ Dezelfde redenering geldt voor de sectorpoorten die overal in de templates zitte
 
 Let er daarbij op dat exit 0 op zo'n resolve-check nog steeds alleen UpdateMetaInfo bewijst. De vier subsectoren hierboven deden er elk zes seconden over, en dat is te snel om gerekend te hebben; de bevestiging kwam pas uit een `@statistics` op het onderliggende item.
 
+### Meerdere items in een aanroep
+
+`GeoDmsRun` neemt elk argument dat niet met `@` of `/` begint als itempad en werkt ze na elkaar af in hetzelfde proces. Elk item krijgt een eigen paar regels `{ Updating::[[item]]` en `} Updating::[[item]] (n secs)` in het log, dus de rekentijd per item blijft leesbaar. Faalt een item, dan loopt de lus door met het volgende, en het proces eindigt met exit 1 en een `[E]`-regel voor het gefaalde item.
+
+Gemeten op 2026-09-04 op 20.17.0.m met twee bestaande items en een opzettelijk ontbrekend derde: 2,4 s, exit 1, twee Updating-paren, een foutregel.
+
+Dit is de manier om werk te delen dat verschillende casussen gemeen hebben, zoals de indicatorenexport van BAU, BAU2 en NbSGenuanceerd voor hetzelfde zichtjaar: alles onder `SourceData`, `BaseData` en `Classifications` wordt dan een keer ingelezen. `batch/RunIndicatoren.ps1` doet dat achter `-Gebundeld`. Twee kanttekeningen. Er is een exitcode voor alle items samen, dus de status per item moet uit het log komen. En of de engine de gedeelde tussenresultaten tussen twee items in het geheugen houdt is niet gemeten; een item dat klaar is laat zijn interest los, dus dat hangt af van wat er nog aan de volgende items hangt. De eerste gebundelde export is daarvoor de meting.
+
+Kies dit boven een verzamelitem met `ExplicitSuppliers` in de configuratie wanneer de items naar gedeelde paden schrijven of wanneer niet alle casussen uit de lijst mee moeten: het verzamelitem trekt alles gelijktijdig en over de hele lijst, de commandoregel precies wat je opgeeft en na elkaar.
+
 ## Trap 2: klopt het (seconden tot minuten)
 
 Een assertie is een `IntegrityCheck` op het onderliggende item, met de exitcode als testuitslag:
