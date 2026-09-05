@@ -1,0 +1,145 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De exogene natuuroplegging als een stroom per variant (#751). Per landschap een beheertype per cel, samengevoegd in
+// de voorrang die het model altijd al had, met per cel de vraag of het water is en of het nieuw is ten opzichte van de
+// stand-administratie in het basisjaar. De oude keten met twee stromen (ExoNatuur en ExoWater) staat er nog naast in
+// SourceData/Grondgebruik/Natuur/Varianten; ModelParameters/Oplegging_Route kiest welke van de twee de rest van het
+// model voedt, en ExogeenOpleggen/AB legt ze naast elkaar.
+//
+// Wat hier bewust anders is dan in de oude keten. Water is een eigenschap van het type (INL_Beheertype/IsWater), en bij
+// rivieren van het ecotoop, want het type N01.03 verzamelt land en water. Het open water van veenbouwsteen 9a en 9b
+// zit niet in de stroom: die cellen krijgen hun water via de sector Waterberging (#664), en staan hier apart als
+// Veen_Water_Sector. De vlaggen NatuurType/IsExogeenOpTeLeggen_* worden hier niet gelezen.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Natuur_T
+{
+	parameter<VariantParameters/VariantK> Variant_rel;
+
+	parameter<String> Variant_name := VariantParameters/VariantK/name[Variant_rel];
+	parameter<Bool>   IsNbSG        := Variant_rel == VariantParameters/VariantK/V/NbSGenuanceerd;
+	parameter<Bool>   IsNbSMax      := Variant_rel == VariantParameters/VariantK/V/NbSMax;
+
+	unit<UInt8> INL_Beheertype  := /Classifications/Grondgebruik/INL_Beheertype;
+	unit<UInt8> LandgebruikType := /Classifications/Grondgebruik/LandgebruikType;
+	unit<UInt8> LU_ModelType    := /Classifications/Actor/LU_ModelType;
+
+	container Bron     := /SourceData/Grondgebruik/Natuur/Bron, Descr = "De leveringen, ingelezen en vertaald naar beheertype.";
+	container Oud_NbSG := /SourceData/Grondgebruik/Natuur/Varianten/NbSGenuanceerd, Descr = "De landschapsketens van NbSGenuanceerd (veenallocatie per peilvak, zandallocatie, rivierenrangschikking, kust). Die staan nog in SourceData; deze template leest hun uitkomst per cel. Verhuizen ze hierheen, dan verandert alleen dit pad.";
+	container State    := /BaseData/StartState/Landgebruik, Descr = "De stand-administratie in het basisjaar, waartegen nieuw wordt bepaald.";
+
+	// ---- per landschap: het beheertype per cel, en of dat water is ----
+
+	container Landelijk
+	: Descr = "De MNP-planpotentieelkaart: wat vigerend natuurbeleid nog realiseert. De levering van BAU en BAU2, en de achtervang van NbSMax."
+	{
+		attribute<INL_Beheertype> Type    (AdminDomain) := Bron/Landelijk_BAU/INL_Beheertype_rel_AD;
+		attribute<Bool>           IsWater (AdminDomain) := MakeDefined(INL_Beheertype/IsWater[Type], FALSE);
+	}
+
+	container Rivieren
+	: Descr = "NbSMax: de Deltares-kaart met drie typen. NbSGenuanceerd: de ecotopen per gebied, per cel getrokken (#621), zonder de behouden dijken (#620). Water is hier de categorie van het ecotoop en niet het type, want N01.03 verzamelt vier terrestrische en twee waterecotopen."
+	{
+		attribute<INL_Beheertype> Type    (AdminDomain) := = IsNbSG
+			? '(MakeDefined(/Classifications/Grondgebruik/NbSRivieren/RivierEcotoop/IsNatuurlijkTerrestrisch[Oud_NbSG/Landschap/Rivieren/Ecotoop_rel_AD], FALSE) || MakeDefined(/Classifications/Grondgebruik/NbSRivieren/RivierEcotoop/IsWater[Oud_NbSG/Landschap/Rivieren/Ecotoop_rel_AD], FALSE)) && !Oud_NbSG/Landschap/Rivieren/Sloopgebied/GeenOplegging ? Oud_NbSG/Landschap/Rivieren/INL_Beheertype_rel_AD : null_b[INL_Beheertype]'
+			: IsNbSMax
+				? 'Bron/Rivieren_NbSMax/INL_Beheertype_rel_AD'
+				: 'const(null_b, AdminDomain, INL_Beheertype)';
+		attribute<Bool>           IsWater (AdminDomain) := = IsNbSG
+			? 'MakeDefined(/Classifications/Grondgebruik/NbSRivieren/RivierEcotoop/IsWater[Oud_NbSG/Landschap/Rivieren/Ecotoop_rel_AD], FALSE)'
+			: 'MakeDefined(INL_Beheertype/IsWater[Type], FALSE)';
+	}
+
+	container Kust
+	: Descr = "Alleen NbSGenuanceerd: duinen, kwelder en het buitendijkse voorland. N01.02 is op typeniveau land (duinvegetatie), dus de oude uitzondering VoorlandAlsNatuur is hier niet nodig."
+	{
+		attribute<INL_Beheertype> Type    (AdminDomain) := = IsNbSG ? 'Oud_NbSG/Landschap/Kust/INL_Beheertype_rel_AD' : 'const(null_b, AdminDomain, INL_Beheertype)';
+		attribute<Bool>           IsWater (AdminDomain) := MakeDefined(INL_Beheertype/IsWater[Type], FALSE);
+	}
+
+	container Zand
+	: Descr = "Alleen NbSGenuanceerd: de twee allocaties van het beekdalherstel, nat en droog. Zes terrestrische typen, dus nooit water."
+	{
+		attribute<INL_Beheertype> Type_Nat   (AdminDomain) := = IsNbSG ? 'Oud_NbSG/Landschap/Zand/Alloc/Alloc_Nat/INL_Beheertype_rel_AD'   : 'const(null_b, AdminDomain, INL_Beheertype)';
+		attribute<INL_Beheertype> Type_Droog (AdminDomain) := = IsNbSG ? 'Oud_NbSG/Landschap/Zand/Alloc/Alloc_Droog/INL_Beheertype_rel_AD' : 'const(null_b, AdminDomain, INL_Beheertype)';
+	}
+
+	container Veen
+	: Descr = "Alleen NbSGenuanceerd: de uitkomst van de tweetrapsallocatie van de bouwstenen per peilvak. Het open water van bouwsteen 9a en 9b (deelstrategie waterbuffering) gaat niet de exogene stroom in maar naar de sector Waterberging, zie Water_Sector; het water van de andere bouwstenen (bouwsteen 5 geeft 0,07 N04.02) wel."
+	{
+		attribute<Bool>           IsWaterbouwsteen (AdminDomain) := = IsNbSG ? 'MakeDefined(Oud_NbSG/Landschap/Veen/BouwsteenType/deelstrategie[Oud_NbSG/Landschap/Veen/Bouwsteen_rel] == ' + quote('waterbuffering') + ', FALSE)' : 'const(FALSE, AdminDomain)';
+		attribute<INL_Beheertype> Natuur           (AdminDomain) := = IsNbSG ? 'Oud_NbSG/Landschap/Veen/Natuur_uitBouwsteen' : 'const(null_b, AdminDomain, INL_Beheertype)';
+		attribute<INL_Beheertype> Water_Alle       (AdminDomain) := = IsNbSG ? 'Oud_NbSG/Landschap/Veen/Water_uitBouwsteen'  : 'const(null_b, AdminDomain, INL_Beheertype)';
+		attribute<INL_Beheertype> Water_Sector     (AdminDomain) := IsWaterbouwsteen ? Water_Alle : null_b[INL_Beheertype], Descr = "Het 9a/9b-water, voor de voorkeursterm van de waterbergingsallocatie (#664).";
+		attribute<INL_Beheertype> Type             (AdminDomain) := MakeDefined(Natuur, IsWaterbouwsteen ? null_b[INL_Beheertype] : Water_Alle);
+		attribute<Bool>           IsWater          (AdminDomain) := MakeDefined(INL_Beheertype/IsWater[Type], FALSE);
+		attribute<LU_ModelType>   Landbouw         (AdminDomain) := = IsNbSG ? 'Oud_NbSG/Landschap/Veen/Landbouw_uitBouwsteen' : 'const(null_b, AdminDomain, LU_ModelType)', Descr = "Natte teelt en vernat grasland uit de bouwstenen (#684).";
+		attribute</Classifications/Grondgebruik/NbSVeen/NbSLandgebruik> Component_rel (AdminDomain) := = IsNbSG ? '!Oud_NbSG/Landschap/Veen/UitkomstType/IsNatuurtype[Oud_NbSG/Landschap/Veen/Uitkomst_rel] ? value(Oud_NbSG/Landschap/Veen/UitkomstType/Idx_Landgebruik[Oud_NbSG/Landschap/Veen/Uitkomst_rel], /Classifications/Grondgebruik/NbSVeen/NbSLandgebruik) : null_b[/Classifications/Grondgebruik/NbSVeen/NbSLandgebruik]' : 'const(null_b, AdminDomain, /Classifications/Grondgebruik/NbSVeen/NbSLandgebruik)', Descr = "De bouwsteencomponent waar de cel in trap 2 op uitkomt (bebouwd, grasland, vernat grasland, natte teelt, water), null voor de natuurtypen.";
+		attribute</Classifications/Grondgebruik/LandbouwType> LandbouwType_rel (AdminDomain) := /Classifications/Grondgebruik/LandbouwType_vanComponent[Component_rel], Descr = "Het landbouwtype dat de component in de stand-administratie krijgt; null voor bebouwd, niet-vernat grasland en water.";
+	}
+
+	// ---- de stroom ----
+
+	parameter<Bool> NeemWaterMee := VariantParameters/VariantK/ExogeenWaterOpleggen[Variant_rel]
+	, Descr = "Doet water mee in de oplegging? Per landschap toegepast voordat de voorrang wordt bepaald, zodat natuur onder een niet-opgelegd watertype gewoon doorkomt, net als in de oude keten waar de twee stromen los van elkaar liepen. Het 9a/9b-water zit al niet in Veen/Type, dus deze schakelaar kan aan zonder de dubbeltelling van #664.";
+
+	attribute<INL_Beheertype> Kust_Bijdrage      (AdminDomain) := NeemWaterMee || !Kust/IsWater     ? Kust/Type       : null_b[INL_Beheertype];
+	attribute<INL_Beheertype> Veen_Bijdrage      (AdminDomain) := NeemWaterMee || !Veen/IsWater     ? Veen/Type       : null_b[INL_Beheertype];
+	attribute<INL_Beheertype> Rivieren_Bijdrage  (AdminDomain) := NeemWaterMee || !Rivieren/IsWater ? Rivieren/Type   : null_b[INL_Beheertype];
+	attribute<INL_Beheertype> Landelijk_Bijdrage (AdminDomain) := NeemWaterMee || !Landelijk/IsWater ? Landelijk/Type : null_b[INL_Beheertype];
+
+	attribute<INL_Beheertype> Levering (AdminDomain) := = IsNbSG
+		? 'MakeDefined(MakeDefined(MakeDefined(MakeDefined(Kust_Bijdrage, Zand/Type_Nat), Veen_Bijdrage), Rivieren_Bijdrage), Zand/Type_Droog)'
+		: IsNbSMax
+			? 'MakeDefined(Rivieren_Bijdrage, Landelijk_Bijdrage)'
+			: 'Landelijk_Bijdrage'
+	, Descr = "Het beheertype dat de variant per cel aanlevert, in de voorrang van de oude keten: kust, zand nat, veen, rivieren, zand droog (dat is wat de code deed; de oude toelichting noemde veen eerst). NbSMax: rivieren over de landelijke kaart. BAU en BAU2: de landelijke kaart. Water alleen als NeemWaterMee aanstaat.";
+
+	attribute<Bool> IsWater (AdminDomain) := MakeDefined(INL_Beheertype/IsWater[Levering], FALSE) || (IsNbSG && IsDefined(Rivieren_Bijdrage) && Levering == Rivieren_Bijdrage && Rivieren/IsWater)
+	, Descr = "Is de levering op deze cel water? Uit het type, en bij rivieren uit het ecotoop.";
+
+	attribute<Bool> IsVeen (AdminDomain) := = IsNbSG ? 'IsDefined(Veen_Bijdrage)' : 'const(FALSE, AdminDomain)'
+	, Descr = "De veenuitzondering uit #660: de bouwstenen beschrijven de eindtoestand, dus in het veen wordt ook bestaande natuur overschreven met het aangeleverde type.";
+
+	attribute<Bool> State_IsNatuur (AdminDomain) := MakeDefined(LandgebruikType/IsNatuur[State/Type], FALSE);
+	attribute<Bool> State_IsWater  (AdminDomain) := MakeDefined(LandgebruikType/IsWater[State/Type],  FALSE);
+
+	attribute<Bool> IsNieuw (AdminDomain) := IsDefined(Levering) && (IsVeen || (IsWater ? !State_IsWater : !State_IsNatuur))
+	, Descr = "Verandert het opleggen iets? Water op een cel die al water is en natuur op een cel die al natuur is doen dat niet, behalve in het veen. Getoetst tegen de stand-administratie, dus tegen dezelfde bron als de landgebruikskaart (#774).";
+
+	attribute<INL_Beheertype> Levering_Nieuw    (AdminDomain) := IsNieuw ? Levering : null_b[INL_Beheertype];
+	attribute<LU_ModelType>   Landbouw_Levering (AdminDomain) := Veen/Landbouw;
+	attribute</Classifications/Grondgebruik/LandbouwType> LandbouwType_Levering (AdminDomain) := Veen/LandbouwType_rel, Descr = "Dezelfde landbouwstroom als landbouwtype voor de stand-administratie.";
+	attribute<INL_Beheertype> Veen_Water_Sector (AdminDomain) := Veen/Water_Sector;
+
+	// ---- dezelfde stroom met water aan, alleen om te meten wat de schakelaar scheelt ----
+	attribute<INL_Beheertype> Levering_MetWater (AdminDomain) := = IsNbSG
+		? 'MakeDefined(MakeDefined(MakeDefined(MakeDefined(Kust/Type, Zand/Type_Nat), Veen/Type), Rivieren/Type), Zand/Type_Droog)'
+		: IsNbSMax ? 'MakeDefined(Rivieren/Type, Landelijk/Type)' : 'Landelijk/Type';
+	attribute<Bool> IsWater_MetWater (AdminDomain) := MakeDefined(INL_Beheertype/IsWater[Levering_MetWater], FALSE) || (IsNbSG && IsDefined(Rivieren/Type) && Levering_MetWater == Rivieren/Type && Rivieren/IsWater);
+	attribute<Bool> IsVeen_MetWater  (AdminDomain) := = IsNbSG ? 'IsDefined(Veen/Type)' : 'const(FALSE, AdminDomain)';
+	attribute<INL_Beheertype> Levering_Nieuw_MetWater (AdminDomain) := IsDefined(Levering_MetWater) && (IsVeen_MetWater || (IsWater_MetWater ? !State_IsWater : !State_IsNatuur)) ? Levering_MetWater : null_b[INL_Beheertype];
+
+	container Controle
+	{
+		attribute<Bool> SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain;
+		parameter<Ha> Areaal_Levering       := sum(SA && IsDefined(Levering)       ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_Nieuw          := sum(SA && IsDefined(Levering_Nieuw) ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_Nieuw_Water    := sum(SA && IsDefined(Levering_Nieuw) && IsWater ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_Landbouw       := sum(SA && IsDefined(Landbouw_Levering) ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_VeenWaterSector := sum(SA && IsDefined(Veen_Water_Sector) ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_Kust           := sum(SA && IsDefined(Kust/Type) ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_Zand           := sum(SA && (IsDefined(Zand/Type_Nat) || IsDefined(Zand/Type_Droog)) ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_Veen           := sum(SA && IsDefined(Veen/Type) ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_Rivieren       := sum(SA && IsDefined(Rivieren/Type) ? AdminDomain/NrHaPerCell : 0[Ha]);
+		parameter<Ha> Areaal_Landelijk      := sum(SA && IsDefined(Landelijk/Type) ? AdminDomain/NrHaPerCell : 0[Ha]);
+	}
+}
