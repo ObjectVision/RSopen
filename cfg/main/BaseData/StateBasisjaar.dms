@@ -15,6 +15,41 @@ container StateBasisjaar : using = "Classifications/modellering"
 , Descr = "Hier wordt de stand per subsector in het basisjaar bepaald, weggeschreven en ingeladen"
 {
 	container State := =ModelParameters/BaseDataOntkoppeld ? 'Read' : 'Write';
+
+	// #776: de twee standtifs van het landgebruik (Type en JaarVerandering) hangen anders dan de andere standbestanden
+	// aan een klein en opsombaar stel invoer: de beheertypenkaart en haar bron, de LGN-, BRP- en BBG-jaargang, de
+	// koppelkolommen van de classificaties en de heuristiek. Dat stel staat hier als fingerprint, zodat een andere
+	// beheertypenkaart de stand-tif niet stil laat staan: de leeskant faalt dan hard tot WriteBasedata run 2 opnieuw
+	// is gedraaid. De overige standbestanden hebben bewust geen fingerprint, zie de skill rs-fingerprints.
+	parameter<String> FileName_Landgebruik_Type := '%LocalDataProjDir%/BaseData/StandBasisjaar/' + /Classifications/Actor/LandgebruikK/StandVar_path[value(0, /Classifications/Actor/LandgebruikK)] + '_' + /ModelParameters/StudyArea + '.tif'
+	, IntegrityCheck = "/Classifications/Actor/LandgebruikK/name[value(0, /Classifications/Actor/LandgebruikK)] == 'Type'"
+	, Descr = "Hetzelfde pad als de for_each hieronder samenstelt uit StandVar_Prep/path, uit dezelfde bron (LandgebruikK/StandVar_path), zodat een hernoeming daar het zijbestand niet van de tif losmaakt.";
+	parameter<String> Fingerprint_Landgebruik :=
+		  'beheertype_bron='   + /ModelParameters/Beheertype_Basisjaar_Bron
+		+ ';gaten_vullen='     + string(/ModelParameters/Beheertype_GatenVullen)
+		+ ';landgebruik_basis=' + /ModelParameters/Landgebruik_Basis
+		+ ';beheertype_passend=lgn_categorie'
+		+ ';nbp='              + /SourceData/Grondgebruik/NBP/Fingerprint_INL_Beheertype_AD
+		+ ';mnp='              + PropValue(/SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/Write_NL2120_MNP_BAU_INL_beheertypen_25m, 'StorageName')
+		+ ';lgn_year='         + /ModelParameters/LGN_Year
+		+ ';brp='              + /SourceData/Landbouw/BRP/Fingerprint_Gewascode
+		+ ';bbg_year='         + /ModelParameters/BBG_Year
+		+ ';start_year='       + string(/ModelParameters/Model_StartYear)
+		+ ';study_area='       + /ModelParameters/StudyArea
+		+ ';admin_domain='     + /ModelParameters/Advanced/AdminDomain_ref
+		+ ';landgebruik_set='  + AsList(/Classifications/Grondgebruik/LandgebruikType/name, ',')
+		+ ';lgn_lu='           + AsList(MakeDefined(string(/Classifications/Grondgebruik/LGNKlasse/LU_ModelType_rel), 'null'), ',')
+		+ ';lgn_bebouwd='      + AsList(string(/Classifications/Grondgebruik/LGNKlasse/isBebouwd), ',')
+		+ ';lgn_landbouwtype=' + AsList(MakeDefined(string(/Classifications/Grondgebruik/LGNKlasse/LandbouwType_rel), 'null'), ',')
+		+ ';brp_landbouwtype=' + AsList(MakeDefined(string(/Classifications/Landbouw/BRPGewasType/LandbouwType_rel), 'null'), ',')
+		+ ';heuristiek_droog=' + AsList(MakeDefined(string(/Classifications/Grondgebruik/BeheertypeHeuristiek/PerLGN_Droog), 'null'), ',')
+		+ ';heuristiek_nat='   + AsList(MakeDefined(string(/Classifications/Grondgebruik/BeheertypeHeuristiek/PerLGN_Nat), 'null'), ',')
+		+ ';heuristiek_water=' + AsList(MakeDefined(string(/Classifications/Grondgebruik/BeheertypeHeuristiek/PerCBS_Water), 'null'), ',')
+	, Descr = "Wat de basisjaarstand van het landgebruik bepaalt. De bronnen zelf (de NBP-tif en de BRP-tif via hun eigen fingerprint, de MNP-kaart via haar pad), de schakelaars, en de koppelkolommen als reeks omdat een wijziging binnen een tabel de naamlijst niet verandert; nulls staan als het woord null in de reeks, anders verliest een verplaatsing naar een lege rij haar positie. De BOFEK-veenkaart die de natte lezing van de heuristiek kiest zit er niet in; die bron wisselt niet van jaargang.
+
+				Twee kanttekeningen. landgebruik_basis bepaalt Type en JaarVerandering niet (die lopen altijd langs LGN), maar staat er als hefboom: de landbouwstandtifs lezen LU_Basisjaar en dragen geen fingerprint, dus als de schakelaar omgaat dwingt de leestoets op Landgebruik/Type run 2 af en die ververst ze mee. En mnp= vangt alleen het pad van de 25m-tif op E:, niet haar inhoud: die tif draagt rijnummers van INL_Beheertype en is schrijf-eenmaal, dus een rij erbij in die classificatie maakt hem stil verkeerd zonder dat deze fingerprint dat ziet.";
+	container Decoupling_Landgebruik := /Templates/DecoupledFile_T(FileName_Landgebruik_Type, Fingerprint_Landgebruik)
+	, Descr = "De fingerprintcontrole voor Landgebruik/Type en JaarVerandering samen; het zijbestand staat naast de Type-tif. Vraag Explanation op als Read/Landgebruik/Type op zijn IntegrityCheck faalt.";
 	
 	container Read_UNCHECKED :=
 		for_each_ndvna(
@@ -39,11 +74,13 @@ container StateBasisjaar : using = "Classifications/modellering"
 		for_each_neidvn(
 			StandVar_Prep/path
 			, 'Read_UNCHECKED/'+StandVar_Prep/path
-			, StandVar_Prep/IsLandbouw || StandVar_Prep/IsWaterberging ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
+			, StandVar_Prep/IsLandbouw || StandVar_Prep/IsWaterberging ? ''
+				: lowercase(StandVar_Prep/Sector_name) == lowercase('Landgebruik') ? 'not(all(IsNull(this))) && /BaseData/StartState/StateBasisjaar/Decoupling_Landgebruik/IsValid'
+				: 'not(all(IsNull(this))) && not(all(IsZero(this)))'
 			, AdminDomain
 			, StandVar_Prep
 			, StandVar_Prep/unit_name
-		), Descr = "Check om ervoor te zorgen dat niet de hele kaart undefined is. Is dit wel het geval, ga dan terug naar Write van dit item, check of die ook undefined is, of dat er iets in het opslaan van de tif fout gaat."
+		), Descr = "Check om ervoor te zorgen dat niet de hele kaart undefined is. Is dit wel het geval, ga dan terug naar Write van dit item, check of die ook undefined is, of dat er iets in het opslaan van de tif fout gaat. De twee landgebruikstifs toetsen daarnaast hun fingerprint (#776): faalt die, dan is de beheertypenkaart of een koppeltabel veranderd sinds de tif is geschreven en moet WriteBasedata run 2 opnieuw."
 	{
 		container Wonen
 		{
@@ -74,7 +111,7 @@ container StateBasisjaar : using = "Classifications/modellering"
 			, 'gdalwrite.grid'
 		), Descr = "Check om ervoor te zorgen dat niet de hele kaart undefined of zero is. Is dit wel zo, ga dan terug tracen naar waar het probleem zit."
 	{
-		parameter<String> Generate := 'Ready', ExplicitSuppliers = "=asList(StandVar_Prep/path, ';')+';Wonen/Footprint;Verblijfsrecreatie/Footprint'";
+		parameter<String> Generate := 'Ready', ExplicitSuppliers = "=asList(StandVar_Prep/path, ';')+';Wonen/Footprint;Verblijfsrecreatie/Footprint;Decoupling_Landgebruik/Write_Fingerprint'";
 		
 		container Wonen
 		{
