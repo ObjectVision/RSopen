@@ -13,7 +13,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-unit<UInt8> LandbouwType : NrOfRows = 12
+unit<UInt8> LandbouwType : NrOfRows = 14
 , Descr = "De landbouwtypologie van de stand-administratie: wat een landbouwcel is, in klassen die decennia op dezelfde plek blijven liggen. Zie #751.
 
 			Waarom niet de gewascode. De BRP registreert het gewas van dit jaar, en op bouwland is dat volgend jaar een
@@ -22,7 +22,9 @@ unit<UInt8> LandbouwType : NrOfRows = 12
 			dat is het onderscheid dat de bodemkoolstof en de veenoxidatie sturen; de houtige teelten, want boomgaard,
 			boomkwekerij en bos op landbouwgrond dragen biomassa; en de teelten die aan een streek vastzitten, bollen en
 			glas. De gewascode blijft aan de bronkant staan, in Classifications/Landbouw/BRPGewasType, en aggregeert bij
-			binnenkomst in de state naar deze twaalf.
+			binnenkomst in de state naar deze veertien. De twee vernatte graslandtypen komen niet uit een bron maar uit de
+			veenbouwstenen (#684): vernat grasland is op veen een eigen toestand met eigen broeikasgaskentallen, en de
+			state moet die kunnen dragen zonder de bouwsteen te kennen.
 
 			Waarom niet de allocatieklassen van Actor/LandbouwKlasses. Die zijn gewassen (aardappelen, bieten, granen)
 			omdat de landbouwallocatie op gewaseconomie draait, en die detaillering hoort in de landbouwstand thuis, die
@@ -56,7 +58,9 @@ unit<UInt8> LandbouwType : NrOfRows = 12
 			'Glastuinbouw'       , 'Glastuinbouw'                 , ''                          , '8'       , ' 4', ' 78', '255', '206',
 			'Riet_paludicultuur' , 'Riet en paludicultuur'        , 'Landbouw_Rietteelt'        , '42'      , '18', '252', '169', ' 18',
 			'Braak'              , 'Braak'                        , 'Landbouw_Akkerbouw'        , '6'       , '43', '220', '210', '180',
-			'Bos_agrarisch'      , 'Bos op landbouwgrond'         , 'Natuur_Totaal'             , '11'      , '44', ' 50', '204', '  1'
+			'Bos_agrarisch'      , 'Bos op landbouwgrond'         , 'Natuur_Totaal'             , '11'      , '44', ' 50', '204', '  1',
+			'Grasland_vernat'    , 'Grasland, vernat (productie)' , 'Landbouw_gg_vee'           , '1'       , '24', ' 90', '200', '160',
+			'Grasland_vernat_kruidenrijk', 'Grasland, vernat en kruidenrijk', 'Landbouw_gg_vee_extensief', '45'   , '26', '120', '190', '130'
 		];
 	}
 
@@ -74,6 +78,11 @@ unit<UInt8> LandbouwType : NrOfRows = 12
 	attribute<UInt32>             g                := uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 6, Elements)]);
 	attribute<UInt32>             b                := uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 7, Elements)]);
 	attribute<UInt32>             BrushColor       := rgb(r, g, b), DialogType = "BrushColor";
+
+	attribute<String>             Component_name   := name == 'Riet_paludicultuur' ? 'NatteTeelt' : name == 'Grasland_vernat' ? 'VernatGrasland_Productie' : name == 'Grasland_vernat_kruidenrijk' ? 'VernatGrasland_Kruidenrijk' : '';
+	attribute<NbSVeen/NbSLandgebruik> Component_rel := rlookup(Component_name, NbSVeen/NbSLandgebruik/name), Descr = "De bouwsteencomponent van team Veen die bij dit type hoort, voor de drie typen die er een hebben. Daarlangs komen de componentkentallen (#778) op het type.";
+	attribute<Float32>            CO2_veen_ton_ha_jaar := MakeDefined(NbSVeen/NbSLandgebruik/CO2_ton_ha_jaar[Component_rel], 0f), Descr = "Netto CO2 op veen volgens team Veen, ton per ha per jaar, positief is uitstoot: natte teelt 1, vernat productiegrasland 7, vernat kruidenrijk grasland 4. Nul voor de andere typen; die krijgen de emissiefactor of SOMERS in de indicator.";
+	attribute<Float32>            CH4_veen_ton_CO2eq_ha_jaar := MakeDefined(NbSVeen/NbSLandgebruik/CH4_ton_CO2eq_ha_jaar[Component_rel], 0f), Descr = "Methaan op veen volgens team Veen: natte teelt 5, vernat productiegrasland 0, vernat kruidenrijk 3.";
 
 	container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
 
@@ -125,6 +134,23 @@ unit<UInt8> LandgebruikType := union_unit_uint8(INL_Beheertype, LandbouwType, LG
 	attribute<Actor/LU_ModelType> LU_ModelType_rel  := union_data(., INL_Beheertype/LU_ModelType_rel, LandbouwType/LU_ModelType_rel, LGNKlasse/LU_ModelType_rel);
 	attribute<CarbonClass>        CarbonClass_rel   := union_data(., INL_Beheertype/CarbonClass_rel, LandbouwType/CarbonClass_rel, /Classifications/Grondgebruik/CarbonClass_rel);
 	attribute<UInt32>             BrushColor        := union_data(., INL_Beheertype/BrushColor, LandbouwType/BrushColor, LGNKlasse/BrushColor), DialogType = "BrushColor";
+
+	// ---- de kentallen die van het type afhangen, zodat een lezer geen koolstofklasse meer hoeft op te zoeken ----
+	attribute<ton_ha_jaarlijks> Cseq_ha              := CarbonClass/Cseq_ha[CarbonClass_rel], Descr = "Jaarlijkse vastlegging in de bovenste 30 cm plus biomassa, ton C per ha per jaar, uit CarbonClass.";
+	attribute<ton_ha>           Cmax_ha              := CarbonClass/Cmax_ha[CarbonClass_rel], Descr = "Maximale voorraad in de bovenste 30 cm plus biomassa, ton C per ha, uit CarbonClass (welke bron kiest ModelParameters/Advanced/Koolstof_MaxSrc).";
+	attribute<Bool>             MagAfboeken          := MakeDefined(CarbonClass/MagAfboeken[CarbonClass_rel], FALSE);
+	attribute<Bool>             IsVeenvormend        := MakeDefined(VeenBroeikasgas/IsVeenvormend[CarbonClass_rel], FALSE), Descr = "Vormt dit type op veen nieuw veen (riet, moeras, hoogveen, broekbos)? Uit de kentallen van team Veen.";
+	attribute<Bool>             IsBebouwdeKlasse     := MakeDefined(VeenBroeikasgas/IsBebouwdeKlasse[CarbonClass_rel], FALSE);
+	attribute<Float32>          Cseq_ha_veen         := MakeDefined(VeenBroeikasgas/Cseq_ha_veen[CarbonClass_rel], 0f), Descr = "Vastlegging op veen volgens team Veen, ton C per ha per jaar; nul buiten de veenvormende typen.";
+	attribute<Float32>          Cmax_ha_veen         := MakeDefined(VeenBroeikasgas/Cmax_ha_veen[CarbonClass_rel], 0f);
+	attribute<Float32>          CH4_ton_CO2eq_ha_jaar := MakeDefined(VeenBroeikasgas/CH4_ton_CO2eq_ha_jaar[CarbonClass_rel], 0f), Descr = "Methaan op veen volgens team Veen, ton CO2-equivalent per ha per jaar; nul buiten de natte typen. Wat van de drooglegging per cel afhangt (vernat veenweide, SOMERS) staat niet hier maar in de indicator.";
+	attribute<Bool>             HeeftComponentKental := union_data(., const(FALSE, INL_Beheertype), IsDefined(LandbouwType/Component_rel), const(FALSE, LGNKlasse)), Descr = "Draagt dit type een bouwsteencomponent van team Veen (natte teelt, vernat grasland)? Dan gelden de componentkentallen hieronder in plaats van die van de koolstofklasse.";
+	attribute<Float32>          CO2_veen_ton_ha_jaar := union_data(., const(0f, INL_Beheertype), LandbouwType/CO2_veen_ton_ha_jaar, const(0f, LGNKlasse));
+	attribute<Float32>          CH4_veen_ton_CO2eq_ha_jaar := union_data(., VeenBroeikasgas/CH4_ton_CO2eq_ha_jaar[INL_Beheertype/CarbonClass_rel], IsDefined(LandbouwType/Component_rel) ? LandbouwType/CH4_veen_ton_CO2eq_ha_jaar : MakeDefined(VeenBroeikasgas/CH4_ton_CO2eq_ha_jaar[LandbouwType/CarbonClass_rel], 0f), MakeDefined(VeenBroeikasgas/CH4_ton_CO2eq_ha_jaar[/Classifications/Grondgebruik/CarbonClass_rel], 0f)), Descr = "Methaan op veen per type: de component van team Veen waar die er is, anders de koolstofklasse. Dit is het kental dat de methaanindicator per cel hoort te lezen; wat van de drooglegging afhangt (vernat veenweide) blijft in de indicator.";
+	attribute<Float32>          ndvi_min             := LGNKlasse/ndvi_min[LGNKlasse_proxy];
+	attribute<Float32>          ndvi_mid             := LGNKlasse/ndvi_mid[LGNKlasse_proxy];
+	attribute<Float32>          ndvi_max             := LGNKlasse/ndvi_max[LGNKlasse_proxy];
+	attribute<Bool>             ndvi_excl            := MakeDefined(LGNKlasse/ndvi_excl[LGNKlasse_proxy], TRUE), Descr = "Groenindex per type via de best passende LGN-klasse, voor de sterfte-indicator (#484).";
 
 	attribute<LandgebruikType> Van_INL          (INL_Beheertype) := invert(INL_Beheertype_rel), Descr = "Van beheertype naar rij in de unie.";
 	attribute<LandgebruikType> Van_LandbouwType (LandbouwType)   := invert(LandbouwType_rel),   Descr = "Van landbouwtype naar rij in de unie.";
@@ -246,3 +272,4 @@ unit<UInt8> LandbouwType_vanLU_Tabel : NrOfRows = 13
 	parameter<UInt32> nrAttr := 2;
 }
 attribute<LandbouwType> LandbouwType_vanLU (Actor/LU_ModelType) := LandbouwType_vanLU_Tabel/LandbouwType_rel[rlookup(lowercase(Actor/LU_ModelType/name), lowercase(LandbouwType_vanLU_Tabel/lu_name))], Descr = "Zie LandbouwType_vanLU_Tabel; null voor alles wat geen landbouwklasse is.";
+attribute<LandbouwType> LandbouwType_vanComponent (NbSVeen/NbSLandgebruik) := invert(LandbouwType/Component_rel), Descr = "Van bouwsteencomponent naar landbouwtype: natte teelt wordt Riet_paludicultuur, vernat productiegrasland Grasland_vernat, vernat kruidenrijk grasland Grasland_vernat_kruidenrijk; de andere drie componenten hebben geen landbouwtype.";
