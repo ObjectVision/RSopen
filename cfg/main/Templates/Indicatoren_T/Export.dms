@@ -7,22 +7,273 @@
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
-// Bevat de sub-items: Impl, Transitie_Matrix, mean_NPV_obv_LUbasisjaar_perLBK,
-// mean_NPV_obv_LU_Zichtjaar_perLBK_zonderAugm.
+// Vier lagen, in deze volgorde: generates met een parameter per uitvoerbestand en een Generate_Alles die ze
+// alle opsomt, Impl met de tussenberekeningen, Diagnose met de getallen die geen bestand schrijven, en de
+// levering zelf: de kaarten en tabellen met een StorageName. Zie #779.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container Export : using = "Classifications/Actor;SourceData"
 {
+
 	parameter<String> ExportZichtjaar := =quote(replace_value(expand(., '%env:ExportZichtjaar%'), 'env:ExportZichtjaar', last(/Classifications/Time/Zichtjaar/name)))
 	, Descr = "Welk zichtjaar de indicatorenexport wegschrijft. Standaard het laatste zichtjaar; via de omgevingsvariabele ExportZichtjaar is een eerder zichtjaar of Basisjaar te kiezen, zodat daar geen configuratiewijziging meer voor nodig is.";
-	
 	container generates
-	{	
-		parameter<string> CarbonStorageSequestration           := 'Ready', explicitsuppliers = "=AsList(Classifications/Time/Zichtjaar/name+'/CarbonStorageSequestration/Write_CO2Stock_Zichtjaar;'+Classifications/Time/Zichtjaar/name+'/CarbonStorageSequestration/Write_CO2Flow_Zichtjaar;'+Classifications/Time/Zichtjaar/name+'/CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar;'+Classifications/Time/Zichtjaar/name+'/CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief', ';')"
-		, Descr = "Trekt alle vier de koolstofkaarten voor alle zichtjaren. De vierde, Write_CO2Ongedekt_Cumulatief, is er sinds #733 bij gekomen en hoort altijd samen met Write_CO2Flow_TovBasisjaar getrokken te worden: zonder die kaart is niet te zien hoeveel SOMERS-uitstoot buiten het saldo is gebleven. Hier stond een verwijzing naar Write_Result_SA, en dat item bestaat niet onder CarbonStorageSequestration; de drie heten Write_CO2Stock_Zichtjaar, Write_CO2Flow_Zichtjaar en Write_CO2Flow_TovBasisjaar. Deze trigger deed daardoor niets, en omdat Generate_Indicatoren alleen de laatste van de drie noemt bleven de bestanden van de eerste twee staan zoals een eerdere run ze had achtergelaten.";
-		parameter<string> SOMERS_CO2_laagveen_Emissies_Mediaan := 'Ready', explicitsuppliers = "=AsList(Classifications/Time/Zichtjaar/name+'/SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA', ';')";
+	: Descr = "Een parameter per uitvoerbestand van deze export, gegroepeerd per domein, met een verzamelparameter per domein onder Themas en een Generate_Alles die alles opsomt (#779).
+
+				Waarom dit bestaat. Tot september 2026 was Generate_Indicatoren een enkele parameter met alle leveranciers in een string, en die slaagt of faalt als geheel. Op 4 september kostte een gefaalde controle op een classificatietabel, die geen enkele indicator voedt, de complete export van drie varianten, ook al stonden er dertig kaarten correct op schijf. Wat er dan ligt is een halve set waaraan je niet ziet welk bestand uit welke draai komt.
+
+				GeoDmsRun neemt meerdere itempaden op de commandoregel en werkt ze na elkaar af, elk met een eigen Updating-paar in het log, en een item dat faalt geeft exit 1 zonder de andere te raken. De export is dus per bestand of per domein op te vragen en bij te draaien:
+
+					GeoDmsRun.exe /Llog.txt /S1 /S2 /S3 cfg/main.dms
+							/Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/generates/Themas/Koolstof
+							/Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/generates/Verharding
+
+				De domeinen zijn dezelfde als die van de containers verderop in dit bestand, maar ze dekken meer: van de 86 uitvoerbestanden worden er dertig hier geschreven en zesenvijftig in de sjablonen onder Templates/Indicatoren. Koolstof en Sloop hebben daarom geen container in dit bestand en hier wel een groep.
+
+				Elke regel wijst met een volledig pad vanaf ThisCasus naar het item dat het bestand schrijft, ook waar dat item hier in Export staat. Dat is nodig en geen omslachtigheid: een ongekwalificeerde naam in een ExplicitSuppliers wordt omhoog gezocht vanaf de container van het item, en die zou hier de gelijknamige parameter hiernaast vinden in plaats van de kaart.
+
+				Wat hier NIET in zit. De legendas onder Legendas, die eenmaal per levering worden getrokken en niet per casus; de NPV-kaarten onder Impl/Zichtjaren, die alleen PostAllocAnalyses opvraagt; en de twee parameters onder AlleZichtjaren hieronder, die over alle zichtjaren gaan in plaats van over ExportZichtjaar.
+
+				Foutisolatie per item lost niet alles op: een gedeelde toeleverancier die faalt raakt nog steeds alles wat hem leest. Wat het wel oplevert is dat je precies weet welk bestand ontbreekt, en dat gericht kunt bijdraaien."
+	{
+		parameter<string> Exportpad := 'ThisCasus/Zichtjaren/Export/'
+		, Descr = "Volledig pad naar deze Export-container, zodat een supplier hieronder bij de kaart uitkomt en niet bij de gelijknamige parameter ernaast.";
+		parameter<string> Jaarpad   := 'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/'
+		, Descr = "Volledig pad naar de indicatoren van het zichtjaar dat deze export wegschrijft, dus naar de instantie die ExportZichtjaar aanwijst.";
+
+		// --- grondgebruik ---
+		// Wat een cel IS en wat er sinds het basisjaar veranderd is, plus het areaal per klasse.
+		parameter<string> Landgebruikskaart                                         := 'Ready', ExplicitSuppliers = "=Exportpad+'Grondgebruik/Landgebruikskaart'";
+		parameter<string> Landgebruikskaart_bij_tov_PrevYear                        := 'Ready', ExplicitSuppliers = "=Exportpad+'Grondgebruik/Landgebruikskaart_bij_tov_PrevYear'";
+		parameter<string> Landgebruikskaart_af_tov_PrevYear                         := 'Ready', ExplicitSuppliers = "=Exportpad+'Grondgebruik/Landgebruikskaart_af_tov_PrevYear'";
+		parameter<string> Verstedelijking                                           := 'Ready', ExplicitSuppliers = "=Exportpad+'Grondgebruik/Verstedelijking'";
+		parameter<string> VerstedelijkingInABCD                                     := 'Ready', ExplicitSuppliers = "=Exportpad+'Grondgebruik/VerstedelijkingInABCD'";
+		parameter<string> Landgebruik_Areaal                                        := 'Ready', ExplicitSuppliers = "=Exportpad+'Grondgebruik/Landgebruik_Areaal'";
+		parameter<string> LandgebruikNL2120_Areaal                                  := 'Ready', ExplicitSuppliers = "=Exportpad+'Grondgebruik/LandgebruikNL2120_Areaal'";
+		parameter<string> LandgebruikskaartNL2120                                   := 'Ready', ExplicitSuppliers = "=Jaarpad+'LandgebruikskaartNL2120/Write_Result_SA'";
+
+		// --- wonen ---
+		// De woningvoorraad: waar hij staat, wat hij waard is en wat hij kost om te bouwen.
+		parameter<string> Dichtheid_Wonen                                           := 'Ready', ExplicitSuppliers = "=Exportpad+'Wonen/Dichtheid_Wonen'";
+		parameter<string> PandFootprint_Wonen                                       := 'Ready', ExplicitSuppliers = "=Exportpad+'Wonen/PandFootprint_Wonen'";
+		parameter<string> Bouwwijze_Areaal                                          := 'Ready', ExplicitSuppliers = "=Exportpad+'Wonen/Bouwwijze_Areaal'";
+		parameter<string> Woningwaarde_Nieuwbouw                                    := 'Ready', ExplicitSuppliers = "=Jaarpad+'Woningwaarde/Nieuwbouw'";
+		parameter<string> Woningwaarde_Nieuwbouw_NCW                                := 'Ready', ExplicitSuppliers = "=Jaarpad+'Woningwaarde/Nieuwbouw_NCW'";
+		parameter<string> KostenWoningbouw_Bouwkosten                               := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/Bouwkosten'";
+		parameter<string> KostenWoningbouw_Bouwkosten_NCW                           := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/Bouwkosten_NCW'";
+		parameter<string> KostenWoningbouw_MeerkostenBouwwijze                      := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/MeerkostenBouwwijze'";
+		parameter<string> KostenWoningbouw_Bouwwijze                                := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/Bouwwijze'";
+		parameter<string> KostenWoningbouw_Regulier                                 := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/Regulier'";
+		parameter<string> KostenWoningbouw_Alternatief                              := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/Alternatief'";
+		parameter<string> KostenWoningbouw_MeerkostenBodemdaling                    := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/MeerkostenBodemdaling'";
+		parameter<string> KostenWoningbouw_MeerkostenBodemdaling_NCW                := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/MeerkostenBodemdaling_NCW'";
+		parameter<string> KostenWoningbouw_BeheerEnOnderhoud                        := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/BeheerEnOnderhoud'";
+		parameter<string> KostenWoningbouw_Controle                                 := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWoningbouw/Controle'";
+
+		// --- werken ---
+		// De werklocaties: dichtheid, voetafdruk, de meerkosten tegen het water en de bereikbaarheid van banen.
+		parameter<string> Dichtheid_Werken_Pandfootprint_ha                         := 'Ready', ExplicitSuppliers = "=Exportpad+'Werken/Dichtheid_Werken_Pandfootprint_ha'";
+		parameter<string> Dichtheid_Werken_Banen_m2                                 := 'Ready', ExplicitSuppliers = "=Exportpad+'Werken/Dichtheid_Werken_Banen_m2'";
+		parameter<string> PandFootprint_Werken                                      := 'Ready', ExplicitSuppliers = "=Exportpad+'Werken/PandFootprint_Werken'";
+		parameter<string> KostenWerklocaties_Controle                               := 'Ready', ExplicitSuppliers = "=Jaarpad+'KostenWerklocaties/Controle'";
+		parameter<string> Bereikbaarheid_Banen                                      := 'Ready', ExplicitSuppliers = "=Jaarpad+'Bereikbaarheid_Banen/Result'";
+
+		// --- water ---
+		// Verharding, piekbuiberging en overstromingsschade, plus de seizoensberging op veen. Verharding staat hier omdat hij de invoer van de piekbuikant is; wie hem als verstening leest, leest hem als grondgebruik.
+		parameter<string> Verharding                                                := 'Ready', ExplicitSuppliers = "=Exportpad+'Water/Verharding'";
+		parameter<string> Piekbuiberging_Ongedekt                                   := 'Ready', ExplicitSuppliers = "=Exportpad+'Water/Piekbuiberging_Ongedekt'";
+		parameter<string> Piekbuiberging_Gedekt                                     := 'Ready', ExplicitSuppliers = "=Exportpad+'Water/Piekbuiberging_Gedekt'";
+		parameter<string> Piekbuiberging_Dekkingsgraad                              := 'Ready', ExplicitSuppliers = "=Exportpad+'Water/Piekbuiberging_Dekkingsgraad'";
+		parameter<string> Overstromingsschade_Hoofdwatersysteem_Binnendijks         := 'Ready', ExplicitSuppliers = "=Exportpad+'Water/Overstromingsschade_Hoofdwatersysteem_Binnendijks'";
+		parameter<string> Overstromingsschade_Hoofdwatersysteem_Buitendijks         := 'Ready', ExplicitSuppliers = "=Exportpad+'Water/Overstromingsschade_Hoofdwatersysteem_Buitendijks'";
+		parameter<string> Overstromingsschade_Regionaalwatersysteem_Binnendijks     := 'Ready', ExplicitSuppliers = "=Exportpad+'Water/Overstromingsschade_Regionaalwatersysteem_Binnendijks'";
+		parameter<string> WaterbergingVeen                                          := 'Ready', ExplicitSuppliers = "=Exportpad+'Water/WaterbergingVeen'";
+		parameter<string> Overstromingsschade_Hoofdwatersysteem_Binnendijks_NCW     := 'Ready', ExplicitSuppliers = "=Jaarpad+'Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks_NCW'";
+		parameter<string> Overstromingsschade_Hoofdwatersysteem_Buitendijks_NCW     := 'Ready', ExplicitSuppliers = "=Jaarpad+'Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks_NCW'";
+		parameter<string> Overstromingsschade_Regionaalwatersysteem_Binnendijks_NCW := 'Ready', ExplicitSuppliers = "=Jaarpad+'Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks_NCW'";
+
+		// --- natuur ---
+		// Natuur en groen, en wat groen oplevert: bereikbaarheid, woningwaarde en vermeden sterfte. De woningwaardekant staat hier en niet bij Wonen omdat de kaarten het effect VAN groen meten.
+		parameter<string> BT_Exogeen                                                := 'Ready', ExplicitSuppliers = "=Exportpad+'Natuur/BT_Exogeen'";
+		parameter<string> BT_Exogeen_Areaal                                         := 'Ready', ExplicitSuppliers = "=Exportpad+'Natuur/BT_Exogeen_Areaal'";
+		parameter<string> NieuweNatuur                                              := 'Ready', ExplicitSuppliers = "=Exportpad+'Natuur/NieuweNatuur'";
+		parameter<string> VerdwenenNatuur                                           := 'Ready', ExplicitSuppliers = "=Exportpad+'Natuur/VerdwenenNatuur'";
+		parameter<string> BereikbaarheidGroen_BBG                                   := 'Ready', ExplicitSuppliers = "=Exportpad+'Natuur/BereikbaarheidGroen_BBG'";
+		parameter<string> BereikbaarheidGroen_Fractie                               := 'Ready', ExplicitSuppliers = "=Exportpad+'Natuur/BereikbaarheidGroen_Fractie'";
+		parameter<string> WaardeNabijheidGroen_Woningen                             := 'Ready', ExplicitSuppliers = "=Jaarpad+'WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen'";
+		parameter<string> WaardeNabijheidGroen_BestaandeWoningen                    := 'Ready', ExplicitSuppliers = "=Jaarpad+'WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen'";
+		parameter<string> WaardeNabijheidGroen_NieuwbouwWoningen                    := 'Ready', ExplicitSuppliers = "=Jaarpad+'WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen'";
+		parameter<string> WaardeNabijheidGroen_Woningen_NCW                         := 'Ready', ExplicitSuppliers = "=Jaarpad+'WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen_NCW'";
+		parameter<string> WaardeNabijheidGroen_BestaandeWoningen_NCW                := 'Ready', ExplicitSuppliers = "=Jaarpad+'WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW'";
+		parameter<string> WaardeNabijheidGroen_NieuwbouwWoningen_NCW                := 'Ready', ExplicitSuppliers = "=Jaarpad+'WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW'";
+		parameter<string> SterfteAfname_PerPeriode                                  := 'Ready', ExplicitSuppliers = "=Jaarpad+'SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnamePerPeriode'";
+		parameter<string> SterfteAfname_Cumulatief                                  := 'Ready', ExplicitSuppliers = "=Jaarpad+'SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief'";
+
+		// --- landbouw ---
+		// Wat de landbouw kwijtraakt. Ook de drie kaarten die een andere bestemming op vruchtbare landbouwgrond meten staan hier: die bestaan om het verlies te tellen, en waar verstedelijking, natuur of waterberging landt staat al los in het eigen domein.
+		parameter<string> VerstedelijkingOpVruchtbareLandbouwgronden                := 'Ready', ExplicitSuppliers = "=Exportpad+'Landbouw/VerstedelijkingOpVruchtbareLandbouwgronden'";
+		parameter<string> NieuweNatuurOpVruchtbareLandbouwgronden                   := 'Ready', ExplicitSuppliers = "=Exportpad+'Landbouw/NieuweNatuurOpVruchtbareLandbouwgronden'";
+		parameter<string> WaterbergingVeenOpVruchtbareLandbouwgronden               := 'Ready', ExplicitSuppliers = "=Exportpad+'Landbouw/WaterbergingVeenOpVruchtbareLandbouwgronden'";
+		parameter<string> VerdwenenLandbouw                                         := 'Ready', ExplicitSuppliers = "=Jaarpad+'Grondgebruik/Verandering/VerdwenenLandbouw'";
+		parameter<string> VerdwenenVruchtbareLandbouw                               := 'Ready', ExplicitSuppliers = "=Jaarpad+'Grondgebruik/Verandering/VerdwenenVruchtbareLandbouw'";
+
+		// --- koolstof ---
+		// De koolstofboekhouding en de veenemissies volgens SOMERS.
+		parameter<string> CO2Stock_Zichtjaar                                        := 'Ready', ExplicitSuppliers = "=Jaarpad+'CarbonStorageSequestration/Write_CO2Stock_Zichtjaar'";
+		parameter<string> CO2Flow_Zichtjaar                                         := 'Ready', ExplicitSuppliers = "=Jaarpad+'CarbonStorageSequestration/Write_CO2Flow_Zichtjaar'";
+		parameter<string> CO2Flow_TovBasisjaar                                      := 'Ready', ExplicitSuppliers = "=Jaarpad+'CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar'";
+		parameter<string> CO2Ongedekt_Cumulatief                                    := 'Ready', ExplicitSuppliers = "=Jaarpad+'CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief'";
+		parameter<string> SOMERS_CO2_Minimum                                        := 'Ready', ExplicitSuppliers = "=Jaarpad+'SOMERS_CO2_laagveen/Emissies/Minimum/Write_Result_SA'";
+		parameter<string> SOMERS_CO2_Mediaan                                        := 'Ready', ExplicitSuppliers = "=Jaarpad+'SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA'";
+		parameter<string> SOMERS_CO2_Maximum                                        := 'Ready', ExplicitSuppliers = "=Jaarpad+'SOMERS_CO2_laagveen/Emissies/Maximum/Write_Result_SA'";
+
+		// --- sloop ---
+		// De drie sloopoorzaken van #658, elk met woningen, banen en de twee kostenposten, nominaal en als netto contante waarde. Sloop kruist wonen, werken, natuur en water en is daarom een eigen domein: het is de uitkomst van een ingreep en niet van een sector.
+		parameter<string> Sloop_NieuweNatuur_Woningen                               := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanNieuweNatuur/GesloopteWoningen'";
+		parameter<string> Sloop_NieuweNatuur_Banen                                  := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanNieuweNatuur/GesloopteBanen'";
+		parameter<string> Sloop_NieuweNatuur_Uitkoopkosten                          := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten'";
+		parameter<string> Sloop_NieuweNatuur_Sloopkosten                            := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanNieuweNatuur/Sloopkosten'";
+		parameter<string> Sloop_NieuweNatuur_Uitkoopkosten_NCW                      := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_NCW'";
+		parameter<string> Sloop_NieuweNatuur_Sloopkosten_NCW                        := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanNieuweNatuur/Sloopkosten_NCW'";
+		parameter<string> Sloop_WaterbergingVeen_Woningen                           := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanWaterbergingVeen/GesloopteWoningen'";
+		parameter<string> Sloop_WaterbergingVeen_Banen                              := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanWaterbergingVeen/GesloopteBanen'";
+		parameter<string> Sloop_WaterbergingVeen_Uitkoopkosten                      := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten'";
+		parameter<string> Sloop_WaterbergingVeen_Sloopkosten                        := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanWaterbergingVeen/Sloopkosten'";
+		parameter<string> Sloop_WaterbergingVeen_Uitkoopkosten_NCW                  := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_NCW'";
+		parameter<string> Sloop_WaterbergingVeen_Sloopkosten_NCW                    := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_NCW'";
+		parameter<string> Sloop_OverigeBouwstenen_Woningen                          := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanOverigeBouwstenen/GesloopteWoningen'";
+		parameter<string> Sloop_OverigeBouwstenen_Banen                             := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanOverigeBouwstenen/GesloopteBanen'";
+		parameter<string> Sloop_OverigeBouwstenen_Uitkoopkosten                     := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten'";
+		parameter<string> Sloop_OverigeBouwstenen_Sloopkosten                       := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten'";
+		parameter<string> Sloop_OverigeBouwstenen_Uitkoopkosten_NCW                 := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_NCW'";
+		parameter<string> Sloop_OverigeBouwstenen_Sloopkosten_NCW                   := 'Ready', ExplicitSuppliers = "=Jaarpad+'SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_NCW'";
+
+		// --- tabellen ---
+		// De tabellen die over alle domeinen tegelijk gaan: de indicatorentabel landsdekkend en per regio, en de claimrealisatie per allocatieniveau.
+		parameter<string> Indicatoren_PerIndeling                                   := 'Ready', ExplicitSuppliers = "=Exportpad+'Tabellen/PerIndeling/Tabel'";
+		parameter<string> Indicatoren_PerNederland                                  := 'Ready', ExplicitSuppliers = "=Exportpad+'Tabellen/PerNederland/Tabel'";
+		parameter<string> ClaimRealisatie                                           := 'Ready'
+		, ExplicitSuppliers = "=AsList(Exportpad+'Tabellen/ClaimRealisatie_PerNiveau/'+Tabellen/ClaimNiveau/values+'/Tabel', ';')+';'+Exportpad+'Tabellen/ClaimRealisatie_PerNiveau/Nederland/Tabel'"
+		, Descr = "De claimtabellen van alle niveaus in een keer. Welke niveaus dat zijn hangt af van Tabellen/ClaimNiveau, dus dit is de enige regel hier die niet op een vast aantal bestanden staat.";
+
+		container Themas
+		: Descr = "Een domein in een aanroep. Handig wanneer een levering op een enkel onderwerp moet worden bijgedraaid, bijvoorbeeld nadat er aan de koolstofkant iets is veranderd: dan hoeft niet de hele export over.
+
+				Generate_Alles hieronder noemt bewust de items zelf en niet deze negen, zodat de ketting van leveranciers een stap diep blijft. Deze parameters zijn een tweede ingang op dezelfde items en geen tussenlaag."
+		{
+			parameter<string> Grondgebruik := 'Ready', ExplicitSuppliers = "Landgebruikskaart;Landgebruikskaart_bij_tov_PrevYear;Landgebruikskaart_af_tov_PrevYear;Verstedelijking;VerstedelijkingInABCD;Landgebruik_Areaal;LandgebruikNL2120_Areaal;LandgebruikskaartNL2120";
+			parameter<string> Wonen        := 'Ready', ExplicitSuppliers = "Dichtheid_Wonen;PandFootprint_Wonen;Bouwwijze_Areaal;Woningwaarde_Nieuwbouw;Woningwaarde_Nieuwbouw_NCW;KostenWoningbouw_Bouwkosten;KostenWoningbouw_Bouwkosten_NCW;KostenWoningbouw_MeerkostenBouwwijze;KostenWoningbouw_Bouwwijze;KostenWoningbouw_Regulier;KostenWoningbouw_Alternatief;KostenWoningbouw_MeerkostenBodemdaling;KostenWoningbouw_MeerkostenBodemdaling_NCW;KostenWoningbouw_BeheerEnOnderhoud;KostenWoningbouw_Controle";
+			parameter<string> Werken       := 'Ready', ExplicitSuppliers = "Dichtheid_Werken_Pandfootprint_ha;Dichtheid_Werken_Banen_m2;PandFootprint_Werken;KostenWerklocaties_Controle;Bereikbaarheid_Banen";
+			parameter<string> Water        := 'Ready', ExplicitSuppliers = "Verharding;Piekbuiberging_Ongedekt;Piekbuiberging_Gedekt;Piekbuiberging_Dekkingsgraad;Overstromingsschade_Hoofdwatersysteem_Binnendijks;Overstromingsschade_Hoofdwatersysteem_Buitendijks;Overstromingsschade_Regionaalwatersysteem_Binnendijks;WaterbergingVeen;Overstromingsschade_Hoofdwatersysteem_Binnendijks_NCW;Overstromingsschade_Hoofdwatersysteem_Buitendijks_NCW;Overstromingsschade_Regionaalwatersysteem_Binnendijks_NCW";
+			parameter<string> Natuur       := 'Ready', ExplicitSuppliers = "BT_Exogeen;BT_Exogeen_Areaal;NieuweNatuur;VerdwenenNatuur;BereikbaarheidGroen_BBG;BereikbaarheidGroen_Fractie;WaardeNabijheidGroen_Woningen;WaardeNabijheidGroen_BestaandeWoningen;WaardeNabijheidGroen_NieuwbouwWoningen;WaardeNabijheidGroen_Woningen_NCW;WaardeNabijheidGroen_BestaandeWoningen_NCW;WaardeNabijheidGroen_NieuwbouwWoningen_NCW;SterfteAfname_PerPeriode;SterfteAfname_Cumulatief";
+			parameter<string> Landbouw     := 'Ready', ExplicitSuppliers = "VerstedelijkingOpVruchtbareLandbouwgronden;NieuweNatuurOpVruchtbareLandbouwgronden;WaterbergingVeenOpVruchtbareLandbouwgronden;VerdwenenLandbouw;VerdwenenVruchtbareLandbouw";
+			parameter<string> Koolstof     := 'Ready', ExplicitSuppliers = "CO2Stock_Zichtjaar;CO2Flow_Zichtjaar;CO2Flow_TovBasisjaar;CO2Ongedekt_Cumulatief;SOMERS_CO2_Minimum;SOMERS_CO2_Mediaan;SOMERS_CO2_Maximum";
+			parameter<string> Sloop        := 'Ready', ExplicitSuppliers = "Sloop_NieuweNatuur_Woningen;Sloop_NieuweNatuur_Banen;Sloop_NieuweNatuur_Uitkoopkosten;Sloop_NieuweNatuur_Sloopkosten;Sloop_NieuweNatuur_Uitkoopkosten_NCW;Sloop_NieuweNatuur_Sloopkosten_NCW;Sloop_WaterbergingVeen_Woningen;Sloop_WaterbergingVeen_Banen;Sloop_WaterbergingVeen_Uitkoopkosten;Sloop_WaterbergingVeen_Sloopkosten;Sloop_WaterbergingVeen_Uitkoopkosten_NCW;Sloop_WaterbergingVeen_Sloopkosten_NCW;Sloop_OverigeBouwstenen_Woningen;Sloop_OverigeBouwstenen_Banen;Sloop_OverigeBouwstenen_Uitkoopkosten;Sloop_OverigeBouwstenen_Sloopkosten;Sloop_OverigeBouwstenen_Uitkoopkosten_NCW;Sloop_OverigeBouwstenen_Sloopkosten_NCW";
+			parameter<string> Tabellen     := 'Ready', ExplicitSuppliers = "Indicatoren_PerIndeling;Indicatoren_PerNederland;ClaimRealisatie";
+		}
+
+		parameter<string> Alles_lijst :=
+				  'Landgebruikskaart'
+				+ ';Landgebruikskaart_bij_tov_PrevYear'
+				+ ';Landgebruikskaart_af_tov_PrevYear'
+				+ ';Verstedelijking'
+				+ ';VerstedelijkingInABCD'
+				+ ';Landgebruik_Areaal'
+				+ ';LandgebruikNL2120_Areaal'
+				+ ';LandgebruikskaartNL2120'
+				+ ';Dichtheid_Wonen'
+				+ ';PandFootprint_Wonen'
+				+ ';Bouwwijze_Areaal'
+				+ ';Woningwaarde_Nieuwbouw'
+				+ ';Woningwaarde_Nieuwbouw_NCW'
+				+ ';KostenWoningbouw_Bouwkosten'
+				+ ';KostenWoningbouw_Bouwkosten_NCW'
+				+ ';KostenWoningbouw_MeerkostenBouwwijze'
+				+ ';KostenWoningbouw_Bouwwijze'
+				+ ';KostenWoningbouw_Regulier'
+				+ ';KostenWoningbouw_Alternatief'
+				+ ';KostenWoningbouw_MeerkostenBodemdaling'
+				+ ';KostenWoningbouw_MeerkostenBodemdaling_NCW'
+				+ ';KostenWoningbouw_BeheerEnOnderhoud'
+				+ ';KostenWoningbouw_Controle'
+				+ ';Dichtheid_Werken_Pandfootprint_ha'
+				+ ';Dichtheid_Werken_Banen_m2'
+				+ ';PandFootprint_Werken'
+				+ ';KostenWerklocaties_Controle'
+				+ ';Bereikbaarheid_Banen'
+				+ ';Verharding'
+				+ ';Piekbuiberging_Ongedekt'
+				+ ';Piekbuiberging_Gedekt'
+				+ ';Piekbuiberging_Dekkingsgraad'
+				+ ';Overstromingsschade_Hoofdwatersysteem_Binnendijks'
+				+ ';Overstromingsschade_Hoofdwatersysteem_Buitendijks'
+				+ ';Overstromingsschade_Regionaalwatersysteem_Binnendijks'
+				+ ';WaterbergingVeen'
+				+ ';Overstromingsschade_Hoofdwatersysteem_Binnendijks_NCW'
+				+ ';Overstromingsschade_Hoofdwatersysteem_Buitendijks_NCW'
+				+ ';Overstromingsschade_Regionaalwatersysteem_Binnendijks_NCW'
+				+ ';BT_Exogeen'
+				+ ';BT_Exogeen_Areaal'
+				+ ';NieuweNatuur'
+				+ ';VerdwenenNatuur'
+				+ ';BereikbaarheidGroen_BBG'
+				+ ';BereikbaarheidGroen_Fractie'
+				+ ';WaardeNabijheidGroen_Woningen'
+				+ ';WaardeNabijheidGroen_BestaandeWoningen'
+				+ ';WaardeNabijheidGroen_NieuwbouwWoningen'
+				+ ';WaardeNabijheidGroen_Woningen_NCW'
+				+ ';WaardeNabijheidGroen_BestaandeWoningen_NCW'
+				+ ';WaardeNabijheidGroen_NieuwbouwWoningen_NCW'
+				+ ';SterfteAfname_PerPeriode'
+				+ ';SterfteAfname_Cumulatief'
+				+ ';VerstedelijkingOpVruchtbareLandbouwgronden'
+				+ ';NieuweNatuurOpVruchtbareLandbouwgronden'
+				+ ';WaterbergingVeenOpVruchtbareLandbouwgronden'
+				+ ';VerdwenenLandbouw'
+				+ ';VerdwenenVruchtbareLandbouw'
+				+ ';CO2Stock_Zichtjaar'
+				+ ';CO2Flow_Zichtjaar'
+				+ ';CO2Flow_TovBasisjaar'
+				+ ';CO2Ongedekt_Cumulatief'
+				+ ';SOMERS_CO2_Minimum'
+				+ ';SOMERS_CO2_Mediaan'
+				+ ';SOMERS_CO2_Maximum'
+				+ ';Sloop_NieuweNatuur_Woningen'
+				+ ';Sloop_NieuweNatuur_Banen'
+				+ ';Sloop_NieuweNatuur_Uitkoopkosten'
+				+ ';Sloop_NieuweNatuur_Sloopkosten'
+				+ ';Sloop_NieuweNatuur_Uitkoopkosten_NCW'
+				+ ';Sloop_NieuweNatuur_Sloopkosten_NCW'
+				+ ';Sloop_WaterbergingVeen_Woningen'
+				+ ';Sloop_WaterbergingVeen_Banen'
+				+ ';Sloop_WaterbergingVeen_Uitkoopkosten'
+				+ ';Sloop_WaterbergingVeen_Sloopkosten'
+				+ ';Sloop_WaterbergingVeen_Uitkoopkosten_NCW'
+				+ ';Sloop_WaterbergingVeen_Sloopkosten_NCW'
+				+ ';Sloop_OverigeBouwstenen_Woningen'
+				+ ';Sloop_OverigeBouwstenen_Banen'
+				+ ';Sloop_OverigeBouwstenen_Uitkoopkosten'
+				+ ';Sloop_OverigeBouwstenen_Sloopkosten'
+				+ ';Sloop_OverigeBouwstenen_Uitkoopkosten_NCW'
+				+ ';Sloop_OverigeBouwstenen_Sloopkosten_NCW'
+				+ ';Indicatoren_PerIndeling'
+				+ ';Indicatoren_PerNederland'
+				+ ';ClaimRealisatie'
+		, Descr = "De namen hierboven als een enkele string, zodat Generate_Alles hem alleen nog hoeft te noemen. Staat apart omdat een string-parameter in seconden op te vragen is: wie wil weten wat deze export schrijft vraagt dit item op, en hoeft daar geen bestand voor te laten rekenen.";
+
+		parameter<string> Generate_Alles := 'Ready', ExplicitSuppliers = "=Alles_lijst"
+		, Descr = "Alle uitvoerbestanden van deze export in een aanroep. Dit is wat Generate_Indicatoren hieronder opvraagt, en daarmee wat RunIndicatoren.ps1 en RunZichtjaren.cmd draaien.";
+
+		container AlleZichtjaren
+		: Descr = "De twee triggers die niet over ExportZichtjaar gaan maar over alle zichtjaren tegelijk. Ze staan bewust buiten Generate_Alles: een gewone indicatorenrun schrijft een zichtjaar, en deze twee schrijven de hele reeks. Met de hand aan te roepen wanneer de koolstof- of veenkaarten van alle zichtjaren opnieuw moeten."
+		{
+			parameter<string> CarbonStorageSequestration           := 'Ready', ExplicitSuppliers = "=AsList(Classifications/Time/Zichtjaar/name+'/CarbonStorageSequestration/Write_CO2Stock_Zichtjaar;'+Classifications/Time/Zichtjaar/name+'/CarbonStorageSequestration/Write_CO2Flow_Zichtjaar;'+Classifications/Time/Zichtjaar/name+'/CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar;'+Classifications/Time/Zichtjaar/name+'/CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief', ';')"
+			, Descr = "Trekt alle vier de koolstofkaarten voor alle zichtjaren. De vierde, Write_CO2Ongedekt_Cumulatief, is er sinds #733 bij gekomen en hoort altijd samen met Write_CO2Flow_TovBasisjaar getrokken te worden: zonder die kaart is niet te zien hoeveel SOMERS-uitstoot buiten het saldo is gebleven. Hier stond ooit een verwijzing naar Write_Result_SA, en dat item bestaat niet onder CarbonStorageSequestration, zodat deze trigger niets deed.";
+			parameter<string> SOMERS_CO2_laagveen_Emissies_Mediaan := 'Ready', ExplicitSuppliers = "=AsList(Classifications/Time/Zichtjaar/name+'/SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA', ';')";
+		}
 	}
+
 
 	container Impl
 	{
@@ -180,127 +431,99 @@ container Export : using = "Classifications/Actor;SourceData"
 				// , rdc_25m
 				// , Eur_m2
 			// );
+		
+		// Verandering van het areaal per klasse. Voedt de kolom Verandering van de tabel Landgebruik_Areaal
+		// en is dus een tussenberekening van de levering, geen diagnosegetal (#779).
+		attribute<Ha> Verandering_Areaal_perLUMT (LU_ModelType) := Zichtjaar_Areaal_perLUMT - Basisjaar_Areaal_perLUMT;
 	}
-	
-	// Veranderingen totaal areaal alle klassen (LUmodeltypes)
-	attribute<Ha>     Verandering_Areaal_perLUMT      (LU_ModelType) := impl/Zichtjaar_Areaal_perLUMT - impl/Basisjaar_Areaal_perLUMT;
-	
-	// Veranderingen totaal areaal sector landbouw 
-	parameter<Ha>     Verandering_Areaal_Landbouw                    := impl/Zichtjaar_Areaal_Landbouw - impl/Basisjaar_Areaal_Landbouw;
-	
-	// Verandering netto opbrengsten in euro’s (bedrijfwinst) tussen basisjaar en zichtjaar
-	parameter<Eur_ha> Verandering_NettoOpbrengst_gemid_perHa         := impl/Zichtjaar_NettoOpbrengsten_perLUMT/Gemiddeld_perHa - impl/Basisjaar_NettoOpbrengsten_perLUMT/Gemiddeld_perHa;
-	parameter<Eur>    Verandering_NettoOpbrengst_Totaal_Studiegebied := impl/Zichtjaar_NettoOpbrengsten_perLUMT/Totaal_Studiegebied - impl/Basisjaar_NettoOpbrengsten_perLUMT/Totaal_Studiegebied;
-	
-	// CO2 emissies, mton en eur, via prijs
-	parameter<ton_jaarlijks>    Basisjaar_CO2_Uitstoot     := ='sum(ThisCasus/Basisjaar/SOMERS_CO2_laagveen/Emissies/Mediaan/Jaarlijks)[ton_jaarlijks]';
-	parameter<ton>              Cumulatief_CO2_Uitstoot    := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Mediaan/Cumulatief_sindsStartyear)[ton]';
-	parameter<Eur>              Cumulatief_CO2_kosten_laag := Cumulatief_CO2_Uitstoot * /ModelParameters/Landbouw/CO2_prijs_minimum; 
-	parameter<Eur>              Cumulatief_CO2_kosten_hoog := Cumulatief_CO2_Uitstoot * /ModelParameters/Landbouw/CO2_prijs_maximum;
 
-	container Transitie_Matrix := 
-		for_each_nedv(
-			Actor/LU_ModelType/nameshort
-			, 'impl/LU_ModelType_Transities/count[
-													value(
-														uint32(id(Actor/LU_ModelType)) * uint32(#Actor/LU_ModelType) + '+string(id(Actor/LU_ModelType))+'
-													, impl/LU_ModelType_Transities
-													)
-												][uint8]'
-			, Actor/LU_ModelType
-			, uint8
-		)
+	
+	container Diagnose
+	: Descr = "Getallen die niet de deur uit gaan: geen enkel item hieronder heeft een StorageName, en geen enkel item hieronder staat in generates (#779). Ze zijn er om naar te kijken, in de GUI of met een losse aanroep. Tot september 2026 stonden ze zonder markering tussen de exportitems in, zodat uit dit bestand niet was af te lezen wat levering was en wat gereedschap.
+
+				De transitiematrix hoort hier het nadrukkelijkst thuis: die telt cellen per combinatie van beginklasse en eindklasse, is een kruistabel van klasse bij klasse en is bedoeld om te lezen, niet om te leveren. Wat er wel per klasse geleverd wordt is het areaal, en dat staat als tabel Landgebruik_Areaal onderaan dit bestand."
 	{
-		attribute<string> from  (Actor/LU_ModelType) := Actor/LU_ModelType/nameshort;
+		// Veranderingen totaal areaal sector landbouw 
+		parameter<Ha>     Verandering_Areaal_Landbouw                    := impl/Zichtjaar_Areaal_Landbouw - impl/Basisjaar_Areaal_Landbouw;
+	
+		// Verandering netto opbrengsten in euro’s (bedrijfwinst) tussen basisjaar en zichtjaar
+		parameter<Eur_ha> Verandering_NettoOpbrengst_gemid_perHa         := impl/Zichtjaar_NettoOpbrengsten_perLUMT/Gemiddeld_perHa - impl/Basisjaar_NettoOpbrengsten_perLUMT/Gemiddeld_perHa;
+		parameter<Eur>    Verandering_NettoOpbrengst_Totaal_Studiegebied := impl/Zichtjaar_NettoOpbrengsten_perLUMT/Totaal_Studiegebied - impl/Basisjaar_NettoOpbrengsten_perLUMT/Totaal_Studiegebied;
+	
+		// CO2 emissies, mton en eur, via prijs
+		parameter<ton_jaarlijks>    Basisjaar_CO2_Uitstoot     := ='sum(ThisCasus/Basisjaar/SOMERS_CO2_laagveen/Emissies/Mediaan/Jaarlijks)[ton_jaarlijks]';
+		parameter<ton>              Cumulatief_CO2_Uitstoot    := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Mediaan/Cumulatief_sindsStartyear)[ton]';
+		parameter<Eur>              Cumulatief_CO2_kosten_laag := Cumulatief_CO2_Uitstoot * /ModelParameters/Landbouw/CO2_prijs_minimum; 
+		parameter<Eur>              Cumulatief_CO2_kosten_hoog := Cumulatief_CO2_Uitstoot * /ModelParameters/Landbouw/CO2_prijs_maximum;
+
+		container Transitie_Matrix := 
+			for_each_nedv(
+				Actor/LU_ModelType/nameshort
+				, 'impl/LU_ModelType_Transities/count[
+														value(
+															uint32(id(Actor/LU_ModelType)) * uint32(#Actor/LU_ModelType) + '+string(id(Actor/LU_ModelType))+'
+														, impl/LU_ModelType_Transities
+														)
+													][uint8]'
+				, Actor/LU_ModelType
+				, uint8
+			)
+		{
+			attribute<string> from  (Actor/LU_ModelType) := Actor/LU_ModelType/nameshort;
+		}
+	
+		container mean_NPV_obv_LUbasisjaar_perLBK :=
+			for_each_nedv(
+				LandbouwKlasses/name
+				, 'mean(impl/Basisjaar_NPV_perLUMT/Landbouw_'+LandbouwKlasses/name+')'
+				, void
+				, Eur_m2
+			);
+		
+		container mean_NPV_obv_LU_Zichtjaar_perLBK_zonderAugm :=
+			for_each_nedv(
+				LandbouwKlasses/name
+				, 'mean(impl/Zichtjaar_NPV_perLUMT/Landbouw_'+LandbouwKlasses/name+')'
+				, void
+				, Eur_m2
+			);
+	
+		// container mean_NPV_obv_LU_Zichtjaar_perLBK_Augmented :=
+			// for_each_nedv(
+				// LandbouwKlasses/name
+				// , 'mean(impl/Zichtjaar_NPV_Augmented_perLUMT/Landbouw_'+LandbouwKlasses/name+')'
+				// , void
+				// , Eur_m2
+			// );
+	
+		// container Bereikbaarheid_GroenWater 
+		// {
+			// parameter<String> Param_Afstand := 'Tot300m'; //opties: Tot500m Tot1000m
+			// parameter<String> Param_Type    := 'Aanwezig'; //opties: Aanwezig Beschikbaar Bereikbaar
+		
+			// unit<UInt8> GroenWaterK := ThisCasus/Zichtjaren/Basisjaar/BereikbaarheidGroen/GroenWaterK;
+		
+			// container Basisjaar := 
+				// for_each_nedv(
+					// GroenWaterK/name
+					// , 'ThisCasus/Zichtjaren/Basisjaar/BereikbaarheidGroen/Afstanden/'+Param_Afstand+'/AggrGroenKlassen/'+GroenWaterK/name+'/Indicatoren/'+Param_Type+'/Groen/Aggregated/PerWoning'
+					// , void
+					// , m2_Woning
+				// );
+			// container Zichtjaar := 
+				// for_each_nedv(
+					// GroenWaterK/name
+					// , 'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/Afstanden/'+Param_Afstand+'/AggrGroenKlassen/'+GroenWaterK/name+'/Indicatoren/'+Param_Type+'/Groen/Aggregated/PerWoning'
+					// , void
+					// , m2_Woning
+				// );
+		// }
 	}
+
 	
-	container mean_NPV_obv_LUbasisjaar_perLBK :=
-		for_each_nedv(
-			LandbouwKlasses/name
-			, 'mean(impl/Basisjaar_NPV_perLUMT/Landbouw_'+LandbouwKlasses/name+')'
-			, void
-			, Eur_m2
-		);
-		
-	container mean_NPV_obv_LU_Zichtjaar_perLBK_zonderAugm :=
-		for_each_nedv(
-			LandbouwKlasses/name
-			, 'mean(impl/Zichtjaar_NPV_perLUMT/Landbouw_'+LandbouwKlasses/name+')'
-			, void
-			, Eur_m2
-		);
-	
-	// container mean_NPV_obv_LU_Zichtjaar_perLBK_Augmented :=
-		// for_each_nedv(
-			// LandbouwKlasses/name
-			// , 'mean(impl/Zichtjaar_NPV_Augmented_perLUMT/Landbouw_'+LandbouwKlasses/name+')'
-			// , void
-			// , Eur_m2
-		// );
-	
-	// container Bereikbaarheid_GroenWater 
-	// {
-		// parameter<String> Param_Afstand := 'Tot300m'; //opties: Tot500m Tot1000m
-		// parameter<String> Param_Type    := 'Aanwezig'; //opties: Aanwezig Beschikbaar Bereikbaar
-		
-		// unit<UInt8> GroenWaterK := ThisCasus/Zichtjaren/Basisjaar/BereikbaarheidGroen/GroenWaterK;
-		
-		// container Basisjaar := 
-			// for_each_nedv(
-				// GroenWaterK/name
-				// , 'ThisCasus/Zichtjaren/Basisjaar/BereikbaarheidGroen/Afstanden/'+Param_Afstand+'/AggrGroenKlassen/'+GroenWaterK/name+'/Indicatoren/'+Param_Type+'/Groen/Aggregated/PerWoning'
-				// , void
-				// , m2_Woning
-			// );
-		// container Zichtjaar := 
-			// for_each_nedv(
-				// GroenWaterK/name
-				// , 'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/Afstanden/'+Param_Afstand+'/AggrGroenKlassen/'+GroenWaterK/name+'/Indicatoren/'+Param_Type+'/Groen/Aggregated/PerWoning'
-				// , void
-				// , m2_Woning
-			// );
-	// }
-	
-	//export attributen ProvNH
-	attribute<Woning_ha>                              Dichtheid_Wonen                    (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Wonen/Per_AdminDomain'                  , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Dichtheid_Wonen')", StorageType = "gdalwrite.grid";
-	attribute<m2_ha>                                  Dichtheid_Werken_Pandfootprint_ha  (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/PandFootprint_ha/Per_AdminDomain', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Dichtheid_Werken_Pandfootprint_ha')", StorageType = "gdalwrite.grid";
-	attribute<job_m2PandFootprint>                    Dichtheid_Werken_Banen_m2          (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/Banen_m2/Per_AdminDomain'        , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Dichtheid_Werken_Banen_m2')", StorageType = "gdalwrite.grid";
-	attribute<float32>                                Verharding                         (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Verharding/Result'                                , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Verharding')", StorageType = "gdalwrite.grid";
-	// De twee piekbuikaarten liggen als enige export niet op het AdminDomain van 25 meter maar op het blok
-	// van Basisjaar/Piekbuiberging/Grid_ref, nu 500 meter. Vierhonderd cellen van de buurkaarten passen in
-	// een cel hiervan, dus de blokmaat hoort in de bestandsnaam; zonder dat wordt zo'n kaart naast de andere
-	// gelegd en per cel gecombineerd, en dat levert onzin op. Zie #720.
-	attribute<Meter3>                                 Piekbuiberging_Ongedekt (ThisCasus/Basisjaar/Piekbuiberging/Grid) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/PerGrid/Ongedekt', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Piekbuiberging_Ongedekt_m3_per'+ThisCasus/Basisjaar/Piekbuiberging/Grid_ref)", StorageType = "gdalwrite.grid";
-	attribute<Meter3>                                 Piekbuiberging_Gedekt   (ThisCasus/Basisjaar/Piekbuiberging/Grid) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/PerGrid/Gedekt'  , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Piekbuiberging_Gedekt_m3_per'+ThisCasus/Basisjaar/Piekbuiberging/Grid_ref)"  , StorageType = "gdalwrite.grid", Descr = "De keerzijde van Ongedekt: waar de opgave wel wordt gedekt. Stond tot #720 als StorageName op PerGrid/Afname in de indicator zelf, maar dat item kwam in geen enkele ExplicitSuppliers voor, dus het bestand is nooit geschreven. Nu een gewone rasterexport naast de andere.";
-	attribute<float32>                                Piekbuiberging_Dekkingsgraad (ThisCasus/Basisjaar/Piekbuiberging/Grid) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/PerGrid/Dekkingsgraad', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Piekbuiberging_Dekkingsgraad_per'+ThisCasus/Basisjaar/Piekbuiberging/Grid_ref)", StorageType = "gdalwrite.grid", Descr = "Gedekt gedeeld door de opgave, per blok. Gevraagd als kaartbeeld bij de oplevering van 3 september; de tabelkolom bestond al, de kaart niet. Ligt op hetzelfde blok als de twee kaarten hierboven. Lees hem niet los van Dekkingsgraad_Ongeklemd in de tabel: deze kaart is de ondergrens van de bandbreedte, waarbij berging alleen zijn eigen blok bedient. Zie #720 en #741.";
-	// De voetafdruk van wonen en van werken in vierkante meters per cel. Beide werden al berekend in
-	// Templates/Indicatoren.dms maar stonden in geen enkele export; team Veen vraagt er expliciet om
-	// voor de bodemdalingskant.
-	attribute<meter2>                                 PandFootprint_Wonen                (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Stand/PandFootprint_Wonen'                          , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'PandFootprint_Wonen')", StorageType = "gdalwrite.grid";
-	attribute<meter2>                                 PandFootprint_Werken               (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Stand/PandFootprint_Werken'                         , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'PandFootprint_Werken')", StorageType = "gdalwrite.grid";
-	// De natuurbouwstenen zoals de landschapsteams ze hebben aangeleverd, voor ze in de landgebruikskaart
-	// worden samengevoegd met de bestaande natuur. Dit is dus wat de variant oplegt en niet wat er in het
-	// basisjaar al stond; in het basisjaar is de kaart daarom leeg.
-	attribute</Classifications/Grondgebruik/INL_Beheertype> BT_Exogeen                         (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/LandgebruikskaartNL2120/BT_Exogeen'                  , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'BT_Exogeen')", StorageType = "gdalwrite.grid";
-	attribute<Eur>                                    Overstromingsschade_Hoofdwatersysteem_Binnendijks     (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks'      , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Overstromingsschade_Hoofdwatersysteem_Binnendijks')", StorageType = "gdalwrite.grid";
-	attribute<Eur>                                    Overstromingsschade_Hoofdwatersysteem_Buitendijks     (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks'      , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Overstromingsschade_Hoofdwatersysteem_Buitendijks')", StorageType = "gdalwrite.grid";
-	attribute<Eur>                                    Overstromingsschade_Regionaalwatersysteem_Binnendijks (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks'      , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Overstromingsschade_Regionaalwatersysteem_Binnendijks')", StorageType = "gdalwrite.grid";
-	attribute<m2_woning>                              BereikbaarheidGroen_BBG            (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/obv_BBG/PerRegios/Nationaal/Afstanden/Tot300m/AggrGroenKlassen/TotaalExAgrarisch/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'BereikbaarheidGroen')", StorageType = "gdalwrite.grid";
-	attribute<meter2>                                 BereikbaarheidGroen_Fractie        (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/obv_BBG/PerRegios/Nationaal/Afstanden/Tot300m/AggrGroenKlassen/Fractie/Indicatoren/Groenaanbod/Indicator', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'BereikbaarheidGroen_Fractie')", StorageType = "gdalwrite.grid", Descr = "De fractiebenadering uit #717: het groene deel van elke cel telt, inclusief het groen en water binnen ontwikkelpakketten, zonder de parkgroendrempels. De klassevariant hierboven blijft bestaan maar gaat op verzoek van Deltares niet mee in leveringen zolang #717 open staat.";
-	attribute<LU_ModelType>                           Landgebruikskaart                  (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Landgebruikskaart/Result_SA'                      , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Landgebruikskaart')", StorageType = "gdalwrite.grid";
-	attribute<LU_ModelType>                           Landgebruikskaart_bij_tov_PrevYear (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Landgebruikskaart/Result_bij_tov_PrevYear'        , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Landgebruikskaart_bij_tov_PrevYear')", StorageType = "gdalwrite.grid";
-	attribute<LU_ModelType>                           Landgebruikskaart_af_tov_PrevYear  (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Landgebruikskaart/Result_af_tov_PrevYear'         , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Landgebruikskaart_af_tov_PrevYear')", StorageType = "gdalwrite.grid";
-	attribute<Grondgebruik/ABCD/ABCD_subK>            VerstedelijkingInABCD              (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerstedelijkingInABCD'   , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'VerstedelijkingInABCD')", StorageType = "gdalwrite.grid";
-	attribute<bool>                                    Verstedelijking                            (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/Verstedelijking', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Verstedelijking')", StorageType = "tif";
-	attribute<bool>                                    VerstedelijkingOpVruchtbareLandbouwgronden (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'VerstedelijkingOpVruchtbareLandbouwgronden')", StorageType = "tif";
-	attribute<bool>                                    NieuweNatuur                               (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/NieuweNatuur', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'NieuweNatuur')", StorageType = "tif";
-	attribute<bool>                                    NieuweNatuurOpVruchtbareLandbouwgronden    (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'NieuweNatuurOpVruchtbareLandbouwgronden')", StorageType = "tif";
-	attribute<bool>                                    VerdwenenNatuur                            (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenNatuur', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'VerdwenenNatuur')", StorageType = "tif";
-	attribute<bool>                                    WaterbergingVeen                           (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/WaterbergingVeen', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'WaterbergingVeen')", StorageType = "tif";
-	attribute<bool>                                    WaterbergingVeenOpVruchtbareLandbouwgronden (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'WaterbergingVeenOpVruchtbareLandbouwgronden')", StorageType = "tif";
-	
-	parameter<string> Generate_Indicatoren := 'Ready'
-	, ExplicitSuppliers = "='PerIndeling/Tabel;PerNederland/Tabel;Landgebruik_Areaal;LandgebruikNL2120_Areaal;BT_Exogeen_Areaal;Bouwwijze_Areaal;Dichtheid_Wonen;Dichtheid_Werken_Pandfootprint_ha;Dichtheid_Werken_Banen_m2;PandFootprint_Wonen;PandFootprint_Werken;BT_Exogeen;Verharding;Piekbuiberging_Ongedekt;Piekbuiberging_Gedekt;Piekbuiberging_Dekkingsgraad;Overstromingsschade_Hoofdwatersysteem_Binnendijks;Overstromingsschade_Hoofdwatersysteem_Buitendijks;Overstromingsschade_Regionaalwatersysteem_Binnendijks;BereikbaarheidGroen_BBG;BereikbaarheidGroen_Fractie;Landgebruikskaart;Landgebruikskaart_bij_tov_PrevYear;Landgebruikskaart_af_tov_PrevYear;VerstedelijkingInABCD;Verstedelijking;VerstedelijkingOpVruchtbareLandbouwgronden;NieuweNatuur;NieuweNatuurOpVruchtbareLandbouwgronden;VerdwenenNatuur;WaterbergingVeen;WaterbergingVeenOpVruchtbareLandbouwgronden' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Sloopkosten' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/GesloopteWoningen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Sloopkosten' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/GesloopteWoningen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Woningwaarde/Nieuwbouw' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnamePerPeriode' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Stock_Zichtjaar' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Flow_Zichtjaar' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Minimum/Write_Result_SA' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Maximum/Write_Result_SA' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/LandgebruikskaartNL2120/Write_Result_SA' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenLandbouw' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenVruchtbareLandbouw' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Sloopkosten_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Woningwaarde/Nieuwbouw_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/GesloopteBanen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/GesloopteBanen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/GesloopteWoningen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/GesloopteBanen' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/Alternatief' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/Regulier' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/MeerkostenBodemdaling' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/BeheerEnOnderhoud' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/MeerkostenBodemdaling_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/Bouwwijze' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/Bouwkosten' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/Bouwkosten_NCW' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/MeerkostenBouwwijze' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/Controle' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWerklocaties/Controle' + ';ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Bereikbaarheid_Banen/Result' + ';' + AsList('ClaimRealisatie_PerNiveau/'+ClaimNiveau/values+'/Tabel', ';') + ';ClaimRealisatie_PerNiveau/Nederland/Tabel'";
+	parameter<string> Generate_Indicatoren := generates/Generate_Alles
+	, Descr = "Alias van generates/Generate_Alles, zodat batch/RunIndicatoren.ps1 en batch/RunZichtjaren.cmd ongewijzigd blijven werken (#779). Hier stond de lijst zelf, als een enkele string met alle leveranciers achter elkaar; die staat nu regel voor regel in generates bovenaan dit bestand, met een naam per uitvoerbestand, zodat de export ook per bestand is aan te roepen.";
+
 	
 	parameter<string> AllocatieFileName := replace(
 		ModelParameters/Advanced/AllocatieFileName
@@ -309,303 +532,390 @@ container Export : using = "Classifications/Actor;SourceData"
 		, '@SA@', ModelParameters/StudyArea
 		, '@SS@', string(#/Classifications/Actor/Sector/xSubsector)
 	);
+
+	container Grondgebruik
+	: Descr = "Wat een cel is en wat er sinds het basisjaar aan veranderd is (#779). De landgebruikskaart in twee smaken, de twee verschilkaarten met het vorige zichtjaar, de verstedelijking, en de arealen per klasse als tabel.
+
+				De NL2120-kaart zelf staat niet hier maar in Templates/Indicatoren/Landgebruikskaart, en gaat via generates/LandgebruikskaartNL2120 mee. De tabel met haar arealen staat hier wel, want die wordt hier gemaakt."
+	{
+		attribute<LU_ModelType>                           Landgebruikskaart                  (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Landgebruikskaart/Result_SA'                      , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Landgebruikskaart')", StorageType = "gdalwrite.grid";
+		attribute<LU_ModelType>                           Landgebruikskaart_bij_tov_PrevYear (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Landgebruikskaart/Result_bij_tov_PrevYear'        , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Landgebruikskaart_bij_tov_PrevYear')", StorageType = "gdalwrite.grid";
+		attribute<LU_ModelType>                           Landgebruikskaart_af_tov_PrevYear  (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Landgebruikskaart/Result_af_tov_PrevYear'         , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Landgebruikskaart_af_tov_PrevYear')", StorageType = "gdalwrite.grid";
+		attribute<bool>                                    Verstedelijking                            (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/Verstedelijking', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Verstedelijking')", StorageType = "tif";
+		attribute</SourceData/Grondgebruik/ABCD/ABCD_subK>            VerstedelijkingInABCD              (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerstedelijkingInABCD'   , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'VerstedelijkingInABCD')", StorageType = "gdalwrite.grid"
+		, Descr = "De waarde-eenheid staat met een leidende slash omdat de container Grondgebruik waarin deze kaart sinds #779 zit, de ongekwalificeerde naam Grondgebruik afschermt: die zou dan naar deze container zelf wijzen in plaats van naar SourceData.";
+
+		unit<uint8> Landgebruik_Areaal := Actor/LU_ModelType
+		, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Landgebruik_Areaal', '.tif', '.csv')", StorageType = "gdalwrite.vect"
+		, Descr = "De tabelkant van de landgebruikskaart (#658). Die kaart is een klasse per cel en aggregeert dus niet naar een getal per regio, maar naar een areaal per klasse. Deze tabel stond wel in de boom, als Impl/Basisjaar_Areaal_perLUMT en Impl/Zichtjaar_Areaal_perLUMT, maar werd nergens weggeschreven."
+		{
+			attribute<String> Klasse      := Actor/LU_ModelType/name;
+			attribute<Ha>     Basisjaar   := Impl/Basisjaar_Areaal_perLUMT;
+			attribute<Ha>     Zichtjaar   := Impl/Zichtjaar_Areaal_perLUMT;
+			attribute<Ha>     Verandering := Impl/Verandering_Areaal_perLUMT;
+		}
+
+		unit<uint8> LandgebruikNL2120_Areaal := /Classifications/Grondgebruik/LU_NL2120
+		, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'LandgebruikNL2120_Areaal', '.tif', '.csv')", StorageType = "gdalwrite.vect"
+		, Descr = "Idem voor de NL2120-landgebruikskaart met haar 92 klassen (#633): het areaal per klasse in het zichtjaar. De kaart zelf gaat als grid mee via LandgebruikskaartNL2120/Write_Result_SA."
+		{
+			attribute<String> Klasse    := /Classifications/Grondgebruik/LU_NL2120/name;
+			attribute<Ha>     Zichtjaar := ='pcount(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/LandgebruikskaartNL2120/Write_Result_SA)[float32] * rdc_25m/NrHaPerCell';
+		}
+	}
+
+	container Wonen
+	: Descr = "De woningvoorraad: waar hij staat en hoe dicht, hoeveel vierkante meter pand er ligt, en met welke bouwwijze de nieuwbouw is neergezet (#779).
+
+				De woningwaarde en de tien kostenposten van de woningbouw staan in Templates/Indicatoren/Woningwaarde.dms en KostenWoningbouw.dms; ze horen wel bij dit domein en staan in generates onder wonen."
+	{
 	
-	unit<uint32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path
-	, Descr = "De regio-indeling waarop de indicatorentabel aggregeert, uit ModelParameters/Advanced (#658). Stond hier tot dan hard op Provincie/StudyArea. Dezelfde indeling die de indicatoren zelf voor hun Per_Regio gebruiken, zodat de kolommen hieronder allemaal over dezelfde regels gaan.";
+		attribute<Woning_ha>                              Dichtheid_Wonen                    (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Wonen/Per_AdminDomain'                  , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Dichtheid_Wonen')", StorageType = "gdalwrite.grid";
+		// De voetafdruk van wonen en van werken in vierkante meters per cel. Beide werden al berekend in
+		// Templates/Indicatoren.dms maar stonden in geen enkele export; team Veen vraagt er expliciet om
+		// voor de bodemdalingskant.
+		attribute<meter2>                                 PandFootprint_Wonen                (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Stand/PandFootprint_Wonen'                          , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'PandFootprint_Wonen')", StorageType = "gdalwrite.grid";
 
-	template RegionaleIndicatoren_T
-	: Descr = "De tabelkant van de export, als sjabloon zodat hij twee keer kan worden neergezet: een keer landsdekkend en een keer op de gekozen regio-indeling (#705).
+		unit<uint32> Bouwwijze_Areaal := /Classifications/Modellering/BouwwijzeK
+		, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Bouwwijze_Areaal', '.tif', '.csv')", StorageType = "gdalwrite.vect"
+		, Descr = "De tabelkant van de bouwwijzekaart (#763): hoeveel hectare nieuwbouw er per bouwwijze staat. Net als bij het landgebruik aggregeert een klasse per cel niet naar een getal per regio maar naar een areaal per klasse, dus staat dit los van de indicatorentabel.
 
-				De drie tekstparameters regelen waar de kolommen hun getal halen. Elke indicator rekent zelf al twee dingen uit, een waarde per regio en een landelijk totaal, en dat verschilt alleen in het achtervoegsel: X_Per_Regio tegenover X_Per_NL. Voor de landelijke tabel wordt dat landelijke totaal, een parameter zonder domein, met union_data op de enkele regel van de NL-indeling gezet; vandaar Voor en Sluit.
+					Dit is het antwoord op de vraag hoeveel er aangepast is gebouwd: de drie bodemdalingbestendige bouwwijzen zijn ophogen, funderen op palen en drijvend. Wat dat extra kost staat als KostenWoningbouw_MeerkostenBouwwijze in de indicatorentabel, en dat bedrag is nul zolang de kentallen van #505 leeg zijn.
 
-				De kolommen die zelf sommeren over Regio/Per_AdminDomain_Fijn hebben geen van dit alles nodig: die volgen vanzelf de indeling die hier wordt meegegeven."
-	{
-		parameter<String> RegioPad;
-		parameter<String> Voor;
-		parameter<String> NaamAggr;
-		parameter<String> Sluit;
-		parameter<String> AggrContainer;
-		parameter<String> GroenPadExpr;
-		parameter<String> TabelNaam;
-
-		unit<uint32> Regio := =RegioPad;
-
-		attribute<String> GroenPad (Regio) := =GroenPadExpr
-		, Descr = "Waar de bereikbaarheid van groen per regel vandaan komt. Die indicator rekent per regio een eigen gemiddelde uit en is dus niet op te tellen; voor de landsdekkende tabel wijst dit naar de instantie Nationaal, die het gemiddelde over heel Nederland neemt.";
-
-		unit<uint32> Tabel := Regio
-		, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', TabelNaam, '.tif', '.csv')", StorageType = "gdalwrite.vect"
-		, Descr = "De tabelkant van de export (#658): naast elke grid-indicator hierboven staat hier dezelfde indicator geaggregeerd naar de regio-indeling uit ModelParameters/Advanced. In de productierun staat die op NL, dus is dit een tabel van een regel met alle indicatoren naast elkaar.
-
-					Twee dingen staan er bewust niet in. Claimrealisatie hoort per allocatieregio van de betreffende sector en zit in ClaimRealisatie/Per_AllocRegio. En de landgebruikskaart is een klasse per cel; die aggregeert naar een areaal per klasse en niet naar een getal per regio, en staat als Impl/Zichtjaar_Areaal_perLUMT en Transitie_Matrix hierboven.
-
-					Een kolom die door een uitgeschakelde sector leeg blijft, zoals verblijfsrecreatie, komt als lege kolom mee. Dat is bedoeld: de kolommen liggen vast, zodat twee runs naast elkaar te leggen zijn."
+					Alleen de cellen waar sinds het basisjaar netto woningen zijn bijgekomen tellen mee, want de bouwwijze van bestaande bebouwing kent het model niet."
 		{
-			attribute<String>    Regio_name                                                      := Regio/name;
-
-			// --- dichtheid ---
-			attribute<Woning_ha> Dichtheid_Wonen                                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Wonen/'+NaamAggr+Sluit;
-			attribute<Job_ha>    Dichtheid_Werken_Banen_ha                                       := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/Banen_ha/'+NaamAggr+Sluit;
-			attribute<m2_ha>     Dichtheid_Werken_PandFootprint_ha                               := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/PandFootprint_ha/'+NaamAggr+Sluit;
-			attribute<job_m2PandFootprint> Dichtheid_Werken_Banen_m2                             := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/Banen_m2/'+NaamAggr+Sluit;
-
-			// --- verharding ---
-			attribute<float32>   Verharding                                                      := ='mean(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Verharding/Result, Regio/Per_AdminDomain_Fijn)', Descr = "Gemiddelde verharde fractie per cel over de regio, uit dezelfde samengestelde kaart die als grid wordt geexporteerd.";
-			attribute<m2_ha>     Verharding_Werken                                               := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Verharding/Werken/'+NaamAggr+Sluit;
-			attribute<m2_ha>     Verharding_Verblijfsrecreatie                                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Verharding/Verblijfsrecreatie/'+NaamAggr+Sluit;
-
-			// --- piekbuiberging ---
-			// Hoeveel van de piekbuiopgave in bestaand bebouwd gebied wordt gedekt door blauw-groene
-			// maatregelen. Niet te verwarren met de sector Waterberging verderop in deze tabel, die als
-			// WaterbergingVeen in hectare staat: dat is seizoensberging in het landelijk gebied en telt hier
-			// per constructie niet mee. Beide heetten tot #720 waterberging.
-			//
-			// Dekkingsgraad is Gedekt gedeeld door Opgave, en dat is het getal dat in een beleidstekst wordt
-			// overgenomen. Lees het nooit los van Dekkingsgraad_Ongeklemd ernaast: opgave en aanbod worden per
-			// blok van 500 meter weggestreept en aanbod boven de blokopgave vervalt, wat op Y2120 bijna de helft
-			// van het aanbod is. De twee kolommen zijn de onder- en bovengrens van dezelfde uitkomst.
-			//
-			// Piekbuiberging_Aanbod_m3 is sinds #741 van betekenis veranderd zonder van naam te veranderen. Hij
-			// telde alle bergingscapaciteit en telt nu alleen de capaciteit binnen bestaand bebouwd gebied, want
-			// de opgave stond daar al op gemaskeerd. Het getal wordt daarmee kleiner en de dekkingsgraad ook. Wat
-			// eruit valt staat als Piekbuiberging_AanbodBuitenUrbanContour_m3 ernaast, dus de oude kolom is terug te
-			// krijgen door die twee op te tellen. Leg leveringen van voor en na #741 daarom niet naast elkaar
-			// zonder die optelling.
-			attribute<Meter3>    Piekbuiberging_Opgave_m3                                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Opgave'+Sluit;
-			attribute<Meter3>    Piekbuiberging_Aanbod_m3                                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Aanbod'+Sluit;
-			attribute<Meter3>    Piekbuiberging_AanbodBuitenUrbanContour_m3                               := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/AanbodBuitenUrbanContour'+Sluit;
-			attribute<Meter3>    Piekbuiberging_Gedekt_m3                                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Gedekt'+Sluit;
-			attribute<Meter3>    Piekbuiberging_Ongedekt_m3                                      := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Ongedekt'+Sluit;
-			attribute<Meter3>    Piekbuiberging_AanbodZonderOpgave_m3                            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/AanbodZonderOpgave'+Sluit;
-			attribute<float32>   Piekbuiberging_Dekkingsgraad                                    := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Dekkingsgraad'+Sluit;
-			attribute<float32>   Piekbuiberging_Dekkingsgraad_Ongeklemd                          := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Dekkingsgraad_Ongeklemd'+Sluit;
-
-			// --- overstromingsschade ---
-			attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Binnendijks                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks_'+NaamAggr+Sluit;
-			attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Buitendijks                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks_'+NaamAggr+Sluit;
-			attribute<Eur>       Overstromingsschade_Regionaalwatersysteem_Binnendijks            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks_'+NaamAggr+Sluit;
-			attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Binnendijks_NCW            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks_NCW_'+NaamAggr+Sluit;
-			attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Buitendijks_NCW            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks_NCW_'+NaamAggr+Sluit;
-			attribute<Eur>       Overstromingsschade_Regionaalwatersysteem_Binnendijks_NCW        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks_NCW_'+NaamAggr+Sluit;
-			attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Binnendijks_tov_basisjaar  := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks_tov_basisjaar/'+NaamAggr+Sluit;
-
-			// --- kosten van de overstromingsmaatregel op werklocaties (#727) ---
-			attribute<Eur>       KostenWerklocaties_MeerkostenOverstroming                       := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWerklocaties/'+NaamAggr+'/MeerkostenOverstroming'+Sluit, Descr = "Wat de gealloceerde werklocaties aan extra ophoging tegen het water kosten, nominaal. De tegenhanger van de korting die diezelfde cellen sinds #727 in de overstromingsschade krijgen.";
-			attribute<Eur>       KostenWerklocaties_MeerkostenOverstroming_NCW                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWerklocaties/'+NaamAggr+'/MeerkostenOverstroming_NCW'+Sluit;
-			attribute<Ha>        KostenWerklocaties_Werklocatie_Ha                               := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWerklocaties/'+NaamAggr+'/Werklocatie_Ha'+Sluit, Descr = "Controlegetal: over hoeveel hectare de post hierboven is geboekt.";
-
-			// --- kosten van de woningbouw (#505, #763) ---
-			// De posten van KostenWoningbouw stonden tot #763 alleen als kaart en als controlebestand in
-			// de export, terwijl de indicator de regionale en de landelijke sommen allang uitrekende. De
-			// eerste twee gaan over het gebouw, de rest over het terrein eronder en het onderhoud erna.
-			attribute<Eur>       KostenWoningbouw_Bouwkosten                                     := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Bouwkosten'+Sluit, Descr = "De bouwkosten van de gealloceerde nieuwbouw, dus van de woningen zelf. Sinds #763 in de export; de post zat daarvoor alleen in het exploitatiesaldo van de allocatie.";
-			attribute<Eur>       KostenWoningbouw_Bouwkosten_NCW                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Bouwkosten_NCW'+Sluit;
-			attribute<Eur>       KostenWoningbouw_MeerkostenBouwwijze                            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/MeerkostenBouwwijze'+Sluit, Descr = "Het deel van die bouwkosten dat aan de gekozen bouwwijze hangt, dus wat aangepast bouwen boven op een gewone woning kost. Staat op nul zolang BouwwijzeK/Kostenopslag op 1,0 staat en BouwwijzeOpslagInBouwkosten uit staat, zie #505 en #723. De hectares per bouwwijze staan in Bouwwijze_Areaal.";
-			attribute<Eur>       KostenWoningbouw_Regulier                                       := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Regulier'+Sluit, Descr = "De grondproductiekosten van de ontwikkelaar: bouw- en woonrijp maken, bovenwijkse voorzieningen en het planproces.";
-			attribute<Eur>       KostenWoningbouw_Regulier_NCW                                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Regulier_NCW'+Sluit;
-			attribute<Eur>       KostenWoningbouw_MeerkostenBodemdaling                          := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/MeerkostenBodemdaling'+Sluit, Descr = "Wat er bovenop komt doordat de ondergrond zakt, uit bijlage E van het landelijk afwegingskader. Hangt aan de bodemdalingsopgave van de plek en niet aan de categorie uit de bebouwingstypekaart.";
-			attribute<Eur>       KostenWoningbouw_MeerkostenBodemdaling_NCW                      := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/MeerkostenBodemdaling_NCW'+Sluit;
-			attribute<Eur>       KostenWoningbouw_BeheerEnOnderhoud                              := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/BeheerEnOnderhoud'+Sluit, Descr = "Het onderhoud aan de openbare ruimte over honderd jaar, netto contante waarde vanaf oplevering. Valt bij de gemeente en zit daarom niet in het exploitatiesaldo.";
-			attribute<Eur>       KostenWoningbouw_BeheerEnOnderhoud_NCW                          := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/BeheerEnOnderhoud_NCW'+Sluit, Descr = "Let op de dubbele verdiscontering in de betekenis: het bedrag zelf is al een contante waarde over honderd jaar, en wordt hier nog eens teruggerekend van het bouwjaar naar het basisjaar.";
-			attribute<Ha>        KostenWoningbouw_Nieuwbouw_Ha                                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Nieuwbouw_Ha'+Sluit, Descr = "Controlegetal: over hoeveel hectare de posten hierboven zijn geboekt.";
-
-			// --- bereikbaarheid van groen ---
-			attribute<meter2>    BereikbaarheidGroen_BBG_Tot300m_ExAgr_Groenaanbod_over_woning   := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/TotaalExAgrarisch/Indicatoren/Cumulatief_Groenaanbod_over_woningen/Indicator_Aggregated', ',')+')';
-			attribute<meter2>    BereikbaarheidGroen_BBG_Tot300m_Groenaanbod_over_woning         := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/Totaal/Indicatoren/Cumulatief_Groenaanbod_over_woningen/Indicator_Aggregated', ',')+')';
-			attribute<m2_Woning> BereikbaarheidGroen_BBG_Tot300m_ExAgr_DrukteCorr_PerWoning      := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/TotaalExAgrarisch/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator_Aggregated', ',')+')';
-			attribute<m2_Woning> BereikbaarheidGroen_BBG_Tot300m_DrukteCorr_PerWoning            := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/Totaal/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator_Aggregated', ',')+')';
-			attribute<meter2>    BereikbaarheidGroen_Fractie_Tot300m_Groenaanbod_over_woning     := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/Fractie/Indicatoren/Cumulatief_Groenaanbod_over_woningen/Indicator_Aggregated', ',')+')', Descr = "Fractiebenadering (#717). Geen ExAgr-tegenhanger: de fractietak kent geen agrarische uitsluiting, want de hedonische natuurdefinitie regelt zelf al wat meetelt.";
-			attribute<m2_Woning> BereikbaarheidGroen_Fractie_Tot300m_DrukteCorr_PerWoning        := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/Fractie/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator_Aggregated', ',')+')', Descr = "Fractiebenadering, druktegecorrigeerd (#717).";
-
-			// --- grondgebruik: verandering ten opzichte van het basisjaar ---
-			attribute<ha>        Verstedelijking                                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/Verstedelijking/'+NaamAggr+Sluit;
-			attribute<ha>        VerstedelijkingOpVruchtbareLandbouwgronden                      := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden/'+NaamAggr+Sluit;
-			// Inbreidingsaandeel per regio. Stond alleen als landelijke parameter in Indicatoren/Inbreiding en
-			// kwam daardoor niet in deze tabel. Teller en noemer allebei bruto: met het netto verschil kantelt
-			// de maat zodra er ergens gesloopt wordt en kan hij negatief worden, zie #639. Een regio zonder
-			// nieuwe woningen geeft een lege cel, want dan is er geen aandeel te bepalen.
-			attribute<float32>   FractieWoningenErbijInBestaandBebouwdGebied                     := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/WoningenErbij * float32(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/BestaandBebouwdGebied), Regio/Per_AdminDomain_Fijn) / sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/WoningenErbij, Regio/Per_AdminDomain_Fijn)[float32]';
-			attribute<float32>   FractieWoningenErbijInBestaandGroenInUrbanContour                       := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/WoningenErbij * float32(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/BestaandGroenInBestaandBebouwdGebied), Regio/Per_AdminDomain_Fijn) / sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/WoningenErbij, Regio/Per_AdminDomain_Fijn)[float32]';
-			attribute<ha>        NieuweNatuur                                                    := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/NieuweNatuur/'+NaamAggr+Sluit;
-			attribute<ha>        NieuweNatuurOpVruchtbareLandbouwgronden                         := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden/'+NaamAggr+Sluit;
-			attribute<ha>        VerdwenenNatuur                                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenNatuur/'+NaamAggr+Sluit;
-			attribute<ha>        WaterbergingVeen                                                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/WaterbergingVeen/'+NaamAggr+Sluit;
-			attribute<ha>        WaterbergingVeenOpVruchtbareLandbouwgronden                     := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden/'+NaamAggr+Sluit;
-			attribute<ha>        VerdwenenLandbouw                                               := ='sum(float32(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenLandbouw) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn)';
-			attribute<ha>        VerdwenenVruchtbareLandbouw                                     := ='sum(float32(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenVruchtbareLandbouw) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn)';
-
-			// --- sloop, uitgesplitst naar de drie oorzaken uit #658 ---
-			attribute<Woning>    Sloop_NieuweNatuur_Woningen                                     := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/GesloopteWoningen_'+NaamAggr+Sluit;
-			attribute<Job>       Sloop_NieuweNatuur_Banen                                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/GesloopteBanen_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_NieuweNatuur_Uitkoopkosten                                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_NieuweNatuur_Sloopkosten                                  := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Sloopkosten_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_NieuweNatuur_Uitkoopkosten_NCW                            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_NCW_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_NieuweNatuur_Sloopkosten_NCW                              := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Sloopkosten_NCW_'+NaamAggr+Sluit;
-
-			attribute<Woning>    Sloop_WaterbergingVeen_Woningen                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/GesloopteWoningen_'+NaamAggr+Sluit;
-			attribute<Job>       Sloop_WaterbergingVeen_Banen                                    := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/GesloopteBanen_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_WaterbergingVeen_Uitkoopkosten                            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_WaterbergingVeen_Sloopkosten                              := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_WaterbergingVeen_Uitkoopkosten_NCW                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_NCW_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_WaterbergingVeen_Sloopkosten_NCW                          := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_NCW_'+NaamAggr+Sluit;
-
-			attribute<Woning>    Sloop_OverigeBouwstenen_Woningen                                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/GesloopteWoningen_'+NaamAggr+Sluit;
-			attribute<Job>       Sloop_OverigeBouwstenen_Banen                                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/GesloopteBanen_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_OverigeBouwstenen_Uitkoopkosten                           := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_OverigeBouwstenen_Sloopkosten                             := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_OverigeBouwstenen_Uitkoopkosten_NCW                       := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_NCW_'+NaamAggr+Sluit;
-			attribute<Eur>       Sloop_OverigeBouwstenen_Sloopkosten_NCW                         := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_NCW_'+NaamAggr+Sluit;
-
-			// --- woningwaarde en de waardering van groen in de nabijheid ---
-			attribute<Eur>       Woningwaarde_Nieuwbouw                                          := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Woningwaarde/Nieuwbouw, Regio/Per_AdminDomain_Fijn)';
-			attribute<Eur>       Woningwaarde_Nieuwbouw_NCW                                      := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Woningwaarde/Nieuwbouw_NCW, Regio/Per_AdminDomain_Fijn)';
-			attribute<Eur>       WaardeNabijheidGroen_Woningen                                   := ='sum(MakeDefined(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen, 0[Eur]), Regio/Per_AdminDomain_Fijn)';
-			attribute<Eur>       WaardeNabijheidGroen_BestaandeWoningen                          := ='sum(MakeDefined(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen, 0[Eur]), Regio/Per_AdminDomain_Fijn)';
-			attribute<Eur>       WaardeNabijheidGroen_NieuwbouwWoningen                          := ='sum(MakeDefined(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen, 0[Eur]), Regio/Per_AdminDomain_Fijn)';
-			attribute<Eur>       WaardeNabijheidGroen_Woningen_NCW                               := ='sum(MakeDefined(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen_NCW, 0[Eur]), Regio/Per_AdminDomain_Fijn)';
-
-			// --- vermeden sterfte door meer groen ---
-			attribute<Persoon>   SterfteAfname_PerPeriode                                        := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnamePerPeriode, Regio/Per_AdminDomain_Fijn)';
-			attribute<Persoon>   SterfteAfname_Cumulatief                                        := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief, Regio/Per_AdminDomain_Fijn)';
-			// De twee termen waaruit SterfteAfname_PerPeriode is opgebouwd, apart, omdat ze een verschillend
-			// verhaal vertellen. Zittend meet de verandering op de eigen locatie sinds het basisjaar en is dus
-			// het effect van vergroening. Nieuw vergelijkt de nieuwe woning met de bewonersgewogen gemiddelde
-			// groenindex van een woning in het basisjaar, en is structureel negatief zodra nieuwbouw compacter
-			// is dan de bestaande voorraad. Zonder deze splitsing is een negatief totaal niet uit te leggen.
-			attribute<Persoon>   SterfteAfname_PerPeriode_ZittendeBewoners                       := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameZittendeBewoners, Regio/Per_AdminDomain_Fijn)';
-			attribute<Persoon>   SterfteAfname_PerPeriode_NieuweBewoners                         := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameNieuweBewoners, Regio/Per_AdminDomain_Fijn)';
-
-			// --- koolstof ---
-			attribute<ton>       CO2Stock_Zichtjaar                                              := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Stock_Zichtjaar, Regio/Per_AdminDomain_Fijn)', Descr = "De totale voorraad over beide pools: de bovenste 30 cm uit de bodemkoolstofkaart plus de veenkoolstof daaronder. De twee staan hieronder apart, en dat is nodig om deze kolom te kunnen lezen; zie daar.";
-			// #736: de twee pools apart, want anders leest deze kolom als koolstof die op het spel staat. De veenreserve is
-			// sinds die ronde de hele veenkolom onder de bovenste 30 cm in plaats van de schijf boven de basisjaar-GLG, en
-			// daarmee gaat hij landelijk van 218 naar 863 Mton CO2. Van die reserve wordt binnen de horizon maar een derde
-			// aangesproken: BAU verbruikt op de veenweide 0,54 van de 1,75 m die onder de toplaag ligt. Een lezer die alleen
-			// het totaal ziet, ziet die verschuiving aan voor een verandering in wat er kan vrijkomen.
-			attribute<ton>       CO2Stock_Zichtjaar_Bovenlaag                                    := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Zichtjaar/CO2/Stock_Bovenlaag, Regio/Per_AdminDomain_Fijn)', Descr = "Alleen de bovenste 30 cm plus biomassa, dus de voorraad zoals de indicator hem voor #657 rapporteerde. Dit is de pool waar een landgebruiksverandering op aangrijpt.";
-			attribute<ton>       CO2Stock_Zichtjaar_Veenreserve                                  := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Zichtjaar/CO2/Stock_Veenreserve, Regio/Per_AdminDomain_Fijn)', Descr = "Alleen de veenkoolstof onder de bovenste 30 cm. Deze pool wordt uitsluitend door veenoxidatie aangesproken en verandert niet bij een landgebruiksverandering; wat er binnen de horizon van af gaat is het verschil met het basisjaar.";
-			attribute<ton>       CO2Flow_Zichtjaar                                               := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Flow_Zichtjaar, Regio/Per_AdminDomain_Fijn)';
-			attribute<ton>       CO2Flow_TovBasisjaar                                            := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar, Regio/Per_AdminDomain_Fijn)';
-			// #733: de kolom hierboven is op een laat zichtjaar niet los te lezen. De koolstofboekhouding kan niet meer verliezen
-			// dan er in de voorraad ligt, dus zodra een veenweidecel leeg is stopt haar bijdrage aan het verlies terwijl SOMERS
-			// er uitstoot blijft rapporteren. In BAU op 2120 gaat het om 96,1 Mton CO2 landelijk, genoeg om het saldo van min 89
-			// naar plus 7 te tillen. Deze twee kolommen zetten dat erbij: hoeveel er buiten de boekhouding is gebleven, en wat
-			// het saldo zou zijn als die post onverkort was geboekt.
-			attribute<ton>       CO2Ongedekt_Cumulatief                                          := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief, Regio/Per_AdminDomain_Fijn)', Descr = "Veenoxidatie die SOMERS sinds het basisjaar rapporteert terwijl de koolstofvoorraad van die cel al leeg was. Nul op alle zichtjaren waar de voorraad de vraag nog kon dragen.";
-			attribute<ton>       CO2Flow_TovBasisjaar_InclOngedekt                                := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar, Regio/Per_AdminDomain_Fijn) - sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief, Regio/Per_AdminDomain_Fijn)', Descr = "Het koolstofsaldo met de ongedekte post als verlies meegeteld. Uitdrukkelijk niet de indicator, want veen dat er niet ligt oxideert niet; de kolom staat er als ondergrens naast zodat de bandbreedte tussen de koolstofindicator en de SOMERS-indicator zichtbaar is (#733).";
-
-			// --- veenemissies volgens SOMERS, cumulatief sinds het basisjaar ---
-			attribute<kg>        SOMERS_CO2_Cumulatief_Minimum                                   := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Minimum/Write_Result_SA, Regio/Per_AdminDomain_Fijn)';
-			attribute<kg>        SOMERS_CO2_Cumulatief_Mediaan                                   := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA, Regio/Per_AdminDomain_Fijn)';
-			attribute<kg>        SOMERS_CO2_Cumulatief_Maximum                                   := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Maximum/Write_Result_SA, Regio/Per_AdminDomain_Fijn)';
+			attribute<String> Bouwwijze    := /Classifications/Modellering/BouwwijzeK/name;
+			attribute<Ha>     Nieuwbouw_Ha := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/Nieuwbouw_Ha_perBouwwijze';
 		}
 	}
 
-	container PerIndeling := RegionaleIndicatoren_T(
-		  /ModelParameters/Advanced/IndicatorRegio_path
-		, ''
-		, 'Per_Regio'
-		, ''
-		, 'PerRegio'
-		, "'obv_BBG/PerRegios/'+Regio/name"
-		, 'Indicatoren_'+/ModelParameters/Advanced/IndicatorRegio_ref
-	), Descr = "De tabel op de regio-indeling uit ModelParameters/Advanced/IndicatorRegio_ref, sinds #705 de landschapsindeling.";
-
-	container PerNederland := RegionaleIndicatoren_T(
-		  '/SourceData/RegioIndelingen/NL'
-		, 'union_data(Regio,'
-		, 'Per_NL'
-		, ')'
-		, 'PerNL'
-		, "const('obv_BBG/PerRegios/Nationaal', Regio)"
-		, 'NationaleIndicatoren'
-	), Descr = "Dezelfde tabel, altijd landsdekkend en niet afhankelijk van een parameter. Op verzoek vanuit Deltares bij #705: een run levert voortaan hoe dan ook de landelijke getallen op, en daarnaast de gekozen regionale doorsnede.";
-
-
-	// Claimrealisatie per allocatieregio, gevraagd vanuit Deltares bij de bespreking van de
-	// productierun. Bewust een eigen tabel per schaalniveau en geen kolom in RegionaleIndicatoren:
-	// de claim hoort per allocatieregio van de betreffende sector, en dat is een andere doorsnede
-	// dan de indicatorenregio. Juist het verschil tussen de niveaus maakt overflow zichtbaar. Zit
-	// een regio op NVM-niveau boven de 1 terwijl COROP eromheen op 1 uitkomt, dan is de claim
-	// binnen die grotere regio verschoven en niet landelijk overschreden.
-	// Alleen de indelingen waarop wonen wordt gealloceerd, plus het landelijke totaal. Werken
-	// gebruikt dezelfde drie indelingen. Waterbergingsregio hoort er nadrukkelijk NIET bij: daar
-	// wordt waterberging op geclaimd en niet wonen of werken, en de wonen- en werkenclaim bestaat
-	// daar dus niet als bronbestand. Een for_each over alle Uq_AllocRegios liep daarop vast met
-	// een GDAL-fout op een niet bestaande Wonen.csv.
-	unit<uint8> ClaimNiveau := unique(
-		ModelParameters/SectorAllocRegio/AllocRegio_name[ModelParameters/SectorAllocRegio/WonenAllocRegio/org_rel]
-	);
-
-	container ClaimRealisatie_PerNiveau :=
-		for_each_ne(
-			  ClaimNiveau/values
-			, 'ClaimRealisatie_Niveau_T(' + quote(ClaimNiveau/values) + ')'
-		)
+	container Werken
+	: Descr = "De werklocaties: dichtheid naar voetafdruk en naar banen, en de voetafdruk zelf (#779). De meerkosten tegen het water en de bereikbaarheid van banen staan in Templates/Indicatoren en horen in generates bij dit domein."
 	{
-		container Nederland := ClaimRealisatie_Niveau_T('Nederland');
+		attribute<m2_ha>                                  Dichtheid_Werken_Pandfootprint_ha  (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/PandFootprint_ha/Per_AdminDomain', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Dichtheid_Werken_Pandfootprint_ha')", StorageType = "gdalwrite.grid";
+		attribute<job_m2PandFootprint>                    Dichtheid_Werken_Banen_m2          (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/Banen_m2/Per_AdminDomain'        , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Dichtheid_Werken_Banen_m2')", StorageType = "gdalwrite.grid";
+		attribute<meter2>                                 PandFootprint_Werken               (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Stand/PandFootprint_Werken'                         , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'PandFootprint_Werken')", StorageType = "gdalwrite.grid";
 	}
 
-	Template ClaimRealisatie_Niveau_T
-	{
-		parameter<String> Niveau_name;
-		///
-		container Bron := ='ThisCasus/Zichtjaren/' + ExportZichtjaar + '/ClaimRealisatie/Per_AllocRegio/' + Niveau_name;
+	container Water
+	: Descr = "Verharding, piekbuiberging, overstromingsschade en de seizoensberging op veen (#779).
 
-		unit<uint32> Tabel := Bron/ClaimRegio
-		, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'ClaimRealisatie_' + Niveau_name, '.tif', '.csv')"
-		, StorageType = "gdalwrite.vect"
-		, Descr = "Gerealiseerde stand gedeeld door de claim, per regio van deze indeling. Een waarde onder 1 betekent dat de claim niet is gehaald, boven 1 dat er meer is gealloceerd dan gevraagd."
+				Verharding staat hier omdat hij de invoer van de piekbuikant is. Wie hem als verstening leest hoort hem bij grondgebruik; dat is de ene plek waar deze indeling twee kanten op kan.
+
+				De drie NCW-varianten van de overstromingsschade staan in Templates/Indicatoren en horen in generates bij dit domein."
+	{
+		attribute<float32>                                Verharding                         (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Verharding/Result'                                , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Verharding')", StorageType = "gdalwrite.grid";
+		// De drie piekbuikaarten liggen als enige export niet op het AdminDomain van 25 meter maar op het blok
+		// van Basisjaar/Piekbuiberging/Grid_ref, nu 500 meter. Vierhonderd cellen van de buurkaarten passen in
+		// een cel hiervan, dus de blokmaat hoort in de bestandsnaam; zonder dat wordt zo'n kaart naast de andere
+		// gelegd en per cel gecombineerd, en dat levert onzin op. Zie #720.
+		attribute<Meter3>                                 Piekbuiberging_Ongedekt (ThisCasus/Basisjaar/Piekbuiberging/Grid) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/PerGrid/Ongedekt', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Piekbuiberging_Ongedekt_m3_per'+ThisCasus/Basisjaar/Piekbuiberging/Grid_ref)", StorageType = "gdalwrite.grid";
+		attribute<Meter3>                                 Piekbuiberging_Gedekt   (ThisCasus/Basisjaar/Piekbuiberging/Grid) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/PerGrid/Gedekt'  , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Piekbuiberging_Gedekt_m3_per'+ThisCasus/Basisjaar/Piekbuiberging/Grid_ref)"  , StorageType = "gdalwrite.grid", Descr = "De keerzijde van Ongedekt: waar de opgave wel wordt gedekt. Stond tot #720 als StorageName op PerGrid/Afname in de indicator zelf, maar dat item kwam in geen enkele ExplicitSuppliers voor, dus het bestand is nooit geschreven. Nu een gewone rasterexport naast de andere.";
+		attribute<float32>                                Piekbuiberging_Dekkingsgraad (ThisCasus/Basisjaar/Piekbuiberging/Grid) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/PerGrid/Dekkingsgraad', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Piekbuiberging_Dekkingsgraad_per'+ThisCasus/Basisjaar/Piekbuiberging/Grid_ref)", StorageType = "gdalwrite.grid", Descr = "Gedekt gedeeld door de opgave, per blok. Gevraagd als kaartbeeld bij de oplevering van 3 september; de tabelkolom bestond al, de kaart niet. Ligt op hetzelfde blok als de twee kaarten hierboven. Lees hem niet los van Dekkingsgraad_Ongeklemd in de tabel: deze kaart is de ondergrens van de bandbreedte, waarbij berging alleen zijn eigen blok bedient. Zie #720 en #741.";
+		attribute<Eur>                                    Overstromingsschade_Hoofdwatersysteem_Binnendijks     (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks'      , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Overstromingsschade_Hoofdwatersysteem_Binnendijks')", StorageType = "gdalwrite.grid";
+		attribute<Eur>                                    Overstromingsschade_Hoofdwatersysteem_Buitendijks     (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks'      , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Overstromingsschade_Hoofdwatersysteem_Buitendijks')", StorageType = "gdalwrite.grid";
+		attribute<Eur>                                    Overstromingsschade_Regionaalwatersysteem_Binnendijks (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks'      , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Overstromingsschade_Regionaalwatersysteem_Binnendijks')", StorageType = "gdalwrite.grid";
+		attribute<bool>                                    WaterbergingVeen                           (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/WaterbergingVeen', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'WaterbergingVeen')", StorageType = "tif";
+	}
+
+	container Natuur
+	: Descr = "Natuur en groen, en wat groen oplevert (#779). De natuurbouwstenen die de variant oplegt, de nieuwe en verdwenen natuur, en de twee bereikbaarheidsmaten.
+
+				De waardering van groen in de woningprijs en de vermeden sterfte staan in Templates/Indicatoren en horen in generates bij dit domein en niet bij wonen: die kaarten meten het effect van groen, niet de woningvoorraad."
+	{
+		// De natuurbouwstenen zoals de landschapsteams ze hebben aangeleverd, voor ze in de landgebruikskaart
+		// worden samengevoegd met de bestaande natuur. Dit is dus wat de variant oplegt en niet wat er in het
+		// basisjaar al stond; in het basisjaar is de kaart daarom leeg.
+		attribute</Classifications/Grondgebruik/INL_Beheertype> BT_Exogeen                         (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/LandgebruikskaartNL2120/BT_Exogeen'                  , StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'BT_Exogeen')", StorageType = "gdalwrite.grid";
+
+		unit<uint8> BT_Exogeen_Areaal := /Classifications/Grondgebruik/INL_Beheertype
+		, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'BT_Exogeen_Areaal', '.tif', '.csv')", StorageType = "gdalwrite.vect"
+		, Descr = "De tabelkant van BT_Exogeen: hoeveel hectare de landschapsteams per natuurbeheertype opleggen. Gevraagd bij de oplevering van 3 september, naast de kaart. Dit telt alleen de oplegging van de variant en niet de natuur die er in het basisjaar al lag; in het basisjaar is de kolom daarom nul. Wie het totale natuurareaal wil heeft LandgebruikNL2120_Areaal nodig, waar de bestaande natuur wel in zit."
 		{
-			attribute<String>  Regio_name              := Bron/ClaimRegio/name;
-			// Leeg laten waar er geen claim is, in plaats van een ratio van nul te tonen. Een nul leest
-			// als een meting en nodigt niet uit om de claimkolom ernaast te bekijken; een leeg veld wel.
-			attribute<float32> Wonen_realisatie        := Bron/Impl/Claims/Aantal_Woningen_Totaal > 0[Woning] ? Bron/Claim_realisatie/Wonen/Totaal : null_f;
-			attribute<float32> Werken_realisatie       := Bron/Impl/Claims/Banen_Totaal > 0[Job] ? Bron/Claim_realisatie/Werken/Totaal : null_f;
-			attribute<Woning>  Wonen_claim             := Bron/Impl/Claims/Aantal_Woningen_Totaal;
-			attribute<Woning>  Wonen_stand             := Bron/Impl/Stand_PerAllocRegio/Aantal_Woningen_Totaal;
-			attribute<Job>     Werken_claim            := Bron/Impl/Claims/Banen_Totaal;
-			attribute<Job>     Werken_stand            := Bron/Impl/Stand_PerAllocRegio/Banen_Totaal;
+			attribute<String> Beheertype := /Classifications/Grondgebruik/INL_Beheertype/Label;
+			attribute<Ha>     Zichtjaar  := ='pcount(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/LandgebruikskaartNL2120/BT_Exogeen)[float32] * rdc_25m/NrHaPerCell';
+		}
+		attribute<bool>                                    NieuweNatuur                               (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/NieuweNatuur', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'NieuweNatuur')", StorageType = "tif";
+		attribute<bool>                                    VerdwenenNatuur                            (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenNatuur', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'VerdwenenNatuur')", StorageType = "tif";
+		attribute<m2_woning>                              BereikbaarheidGroen_BBG            (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/obv_BBG/PerRegios/Nationaal/Afstanden/Tot300m/AggrGroenKlassen/TotaalExAgrarisch/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'BereikbaarheidGroen')", StorageType = "gdalwrite.grid";
+		attribute<meter2>                                 BereikbaarheidGroen_Fractie        (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/obv_BBG/PerRegios/Nationaal/Afstanden/Tot300m/AggrGroenKlassen/Fractie/Indicatoren/Groenaanbod/Indicator', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'BereikbaarheidGroen_Fractie')", StorageType = "gdalwrite.grid", Descr = "De fractiebenadering uit #717: het groene deel van elke cel telt, inclusief het groen en water binnen ontwikkelpakketten, zonder de parkgroendrempels. De klassevariant hierboven blijft bestaan maar gaat op verzoek van Deltares niet mee in leveringen zolang #717 open staat.";
+	}
+
+	container Landbouw
+	: Descr = "Wat de landbouw kwijtraakt (#779). Dit zijn de kruisingen: een andere bestemming die op vruchtbare landbouwgrond landt.
+
+				Ze staan hier en niet bij verstedelijking, natuur of water omdat ze bestaan om het verlies aan landbouwgrond te tellen. Waar die bestemmingen landen staat al los in het eigen domein, zonder de landbouwvoorwaarde.
+
+				De twee kaarten met verdwenen landbouw staan in Templates/Indicatoren/Grondgebruik.dms en horen in generates ook bij dit domein."
+	{
+		attribute<bool>                                    VerstedelijkingOpVruchtbareLandbouwgronden (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'VerstedelijkingOpVruchtbareLandbouwgronden')", StorageType = "tif";
+		attribute<bool>                                    NieuweNatuurOpVruchtbareLandbouwgronden    (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'NieuweNatuurOpVruchtbareLandbouwgronden')", StorageType = "tif";
+		attribute<bool>                                    WaterbergingVeenOpVruchtbareLandbouwgronden (AdminDomain) := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden', StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'WaterbergingVeenOpVruchtbareLandbouwgronden')", StorageType = "tif";
+	}
+
+	container Tabellen
+	: Descr = "De tabellen die over alle domeinen tegelijk gaan (#779): de indicatorentabel als sjabloon, twee keer neergezet, en de claimrealisatie per allocatieniveau.
+
+				Een kolom in deze tabellen hoort bij een domein, de tabel als geheel niet. Daarom staan ze apart en niet onder een van de domeinen hierboven."
+	{
+	
+		template RegionaleIndicatoren_T
+		: Descr = "De tabelkant van de export, als sjabloon zodat hij twee keer kan worden neergezet: een keer landsdekkend en een keer op de gekozen regio-indeling (#705).
+
+					De drie tekstparameters regelen waar de kolommen hun getal halen. Elke indicator rekent zelf al twee dingen uit, een waarde per regio en een landelijk totaal, en dat verschilt alleen in het achtervoegsel: X_Per_Regio tegenover X_Per_NL. Voor de landelijke tabel wordt dat landelijke totaal, een parameter zonder domein, met union_data op de enkele regel van de NL-indeling gezet; vandaar Voor en Sluit.
+
+					De kolommen die zelf sommeren over Regio/Per_AdminDomain_Fijn hebben geen van dit alles nodig: die volgen vanzelf de indeling die hier wordt meegegeven."
+		{
+			parameter<String> RegioPad;
+			parameter<String> Voor;
+			parameter<String> NaamAggr;
+			parameter<String> Sluit;
+			parameter<String> AggrContainer;
+			parameter<String> GroenPadExpr;
+			parameter<String> TabelNaam;
+
+			unit<uint32> Regio := =RegioPad;
+
+			attribute<String> GroenPad (Regio) := =GroenPadExpr
+			, Descr = "Waar de bereikbaarheid van groen per regel vandaan komt. Die indicator rekent per regio een eigen gemiddelde uit en is dus niet op te tellen; voor de landsdekkende tabel wijst dit naar de instantie Nationaal, die het gemiddelde over heel Nederland neemt.";
+
+			unit<uint32> Tabel := Regio
+			, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', TabelNaam, '.tif', '.csv')", StorageType = "gdalwrite.vect"
+			, Descr = "De tabelkant van de export (#658): naast elke grid-indicator hierboven staat hier dezelfde indicator geaggregeerd naar de regio-indeling uit ModelParameters/Advanced. In de productierun staat die op NL, dus is dit een tabel van een regel met alle indicatoren naast elkaar.
+
+						Twee dingen staan er bewust niet in. Claimrealisatie hoort per allocatieregio van de betreffende sector en zit in ClaimRealisatie/Per_AllocRegio. En de landgebruikskaart is een klasse per cel; die aggregeert naar een areaal per klasse en niet naar een getal per regio, en staat als Impl/Zichtjaar_Areaal_perLUMT en Diagnose/Transitie_Matrix hierboven.
+
+						Een kolom die door een uitgeschakelde sector leeg blijft, zoals verblijfsrecreatie, komt als lege kolom mee. Dat is bedoeld: de kolommen liggen vast, zodat twee runs naast elkaar te leggen zijn."
+			{
+				attribute<String>    Regio_name                                                      := Regio/name;
+
+				// --- dichtheid ---
+				attribute<Woning_ha> Dichtheid_Wonen                                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Wonen/'+NaamAggr+Sluit;
+				attribute<Job_ha>    Dichtheid_Werken_Banen_ha                                       := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/Banen_ha/'+NaamAggr+Sluit;
+				attribute<m2_ha>     Dichtheid_Werken_PandFootprint_ha                               := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/PandFootprint_ha/'+NaamAggr+Sluit;
+				attribute<job_m2PandFootprint> Dichtheid_Werken_Banen_m2                             := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Dichtheid/Werken/Banen_m2/'+NaamAggr+Sluit;
+
+				// --- verharding ---
+				attribute<float32>   Verharding                                                      := ='mean(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Verharding/Result, Regio/Per_AdminDomain_Fijn)', Descr = "Gemiddelde verharde fractie per cel over de regio, uit dezelfde samengestelde kaart die als grid wordt geexporteerd.";
+				attribute<m2_ha>     Verharding_Werken                                               := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Verharding/Werken/'+NaamAggr+Sluit;
+				attribute<m2_ha>     Verharding_Verblijfsrecreatie                                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Verharding/Verblijfsrecreatie/'+NaamAggr+Sluit;
+
+				// --- piekbuiberging ---
+				// Hoeveel van de piekbuiopgave in bestaand bebouwd gebied wordt gedekt door blauw-groene
+				// maatregelen. Niet te verwarren met de sector Waterberging verderop in deze tabel, die als
+				// WaterbergingVeen in hectare staat: dat is seizoensberging in het landelijk gebied en telt hier
+				// per constructie niet mee. Beide heetten tot #720 waterberging.
+				//
+				// Dekkingsgraad is Gedekt gedeeld door Opgave, en dat is het getal dat in een beleidstekst wordt
+				// overgenomen. Lees het nooit los van Dekkingsgraad_Ongeklemd ernaast: opgave en aanbod worden per
+				// blok van 500 meter weggestreept en aanbod boven de blokopgave vervalt, wat op Y2120 bijna de helft
+				// van het aanbod is. De twee kolommen zijn de onder- en bovengrens van dezelfde uitkomst.
+				//
+				// Piekbuiberging_Aanbod_m3 is sinds #741 van betekenis veranderd zonder van naam te veranderen. Hij
+				// telde alle bergingscapaciteit en telt nu alleen de capaciteit binnen bestaand bebouwd gebied, want
+				// de opgave stond daar al op gemaskeerd. Het getal wordt daarmee kleiner en de dekkingsgraad ook. Wat
+				// eruit valt staat als Piekbuiberging_AanbodBuitenUrbanContour_m3 ernaast, dus de oude kolom is terug te
+				// krijgen door die twee op te tellen. Leg leveringen van voor en na #741 daarom niet naast elkaar
+				// zonder die optelling.
+				attribute<Meter3>    Piekbuiberging_Opgave_m3                                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Opgave'+Sluit;
+				attribute<Meter3>    Piekbuiberging_Aanbod_m3                                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Aanbod'+Sluit;
+				attribute<Meter3>    Piekbuiberging_AanbodBuitenUrbanContour_m3                               := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/AanbodBuitenUrbanContour'+Sluit;
+				attribute<Meter3>    Piekbuiberging_Gedekt_m3                                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Gedekt'+Sluit;
+				attribute<Meter3>    Piekbuiberging_Ongedekt_m3                                      := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Ongedekt'+Sluit;
+				attribute<Meter3>    Piekbuiberging_AanbodZonderOpgave_m3                            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/AanbodZonderOpgave'+Sluit;
+				attribute<float32>   Piekbuiberging_Dekkingsgraad                                    := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Dekkingsgraad'+Sluit;
+				attribute<float32>   Piekbuiberging_Dekkingsgraad_Ongeklemd                          := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Piekbuiberging/'+AggrContainer+'/Dekkingsgraad_Ongeklemd'+Sluit;
+
+				// --- overstromingsschade ---
+				attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Binnendijks                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks_'+NaamAggr+Sluit;
+				attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Buitendijks                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks_'+NaamAggr+Sluit;
+				attribute<Eur>       Overstromingsschade_Regionaalwatersysteem_Binnendijks            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks_'+NaamAggr+Sluit;
+				attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Binnendijks_NCW            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks_NCW_'+NaamAggr+Sluit;
+				attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Buitendijks_NCW            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks_NCW_'+NaamAggr+Sluit;
+				attribute<Eur>       Overstromingsschade_Regionaalwatersysteem_Binnendijks_NCW        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks_NCW_'+NaamAggr+Sluit;
+				attribute<Eur>       Overstromingsschade_Hoofdwatersysteem_Binnendijks_tov_basisjaar  := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks_tov_basisjaar/'+NaamAggr+Sluit;
+
+				// --- kosten van de overstromingsmaatregel op werklocaties (#727) ---
+				attribute<Eur>       KostenWerklocaties_MeerkostenOverstroming                       := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWerklocaties/'+NaamAggr+'/MeerkostenOverstroming'+Sluit, Descr = "Wat de gealloceerde werklocaties aan extra ophoging tegen het water kosten, nominaal. De tegenhanger van de korting die diezelfde cellen sinds #727 in de overstromingsschade krijgen.";
+				attribute<Eur>       KostenWerklocaties_MeerkostenOverstroming_NCW                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWerklocaties/'+NaamAggr+'/MeerkostenOverstroming_NCW'+Sluit;
+				attribute<Ha>        KostenWerklocaties_Werklocatie_Ha                               := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWerklocaties/'+NaamAggr+'/Werklocatie_Ha'+Sluit, Descr = "Controlegetal: over hoeveel hectare de post hierboven is geboekt.";
+
+				// --- kosten van de woningbouw (#505, #763) ---
+				// De posten van KostenWoningbouw stonden tot #763 alleen als kaart en als controlebestand in
+				// de export, terwijl de indicator de regionale en de landelijke sommen allang uitrekende. De
+				// eerste twee gaan over het gebouw, de rest over het terrein eronder en het onderhoud erna.
+				attribute<Eur>       KostenWoningbouw_Bouwkosten                                     := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Bouwkosten'+Sluit, Descr = "De bouwkosten van de gealloceerde nieuwbouw, dus van de woningen zelf. Sinds #763 in de export; de post zat daarvoor alleen in het exploitatiesaldo van de allocatie.";
+				attribute<Eur>       KostenWoningbouw_Bouwkosten_NCW                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Bouwkosten_NCW'+Sluit;
+				attribute<Eur>       KostenWoningbouw_MeerkostenBouwwijze                            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/MeerkostenBouwwijze'+Sluit, Descr = "Het deel van die bouwkosten dat aan de gekozen bouwwijze hangt, dus wat aangepast bouwen boven op een gewone woning kost. Staat op nul zolang BouwwijzeK/Kostenopslag op 1,0 staat en BouwwijzeOpslagInBouwkosten uit staat, zie #505 en #723. De hectares per bouwwijze staan in Bouwwijze_Areaal.";
+				attribute<Eur>       KostenWoningbouw_Regulier                                       := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Regulier'+Sluit, Descr = "De grondproductiekosten van de ontwikkelaar: bouw- en woonrijp maken, bovenwijkse voorzieningen en het planproces.";
+				attribute<Eur>       KostenWoningbouw_Regulier_NCW                                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Regulier_NCW'+Sluit;
+				attribute<Eur>       KostenWoningbouw_MeerkostenBodemdaling                          := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/MeerkostenBodemdaling'+Sluit, Descr = "Wat er bovenop komt doordat de ondergrond zakt, uit bijlage E van het landelijk afwegingskader. Hangt aan de bodemdalingsopgave van de plek en niet aan de categorie uit de bebouwingstypekaart.";
+				attribute<Eur>       KostenWoningbouw_MeerkostenBodemdaling_NCW                      := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/MeerkostenBodemdaling_NCW'+Sluit;
+				attribute<Eur>       KostenWoningbouw_BeheerEnOnderhoud                              := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/BeheerEnOnderhoud'+Sluit, Descr = "Het onderhoud aan de openbare ruimte over honderd jaar, netto contante waarde vanaf oplevering. Valt bij de gemeente en zit daarom niet in het exploitatiesaldo.";
+				attribute<Eur>       KostenWoningbouw_BeheerEnOnderhoud_NCW                          := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/BeheerEnOnderhoud_NCW'+Sluit, Descr = "Let op de dubbele verdiscontering in de betekenis: het bedrag zelf is al een contante waarde over honderd jaar, en wordt hier nog eens teruggerekend van het bouwjaar naar het basisjaar.";
+				attribute<Ha>        KostenWoningbouw_Nieuwbouw_Ha                                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/'+NaamAggr+'/Nieuwbouw_Ha'+Sluit, Descr = "Controlegetal: over hoeveel hectare de posten hierboven zijn geboekt.";
+
+				// --- bereikbaarheid van groen ---
+				attribute<meter2>    BereikbaarheidGroen_BBG_Tot300m_ExAgr_Groenaanbod_over_woning   := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/TotaalExAgrarisch/Indicatoren/Cumulatief_Groenaanbod_over_woningen/Indicator_Aggregated', ',')+')';
+				attribute<meter2>    BereikbaarheidGroen_BBG_Tot300m_Groenaanbod_over_woning         := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/Totaal/Indicatoren/Cumulatief_Groenaanbod_over_woningen/Indicator_Aggregated', ',')+')';
+				attribute<m2_Woning> BereikbaarheidGroen_BBG_Tot300m_ExAgr_DrukteCorr_PerWoning      := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/TotaalExAgrarisch/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator_Aggregated', ',')+')';
+				attribute<m2_Woning> BereikbaarheidGroen_BBG_Tot300m_DrukteCorr_PerWoning            := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/Totaal/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator_Aggregated', ',')+')';
+				attribute<meter2>    BereikbaarheidGroen_Fractie_Tot300m_Groenaanbod_over_woning     := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/Fractie/Indicatoren/Cumulatief_Groenaanbod_over_woningen/Indicator_Aggregated', ',')+')', Descr = "Fractiebenadering (#717). Geen ExAgr-tegenhanger: de fractietak kent geen agrarische uitsluiting, want de hedonische natuurdefinitie regelt zelf al wat meetelt.";
+				attribute<m2_Woning> BereikbaarheidGroen_Fractie_Tot300m_DrukteCorr_PerWoning        := ='union_data(Regio,'+AsList('ThisCasus/Zichtjaren/'+ExportZichtjaar+'/BereikbaarheidGroen/'+GroenPad+'/Afstanden/Tot300m/AggrGroenKlassen/Fractie/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator_Aggregated', ',')+')', Descr = "Fractiebenadering, druktegecorrigeerd (#717).";
+
+				// --- grondgebruik: verandering ten opzichte van het basisjaar ---
+				attribute<ha>        Verstedelijking                                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/Verstedelijking/'+NaamAggr+Sluit;
+				attribute<ha>        VerstedelijkingOpVruchtbareLandbouwgronden                      := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden/'+NaamAggr+Sluit;
+				// Inbreidingsaandeel per regio. Stond alleen als landelijke parameter in Indicatoren/Inbreiding en
+				// kwam daardoor niet in deze tabel. Teller en noemer allebei bruto: met het netto verschil kantelt
+				// de maat zodra er ergens gesloopt wordt en kan hij negatief worden, zie #639. Een regio zonder
+				// nieuwe woningen geeft een lege cel, want dan is er geen aandeel te bepalen.
+				attribute<float32>   FractieWoningenErbijInBestaandBebouwdGebied                     := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/WoningenErbij * float32(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/BestaandBebouwdGebied), Regio/Per_AdminDomain_Fijn) / sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/WoningenErbij, Regio/Per_AdminDomain_Fijn)[float32]';
+				attribute<float32>   FractieWoningenErbijInBestaandGroenInUrbanContour                       := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/WoningenErbij * float32(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/BestaandGroenInBestaandBebouwdGebied), Regio/Per_AdminDomain_Fijn) / sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Inbreiding/WoningenErbij, Regio/Per_AdminDomain_Fijn)[float32]';
+				attribute<ha>        NieuweNatuur                                                    := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/NieuweNatuur/'+NaamAggr+Sluit;
+				attribute<ha>        NieuweNatuurOpVruchtbareLandbouwgronden                         := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden/'+NaamAggr+Sluit;
+				attribute<ha>        VerdwenenNatuur                                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenNatuur/'+NaamAggr+Sluit;
+				attribute<ha>        WaterbergingVeen                                                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/WaterbergingVeen/'+NaamAggr+Sluit;
+				attribute<ha>        WaterbergingVeenOpVruchtbareLandbouwgronden                     := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden/'+NaamAggr+Sluit;
+				attribute<ha>        VerdwenenLandbouw                                               := ='sum(float32(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenLandbouw) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn)';
+				attribute<ha>        VerdwenenVruchtbareLandbouw                                     := ='sum(float32(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Grondgebruik/Verandering/VerdwenenVruchtbareLandbouw) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn)';
+
+				// --- sloop, uitgesplitst naar de drie oorzaken uit #658 ---
+				attribute<Woning>    Sloop_NieuweNatuur_Woningen                                     := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/GesloopteWoningen_'+NaamAggr+Sluit;
+				attribute<Job>       Sloop_NieuweNatuur_Banen                                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/GesloopteBanen_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_NieuweNatuur_Uitkoopkosten                                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_NieuweNatuur_Sloopkosten                                  := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Sloopkosten_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_NieuweNatuur_Uitkoopkosten_NCW                            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_NCW_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_NieuweNatuur_Sloopkosten_NCW                              := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanNieuweNatuur/Sloopkosten_NCW_'+NaamAggr+Sluit;
+
+				attribute<Woning>    Sloop_WaterbergingVeen_Woningen                                 := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/GesloopteWoningen_'+NaamAggr+Sluit;
+				attribute<Job>       Sloop_WaterbergingVeen_Banen                                    := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/GesloopteBanen_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_WaterbergingVeen_Uitkoopkosten                            := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_WaterbergingVeen_Sloopkosten                              := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_WaterbergingVeen_Uitkoopkosten_NCW                        := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_NCW_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_WaterbergingVeen_Sloopkosten_NCW                          := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_NCW_'+NaamAggr+Sluit;
+
+				attribute<Woning>    Sloop_OverigeBouwstenen_Woningen                                := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/GesloopteWoningen_'+NaamAggr+Sluit;
+				attribute<Job>       Sloop_OverigeBouwstenen_Banen                                   := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/GesloopteBanen_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_OverigeBouwstenen_Uitkoopkosten                           := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_OverigeBouwstenen_Sloopkosten                             := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_OverigeBouwstenen_Uitkoopkosten_NCW                       := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_NCW_'+NaamAggr+Sluit;
+				attribute<Eur>       Sloop_OverigeBouwstenen_Sloopkosten_NCW                         := =Voor+'ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_NCW_'+NaamAggr+Sluit;
+
+				// --- woningwaarde en de waardering van groen in de nabijheid ---
+				attribute<Eur>       Woningwaarde_Nieuwbouw                                          := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Woningwaarde/Nieuwbouw, Regio/Per_AdminDomain_Fijn)';
+				attribute<Eur>       Woningwaarde_Nieuwbouw_NCW                                      := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Woningwaarde/Nieuwbouw_NCW, Regio/Per_AdminDomain_Fijn)';
+				attribute<Eur>       WaardeNabijheidGroen_Woningen                                   := ='sum(MakeDefined(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen, 0[Eur]), Regio/Per_AdminDomain_Fijn)';
+				attribute<Eur>       WaardeNabijheidGroen_BestaandeWoningen                          := ='sum(MakeDefined(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen, 0[Eur]), Regio/Per_AdminDomain_Fijn)';
+				attribute<Eur>       WaardeNabijheidGroen_NieuwbouwWoningen                          := ='sum(MakeDefined(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen, 0[Eur]), Regio/Per_AdminDomain_Fijn)';
+				attribute<Eur>       WaardeNabijheidGroen_Woningen_NCW                               := ='sum(MakeDefined(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen_NCW, 0[Eur]), Regio/Per_AdminDomain_Fijn)';
+
+				// --- vermeden sterfte door meer groen ---
+				attribute<Persoon>   SterfteAfname_PerPeriode                                        := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnamePerPeriode, Regio/Per_AdminDomain_Fijn)';
+				attribute<Persoon>   SterfteAfname_Cumulatief                                        := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief, Regio/Per_AdminDomain_Fijn)';
+				// De twee termen waaruit SterfteAfname_PerPeriode is opgebouwd, apart, omdat ze een verschillend
+				// verhaal vertellen. Zittend meet de verandering op de eigen locatie sinds het basisjaar en is dus
+				// het effect van vergroening. Nieuw vergelijkt de nieuwe woning met de bewonersgewogen gemiddelde
+				// groenindex van een woning in het basisjaar, en is structureel negatief zodra nieuwbouw compacter
+				// is dan de bestaande voorraad. Zonder deze splitsing is een negatief totaal niet uit te leggen.
+				attribute<Persoon>   SterfteAfname_PerPeriode_ZittendeBewoners                       := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameZittendeBewoners, Regio/Per_AdminDomain_Fijn)';
+				attribute<Persoon>   SterfteAfname_PerPeriode_NieuweBewoners                         := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameNieuweBewoners, Regio/Per_AdminDomain_Fijn)';
+
+				// --- koolstof ---
+				attribute<ton>       CO2Stock_Zichtjaar                                              := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Stock_Zichtjaar, Regio/Per_AdminDomain_Fijn)', Descr = "De totale voorraad over beide pools: de bovenste 30 cm uit de bodemkoolstofkaart plus de veenkoolstof daaronder. De twee staan hieronder apart, en dat is nodig om deze kolom te kunnen lezen; zie daar.";
+				// #736: de twee pools apart, want anders leest deze kolom als koolstof die op het spel staat. De veenreserve is
+				// sinds die ronde de hele veenkolom onder de bovenste 30 cm in plaats van de schijf boven de basisjaar-GLG, en
+				// daarmee gaat hij landelijk van 218 naar 863 Mton CO2. Van die reserve wordt binnen de horizon maar een derde
+				// aangesproken: BAU verbruikt op de veenweide 0,54 van de 1,75 m die onder de toplaag ligt. Een lezer die alleen
+				// het totaal ziet, ziet die verschuiving aan voor een verandering in wat er kan vrijkomen.
+				attribute<ton>       CO2Stock_Zichtjaar_Bovenlaag                                    := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Zichtjaar/CO2/Stock_Bovenlaag, Regio/Per_AdminDomain_Fijn)', Descr = "Alleen de bovenste 30 cm plus biomassa, dus de voorraad zoals de indicator hem voor #657 rapporteerde. Dit is de pool waar een landgebruiksverandering op aangrijpt.";
+				attribute<ton>       CO2Stock_Zichtjaar_Veenreserve                                  := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Zichtjaar/CO2/Stock_Veenreserve, Regio/Per_AdminDomain_Fijn)', Descr = "Alleen de veenkoolstof onder de bovenste 30 cm. Deze pool wordt uitsluitend door veenoxidatie aangesproken en verandert niet bij een landgebruiksverandering; wat er binnen de horizon van af gaat is het verschil met het basisjaar.";
+				attribute<ton>       CO2Flow_Zichtjaar                                               := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Flow_Zichtjaar, Regio/Per_AdminDomain_Fijn)';
+				attribute<ton>       CO2Flow_TovBasisjaar                                            := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar, Regio/Per_AdminDomain_Fijn)';
+				// #733: de kolom hierboven is op een laat zichtjaar niet los te lezen. De koolstofboekhouding kan niet meer verliezen
+				// dan er in de voorraad ligt, dus zodra een veenweidecel leeg is stopt haar bijdrage aan het verlies terwijl SOMERS
+				// er uitstoot blijft rapporteren. In BAU op 2120 gaat het om 96,1 Mton CO2 landelijk, genoeg om het saldo van min 89
+				// naar plus 7 te tillen. Deze twee kolommen zetten dat erbij: hoeveel er buiten de boekhouding is gebleven, en wat
+				// het saldo zou zijn als die post onverkort was geboekt.
+				attribute<ton>       CO2Ongedekt_Cumulatief                                          := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief, Regio/Per_AdminDomain_Fijn)', Descr = "Veenoxidatie die SOMERS sinds het basisjaar rapporteert terwijl de koolstofvoorraad van die cel al leeg was. Nul op alle zichtjaren waar de voorraad de vraag nog kon dragen.";
+				attribute<ton>       CO2Flow_TovBasisjaar_InclOngedekt                                := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar, Regio/Per_AdminDomain_Fijn) - sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief, Regio/Per_AdminDomain_Fijn)', Descr = "Het koolstofsaldo met de ongedekte post als verlies meegeteld. Uitdrukkelijk niet de indicator, want veen dat er niet ligt oxideert niet; de kolom staat er als ondergrens naast zodat de bandbreedte tussen de koolstofindicator en de SOMERS-indicator zichtbaar is (#733).";
+
+				// --- veenemissies volgens SOMERS, cumulatief sinds het basisjaar ---
+				attribute<kg>        SOMERS_CO2_Cumulatief_Minimum                                   := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Minimum/Write_Result_SA, Regio/Per_AdminDomain_Fijn)';
+				attribute<kg>        SOMERS_CO2_Cumulatief_Mediaan                                   := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA, Regio/Per_AdminDomain_Fijn)';
+				attribute<kg>        SOMERS_CO2_Cumulatief_Maximum                                   := ='sum(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/SOMERS_CO2_laagveen/Emissies/Maximum/Write_Result_SA, Regio/Per_AdminDomain_Fijn)';
+			}
+		}
+
+		container PerIndeling := RegionaleIndicatoren_T(
+			  /ModelParameters/Advanced/IndicatorRegio_path
+			, ''
+			, 'Per_Regio'
+			, ''
+			, 'PerRegio'
+			, "'obv_BBG/PerRegios/'+Regio/name"
+			, 'Indicatoren_'+/ModelParameters/Advanced/IndicatorRegio_ref
+		), Descr = "De tabel op de regio-indeling uit ModelParameters/Advanced/IndicatorRegio_ref, sinds #705 de landschapsindeling.";
+
+		container PerNederland := RegionaleIndicatoren_T(
+			  '/SourceData/RegioIndelingen/NL'
+			, 'union_data(Regio,'
+			, 'Per_NL'
+			, ')'
+			, 'PerNL'
+			, "const('obv_BBG/PerRegios/Nationaal', Regio)"
+			, 'NationaleIndicatoren'
+		), Descr = "Dezelfde tabel, altijd landsdekkend en niet afhankelijk van een parameter. Op verzoek vanuit Deltares bij #705: een run levert voortaan hoe dan ook de landelijke getallen op, en daarnaast de gekozen regionale doorsnede.";
+
+
+		// Claimrealisatie per allocatieregio, gevraagd vanuit Deltares bij de bespreking van de
+		// productierun. Bewust een eigen tabel per schaalniveau en geen kolom in RegionaleIndicatoren:
+		// de claim hoort per allocatieregio van de betreffende sector, en dat is een andere doorsnede
+		// dan de indicatorenregio. Juist het verschil tussen de niveaus maakt overflow zichtbaar. Zit
+		// een regio op NVM-niveau boven de 1 terwijl COROP eromheen op 1 uitkomt, dan is de claim
+		// binnen die grotere regio verschoven en niet landelijk overschreden.
+		// Alleen de indelingen waarop wonen wordt gealloceerd, plus het landelijke totaal. Werken
+		// gebruikt dezelfde drie indelingen. Waterbergingsregio hoort er nadrukkelijk NIET bij: daar
+		// wordt waterberging op geclaimd en niet wonen of werken, en de wonen- en werkenclaim bestaat
+		// daar dus niet als bronbestand. Een for_each over alle Uq_AllocRegios liep daarop vast met
+		// een GDAL-fout op een niet bestaande Wonen.csv.
+		unit<uint8> ClaimNiveau := unique(
+			ModelParameters/SectorAllocRegio/AllocRegio_name[ModelParameters/SectorAllocRegio/WonenAllocRegio/org_rel]
+		);
+
+		container ClaimRealisatie_PerNiveau :=
+			for_each_ne(
+				  ClaimNiveau/values
+				, 'ClaimRealisatie_Niveau_T(' + quote(ClaimNiveau/values) + ')'
+			)
+		{
+			container Nederland := ClaimRealisatie_Niveau_T('Nederland');
+		}
+
+		Template ClaimRealisatie_Niveau_T
+		{
+			parameter<String> Niveau_name;
+			///
+			container Bron := ='ThisCasus/Zichtjaren/' + ExportZichtjaar + '/ClaimRealisatie/Per_AllocRegio/' + Niveau_name;
+
+			unit<uint32> Tabel := Bron/ClaimRegio
+			, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'ClaimRealisatie_' + Niveau_name, '.tif', '.csv')"
+			, StorageType = "gdalwrite.vect"
+			, Descr = "Gerealiseerde stand gedeeld door de claim, per regio van deze indeling. Een waarde onder 1 betekent dat de claim niet is gehaald, boven 1 dat er meer is gealloceerd dan gevraagd."
+			{
+				attribute<String>  Regio_name              := Bron/ClaimRegio/name;
+				// Leeg laten waar er geen claim is, in plaats van een ratio van nul te tonen. Een nul leest
+				// als een meting en nodigt niet uit om de claimkolom ernaast te bekijken; een leeg veld wel.
+				attribute<float32> Wonen_realisatie        := Bron/Impl/Claims/Aantal_Woningen_Totaal > 0[Woning] ? Bron/Claim_realisatie/Wonen/Totaal : null_f;
+				attribute<float32> Werken_realisatie       := Bron/Impl/Claims/Banen_Totaal > 0[Job] ? Bron/Claim_realisatie/Werken/Totaal : null_f;
+				attribute<Woning>  Wonen_claim             := Bron/Impl/Claims/Aantal_Woningen_Totaal;
+				attribute<Woning>  Wonen_stand             := Bron/Impl/Stand_PerAllocRegio/Aantal_Woningen_Totaal;
+				attribute<Job>     Werken_claim            := Bron/Impl/Claims/Banen_Totaal;
+				attribute<Job>     Werken_stand            := Bron/Impl/Stand_PerAllocRegio/Banen_Totaal;
+			}
 		}
 	}
 
-	unit<uint8> Landgebruik_Areaal := Actor/LU_ModelType
-	, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Landgebruik_Areaal', '.tif', '.csv')", StorageType = "gdalwrite.vect"
-	, Descr = "De tabelkant van de landgebruikskaart (#658). Die kaart is een klasse per cel en aggregeert dus niet naar een getal per regio, maar naar een areaal per klasse. Deze tabel stond wel in de boom, als Impl/Basisjaar_Areaal_perLUMT en Impl/Zichtjaar_Areaal_perLUMT, maar werd nergens weggeschreven."
-	{
-		attribute<String> Klasse      := Actor/LU_ModelType/name;
-		attribute<Ha>     Basisjaar   := Impl/Basisjaar_Areaal_perLUMT;
-		attribute<Ha>     Zichtjaar   := Impl/Zichtjaar_Areaal_perLUMT;
-		attribute<Ha>     Verandering := Verandering_Areaal_perLUMT;
-	}
-
-	unit<uint8> LandgebruikNL2120_Areaal := /Classifications/Grondgebruik/LU_NL2120
-	, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'LandgebruikNL2120_Areaal', '.tif', '.csv')", StorageType = "gdalwrite.vect"
-	, Descr = "Idem voor de NL2120-landgebruikskaart met haar 92 klassen (#633): het areaal per klasse in het zichtjaar. De kaart zelf gaat als grid mee via LandgebruikskaartNL2120/Write_Result_SA."
-	{
-		attribute<String> Klasse    := /Classifications/Grondgebruik/LU_NL2120/name;
-		attribute<Ha>     Zichtjaar := ='pcount(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/LandgebruikskaartNL2120/Write_Result_SA)[float32] * rdc_25m/NrHaPerCell';
-	}
-
-	unit<uint8> BT_Exogeen_Areaal := /Classifications/Grondgebruik/INL_Beheertype
-	, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'BT_Exogeen_Areaal', '.tif', '.csv')", StorageType = "gdalwrite.vect"
-	, Descr = "De tabelkant van BT_Exogeen: hoeveel hectare de landschapsteams per natuurbeheertype opleggen. Gevraagd bij de oplevering van 3 september, naast de kaart. Dit telt alleen de oplegging van de variant en niet de natuur die er in het basisjaar al lag; in het basisjaar is de kolom daarom nul. Wie het totale natuurareaal wil heeft LandgebruikNL2120_Areaal nodig, waar de bestaande natuur wel in zit."
-	{
-		attribute<String> Beheertype := /Classifications/Grondgebruik/INL_Beheertype/Label;
-		attribute<Ha>     Zichtjaar  := ='pcount(ThisCasus/Zichtjaren/'+ExportZichtjaar+'/LandgebruikskaartNL2120/BT_Exogeen)[float32] * rdc_25m/NrHaPerCell';
-	}
-
-	unit<uint32> Bouwwijze_Areaal := /Classifications/Modellering/BouwwijzeK
-	, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'Bouwwijze_Areaal', '.tif', '.csv')", StorageType = "gdalwrite.vect"
-	, Descr = "De tabelkant van de bouwwijzekaart (#763): hoeveel hectare nieuwbouw er per bouwwijze staat. Net als bij het landgebruik aggregeert een klasse per cel niet naar een getal per regio maar naar een areaal per klasse, dus staat dit los van de indicatorentabel.
-
-				Dit is het antwoord op de vraag hoeveel er aangepast is gebouwd: de drie bodemdalingbestendige bouwwijzen zijn ophogen, funderen op palen en drijvend. Wat dat extra kost staat als KostenWoningbouw_MeerkostenBouwwijze in de indicatorentabel, en dat bedrag is nul zolang de kentallen van #505 leeg zijn.
-
-				Alleen de cellen waar sinds het basisjaar netto woningen zijn bijgekomen tellen mee, want de bouwwijze van bestaande bebouwing kent het model niet."
-	{
-		attribute<String> Bouwwijze    := /Classifications/Modellering/BouwwijzeK/name;
-		attribute<Ha>     Nieuwbouw_Ha := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/KostenWoningbouw/Nieuwbouw_Ha_perBouwwijze';
-	}
 
 	container Legendas: Descr = "De klassenamen bij de kaarten die een classificatie als waardenunit hebben. Een GeoTIFF draagt alleen het getal, dus zonder deze tabellen is een klassekaart bij de ontvanger niet te lezen. MaakOplevering.ps1 zet ze als <bestandsnaam>_meta.txt naast de kaart waar ze bij horen.
 
