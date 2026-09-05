@@ -68,6 +68,7 @@ Template CarbonStorageSequestration_T
 	attribute<bool> OpSOMERSPerceel (AdminDomain) := IsDefined(/SourceData/Landbouw/SOMERS/Veenweide_percelen/AdminDomain_rel), Descr = "Ligt hier een veenweideperceel waarvoor SOMERS een oxidatie berekent? Dit is de afbakening van de vraagkant van de balans, en die valt niet samen met de veen- en moerige gronden van BOFEK2020; zie OpVeenbodem hierboven.";
 
 	container VeenKentallen := /Classifications/Grondgebruik/VeenBroeikasgas;
+	unit<UInt8> LandgebruikType := /Classifications/Grondgebruik/LandgebruikType, Descr = "De classificatie van de stand-administratie (#751): het type per cel, met de koolstofklasse en de kentallen van team Veen als kolommen.";
 
 	// #657: de kentallen van team Veen voor de veenvormende klassen op veenbodem, in plaats van de generieke Cseq en Cmax.
 	// De reden dat ook het maximum mee moet: de voorraad uit de bodemkoolstofkaart ligt op de veenbodem rond 169 ton C per
@@ -125,16 +126,18 @@ Template CarbonStorageSequestration_T
 	// sinds trap 2 van #684 per cel bekend. Zie de schakelaar Koolstof_KentalUitBouwsteencomponent.
 	unit<uint8> NbSLandgebruik := /Classifications/Grondgebruik/NbSVeen/NbSLandgebruik;
 
-	attribute<NbSLandgebruik> Component_rel (AdminDomain) := NbSLandgebruik/PerLU_ModelType[ThisVariantData/ExogeenOpleggen/Landbouw_Effectief]
-	, Descr = "Welk hoofdtype landgebruik van de bouwstenentabel legt de veenlevering hier op? Null buiten de landbouwstroom, en dus null in elke variant zonder veenlevering.";
+	attribute<NbSLandgebruik> Component_rel (AdminDomain) := /Classifications/Grondgebruik/LandbouwType/Component_rel[LandgebruikType/LandbouwType_rel[Zichtjaar/Grondgebruik/Type]]
+	, Descr = "Welk hoofdtype landgebruik van de bouwstenentabel ligt hier volgens de stand-administratie (#751)? Via het landbouwtype van het type: natte teelt (Riet_paludicultuur), vernat productiegrasland en vernat kruidenrijk grasland dragen een component, de rest niet. Las tot #751 ThisVariantData/ExogeenOpleggen/Landbouw_Effectief, dus alleen de landbouwstroom van de veenlevering. Het riet uit de BRP in het basisjaar draagt hetzelfde landbouwtype, maar of de component ook telt beslist HeeftComponentKental hieronder.";
 
 	attribute<bool> HeeftComponentKental (AdminDomain) := = /ModelParameters/Advanced/Koolstof_KentalUitBouwsteencomponent
-															? 'MakeDefined(NbSLandgebruik/HeeftComponentKental[Component_rel], FALSE)'
+															? 'MakeDefined(NbSLandgebruik/HeeftComponentKental[Component_rel], FALSE) && Zichtjaar/Grondgebruik/Type != BaseYear/Grondgebruik/Type'
 															: 'const(FALSE, AdminDomain)'
-	, Descr = "Rekent deze cel met het kental van haar bouwsteencomponent in plaats van met dat van haar koolstofklasse? Staat de schakelaar uit, dan is dit overal FALSE en gedraagt de cel zich als voor #778: natte teelt is dan een veenvormende rietklasse.";
+	, Descr = "Rekent deze cel met het kental van haar bouwsteencomponent in plaats van met dat van haar koolstofklasse? Alleen waar het type sinds het basisjaar is veranderd, dus waar de veenlevering de natte teelt of het vernatte grasland heeft opgelegd. Riet dat er in het basisjaar al ligt (BRP-riet, en tot 5 september 2026 ook LGN 42 en 43) houdt zijn veenvormende rietklasse; zonder deze poort werd het in BAU en BAU2 geen veenvormer meer en boekte BuitenSOMERS er de emissiefactor voor gedraineerd veen. Staat de schakelaar uit, dan is dit overal FALSE en gedraagt de cel zich als voor #778: natte teelt is dan een veenvormende rietklasse.";
 
-	attribute<float32> ComponentKental_CO2 (AdminDomain) := NbSLandgebruik/CO2_ton_ha_jaar[Component_rel]
-	, Descr = "Het CO2-kental van de component, in ton per hectare per jaar en positief is uitstoot. Voor natte teelt 1, voor vernat kruidenrijk grasland 4,02 en voor vernat productiegrasland 7.";
+	attribute<float32> ComponentKental_CO2 (AdminDomain) := MakeDefined(LandgebruikType/CO2_veen_ton_ha_jaar[Zichtjaar/Grondgebruik/Type], 0f)
+	, Descr = "Het CO2-kental van de component, in ton per hectare per jaar en positief is uitstoot, als kolom op het type. Voor natte teelt 1, voor vernat kruidenrijk grasland 4,02 en voor vernat productiegrasland 7.";
+	attribute<float32> ComponentKental_CH4 (AdminDomain) := MakeDefined(/Classifications/Grondgebruik/LandbouwType/CH4_veen_ton_CO2eq_ha_jaar[LandgebruikType/LandbouwType_rel[Zichtjaar/Grondgebruik/Type]], 0f)
+	, Descr = "Het methaankental van de component, in ton CO2-equivalent per hectare per jaar; lezer Methaan_T. Voor natte teelt 5, voor vernat kruidenrijk grasland 3 en voor vernat productiegrasland 0.";
 
 	attribute<bool> IsVeenvormendNu (AdminDomain) := MakeDefined(VeenKentallen/IsVeenvormend[Zichtjaar/Grondgebruik/CC], FALSE) && !HeeftComponentKental
 	, Descr = "Is het landgebruik hier een veenvormende klasse geworden? Dan boekt deze post niets meer. De emissiefactor beschrijft een gedraineerde veenbodem onder het huidige gebruik en niet een vernat moeras; hem daar laten doorlopen zou de vernatting van veen buiten de veenweidepercelen als uitstoot in de boeken zetten en bovendien via Oxidatie/Actief de vastlegging bevriezen op precies de cellen waar het veen weer aangroeit.
@@ -234,12 +237,15 @@ Template CarbonStorageSequestration_T
 	{
 		container Grondgebruik
 		{
-			attribute<LGNKlasse>   LGN (AdminDomain) := /SourceData/Grondgebruik/LGN/m25;
-
-			// #657: dit stond op rjoin(LGN, CarbonClass/LGN_rel, id(CarbonClass)), maar LGN_code is in de koolstoftabel niet
-			// uniek en een rjoin pakt bij een dubbele sleutel stil de eerste rij. De koppeling ligt nu vast in
-			// Classifications/Grondgebruik/CarbonClass_rel, met een IntegrityCheck erop. De uitkomst is dezelfde.
-			attribute<CarbonClass> CC  (AdminDomain) := /Classifications/Grondgebruik/CarbonClass_rel[LGN];
+			// #751: het landgebruik van het basisjaar uit de stand-administratie en niet meer uit LGN. Het type draagt zijn
+			// koolstofklasse als kolom, dus de vertaalstap LGN naar CarbonClass (met rjoin en aanvulling, #657) is hier niet
+			// meer nodig. Op natuur is dat fijner dan LGN (het beheertype), op landbouw grover: bouwland staat uniform op
+			// klasse 38 en grasland op 24 of 25 waar LGN per gewas een klasse gaf, zie LandbouwType/CarbonClass_rel. De
+			// basislijn van voorraad en maximum verschuift daardoor op vrijwel elke natuur- en landbouwcel; de oplegging is
+			// uitkomstneutraal gemeten, deze basis niet. Buiten het studiegebied is de stand leeg; daar valt het terug op de
+			// basiskaart, die het hele raster dekt.
+			attribute<LandgebruikType> Type (AdminDomain) := MakeDefined(Basisjaar/Stand/Landgebruik_Type, /BaseData/StartState/Landgebruik/Type), Descr = "Het type per cel in het basisjaar, uit de stand-administratie (#751).";
+			attribute<CarbonClass>     CC   (AdminDomain) := LandgebruikType/CarbonClass_rel[Type], Descr = "De koolstofklasse van dat type.";
 		}
 		
 		container Carbon
@@ -345,7 +351,11 @@ Template CarbonStorageSequestration_T
 	{
 		container Grondgebruik
 		{
-			attribute<CarbonClass> CC_Exogeen (AdminDomain) := =IsStartYear ? 'const(null_b, AdminDomain)' : 'ThisVariantData/ExogeenOpleggen/carbonclass_rel';
+			// #751: het type per cel uit de stand van dit zichtjaar. De oplegging landt in het eerste zichtjaar in de stand
+			// (Templates/Allocatie/Zichtjaar_T) en reist daarna mee, dus een tweede bron voor dezelfde informatie is niet meer
+			// nodig; tot #751 las dit ThisVariantData/ExogeenOpleggen/carbonclass_rel met een terugval op PrevZichtjaar. Het type
+			// blijft staan onder wonen, werken en verblijfsrecreatie; de sectortoets hieronder blijft daarom nodig.
+			attribute<LandgebruikType> Type (AdminDomain) := MakeDefined(Stand/Landgebruik_Type, BaseYear/Grondgebruik/Type), Descr = "Het type per cel in dit zichtjaar, uit de stand-administratie; buiten het studiegebied het basisjaartype.";
 
 			// #657: dit stond op IsDefined(Stand/Subsector_rel), en dat is waar voor elke gealloceerde cel, niet alleen voor de
 			// stedelijke sectoren. In Y2030 kregen daardoor ook de 15.542 waterbergingscellen de klasse Dichtbebouwd, met een
@@ -354,7 +364,7 @@ Template CarbonStorageSequestration_T
 			// boeken in. De toets is nu dezelfde als elders in het model, zie Templates/Indicatoren/Grondgebruik.dms.
 			attribute<bool>        IsStedelijk (AdminDomain) := MakeDefined(/Classifications/Actor/Sector/IsStedelijk[Stand/Sector_rel], FALSE), Descr = "Draagt deze cel een gealloceerde stedelijke sector? Niet-stedelijke sectoren, zoals waterberging, veranderen hier niet van koolstofklasse; wat daar met de voorraad hoort te gebeuren is onderdeel van #657.";
 
-			attribute<CarbonClass> CC         (AdminDomain) := IsStedelijk ? CarbonClass/v/Dichtbebouwde_stedelijke_gebieden : MakeDefined(CC_Exogeen, PrevZichtjaar/Grondgebruik/CC);
+			attribute<CarbonClass> CC         (AdminDomain) := IsStedelijk ? CarbonClass/v/Dichtbebouwde_stedelijke_gebieden : LandgebruikType/CarbonClass_rel[Type], Descr = "De koolstofklasse van dit zichtjaar: Dichtbebouwd waar een stedelijke sector is gealloceerd, anders de klasse van het type in de stand.";
 			
 			attribute<OP> OP_rel (AdminDomain) := Stand/OP_rel;
 			
