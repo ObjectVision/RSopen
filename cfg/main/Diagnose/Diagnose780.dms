@@ -54,4 +54,69 @@ container Diagnose780
 			, Float32
 		)
 	, Descr = "Hetzelfde over het hele raster, als vergelijking. Het verschil tussen de twee reeksen is waar het om gaat: als de derving op landbouwgrond veel lager ligt dan het rastergemiddelde, dan zat het hoge getal in de niet-landbouwcellen en is de hydrologie niet de verklaring voor de negatieve contante waarden.";
+
+	container Capaciteit
+	: Descr = "Past de minimumclaim van de landbouw nog in de ruimte die de allocatie heeft, per allocatieregio?
+
+				Aanleiding: NbSGenuanceerd valt om op IntegrityCheck statusFlag van discrete_alloc_sp, en dat betekent dat de allocator zijn minimumclaims niet kan halen. Landelijk paste het wel, dus de vraag is of het tekort regionaal is. Zet Casus op BAU of NbSGenuanceerd."
+	{
+		parameter<String> Casus := 'NbSGenuanceerd';
+		container Alloc := ='/Allocatie/WLO_hoog_'+Casus+'/Zichtjaren/Y2040/Sequences/Seq_0/SectorAllocRegios/Provincie_Landbouw/Iters/Iter_0';
+
+		unit<uint32> Regio := Alloc/Allocatie_Prep/AllocRegio
+		{
+			attribute<String> naam := Alloc/Allocatie_Prep/AllocRegio/name;
+		}
+
+		attribute<Bool> IsBeschikbaarVoorLandbouw (CompactedAdminDomain) :=
+			='('+AsItemList('IsDefined(Alloc/Allocatie_Prep/Suitabilities/'+/Classifications/Actor/LandbouwKlasses/name+')', ' || ')+')'
+		, Descr = "Mag hier minstens een van de vijftien LANDBOUWklassen landen? NonLandbouw telt met opzet niet mee: die restcategorie is veel ruimer beschikbaar, en meetellen maakt de ruimte kunstmatig groot. Dat was de fout in de eerste versie van deze meting.";
+
+		attribute<Float32> Beschikbaar (Regio) :=
+			sum(float32(IsBeschikbaarVoorLandbouw), Alloc/Allocatie_Prep/AllocRegio/Per_CompactedAdminDomain)
+		, Descr = "Cellen waar minstens een landbouwklasse mag landen, dus wat de allocator werkelijk aan landbouw kwijt kan.";
+
+		attribute<Float32> Beschikbaar_inclNonLandbouw (Regio) :=
+			sum(float32(IsDefined(Alloc/Allocatie_Prep/Suitabilities/MaxElem)), Alloc/Allocatie_Prep/AllocRegio/Per_CompactedAdminDomain)
+		, Descr = "Ter vergelijking: hetzelfde met NonLandbouw erbij. Het verschil met Beschikbaar laat zien hoeveel ruimte er alleen voor de restcategorie is.";
+
+		attribute<Float32> MinClaim (Regio) :=
+			='add('+AsItemList('float32(Alloc/Allocatie_Prep/Claims/MinClaims/'+/Classifications/Actor/LandbouwKlasses/name+')')+')'
+		, Descr = "De minimumclaims van alle landbouwklassen samen, in cellen. NonLandbouw telt niet mee: die heeft geen ondergrens en vult juist de rest.";
+
+		attribute<Float32> Tekort (Regio) := MinClaim - Beschikbaar
+		, Descr = "Positief is een tekort: zoveel cellen vraagt de ondergrens meer dan er te verdelen zijn. Elke regio met een positief getal laat discrete_alloc_sp op statusFlag vallen.";
+
+		parameter<Float32> Tekort_totaal := sum(max_elem(Tekort, 0f));
+
+		container PerKlasse
+		: Descr = "Hetzelfde maar per klasse, want elke klasse heeft haar EIGEN beschikbaarheid: Suitabilities/<klasse> is null waar die klasse niet mag landen. De meting hierboven telt de cellen waar ENIGE klasse mag landen en is daarmee te ruim; een klasse kan haar ondergrens missen terwijl de regio als geheel ruimte over heeft."
+		{
+			container Beschikbaar :=
+				for_each_nedv(
+					/Classifications/Actor/LandbouwKlasses/name
+					, 'sum(float32(IsDefined(Alloc/Allocatie_Prep/Suitabilities/'+/Classifications/Actor/LandbouwKlasses/name+')), Alloc/Allocatie_Prep/AllocRegio/Per_CompactedAdminDomain)'
+					, Regio
+					, Float32
+				);
+
+			container Tekort :=
+				for_each_nedv(
+					/Classifications/Actor/LandbouwKlasses/name
+					, 'float32(Alloc/Allocatie_Prep/Claims/MinClaims/'+/Classifications/Actor/LandbouwKlasses/name+') - Beschikbaar/'+/Classifications/Actor/LandbouwKlasses/name
+					, Regio
+					, Float32
+				);
+
+			container Tekort_totaal :=
+				for_each_nedv(
+					/Classifications/Actor/LandbouwKlasses/name
+					, 'sum(max_elem(Tekort/'+/Classifications/Actor/LandbouwKlasses/name+', 0f))'
+					, void
+					, Float32
+				)
+			, Descr = "Per klasse het totale tekort in cellen. Elke klasse met een positief getal laat discrete_alloc_sp op statusFlag vallen.";
+		}
+		parameter<Float32> Aantal_regios_met_tekort := sum(float32(Tekort > 0f));
+	}
 }
