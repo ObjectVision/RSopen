@@ -52,10 +52,32 @@ Template Iter_Landbouw_T
 		}
 		
 		container ExogeenOpleggen
-		: Descr = "Hierin staat per AdminDomain of er exogeen areaal wordt opgelegd, en zo ja, hoeveel."
+		: Descr = "Wat er exogeen wordt opgelegd, en wat daarvan landbouw is.
+
+					Sinds #684 legt de veenlevering van NbSGenuanceerd niet alleen natuur en water op maar ook landbouw, namelijk natte teelt en vernat grasland, gemeten 207.947 ha. Voor natuur en water is een oplegging simpelweg onbeschikbaar gebied, want daar komt geen landbouw meer. Voor de landbouwstroom is dat te kort door de bocht: die cellen WORDEN landbouw, alleen ligt hun klasse al vast en hoeft de allocator er niets meer te kiezen.
+
+					Daarom staan hier twee dingen naast elkaar. Beschikbaar houdt de cel uit de allocatie, want er valt niets te kiezen. per_SectorxSubsector zegt welke landbouwklasse de cel wordt, zodat de stand en de claimrealisatie hem wel meetellen. Zonder dat tweede tonen de landgebruikskaart en Landgebruik/Type natte teelt terwijl de landbouwstand daar nul zegt, en telt alles wat die stand optelt tien procent te weinig."
 		{
 			attribute<LU_ModelType> Totaal          (AdminDomain) := ThisVariantData/ExogeenOpleggen/Totaal;
 			attribute<Bool>         Beschikbaar     (AdminDomain) := IsNull(Totaal);
+
+			attribute<LandbouwKlasses> LandbouwK_rel (AdminDomain) := LU_ModelType/LandbouwK_rel[Totaal]
+			, Descr = "De landbouwklasse van de oplegging, null waar de oplegging natuur of water is.";
+
+			attribute<Sector/xSubsector> per_SectorxSubsector (CompactedAdminDomain) :=
+				rlookup(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, LandbouwK_rel), Sector/xSubsector/LandbouwK_rel)
+			, Descr = "Dezelfde vorm als Allocatie/per_SectorxSubsector, maar dan voor de opgelegde landbouw in plaats van de gealloceerde. Null waar niets landbouws is opgelegd.";
+
+			container Ha_PerAllocRegio :=
+				for_each_nedv(
+					Subsector/name
+					, Subsector/LandbouwK_rel != const(null_b, Subsector, LandbouwKlasses)
+						? 'sum(per_SectorxSubsector == Sector/xSubsector/V/Landbouw_'+Subsector/name+' ? CompactedAdminDomain/NrHaPerCell : 0[Ha], AllocRegio/Per_CompactedAdminDomain)'
+						: 'const(0[Ha], AllocRegio, Ha)'
+					, AllocRegio
+					, Ha
+				)
+			, Descr = "Hoeveel hectare van deze klasse er per allocatieregio al vastligt door de oplegging. De claims trekken dit eraf voordat zij de allocator in gaan, want die hectares zijn al gerealiseerd en de allocator kan ze niet meer plaatsen.";
 		}
 
 		attribute<Bool> WasLandbouwInBasisjaar (AdminDomain) :=
@@ -104,7 +126,7 @@ Template Iter_Landbouw_T
 			container MaxClaims := 
 				for_each_nedv(
 					  Subsector/name
-					, replace('uint32(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MaxClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' / AdminDomain/NrHaPerCell)'
+					, replace('uint32(max_elem(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MaxClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' - ExogeenOpleggen/Ha_PerAllocRegio/'+Subsector/name+', 0[Ha]) / AdminDomain/NrHaPerCell)'
 							,'@Z@' , Context/ThisZichtjaar/name
 							,'@SC@', Scenario_name
 							,'@AS@', Context/ThisSectorAllocRegio/name)
@@ -115,7 +137,7 @@ Template Iter_Landbouw_T
 			container MinClaims := 
 				for_each_nedv(
 					  Subsector/name
-					, replace('uint32(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MinClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' / AdminDomain/NrHaPerCell)'
+					, replace('uint32(max_elem(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MinClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' - ExogeenOpleggen/Ha_PerAllocRegio/'+Subsector/name+', 0[Ha]) / AdminDomain/NrHaPerCell)'
 							,'@Z@' , Context/ThisZichtjaar/name
 							,'@SC@', Scenario_name
 							,'@AS@', Context/ThisSectorAllocRegio/name)
