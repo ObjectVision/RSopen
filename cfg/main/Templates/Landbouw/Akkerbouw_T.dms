@@ -4,14 +4,17 @@
 //
 // RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
 //
-// Template voor de economische berekening van akkerbouwgewassen.
-// Analoog aan Dairy_T, maar zonder voedermodel: directe keten opbrengst x prijs - kosten = netto-opbrengst.
+// Template voor de economische berekening van de akkerbouwklassen (#780).
+// Directe keten per gewas: bruto geldopbrengst bij derving nul (opbrengst maal prijs plus bijproduct, per bodemtak) maal een min de
+// opbrengstderving maal de prijsmultiplier, min de toegerekende kosten bij eigen mechanisatie, plus de GLB per ha. Per klasse wint
+// per cel het beste gewas. Kostenvoet, GLB, bodemtak en kapitalisatie zijn identiek aan Dairy_T, zodat melkvee en akkerbouw op
+// dezelfde voet staan.
 //
 // Bronnen:
-//   - Opbrengsten en prijzen: BIJ12/KWIN-AGV actualisatie 2024 (5-jarig gem. 2019-2023)
-//   - Productiekosten: KWIN-AGV 2022 (of dummy-ratio 40% van bruto opbrengst)
-//   - Yield reduction: Water Wijzer Landbouw (WWL) of WUR kansenkaarten
-//   - Transitiekosten: Diogo et al. (2015), Table 5
+//   - Opbrengsten en prijzen: BIJ12-actualisatie juni 2024 (KWIN-AGV-methodiek, vijfjaarsgemiddelden 2019-2023), uien KWIN-AGV 2026
+//   - Toegerekende kosten: KWIN-AGV 2026, saldoberekeningen, eigen mechanisatie
+//   - Opbrengstderving: Water Wijzer Landbouw (WWL_dyn) of de WUR-kansenkaarten (Exotisch)
+//   - Transitiekosten: Diogo (2015), tabel 5, geindexeerd
 //   - Kapitalisatie: identiek aan Dairy_T (continue discontering, Kapitalisatie_T)
 //   - Framework: Koomen, Diogo, Dekkers & Rietveld (2015); Diogo, Koomen & Kuhlman (2015)
 //
@@ -19,69 +22,59 @@
 
 Template Akkerbouw_T : using = "Classifications/Landbouw"
 {
-	parameter<String> LandbouwKlasse_name; 
+	parameter<String> LandbouwKlasse_name;
 	//
 	unit<UInt8>       GewassenInKlasse := ='GewasSoortYR/perLandbouwK_domain/'+LandbouwKlasse_name;
-	
-	container PerGewas := 
+
+	container PerGewas :=
 		for_each_ne(
 			 GewassenInKlasse/name
 			,'PerGewas_T('+Quote(LandbouwKlasse_name)+', '+Quote(GewassenInKlasse/name)+')'
-		), Descr = "Voor elk gewas wordt een container PerGewas/<gewasnaam> aangemaakt met daarin YieldReduction, ActualYield, GrossRevenue, NetRevenue_ha.";
-	
-	attribute<Eur_Ha_jaarlijks>     NetRevenue_ha       (rdc_25m) := ='max_elem('+AsItemList('PerGewas/'+GewassenInKlasse/name+'/NetRevenue_ha')+')', Descr = "Dit representeert dat de boer binnen zijn productiesysteem het beste gewas voor die cel kiest. ";
+		), Descr = "Voor elk gewas wordt een container PerGewas/<gewasnaam> aangemaakt met daarin YieldReduction, BrutoGeldopbrengst, Kosten, GLB en NetRevenue_ha.";
+
+	attribute<Eur_Ha_jaarlijks>     NetRevenue_ha       (rdc_25m) := ='max_elem('+AsItemList('PerGewas/'+GewassenInKlasse/name+'/NetRevenue_ha')+')', Descr = "Dit representeert dat de boer binnen zijn productiesysteem het beste gewas voor die cel kiest. Alleen Rietteelt heeft twee gewassen; bij derving nul wint daar lisdodde.";
 	attribute<Eur_m2_jaarlijks>     Net_revenues        (rdc_25m) := NetRevenue_ha[Eur_m2_jaarlijks];
 	attribute<GewassenInKlasse>     DominantGewas       (rdc_25m) := ='ArgMax('+AsItemList('PerGewas/'+GewassenInKlasse/name+'/NetRevenue_ha')+')[GewassenInKlasse]', Descr = "Voor interpretatie/debug: per cel tonen welke van de onderliggende gewassen dominant is.";
-	
+
 	container Economic_performance
 	{
 		attribute<Eur_m2>           Conversion_costs0   (rdc_25m) := = 'MakeDefined(Factoren/transitiekosten/'+ LandbouwKlasse_name + '[LU_ModelType/LandbouwK_rel[gg_LandbouwK]], /ModelParameters/Landbouw/Transitiekosten_src/Overigen__'+ LandbouwKlasse_name + ')[Eur_m2]';
 		attribute<Eur_m2>           Conversion_costs    (rdc_25m) := = '(1f + /ModelParameters/Landbouw/ConversionCostPremium_'+/ModelParameters/Landbouw/Boervariant_name+') * Conversion_costs0', Descr = "Conversiekosten afhankelijk van huidig landgebruik en boervariant-premie.";
 		attribute<Eur_m2_jaarlijks> Net_revenues        (rdc_25m) := ../Net_revenues;
 	}
-	
+
 	// Kapitalisatie, twee perspectieven: boer (voor suitability) en maatschappelijk (voor NPV-indicator).
 	container Kapitalisatie                := ='Kapitalisatie_T(LandbouwKlasses/V/'+LandbouwKlasse_name+', RentevoetDezeBoer, ModelParameters/Landbouw/afschrijvingsperiode)';
 	container KapitalisatieMaatschappelijk := ='Kapitalisatie_T(LandbouwKlasses/V/'+LandbouwKlasse_name+', ModelParameters/Landbouw/Rentevoet, PeriodDuRation)';
-	
-	attribute<Eur_m2>               Totaal_NonAugmented (rdc_25m) := Economic_performance/Net_revenues * Kapitalisatie/factor - Economic_performance/Conversion_costs;
+
+	attribute<Eur_m2>               Totaal_NonAugmented (rdc_25m) := Economic_performance/Net_revenues * Kapitalisatie/factor - Economic_performance/Conversion_costs
+	, Descr = "Contante waarde van het saldo per hectare over de afschrijvingsperiode tegen de rentevoet van de boervariant, min de transitiekosten. Het saldo is een saldo op de kostenvoet eigen mechanisatie: het bevat geen arbeid, geen machines, geen gebouwen, geen bewaring (aardappelbewaarplaats 1.100 tot 2.000 per ha volgens de NAV) en geen rente over omlopend kapitaal. De gekapitaliseerde waarde is dus een bovengrens voor de betalingsbereidheid voor grond en geen winst. Voor bollen, boomkwekerij en fruit liggen de niet-toegerekende kosten (losse arbeid) per ha veel hoger dan voor akkerbouw en melkvee, dus de vergelijking op saldo zet die drie te gunstig; zie ook de Descr van Totaal_NonAugmented in Dairy_T.";
 	attribute<Eur_m2>               NPV                 (rdc_25m) := Economic_performance/Net_revenues * KapitalisatieMaatschappelijk/Factor - Economic_performance/Conversion_costs;
 	attribute<Eur_m2>               Totaal              (rdc_25m) := Totaal_NonAugmented;
-	
+
 	attribute<Float32>              Suitability         (rdc_25m) := Totaal;
 	attribute<Eur_m2_jaarlijks>     NetRevenue          (rdc_25m) := Economic_performance/Net_revenues;
-	
-	
+
+
 	Template PerGewas_T : using = "Classifications/Landbouw"
 	{
 		parameter<String> LandbouwKlasse_name;
 		parameter<String> Gewas_name;
 		//
-		container                       ParametersKlasse              := ='ModelParameters/Landbouw/per_Gewas/'+LandbouwKlasse_name;
-		container                       ParametersGewas               := ='ModelParameters/Landbouw/per_Gewas/'+LandbouwKlasse_name+'/'+Gewas_name;
+		container                       ParametersGewas               := ='/ModelParameters/Landbouw/per_Gewas/'+LandbouwKlasse_name+'/'+Gewas_name;
 		parameter<GewasSoortYR>         Gewas_rel                     := ='GewasSoortYR/V/'+Gewas_name;
-		
-		attribute<Ratio>                Rotation            (rdc_25m) := switch(
-																			case(/SourceData/Landbouw/HELP/Bodem_HELP_kleiig, ParametersGewas/Rotation_BodemK_kleiig)
-																			,case(/SourceData/Landbouw/HELP/Bodem_HELP_zandig, ParametersGewas/Rotation_BodemK_zandig) 
-																			,0[Ratio]
-																		), Descr = "Rotatie geeft het aandeel van dit gewas in het bouwplan (bijv. 0.25 = 1-op-4 rotatie).", Source = "BRP 2007-2012 gemiddelden per bodemtype (Diogo et al. 2015, Table 3 / Appendix A)";
-		attribute<Ratio>                RotationWeight      (rdc_25m) := Rotation, Descr = "Rotatieaandeel als gewicht (voor alternatieve aggregatiemethoden)";
-		attribute<Float32>              YieldReduction      (rdc_25m) := ='factoren/YieldReduction/Result/'+GewasSoortYR/name[Gewas_rel], Descr = "Per gewas een eigen opbrengstderving uit WWL of kansenkaarten.";
-		attribute<ton_ha_jaarlijks>     ActualYield         (rdc_25m) := ParametersGewas/MaxYield * (1f - YieldReduction) * Rotation; 
-		attribute<Eur_Ha_jaarlijks>     ProductionCosts     (rdc_25m) := switch(
-																		 case(/SourceData/Landbouw/HELP/Bodem_HELP_kleiig, ParametersGewas/ProductionCosts_BodemK_kleiig)
-																		,case(/SourceData/Landbouw/HELP/Bodem_HELP_zandig, ParametersGewas/ProductionCosts_BodemK_zandig)
-																		,0[Eur_Ha_jaarlijks]
-																		) * Rotation, Descr = "Toegerekende kosten per ha, gedifferentieerd per bodemtype.", Source = "Bron: KWIN-AGV (of dummy 40% van MaxBrutoOpbrengst als KWIN niet beschikbaar)";
-		
 
-		
-		parameter<Ratio> PriceMultiplier := ='/VariantParameters/VariantK/PriceMult_'+LandbouwKlasse_name+'[variant_rel]';
+		attribute</Classifications/Landbouw/Bodemtak> Bodemtak_rel (rdc_25m) := /SourceData/Landbouw/HELP/Bodemtak_rel;
+		attribute<Bool>                 HeeftBodem          (rdc_25m) := /SourceData/Landbouw/HELP/HeeftBodem;
+		attribute<Float32>              YieldReduction      (rdc_25m) := ='factoren/YieldReduction/Result/'+GewasSoortYR/name[Gewas_rel], Descr = "Per gewas een eigen opbrengstderving uit WWL of kansenkaarten, als fractie tussen nul en een.";
+		parameter<Ratio>                PriceMultiplier               := ='/VariantParameters/VariantK/PriceMult_'+LandbouwKlasse_name+'[variant_rel]', Descr = "Prijsmultiplier van de klasse per variant; werkt op de bruto geldopbrengst en niet op de kosten of de GLB.";
 
-		// attribute<Eur_Ha_jaarlijks>     GrossRevenue        (rdc_25m) := ActualYield * ParametersGewas/MarketPrice * PriceMultiplier + ParametersGewas/CAP_subsidy * Rotation;
-		attribute<Eur_Ha_jaarlijks>     GrossRevenue        (rdc_25m) := ActualYield * ParametersGewas/MarketPrice * PriceMultiplier + TotaalSubsidie * Rotation;
-		attribute<Eur_Ha_jaarlijks>     NetRevenue_ha       (rdc_25m) := GrossRevenue - ProductionCosts;
+		attribute<Eur_Ha_jaarlijks>     Geldopbrengst_max   (rdc_25m) := ParametersGewas/Geldopbrengst[Bodemtak_rel], Descr = "Bruto geldopbrengst per ha bij derving nul: opbrengst maal prijs plus bijproduct, per bodemtak.";
+		attribute<Eur_Ha_jaarlijks>     BrutoGeldopbrengst  (rdc_25m) := Geldopbrengst_max * (1f - YieldReduction) * PriceMultiplier, Descr = "De derving werkt op de hele geldopbrengst inclusief bijproduct, dus ook op het stro van tarwe.";
+		attribute<Eur_Ha_jaarlijks>     Kosten              (rdc_25m) := ParametersGewas/Toegerekend[Bodemtak_rel]
+		                                                               + (/ModelParameters/Landbouw/Kostenvoet_InclusiefLoonwerk ? ParametersGewas/Loonwerk[Bodemtak_rel] : 0[Eur_Ha_jaarlijks])
+		, Descr = "Toegerekende kosten per ha bij eigen mechanisatie (KWIN-AGV), per bodemtak; het loonwerk komt er alleen bij als Kostenvoet_InclusiefLoonwerk aan staat, en staat nu overal op nul met de Descr ontbreekt.";
+		attribute<Eur_Ha_jaarlijks>     GLB                 (rdc_25m) := const(TotaalSubsidie * float32(ParametersGewas/GLB_subsidiabel), rdc_25m), Descr = "Hectaresteun plus eco-regeling per ha uit Suitability_T, op de hele hectare, voor elk subsidiabel gewas; gewasneutraal en gelijk aan wat Dairy_T op productiegrasland rekent.";
+		attribute<Eur_Ha_jaarlijks>     NetRevenue_ha       (rdc_25m) := HeeftBodem ? BrutoGeldopbrengst - Kosten + GLB : 0[Eur_Ha_jaarlijks], Descr = "Saldo per ha per jaar op de kostenvoet eigen mechanisatie; nul op cellen zonder bodemcode.";
 	}
 }
-

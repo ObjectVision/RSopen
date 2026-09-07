@@ -40,12 +40,50 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 		
 		attribute<bool>          IsVeenGrond    (rdc_25m) := /sourcedata/Landbouw/Peat_thickness > 0.5[meter]; //to do: is dit een juiste rekenregel? betere data? wat gebruikt overheid?
 		
-		parameter<Eur_Ha_jaarlijks> GLB_EcoRegeling_Verwacht := VariantParameters/VariantK/GLB_EcoRegeling_Fractie_Goud[variant_rel]   * VariantParameters/VariantK/GLB_EcoRegeling_Bedrag_Goud[variant_rel]
-																  + VariantParameters/VariantK/GLB_EcoRegeling_Fractie_Zilver[variant_rel] * VariantParameters/VariantK/GLB_EcoRegeling_Bedrag_Zilver[variant_rel]
-																  + VariantParameters/VariantK/GLB_EcoRegeling_Fractie_Brons[variant_rel]  * VariantParameters/VariantK/GLB_EcoRegeling_Bedrag_Brons[variant_rel];
+		// ---- beleid per variant en zichtjaar (#780): stuksgewijs lineair pad door de ankers basisjaar, 2028, 2040 en 2050, daarna constant ----
+		parameter<Float32> jr     := EndYear[float32], Descr = "Het zichtjaar als getal, voor de padberekening hieronder.";
+		parameter<Float32> jr0    := /ModelParameters/Model_StartYear[float32], Descr = "Het basisjaar als getal.";
+		parameter<Float32> f_2028 := min_elem(max_elem((jr - jr0)   / (2028f - jr0), 0f), 1f), Descr = "Fractie van de stap van het basisjaar naar 2028, geklemd tussen 0 en 1.";
+		parameter<Float32> f_2040 := min_elem(max_elem((jr - 2028f) / 12f,           0f), 1f), Descr = "Fractie van de stap van 2028 naar 2040, geklemd tussen 0 en 1.";
+		parameter<Float32> f_2050 := min_elem(max_elem((jr - 2040f) / 10f,           0f), 1f), Descr = "Fractie van de stap van 2040 naar 2050, geklemd tussen 0 en 1; na 2050 blijft alles op het 2050-anker.";
 
-		attribute<Eur_Ha_jaarlijks> ANLb_veen_Verwacht (rdc_25m) := IsVeengrond ? VariantParameters/VariantK/ANLb_veen_Fractie[variant_rel] * VariantParameters/VariantK/ANLb_veen_Bedrag[variant_rel] : 0[Eur_Ha_jaarlijks];
-		attribute<Eur_Ha_jaarlijks> TotaalSubsidie     (rdc_25m) := VariantParameters/VariantK/GLB_Basispremie[variant_rel] + GLB_EcoRegeling_Verwacht + ANLb_veen_Verwacht;
+		parameter<Eur_Ha_jaarlijks> Hs_0  := /ModelParameters/Landbouw/Beleid/GLB_Hectaresteun_basisjaar;
+		parameter<Eur_Ha_jaarlijks> Hs_28 := /ModelParameters/Landbouw/Beleid/GLB_Hectaresteun_2028;
+		parameter<Eur_Ha_jaarlijks> Hs_40 := /VariantParameters/VariantK/GLB_Hectaresteun_2040[variant_rel];
+		parameter<Eur_Ha_jaarlijks> Hs_50 := /VariantParameters/VariantK/GLB_Hectaresteun_2050[variant_rel];
+		parameter<Eur_Ha_jaarlijks> GLB_Hectaresteun := Hs_0 + (Hs_28 - Hs_0) * f_2028 + (Hs_40 - Hs_28) * f_2040 + (Hs_50 - Hs_40) * f_2050
+		, Descr = "GLB-hectaresteun (basisinkomenssteun plus de extra betaling voor de eerste 40 ha, omgerekend naar een gemiddeld bedrijf) per ha subsidiabel areaal, prijspeil 2025: stuksgewijs lineair door de ankers basisjaar (ModelParameters/Landbouw/Beleid), 2028 (idem, de knik van het nieuwe MFK) en 2040 en 2050 (VariantK), daarna constant. Y2040 leest het 2040-anker, Y2050 en later het 2050-anker; een configuratie met een zichtjaar voor 2040 krijgt de tussenwaarde met de knik in 2028.";
+
+		parameter<Eur_Ha_jaarlijks> Eco_0  := /ModelParameters/Landbouw/Beleid/GLB_Eco_basisjaar;
+		parameter<Eur_Ha_jaarlijks> Eco_28 := /ModelParameters/Landbouw/Beleid/GLB_Eco_2028;
+		parameter<Eur_Ha_jaarlijks> Eco_40 := /VariantParameters/VariantK/GLB_Eco_2040[variant_rel];
+		parameter<Eur_Ha_jaarlijks> Eco_50 := /VariantParameters/VariantK/GLB_Eco_2050[variant_rel];
+		parameter<Eur_Ha_jaarlijks> GLB_Eco := Eco_0 + (Eco_28 - Eco_0) * f_2028 + (Eco_40 - Eco_28) * f_2040 + (Eco_50 - Eco_40) * f_2050
+		, Descr = "Verwachte ontvangst uit de eco-regeling per ha, gewogen over de deelnameniveaus, prijspeil 2025; zelfde pad als GLB_Hectaresteun. Bruto: de kosten van de eco-activiteiten zijn niet afgetrokken, dus dit is een bovengrens, voor beide sectoren gelijk.";
+
+		parameter<Eur_Ha_jaarlijks> Di_0  := /ModelParameters/Landbouw/Beleid/GLB_Diensten_extensief_basisjaar;
+		parameter<Eur_Ha_jaarlijks> Di_40 := /VariantParameters/VariantK/GLB_Diensten_extensief_2040[variant_rel];
+		parameter<Eur_Ha_jaarlijks> Di_50 := /VariantParameters/VariantK/GLB_Diensten_extensief_2050[variant_rel];
+		parameter<Eur_Ha_jaarlijks> GLB_Diensten_extensief := Di_0 + (Di_40 - Di_0) * f_2028 + (Di_50 - Di_40) * f_2050
+		, Descr = "Vergoeding voor diensten op natuurlijk beheerd grasland (ANLb, SNL) per ha, alleen gelezen door Dairy_T op gg_vee_extensief. Geen 2028-anker: het 2040-niveau is in 2028 bereikt en blijft tot het 2050-anker.";
+
+		parameter<Eur_Ha_jaarlijks> Vv_0  := /ModelParameters/Landbouw/Beleid/Veen_vergoeding_basisjaar;
+		parameter<Eur_Ha_jaarlijks> Vv_40 := /VariantParameters/VariantK/Veen_vergoeding_2040[variant_rel];
+		parameter<Eur_Ha_jaarlijks> Vv_50 := /VariantParameters/VariantK/Veen_vergoeding_2050[variant_rel];
+		parameter<Eur_Ha_jaarlijks> Veen_vergoeding := Vv_0 + (Vv_40 - Vv_0) * f_2028 + (Vv_50 - Vv_40) * f_2050
+		, Descr = "Veenweidevergoeding per ha grasland op veengrond, alleen gelezen door Dairy_T; geen 2028-anker. Stond tot 7 september 2026 als ANLb_veen_Bedrag maal ANLb_veen_Fractie (300 maal 0,10) in TotaalSubsidie en kwam zo ook bij de akkerbouw terecht.";
+
+		parameter<Eur_m3> Mp_0  := /ModelParameters/Landbouw/Beleid/Mestprijs_basisjaar;
+		parameter<Eur_m3> Mp_40 := /VariantParameters/VariantK/Mestprijs_2040[variant_rel];
+		parameter<Eur_m3> Mp_50 := /VariantParameters/VariantK/Mestprijs_2050[variant_rel];
+		parameter<Eur_m3> Mestprijs := Mp_0 + (Mp_40 - Mp_0) * f_2028 + (Mp_50 - Mp_40) * f_2050
+		, Descr = "Afzetprijs van rundveedrijfmest per m3, per variant en zichtjaar; geen 2028-anker. Gelezen door Dairy_T voor de mest boven de gebruiksnorm.";
+
+		parameter<kg_ha_jaarlijks> Gebruiksnorm_N := /VariantParameters/VariantK/Gebruiksnorm_N[variant_rel]
+		, Descr = "Gebruiksnorm dierlijke mest in kg N per ha per jaar, per variant; vanaf 2026 overal 170 zonder derogatie (RVO), en geen scenario voorziet herstel.";
+
+		parameter<Eur_Ha_jaarlijks> TotaalSubsidie := GLB_Hectaresteun + GLB_Eco
+		, Descr = "Hectaresteun plus eco-regeling per ha subsidiabel areaal, per variant en zichtjaar, prijspeil 2025. Per definitie gewasneutraal: alle gewasgebonden vergoedingen (Veen_vergoeding, GLB_Diensten_extensief) staan in het sjabloon dat ze ontvangt. Gelezen door Akkerbouw_T (elk gewas met GLB_subsidiabel) en Dairy_T (op natuurlijk grasland maal Beleid/GLB_factor_extensief). Was tot 7 september 2026 een attribuut met 260 basispremie plus 85 verwachte eco-regeling plus 30 ANLb-veen op IsVeenGrond, uit negen kolommen van VariantK die in alle varianten gelijk waren. LET OP: Templates/Indicatoren_T/Export.dms vult Basisjaar_NettoOpbrengsten_perLUMT met de suitability van ExportZichtjaar, dus de basisjaarindicator draagt de GLB en de mestprijs van het laatste zichtjaar; zie #780.";
 		
 		container Factoren 
 		{
@@ -96,13 +134,13 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 					)
 				, Descr = "Opbrengstderving voor de gewassen zonder WWL-curve, afgeleid uit de WUR-kansenkaarten.
 
-							Hier stond tot 5 september 2026 een MakeDefined naar ModelParameters/Landbouw/YieldReduction_NoData, en dat is min 99.999. Gemeten op zichtjaar 2040 van BAU droeg 97,3 procent van de cellen die waarde, want de kansenkaarten dekken maar een fractie van het land. Verderop staat ActualYield = MaxYield * (1 - YieldReduction) * Rotation, dus min 99.999 werd daar een opbrengstfactor van honderdduizend. Voor cranberry gaf dat ruim een miljard euro bruto-opbrengst per hectare op vrijwel heel Nederland, en die vijf gewassen hadden daarmee overal de hoogste geschiktheid van alle dertien. Alleen hun maximumclaim hield ze tegen: Cranberry, Rijst en Yacon kwamen alle drie op de hectare nauwkeurig op hun plafond uit, net als Rietteelt en Moerasbomen.
+							Hier stond tot 5 september 2026 een MakeDefined naar ModelParameters/Landbouw/YieldReduction_NoData, en dat is min 99.999. Gemeten op zichtjaar 2040 van BAU droeg 97,3 procent van de cellen die waarde, want de kansenkaarten dekken maar een fractie van het land. Verderop stond toen ActualYield = MaxYield * (1 - YieldReduction) * Rotation (sinds #780 BrutoGeldopbrengst = Geldopbrengst_max * (1 - YieldReduction) * PriceMultiplier), dus min 99.999 werd daar een opbrengstfactor van honderdduizend. Voor cranberry gaf dat ruim een miljard euro bruto-opbrengst per hectare op vrijwel heel Nederland, en die vijf gewassen hadden daarmee overal de hoogste geschiktheid van alle dertien. Alleen hun maximumclaim hield ze tegen: Cranberry, Rijst en Yacon kwamen alle drie op de hectare nauwkeurig op hun plafond uit, net als Rietteelt en Moerasbomen.
 
-							Zonder de MakeDefined blijft een ontbrekende kansenkaart een null, en die wordt in Result opgevangen door de afkapping min_elem(..., 1f). LET OP dat dat de werkzame route is en niet null-propagatie: min_elem(null, 1f) geeft 1 en geen null. De opbrengstderving wordt daar dus 100 procent, ActualYield wordt nul, en het gewas houdt alleen zijn productiekosten over. Voor cranberry is dat ongeveer min 4.800 euro per hectare, dus de allocator kiest hem daar niet, en dat is wat een ontbrekende kansenkaart hoort te betekenen: dit gewas kan hier niet.
+							Zonder de MakeDefined blijft een ontbrekende kansenkaart een null, en die wordt in Result opgevangen door de afkapping min_elem(..., 1f). LET OP dat dat de werkzame route is en niet null-propagatie: min_elem(null, 1f) geeft 1 en geen null. De opbrengstderving wordt daar dus 100 procent, de bruto geldopbrengst wordt nul, en het gewas houdt alleen zijn toegerekende kosten over, verminderd met de GLB. Voor cranberry is dat ongeveer min 4.800 euro per hectare, dus de allocator kiest hem daar niet, en dat is wat een ontbrekende kansenkaart hoort te betekenen: dit gewas kan hier niet.
 
 							Gemeten op 5 september 2026: de kansenkaart van cranberry heeft 141.717.600 nulls op 145.600.000 cellen, dus 97,3 procent zonder waarde, en de 2,7 procent die wel een waarde heeft ligt tussen 0,53 en 0,87. Result/Cranberry heeft daarna nul nulls en een gemiddelde van 0,983.
 
-							WIE DE min_elem WEGHAALT verandert dus stil het gedrag: dan komt de null wel bij ActualYield en NetRevenue_ha, en laat max_elem in Akkerbouw_T het gewas vallen, want max_elem geeft bij een null de andere waarde terug. De uitkomst is voor een klasse met een gewas dezelfde, maar voor Rietteelt, die twee gewassen heeft, niet: daar bepaalt de max_elem over riet en lisdodde welke van de twee wint, en een nul telt anders dan een null.
+							WIE DE min_elem WEGHAALT verandert dus stil het gedrag: dan komt de null wel bij BrutoGeldopbrengst en NetRevenue_ha, en laat max_elem in Akkerbouw_T het gewas vallen, want max_elem geeft bij een null de andere waarde terug. De uitkomst is voor een klasse met een gewas dezelfde, maar voor Rietteelt, die twee gewassen heeft, niet: daar bepaalt de max_elem over riet en lisdodde welke van de twee wint, en een nul telt anders dan een null.
 
 							LET OP, dit blijft een categoriefout die alleen kleiner is gemaakt. Een kansenkaart zegt of een gewas ergens kan staan, niet welke fractie van de maximale opbrengst het haalt. Zolang 1 min kans als opbrengstderving wordt gelezen, staat er een geschiktheidsindex op de plaats van een opbrengstfractie. De nette oplossing is de kaart als beschikbaarheidsmasker gebruiken en de opbrengst apart schatten; dat vraagt een uitspraak van WUR over de opbrengst van deze gewassen."; 
 			}
