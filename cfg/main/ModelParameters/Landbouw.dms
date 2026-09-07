@@ -52,11 +52,14 @@ container Landbouw : using = "Classifications/Actor"
 	parameter<Float32>          Landbouw_Claim_Growth                     := 0.20f, Descr = "factor waarmee de max claims voor Landbouw worden bepaald tov prev zichtjaar";
 	parameter<jaarlijks>        Rentevoet                                 := 0.055[jaarlijks], Descr = "Rentevoet die wordt gebruikt voor de contante waarde berekeningen";
 	parameter<jaarlijks>        Rentevoet_RationeleBoer                   := Rentevoet;
-	parameter<jaarlijks>        Rentevoet_IntermediateBoer                := 0.080[jaarlijks]; //TODO: checken met Marnix/Femke
-	parameter<jaarlijks>        Rentevoet_ConservatieveBoer               := 0.16[jaarlijks]; //TODO: checken met Marnix/Femke
-	parameter<Float32>          ConversionCostPremium_RationeleBoer       := 0.00f; //TODO: checken met Marnix/Femke
-	parameter<Float32>          ConversionCostPremium_IntermediateBoer    := 0.20f; //TODO: checken met Marnix/Femke
-	parameter<Float32>          ConversionCostPremium_ConservatieveBoer   := 1.00f; //TODO: checken met Marnix/Femke
+	parameter<jaarlijks>        Rentevoet_IntermediateBoer                := 0.080[jaarlijks];
+	parameter<jaarlijks>        Rentevoet_ConservatieveBoer               := 0.16[jaarlijks];
+	parameter<Float32>          ConversionCostPremium_RationeleBoer       := 0.00f;
+	parameter<Float32>          ConversionCostPremium_IntermediateBoer    := 0.20f;
+	parameter<Float32>          ConversionCostPremium_ConservatieveBoer   := 1.00f
+	, Descr = "De opslag op de transitiekosten per boervariant, waarmee Akkerbouw_T, Dairy_T en Iter_Landbouw_T de hele matrix uit Transitiekosten_src vermenigvuldigen: de rationele boer betaalt het bedrag zoals het er staat, de conservatieve het dubbele. Samen met de rentevoet hierboven, die de kapitalisatiefactor van 11,95 bij de rationele boer terugbrengt tot ruwweg 6, maakt dat de omschakeldrempel van een conservatieve boer ongeveer vier keer zo hoog als die van een rationele.
+
+				Deze vijf getallen zijn nooit onderbouwd. Zij stonden hier met een TODO om ze met de opdrachtgever te controleren, en dat is niet gebeurd; de TODO stond bovendien met persoonsnamen in een openbare repo. De onderbouwing van de matrix zelf staat sinds #202 in Transitiekosten_src, maar de opslag en de rentevoet per boervariant staan daar los van en horen bij de gedragsaanname over de boer. Status: aanname, ligt als vraag bij de opdrachtgever.";
 	parameter<jaar>             afschrijvingsperiode                      := 20[jaar], Descr = "Afschrijvingsperiode voor investeringen in de landbouw (bijv. gewasverandering)";
 	parameter<Bool>             Kostenvoet_InclusiefLoonwerk              := FALSE
 	, Descr = "FALSE is de definitie van dit model en geen tussenstand: elk saldo in de landbouwgeschiktheid is bruto geldopbrengst min toegerekende kosten bij eigen mechanisatie, dus voor loonwerk, arbeid, machines, gebouwen, grond en rente over levende have. Dat is de enige voet die KWIN Veehouderij (saldo per koe, blz. 149, met loonwerk als aparte regel eronder), KWIN-AGV (toegerekende kosten per gewas, loonwerk in een eigen hoofdstuk) en het BIN (saldo voor werk door derden) alle drie delen. Melkvee: dierposten per koe plus Graslandkosten en Maiskosten zonder loonwerk (KWIN blz. 108 min de 595 loonwerk; KWIN-AGV 885 en 892). Akkerbouw: KWIN-AGV toegerekende kosten. Slootonderhoud, rente over vee en rente over omlopend gewaskapitaal blijven aan beide kanten buiten het saldo; KWIN-AGV rekent die laatste vermoedelijk wel in de toegerekende kosten, de regel wordt bij het lezen van KWIN-AGV 2026 gemeld (orde 50 tot 150 per ha).
@@ -162,19 +165,31 @@ container Landbouw : using = "Classifications/Actor"
 				, String
 			), Descr = "Bovengrens per klasse: het basisjaarareaal maal een plus de bandbreedte, met de Introductieruimte als vloer zodat een klasse zonder basisjaarareaal kan ontstaan; nul voor een exotisch gewas zolang ExotenActief uit staat.";
 	}
-	//"herkomst in rijen, bestemming in kolommen";
 	unit<UInt8> Transitiekosten :=
 		for_each_nedv(
-			Classifications/Actor/LandbouwKlasses/name
+			/Classifications/Actor/LandbouwKlasses/name
 			, replace(
-				'union_data(Classifications/Actor/LandbouwKlasses, '+asList('Transitiekosten_src/'+Classifications/Actor/LandbouwKlasses/name+'__@Best@', ',')+')',
-				'@Best@', Classifications/Actor/LandbouwKlasses/name)
-			,Classifications/Actor/LandbouwKlasses
+				  '(Transitiekosten_src/Veldtype    != Transitiekosten_src/Bouwstenen/@Best@/Veldtype    ? Transitiekosten_src/Bouwstenen/@Best@/Inv_veld      + Transitiekosten_src/Opruimen_veld : 0[Eur_ha])'
+				+ ' + (Transitiekosten_src/Machinepark != Transitiekosten_src/Bouwstenen/@Best@/Machinepark ? Transitiekosten_src/Bouwstenen/@Best@/Inv_machines                                     : 0[Eur_ha])'
+				+ ' + (Transitiekosten_src/Systeem    != Transitiekosten_src/Bouwstenen/@Best@/Systeem    ? Transitiekosten_src/Bouwstenen/@Best@/Inv_specifiek + Transitiekosten_src/Opruimen_specifiek + Transitiekosten_src/Restwaardeverlies * Transitiekosten_src/Onverhandelbaar : 0[Eur_ha])'
+				, '@Best@', /Classifications/Actor/LandbouwKlasses/name)
+			+ ' * Transitiekosten_src/Dekking'
+			, /Classifications/Actor/LandbouwKlasses
 			, Eur_ha
-		), Descr = "Transitiekosten matrix, in Eur/ha, per herkomst en bestemming. Herkomst en bestemming zijn de landbouwklassen. De transitiekosten worden gebruikt om de contante waarde van een gewasverandering te berekenen. De transitiekosten worden alleen in rekening gebracht als er daadwerkelijk een gewasverandering plaatsvindt (dus niet bij een claim op hetzelfde gewas). De transitiekosten worden per ha in rekening gebracht. De transitiekosten worden alleen in rekening gebracht als er daadwerkelijk een gewasverandering plaatsvindt (dus niet bij een claim op hetzelfde gewas). De transitiekosten worden per ha in rekening gebracht.";
+		)
+	, Descr = "De transitiekostenmatrix in euro per hectare: HERKOMST IN RIJEN, BESTEMMING IN KOLOMMEN. Per bestemming staat hier een attribuut over LandbouwKlasses, en de index daarin is de klasse waar de cel vandaan komt.
+
+				De bedragen worden niet meer met de hand opgeschreven maar per paar berekend uit de bouwstenen in Transitiekosten_src, waar ook het principe en de bronnen staan (#202). De regel is per component: draagt de herkomst hetzelfde label als de bestemming, dan kost die component niets; verschillen ze, dan betaalt de omschakeling de investering van de bestemming en het opruimen van de herkomst. Bij het derde component komt daar het verlies van het niet terug te verdienen deel van de herkomstinvestering bij, en dat is de kant vanaf een systeem die #202 vraagt.
+
+				De diagonaal is nul per constructie: een klasse deelt haar drie labels met zichzelf, dus alle drie de takken vallen weg. Er staat daarom geen aparte toets op; Diagnose/PerIssue/Diagnose202/Tabel_Matrix toont de hele matrix zodat het te zien is.
+
+				De factor Dekking is een neutrale een die de toetsen in Transitiekosten_src/Controle in de rekengraaf trekt; zie daar waarom hij niet weg mag.
+
+				Afnemers: Templates/Landbouw/Suitability_T/Factoren/Transitiekosten geeft de kolommen door aan Dairy_T en Akkerbouw_T, die de herkomst van het BASISJAAR gebruiken, en Templates/Allocatie/Iter_Landbouw_T/Allocatie_Prep/Conversiekosten, die sinds #262 de herkomst van het lopende zichtjaar gebruikt. Beide leggen er de opslag van de boervariant overheen. De rij Overigen zit niet in deze unit maar staat als losse parameters Transitiekosten_src/Overigen__<klasse>, want zij geldt voor cellen die helemaal geen landbouwklasse dragen.";
 	
 	#include<Gewas_parameters.dms>
 	#include<Melkvee_parameters.dms>
+	#include<Scenario_parameters.dms>
 	
 	container Beleid
 	: Descr = "Beleidsankers voor de landbouwgeschiktheid die niet per variant verschillen (#780), prijspeil 2025: de GLB in het basisjaar en in 2028 (de knik van het nieuwe meerjarig financieel kader), de mestprijs van het basisjaar en het subsidiabele aandeel van het natuurlijk grasland. De ankers voor 2040 en 2050 staan per variant in VariantParameters/VariantK; Templates/Landbouw/Suitability_T trekt er een stuksgewijs lineair pad doorheen. Alle kentallen zijn reeel constant: er is geen kostenindex per variant, en PriceMult werkt alleen op de bruto geldopbrengst."
@@ -235,299 +250,328 @@ container Landbouw : using = "Classifications/Actor"
 
 
 	container Transitiekosten_src
+	: Descr = "De bouwstenen waaruit de transitiekostenmatrix wordt opgebouwd (#202). Herbouwd op 8 september 2026; wat hier stond was tweehonderdveertig met de hand geschreven parameters die alle uit vijf bedragen van Diogo (2015) tabel 3.5 kwamen, maal een index van 1,40, met een handvol halveringen zonder bron.
+
+				HET PRINCIPE. De transitiekosten van herkomst h naar bestemming b zijn de investering in het bestemmingssysteem die de herkomst NIET al heeft, plus de beeindigingskosten van de herkomst die niet worden terugverdiend. De diagonaal is daarmee per constructie nul: een klasse deelt haar drie systeemlabels met zichzelf, dus er is niets bij te investeren en niets op te ruimen.
+
+				DRIE COMPONENTEN, ELK MET EEN EIGEN DEELBAARHEIDSLABEL. Per component geldt: draagt de herkomst hetzelfde label als de bestemming, dan kost die component niets; verschillen de labels, dan betaalt de omschakeling de investering van de bestemming plus het opruimen van de herkomst.
+
+				1. Veldtype (Bouwland, Grasland, Nat, Onbekend): de inrichting van het perceel. Inv_veld is de drainage van een bouwlandperceel, de inzaai van een grasperceel of de kaden en de stuw van een nat perceel; Opruimen_veld is het scheuren van de zode of het opruimen van de natte inrichting.
+				2. Machinepark (Akkerbouw, Grasland, Fruit, Nat, Geen): het werktuigenpark. Werktuigen hebben een tweedehandsmarkt, dus er staat geen opruimpost tegenover.
+				3. Systeem: de klassegebonden gebouwen, installaties en meerjarige plantopstand. Hier betaalt de omschakeling naast Inv_specifiek ook het opruimen van de herkomst en het verlies van het niet terug te verdienen deel van haar investering, Restwaardeverlies maal Onverhandelbaar. Dat is de kant die #202 mist: rooien, sloop, leegstand en opruimen.
+
+				GEEN DUBBELTELLING MET HET SALDO. Het saldo in Dairy_T en Akkerbouw_T staat sinds #780 op de kostenvoet eigen mechanisatie en bevat geen arbeid, geen gebouwen, geen machines en geen grond. Alles wat hier staat valt dus buiten het saldo en wordt niet twee keer geteld. Andersom betekent het ook dat de gekapitaliseerde geschiktheid een bovengrens voor de betalingsbereidheid voor grond blijft en geen winst; zie de Descr van Totaal_NonAugmented in beide sjablonen.
+
+				DE VIER AKKERBOUWKLASSEN DELEN ALLE DRIE DE LABELS. Aardappelen, Bieten, Granen en Akkerbouw (uien) dragen Veldtype Bouwland, Machinepark Akkerbouw en Systeem Akkerbouw, dus hun onderlinge overgangen kosten nul. Dat is een besluit van de opdrachtgever van 8 september 2026: een gewaswissel binnen het bouwplan is geen bedrijfsomschakeling, en het klasseareaal in dit model is al het jaarlijkse gewasareaal uit BRP en LGN. Tot die datum betaalde elke wissel tussen deze vier de volledige inrichting van een akkerbouwbedrijf, 10.160 per ha, ofwel 850 euro saldoverschil per ha per jaar; daardoor stonden de akkerbouwklassen op het gewas van het basisjaar vast en mat de bandbreedtemeting alleen die drempel (zie de Descr van claims_conservatief). Bollen en Boomkwekerij horen NIET bij die groep: zij delen het basiswerktuigenpark maar hebben met de bollenschuur en het containerveld een eigen bovenbouw.
+
+				IJKING VAN HET NIVEAU. De optelling van de componenten komt uit op 10.650 euro per ha om een bouwlandhectare in te richten en 15.816 om een melkveehectare in te richten, tegen 10.160 en 19.977 in de oude matrix (Diogo 2015 tabel 3.5 maal 1,40). Het NIVEAU van de oude bedragen was dus ongeveer goed, vijf procent bij akkerbouw en eenentwintig procent bij melkvee, en dat laatste verschil is te verklaren uit wat de KWIN-post niet dekt (jongveehuisvesting en melkmachine). Wat niet klopte was dat dat volledige niveau voor ELKE overgang in rekening werd gebracht, ook voor een gewaswissel, en dat de kant vanaf een systeem ontbrak.
+
+				PRIJSPEIL. KWIN-AGV 2026 en KWIN Veehouderij 2025-2026, dus prijspeil 2025 en 2026, gelijk aan de opbrengstenkant sinds #780. Twee uitzonderingen dragen hun eigen prijspeil met een expliciete indexatie in hun Descr: het rooien van een boomgaard (Kwantitatieve Informatie Fruitteelt 2009/2010) en de natte inrichting (VIPNL 2024). Drie klassen rusten voor hun TOTAAL nog op Diogo (2015): zie container Diogo2015 hieronder voor welke en waarom.
+
+				WAT ER NIET IN ZIT. Grondaankoop. Definitie V van de bron rekende die er wel bij, als proxy voor het feit dat een ander landgebruik een andere boer betekent (CBS 2013, per provincie, in het VU-rapport van 2013 een land_costs van 45.525 per ha). RSopen heeft die post nooit gehad en krijgt hem hier ook niet, want de allocatie verplaatst grondgebruik en geen bedrijven. Verder: geen vergunningen, geen advies- en overdrachtskosten, en geen kosten van het inkomensgat tijdens de omschakeljaren."
 	{
-		parameter<Float32> Indexatie_Diogo2015 := 1.40f
-		, Descr = "Prijsindex waarmee de investeringsbedragen van Diogo (2015) naar het prijspeil van 2025 worden gebracht.
+		parameter<Float32> Restwaardeverlies := 0.5f
+		, Descr = "Welk deel van de niet-verhandelbare investering van de herkomst verloren gaat bij een omschakeling. Dit is de knop onder de kant VANAF een systeem (#202) en tegelijk de meest aanvechtbare aanname van deze matrix.
 
-					LET OP: dit is een index en geen meting. De bedragen hieronder zijn omschakelkosten per hectare per bedrijfstype uit Diogo (2015), tabel 5, en die zijn elf jaar oud en nooit geindexeerd, terwijl de opbrengstenkant sinds september 2026 op KWIN 2025-2026 staat. Die scheefheid werkt maar een kant op: te lage omschakelkosten maken de drempel te laag en de boer daarmee te beweeglijk, precies de grootheid die de boervarianten juist willen sturen.
+					WAAROM EEN HALF. Het model kent de leeftijd van de gebouwen niet. Bij een lineaire afschrijving over twintig jaar en een leeftijdsopbouw die gelijkmatig over die twintig jaar verdeeld is, is het niet-afgeschreven deel gemiddeld de helft. Dat is een verwachtingswaarde en geen meting.
 
-					De waarde is de consumentenprijsindex over 2015 tot 2025, ruwweg veertig procent. Twee redenen om hem als voorlopig te lezen. Een algemene prijsindex is niet hetzelfde als een index op landbouwinvesteringen, die in 2021 tot 2023 sterker opliep. En de eigen ijkpunten van dit model wijzen iets hoger: de graslandkosten gingen van 774 in LUS_AgriVali2011 naar 1105 in KWIN 2025-2026, een factor 1,43 over veertien jaar.
+					TWEE ARGUMENTEN DIE DE ANDERE KANT OP WIJZEN, allebei uit KWIN Veehouderij 2025-2026 blz. 154 en 155. De restwaarde van een stal na twintig jaar is daar expliciet nul en er zit geen sloopvoorziening in de jaarkosten, wat voor een half pleit. Maar het boek merkt in een voetnoot op dat de technische levensduur langer is dan twintig jaar, en een boer die zijn grond omzet doet dat vaak juist op het moment dat de stal aan vervanging toe is; dan is het verlies kleiner.
 
-					Waar de echte getallen vandaan zouden moeten komen: KWIN-AGV 2026 paragraaf 4.3 en 4.4 geven vervangingswaarden van gebouwen, verhardingen, drainage en werktuigen. Daaruit is per bedrijfstype een omschakelbedrag op te bouwen, maar dat is een eigen klus en geen opzoekactie, want KWIN kent geen kostenpost per bedrijfstype per hectare.";
+					WAT DE KNOP DOET. Op nul kost het verlaten van een systeem alleen nog het opruimen, en is de matrix bijna weer een matrix die alleen naar de bestemming kijkt. Op een is elke omschakeling zo duur dat de allocatie vastloopt op het basisjaar. Zet hem bewust en meet het effect met Diagnose/PerIssue/Diagnose202. Status: keuze, voor te leggen aan de opdrachtgever.";
 
-		container InvestmentCosts : Descr = "Omschakelkosten per hectare per bedrijfstype, uit Diogo (2015), tabel 5, maal Indexatie_Diogo2015. Zie daar waarom die index er staat en waarom hij voorlopig is."
+		parameter<Float32> Dekking := 1f
+		, ExplicitSuppliers = "Controle/Onverhandelbaar_past;Controle/Laagste_bedrag"
+		, Descr = "Neutrale factor van een, meevermenigvuldigd in elke gegenereerde term van unit Transitiekosten. HAAL HEM NIET WEG omdat hij niets doet: dat is precies zijn functie. De twee toetsen in Controle hangen aan geen enkel item dat het model opvraagt, en een IntegrityCheck die niet in de rekengraaf zit wordt nooit geevalueerd. Via deze factor lopen ze mee zodra de matrix wordt uitgerekend.";
+
+		container Controle
+		: Descr = "Twee toetsen op de bouwstenen, in de rekengraaf gehangen via Dekking hierboven."
 		{
-			parameter<Eur_ha> DairyFarming      := 14269[Eur_ha] * Indexatie_Diogo2015;
-			parameter<Eur_ha> ArableFarming     :=  7257[Eur_ha] * Indexatie_Diogo2015;
-			parameter<Eur_ha> FruitGrowing      := 35858[Eur_ha] * Indexatie_Diogo2015;
-			parameter<Eur_ha> FlowerGrowing     := 26254[Eur_ha] * Indexatie_Diogo2015;
-			parameter<Eur_ha> TreeNursery       := 35055[Eur_ha] * Indexatie_Diogo2015;
+			attribute<Eur_ha> Onverhandelbaar_past (/Classifications/Actor/LandbouwKlasses) := Inv_specifiek - Onverhandelbaar
+			, IntegrityCheck = "all(this >= 0[Eur_ha])"
+			, Descr = "Het niet-verhandelbare deel kan niet groter zijn dan de investering waar het een deel van is. Faalt deze toets, dan is bij een klasse Onverhandelbaar boven Inv_specifiek gezet.";
+
+			attribute<Eur_ha> Laagste_bedrag (/Classifications/Actor/LandbouwKlasses) := min_elem(min_elem(Inv_veld, Opruimen_veld), min_elem(min_elem(Inv_machines, Inv_specifiek), min_elem(Onverhandelbaar, Opruimen_specifiek)))
+			, IntegrityCheck = "all(this >= 0[Eur_ha])"
+			, Descr = "Geen enkel bedrag in de bouwstenen mag negatief zijn. Een negatief bedrag zou een omschakeling geld opleveren en dat is in deze matrix nooit bedoeld.";
 		}
-		
-		// parameter<Eur_m2> Kosten_urbaan_afbraak              := 311.555209[Eur_m2], Descr = "from PeatyMeadows"; // @Jip deze is overbodig in deze cfg toch, omdat we eerder gealloceerde klassen zoals urbaan op slot zetten bij de alloc van later gealloc klassen zoals Landbouw
-		// parameter<Eur_m2> Akkerbouw                          := InvestmentCosts/ArableFarming[Eur_m2];
-		// parameter<Eur_m2> Default_min_transitiekosten        := 100[Eur_m2];
-		
-		// van riet naar...
-		parameter<Eur_ha> Rietteelt__Rietteelt               := 0[Eur_ha];
-		parameter<Eur_ha> Rietteelt__Akkerbouw               := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rietteelt__Aardappelen             := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rietteelt__Bieten                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rietteelt__Granen                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rietteelt__Cranberry               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Rietteelt__Boomgaard               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Rietteelt__Moerasbomen             := InvestmentCosts/ArableFarming * 0.5f; // lijkt me niet zo duur
-		parameter<Eur_ha> Rietteelt__Rijst                   := InvestmentCosts/FruitGrowing; // lijjkt me duur om in te richten
-		parameter<Eur_ha> Rietteelt__Yacon                   := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rietteelt__gg_vee_extensief        := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Rietteelt__gg_vee                  := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Rietteelt__gg_vee_intensief        := InvestmentCosts/DairyFarming;
-		
-		// van Akkerbouw naar...
-		// Deze rij stond uitgecommentarieerd uit de tijd dat Akkerbouw de verzamelklasse was waar Aardappelen,
-		// Bieten en Granen uit zijn gesplitst. Sinds #751 is Akkerbouw de restklasse voor akker- en tuinbouw die
-		// het model niet apart noemt, vertegenwoordigd door zaaiuien, en dus een gewone dertiende klasse. De
-		// drie regels naar Aardappelen, Bieten en Granen hebben er nooit in gestaan en zijn hier toegevoegd op
-		// het bedrag dat de andere overgangen tussen genoemde akkerbouwgewassen ook dragen.
-		parameter<Eur_ha> Akkerbouw__Rietteelt               := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Akkerbouw__Akkerbouw               := 0[Eur_ha];
-		parameter<Eur_ha> Akkerbouw__Aardappelen             := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Akkerbouw__Bieten                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Akkerbouw__Granen                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Akkerbouw__Cranberry               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Akkerbouw__Boomgaard               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Akkerbouw__Moerasbomen             := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Akkerbouw__Rijst                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Akkerbouw__Yacon                   := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Akkerbouw__gg_vee_extensief        := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Akkerbouw__gg_vee                  := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Akkerbouw__gg_vee_intensief        := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> Aardappelen__Rietteelt               := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Aardappelen__Akkerbouw               := InvestmentCosts/ArableFarming; // #751: was 0 toen Akkerbouw de verzamelklasse van dit gewas was, nu een gewone gewaswissel
-		parameter<Eur_ha> Aardappelen__Aardappelen             := 0[Eur_ha];
-		parameter<Eur_ha> Aardappelen__Bieten                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Aardappelen__Granen                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Aardappelen__Cranberry               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Aardappelen__Boomgaard               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Aardappelen__Moerasbomen             := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Aardappelen__Rijst                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Aardappelen__Yacon                   := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Aardappelen__gg_vee_extensief        := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Aardappelen__gg_vee                  := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Aardappelen__gg_vee_intensief        := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> Bieten__Rietteelt               := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Bieten__Akkerbouw               := InvestmentCosts/ArableFarming; // #751: was 0 toen Akkerbouw de verzamelklasse van dit gewas was, nu een gewone gewaswissel
-		parameter<Eur_ha> Bieten__Aardappelen             := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Bieten__Bieten                  := 0[Eur_ha];
-		parameter<Eur_ha> Bieten__Granen                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Bieten__Cranberry               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Bieten__Boomgaard               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Bieten__Moerasbomen             := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Bieten__Rijst                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Bieten__Yacon                   := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Bieten__gg_vee_extensief        := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Bieten__gg_vee                  := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Bieten__gg_vee_intensief        := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> Granen__Rietteelt               := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Granen__Akkerbouw               := InvestmentCosts/ArableFarming; // #751: was 0 toen Akkerbouw de verzamelklasse van dit gewas was, nu een gewone gewaswissel
-		parameter<Eur_ha> Granen__Aardappelen             := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Granen__Bieten                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Granen__Granen                  := 0[Eur_ha];
-		parameter<Eur_ha> Granen__Cranberry               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Granen__Boomgaard               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Granen__Moerasbomen             := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Granen__Rijst                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Granen__Yacon                   := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Granen__gg_vee_extensief        := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Granen__gg_vee                  := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Granen__gg_vee_intensief        := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> Cranberry__Rietteelt               := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Cranberry__Akkerbouw               := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Cranberry__Aardappelen             := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Cranberry__Bieten                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Cranberry__Granen                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Cranberry__Cranberry               := 0[Eur_ha];
-		parameter<Eur_ha> Cranberry__Boomgaard               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Cranberry__Moerasbomen             := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Cranberry__Rijst                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Cranberry__Yacon                   := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Cranberry__gg_vee_extensief        := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Cranberry__gg_vee                  := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Cranberry__gg_vee_intensief        := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> Boomgaard__Rietteelt               := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomgaard__Akkerbouw               := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomgaard__Aardappelen               := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomgaard__Bieten                  := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomgaard__Granen                  := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomgaard__Cranberry               := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Boomgaard__Boomgaard               := 0[Eur_ha];
-		parameter<Eur_ha> Boomgaard__Moerasbomen             := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomgaard__Rijst                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Boomgaard__Yacon                   := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomgaard__gg_vee_extensief        := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Boomgaard__gg_vee                  := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Boomgaard__gg_vee_intensief        := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> Moerasbomen__Rietteelt             := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Moerasbomen__Akkerbouw             := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Moerasbomen__Aardappelen           := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Moerasbomen__Bieten                := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Moerasbomen__Granen                := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Moerasbomen__Cranberry             := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Moerasbomen__Boomgaard             := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Moerasbomen__Moerasbomen           := 0[Eur_ha];
-		parameter<Eur_ha> Moerasbomen__Rijst                 := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Moerasbomen__Yacon                 := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Moerasbomen__gg_vee_extensief      := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Moerasbomen__gg_vee                := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Moerasbomen__gg_vee_intensief      := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> Rijst__Rietteelt                   := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rijst__Akkerbouw                   := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rijst__Aardappelen                 := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rijst__Bieten                      := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rijst__Granen                      := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rijst__Cranberry                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Rijst__Boomgaard                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Rijst__Moerasbomen                 := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rijst__Rijst                       := 0[Eur_ha];
-		parameter<Eur_ha> Rijst__Yacon                       := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Rijst__gg_vee_extensief            := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Rijst__gg_vee                      := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Rijst__gg_vee_intensief            := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> Yacon__Rietteelt                   := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Yacon__Akkerbouw                   := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Yacon__Aardappelen                 := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Yacon__Bieten                      := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Yacon__Granen                      := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Yacon__Cranberry                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Yacon__Boomgaard                   := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Yacon__Moerasbomen                 := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Yacon__Rijst                       := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Yacon__Yacon                       := 0[Eur_ha];
-		parameter<Eur_ha> Yacon__gg_vee_extensief            := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Yacon__gg_vee                      := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Yacon__gg_vee_intensief            := InvestmentCosts/DairyFarming;
-		
-		parameter<Eur_ha> gg_vee_extensief__Rietteelt        := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> gg_vee_extensief__Akkerbouw        := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_extensief__Aardappelen       := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_extensief__Bieten           := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_extensief__Granen           := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_extensief__Cranberry        := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee_extensief__Boomgaard        := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee_extensief__Moerasbomen      := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> gg_vee_extensief__Rijst            := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee_extensief__Yacon            := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_extensief__gg_vee_extensief := 0[Eur_ha];
-		parameter<Eur_ha> gg_vee_extensief__gg_vee           := InvestmentCosts/DairyFarming * 0.5f;
-		parameter<Eur_ha> gg_vee_extensief__gg_vee_intensief := InvestmentCosts/DairyFarming * 0.75f;
-		
-		parameter<Eur_ha> gg_vee__Rietteelt                  := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> gg_vee__Akkerbouw                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee__Aardappelen                := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee__Bieten                     := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee__Granen                     := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee__Cranberry                  := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee__Boomgaard                  := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee__Moerasbomen                := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> gg_vee__Rijst                      := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee__Yacon                      := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee__gg_vee_extensief           := 0[Eur_ha];
-		parameter<Eur_ha> gg_vee__gg_vee                     := 0[Eur_ha];
-		parameter<Eur_ha> gg_vee__gg_vee_intensief           := InvestmentCosts/DairyFarming * 0.5f;
-		
-		parameter<Eur_ha> gg_vee_intensief__Rietteelt        := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> gg_vee_intensief__Akkerbouw        := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_intensief__Aardappelen      := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_intensief__Bieten           := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_intensief__Granen           := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_intensief__Cranberry        := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee_intensief__Boomgaard        := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee_intensief__Moerasbomen      := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> gg_vee_intensief__Rijst            := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> gg_vee_intensief__Yacon            := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> gg_vee_intensief__gg_vee_extensief := 0[Eur_ha];
-		parameter<Eur_ha> gg_vee_intensief__gg_vee           := 0[Eur_ha];
-		parameter<Eur_ha> gg_vee_intensief__gg_vee_intensief := 0[Eur_ha];
-		
-		// van Overigen naar...
-		parameter<Eur_ha> Overigen__Rietteelt        := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Overigen__Akkerbouw        := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Overigen__Aardappelen      := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Overigen__Bieten           := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Overigen__Granen           := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Overigen__Cranberry        := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Overigen__Boomgaard        := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Overigen__Moerasbomen      := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Overigen__Rijst            := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Overigen__Yacon            := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Overigen__gg_vee_extensief := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Overigen__gg_vee           := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Overigen__gg_vee_intensief := InvestmentCosts/DairyFarming;
 
-		// ---- Toegevoegd 5 september 2026 met de klassen Bollen en Boomkwekerij (#751-restklasse gesplitst).
-		// De bedragen volgen dezelfde regel als de rest van de matrix: de bestemming bepaalt de investeringscategorie,
-		// dus naar Bollen geldt FlowerGrowing en naar Boomkwekerij TreeNursery, beide uit Diogo (2015) tabel 5.
+		container Diogo2015
+		: Descr = "De laatste drie bedragen die nog op Diogo (2015) tabel 3.5 rusten, maal de index hieronder. Voor Boomgaard, Bollen en Boomkwekerij is geen KWIN gelezen: KWIN-AGV gaat over akkerbouw en vollegrondsgroenten, en KWIN Fruitteelt, KWIN Bloembollen en KWIN Boomkwekerij zijn aparte uitgaven die niet in huis zijn. Het TOTAAL per hectare van die drie klassen blijft daarom het bedrag uit de bron; alleen de verdeling over veld, werktuigen en systeem is nieuw. De bedragen voor melkvee (14.269) en akkerbouw (7.257) zijn hier weg: die twee zijn vervangen door een optelling uit KWIN, en die komt binnen vijf respectievelijk eenentwintig procent op hetzelfde uit."
+		{
+			parameter<Float32> Indexatie := 1.40f
+			, Descr = "Prijsindex van het prijspeil van Diogo (2015) naar 2025. De bron noemt zelf geen prijspeil; alle economische data komen uit LEI (2013) en het cijfer 7.257 stond al in het VU-rapport voor PBL van november 2013, dus het prijspeil is 2011 of 2012 en niet 2015. Over 2011 tot 2025 is de consumentenprijsindex ruwweg 1,45 tot 1,50 en liep de prijsindex voor landbouwinvesteringsgoederen in 2021 tot 2023 harder op, dus 1,40 is eerder te laag dan te hoog. Status: voorlopig, en alleen nog van belang voor de drie klassen hieronder.";
 
-		// van Bollen naar...
-		parameter<Eur_ha> Bollen__Rietteelt                    := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Bollen__Aardappelen                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Bollen__Bieten                       := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Bollen__Granen                       := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Bollen__Cranberry                    := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Bollen__Boomgaard                    := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Bollen__Moerasbomen                  := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Bollen__Rijst                        := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Bollen__Yacon                        := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Bollen__gg_vee_extensief             := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Bollen__gg_vee                       := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Bollen__gg_vee_intensief             := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Bollen__Akkerbouw                    := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Bollen__Bollen                       := 0[Eur_ha];
-		parameter<Eur_ha> Bollen__Boomkwekerij                 := InvestmentCosts/TreeNursery;
+			parameter<Eur_ha> FruitGrowing  := 35858[Eur_ha] * Indexatie, Descr = "50.201 na indexatie. Diogo (2015) tabel 3.5, investment costs fruit growing.";
+			parameter<Eur_ha> FlowerGrowing := 26254[Eur_ha] * Indexatie, Descr = "36.756 na indexatie. Diogo (2015) tabel 3.5, investment costs flower growing.";
+			parameter<Eur_ha> TreeNursery   := 35055[Eur_ha] * Indexatie, Descr = "49.077 na indexatie. Diogo (2015) tabel 3.5, investment costs tree nursery.";
+		}
 
-		// van Boomkwekerij naar...
-		parameter<Eur_ha> Boomkwekerij__Rietteelt              := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomkwekerij__Aardappelen            := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Boomkwekerij__Bieten                 := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Boomkwekerij__Granen                 := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Boomkwekerij__Cranberry              := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Boomkwekerij__Boomgaard              := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Boomkwekerij__Moerasbomen            := InvestmentCosts/ArableFarming * 0.5f;
-		parameter<Eur_ha> Boomkwekerij__Rijst                  := InvestmentCosts/FruitGrowing;
-		parameter<Eur_ha> Boomkwekerij__Yacon                  := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Boomkwekerij__gg_vee_extensief       := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Boomkwekerij__gg_vee                 := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Boomkwekerij__gg_vee_intensief       := InvestmentCosts/DairyFarming;
-		parameter<Eur_ha> Boomkwekerij__Akkerbouw              := InvestmentCosts/ArableFarming;
-		parameter<Eur_ha> Boomkwekerij__Bollen                 := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Boomkwekerij__Boomkwekerij           := 0[Eur_ha];
+		container Bouwstenen
+		: Descr = "Per landbouwklasse plus de rij Overigen negen regels: drie labels en zes bedragen. Elke klasse uit Classifications/Actor/LandbouwKlasses moet hier een container hebben; ontbreekt er een, dan valt de configuratie om op Unknown identifier in de union_data hieronder, en dat is de bedoeling.
 
-		// naar Bollen en Boomkwekerij, vanuit de bestaande klassen en vanuit Overigen
-		parameter<Eur_ha> Rietteelt__Bollen                    := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Rietteelt__Boomkwekerij              := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Aardappelen__Bollen                  := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Aardappelen__Boomkwekerij            := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Bieten__Bollen                       := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Bieten__Boomkwekerij                 := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Granen__Bollen                       := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Granen__Boomkwekerij                 := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Cranberry__Bollen                    := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Cranberry__Boomkwekerij              := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Boomgaard__Bollen                    := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Boomgaard__Boomkwekerij              := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Moerasbomen__Bollen                  := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Moerasbomen__Boomkwekerij            := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Rijst__Bollen                        := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Rijst__Boomkwekerij                  := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Yacon__Bollen                        := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Yacon__Boomkwekerij                  := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> gg_vee_extensief__Bollen             := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> gg_vee_extensief__Boomkwekerij       := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> gg_vee__Bollen                       := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> gg_vee__Boomkwekerij                 := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> gg_vee_intensief__Bollen             := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> gg_vee_intensief__Boomkwekerij       := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Akkerbouw__Bollen                    := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Akkerbouw__Boomkwekerij              := InvestmentCosts/TreeNursery;
-		parameter<Eur_ha> Overigen__Bollen                     := InvestmentCosts/FlowerGrowing;
-		parameter<Eur_ha> Overigen__Boomkwekerij               := InvestmentCosts/TreeNursery;
+					De volgorde is die van LandbouwKlasses. De bedragen zijn vervangingswaarden per hectare, exclusief btw, prijspeil 2025 tenzij anders vermeld."
+		{
+			container Rietteelt
+			: Descr = "Natte teelt op veen, riet en lisdodde. De klasse is de bestemming van de opgelegde natte teelt uit de veenlevering (#684) en telt daar als gerealiseerde claim, ook met ExotenActief uit. Zie #258 voor het saldo."
+			{
+				parameter<String> Veldtype           := 'Nat';
+				parameter<Eur_ha> Inv_veld           := 11450[Eur_ha], Descr = "Inrichting van een nat perceel: aanleg van kaden en compartimentering 9.700, pompen 1.250 en peilbeheervoorziening 500. Bron: saldoberekening lisdodde VIPNL, Hogeschool Van Hall Larenstein, versie d011024, prijspeil 2024 (vip-nl.nl). Dat is de enige gevonden begroting die dezelfde kostenindeling hanteert als dit model, dus toegerekende kosten apart van bewerkingskosten, grond en gebouwen. Status: onderbouwd.";
+				parameter<Eur_ha> Opruimen_veld      :=  1500[Eur_ha], Descr = "Opruimen van kaden en stuw wanneer er weer een droge teelt op komt. Het opnieuw draineren zit niet hier maar in Inv_veld van de bestemming. Status: aanname zonder bron; geen enkele geraadpleegde bron begroot het terugdraaien van een natte teelt.";
+				parameter<String> Machinepark        := 'Nat';
+				parameter<Eur_ha> Inv_machines       :=     0[Eur_ha], Descr = "Nul: de oogst van riet en lisdodde gaat in alle geraadpleegde begrotingen als loonwerk, met lichte machines op rupsonderstel van de loonwerker. Die post staat als Loonwerk in Gewas_parameters en niet als eigen werktuigenpark. Status: keuze, volgt de bron.";
+				parameter<String> Systeem            := 'Riet';
+				parameter<Eur_ha> Inv_specifiek      :=   500[Eur_ha], Descr = "Zaaien van lisdodde, 500 per ha (VIPNL, zelfde bron als Inv_veld). Poten van stekken in plaats van zaaien kost 2.500 per ha en brengt het totaal van de inrichting op circa 34.450; zaaien is de goedkope en gangbare route. Voor riet noemt de Factsheet Natte Teelten een aanplant in dezelfde orde. LET OP dat deze post hier staat en NIET als jaarlijkse kostenpost in het saldo: de aanplant is eenmalig en zou anders dubbel tellen, zie de Descr van Toegerekend bij per_Gewas/Rietteelt. Status: onderbouwd.";
+				parameter<Eur_ha> Onverhandelbaar    :=   500[Eur_ha], Descr = "De aanplant is niet te verplaatsen.";
+				parameter<Eur_ha> Opruimen_specifiek :=     0[Eur_ha], Descr = "Nul: het opruimen van een natte teelt zit in Opruimen_veld en niet in een aparte installatie.";
+			}
+
+			container Aardappelen
+			: Descr = "Akkerbouw. Deelt alle drie de labels met Bieten, Granen en Akkerbouw, dus de overgangen tussen die vier kosten nul; zie de kopregels van deze container."
+			{
+				parameter<String> Veldtype           := 'Bouwland';
+				parameter<Eur_ha> Inv_veld           := 1700[Eur_ha], Descr = "Buisdrainage bij een drainafstand van 10 m: KWIN-AGV 2026, hoofdstuk Vaste kosten, module 4/78, dat 3.250 bij 5 m, 2.100 bij 8 m en 1.700 bij 10 m geeft, met 5,5 procent jaarkosten. LET OP dat dit de volledige aanleg is: op een perceel dat als grasland al drainage heeft is dit te hoog, en het model weet niet welke percelen drainage hebben. Twee lagere bronnen voor dezelfde bewerking: KWIN Veehouderij 2025-2026 blz. 88 geeft 1.045 sleufloos en 1.280 met sleuvenfrees bij 10 m, en de ACSG-notitie drainagekosten van 22 juni 2022 voor BIJ12 geeft 715 tot 1.620 bij 8 tot 15 m (prijspeil 2020/2021). De akkerbouwkant van dit model staat verder helemaal op KWIN-AGV, daarom die. Status: keuze.";
+				parameter<Eur_ha> Opruimen_veld      :=    0[Eur_ha], Descr = "Nul: drainage blijft onder elk volgend gebruik bruikbaar en hoeft niet te worden verwijderd. Er is ook geen bron gevonden voor de kosten van het verwijderen ervan.";
+				parameter<String> Machinepark        := 'Akkerbouw';
+				parameter<Eur_ha> Inv_machines       := 4600[Eur_ha], Descr = "Het bewerkingsgebonden werktuigenpark van een akkerbouwbedrijf, per hectare. Optelling van de ONDERGRENS van de bandbreedtes in KWIN-AGV 2026 module 4/79: trekker 120 tot 140 kW 94.500, trekker 80 tot 100 kW 68.000, wentelploeg 4-schaar 13.500, getrokken veldspuit 4.000 liter en 36 m 63.000, gedragen kunstmeststrooier 3.300, twee kipwagens tandem 12 ton 34.400; samen 276.700. Gedeeld door 60 ha, de bedrijfsgrootte van een Nederlands akkerbouwbedrijf (LMM 2024: 59,4 ha cultuurgrond), is dat 4.612. Een zaaimachine en een eg zitten er niet in en KWIN geeft geen totaal per bedrijf, dus dit is een ondergrens. Status: afgeleid uit KWIN-AGV, bedrijfsgrootte als aanname.";
+				parameter<String> Systeem            := 'Akkerbouw';
+				parameter<Eur_ha> Inv_specifiek      := 4350[Eur_ha], Descr = "De gewasgebonden werktuigen en de bewaring van hetzelfde bedrijf van 60 ha. Werktuigen, ondergrens KWIN-AGV 2026 module 4/79: getrokken aardappelbunkerrooier 2-rijig 101.800, getrokken snarenpootmachine 4-rijig 39.300, getrokken uienrooier 22.500, samen 163.600, dat is 2.727 per ha. Bewaring, module 4/78: een aardappelbewaarplaats van 750 ton met drukvaste ventilatie en bovengrondse kanalen kost 27.500 per cel plus 95 per ton, dus 98.750, dat is 1.646 per ha. De 750 ton volgt uit het bouwplan van dit model zelf: 27,8 procent aardappelen op klei (Gewas_parameters, proefschrift VU 2018 tabel 3.3) maal 60 ha maal 45 ton. Uienbewaring is niet apart geteld. Samen 4.373, afgerond 4.350. Status: afgeleid uit KWIN-AGV.";
+				parameter<Eur_ha> Onverhandelbaar    := 1650[Eur_ha], Descr = "Alleen de bewaarplaats. Werktuigen hebben een tweedehandsmarkt en worden bij een omschakeling verkocht, dus zij gaan niet verloren.";
+				parameter<Eur_ha> Opruimen_specifiek :=    0[Eur_ha], Descr = "Nul: een bewaarplaats hoeft niet gesloopt te worden om er iets anders op het land te telen.";
+			}
+
+			container Bieten
+			: Descr = "Akkerbouw, dezelfde negen regels als Aardappelen; zie daar voor de bronnen. Het systeemlabel is gelijk, dus de overgang tussen deze klassen kost nul."
+			{
+				parameter<String> Veldtype           := ../Aardappelen/Veldtype;
+				parameter<Eur_ha> Inv_veld           := ../Aardappelen/Inv_veld;
+				parameter<Eur_ha> Opruimen_veld      := ../Aardappelen/Opruimen_veld;
+				parameter<String> Machinepark        := ../Aardappelen/Machinepark;
+				parameter<Eur_ha> Inv_machines       := ../Aardappelen/Inv_machines;
+				parameter<String> Systeem            := ../Aardappelen/Systeem;
+				parameter<Eur_ha> Inv_specifiek      := ../Aardappelen/Inv_specifiek;
+				parameter<Eur_ha> Onverhandelbaar    := ../Aardappelen/Onverhandelbaar;
+				parameter<Eur_ha> Opruimen_specifiek := ../Aardappelen/Opruimen_specifiek;
+			}
+
+			container Granen
+			: Descr = "Akkerbouw, per referentie gelijk aan Aardappelen; zie daar."
+			{
+				parameter<String> Veldtype           := ../Aardappelen/Veldtype;
+				parameter<Eur_ha> Inv_veld           := ../Aardappelen/Inv_veld;
+				parameter<Eur_ha> Opruimen_veld      := ../Aardappelen/Opruimen_veld;
+				parameter<String> Machinepark        := ../Aardappelen/Machinepark;
+				parameter<Eur_ha> Inv_machines       := ../Aardappelen/Inv_machines;
+				parameter<String> Systeem            := ../Aardappelen/Systeem;
+				parameter<Eur_ha> Inv_specifiek      := ../Aardappelen/Inv_specifiek;
+				parameter<Eur_ha> Onverhandelbaar    := ../Aardappelen/Onverhandelbaar;
+				parameter<Eur_ha> Opruimen_specifiek := ../Aardappelen/Opruimen_specifiek;
+			}
+
+			container Cranberry
+			: Descr = "Exotisch gewas op een kansenkaart van WUR, uit sinds 8 september 2026 (ExotenActief). Meerjarige aanplant op een nat veenbed. Geen enkele bron; de bedragen zijn een verdeling van het fruitbedrag van Diogo over de drie componenten. Status: ontbreekt."
+			{
+				parameter<String> Veldtype           := 'Nat';
+				parameter<Eur_ha> Inv_veld           := ../Rietteelt/Inv_veld,      Descr = "Gelijk aan de natte inrichting van Rietteelt; zie daar. Status: aanname.";
+				parameter<Eur_ha> Opruimen_veld      := ../Rietteelt/Opruimen_veld, Descr = "Gelijk aan Rietteelt; zie daar. Status: aanname.";
+				parameter<String> Machinepark        := 'Nat';
+				parameter<Eur_ha> Inv_machines       := ../Rietteelt/Inv_machines,  Descr = "Gelijk aan Rietteelt; zie daar. Status: aanname.";
+				parameter<String> Systeem            := 'Cranberry';
+				parameter<Eur_ha> Inv_specifiek      := Diogo2015/FruitGrowing - ../Rietteelt/Inv_veld - ../Rietteelt/Inv_machines, Descr = "Het fruitbedrag van Diogo (50.201) min de natte inrichting en de natte mechanisatie, dus 39.701 voor de aanplant zelf. Status: ontbreekt, en het bedrag zegt meer over de bron dan over cranberry.";
+				parameter<Eur_ha> Onverhandelbaar    := Inv_specifiek,              Descr = "De aanplant is niet te verplaatsen.";
+				parameter<Eur_ha> Opruimen_specifiek := ../Boomgaard/Opruimen_specifiek, Descr = "Gelijk aan het rooien van een boomgaard; zie daar. Status: aanname.";
+			}
+
+			container Boomgaard
+			: Descr = "Fruitteelt, appel en peer. Het TOTAAL van de drie componenten is het bedrag van Diogo (2015) tabel 3.5, want er is geen KWIN Fruitteelt in huis; de verdeling over veld, werktuigen en systeem is een schatting. Het rooien is wel onderbouwd."
+			{
+				parameter<String> Veldtype           := 'Bouwland';
+				parameter<Eur_ha> Inv_veld           := ../Aardappelen/Inv_veld,      Descr = "Een boomgaard staat op ontwaterd land, dus dezelfde drainage als bouwland; zie Aardappelen.";
+				parameter<Eur_ha> Opruimen_veld      := ../Aardappelen/Opruimen_veld, Descr = "Nul, zie Aardappelen.";
+				parameter<String> Machinepark        := 'Fruit';
+				parameter<Eur_ha> Inv_machines       := 13500[Eur_ha], Descr = "Fruitteeltmechanisatie per hectare: spuit, plukwagens, sorteerlijn en koelcel. Schatting, zo gekozen dat de drie componenten samen op het Diogo-bedrag uitkomen. Status: ontbreekt, KWIN Fruitteelt nodig.";
+				parameter<String> Systeem            := 'Fruit';
+				parameter<Eur_ha> Inv_specifiek      := Diogo2015/FruitGrowing - ../Aardappelen/Inv_veld - Inv_machines, Descr = "De meerjarige plantopstand met steunsysteem, hagelnet en druppelirrigatie: het Diogo-bedrag van 50.201 min de drainage en de mechanisatie, dus 35.001. Status: ontbreekt, KWIN Fruitteelt nodig.";
+				parameter<Eur_ha> Onverhandelbaar    := Inv_specifiek, Descr = "Een plantopstand met steunsysteem is niet te verplaatsen en heeft geen tweedehandsmarkt.";
+				parameter<Eur_ha> Opruimen_specifiek := 4900[Eur_ha], Descr = "Rooien van de plantopstand en de grond weer vlak maken. Kwantitatieve Informatie Fruitteelt 2009/2010 (PPO Wageningen UR, rapport 2009-41), tabel 14.5.2: 1,00 euro per boom voor appel bij 3.000 bomen per ha is 3.000 per ha, peer 1,10 bij 2.500 bomen is 2.750; tabel 14.5.3 geeft egaliseren 375 per ha. Samen 3.375 op prijspeil 2009, maal 1,45 voor de consumentenprijsindex 2009 tot 2025 is 4.894. LET OP: tabel 14.5.1 van diezelfde bron geeft 500 tot 700 per ha voor totaal rooien waarbij alles verstookt kan worden, een factor vier lager; de bron legt het verschil niet uit, vermoedelijk uittrekken inclusief wortel tegenover omduwen en versnipperen. Hier is de duurdere gekozen, want een perceel dat weer bouwland wordt moet wortelvrij zijn. Het verwijderen van hagelnet en druppelirrigatie en de opbrengst van het hout zitten er niet in; daar is geen bron voor. Status: onderbouwd voor het rooien zelf.";
+			}
+
+			container Moerasbomen
+			: Descr = "Korte-omloophout op natte grond, exotisch gewas op een kansenkaart van WUR, uit sinds 8 september 2026. Status: ontbreekt."
+			{
+				parameter<String> Veldtype           := 'Nat';
+				parameter<Eur_ha> Inv_veld           := ../Rietteelt/Inv_veld,      Descr = "Gelijk aan de natte inrichting van Rietteelt; zie daar.";
+				parameter<Eur_ha> Opruimen_veld      := ../Rietteelt/Opruimen_veld, Descr = "Gelijk aan Rietteelt; zie daar.";
+				parameter<String> Machinepark        := 'Nat';
+				parameter<Eur_ha> Inv_machines       := ../Rietteelt/Inv_machines,  Descr = "Gelijk aan Rietteelt; zie daar.";
+				parameter<String> Systeem            := 'Moerasbomen';
+				parameter<Eur_ha> Inv_specifiek      := 4000[Eur_ha], Descr = "Aanplant van korte-omloophout op natte grond. Status: aanname zonder bron. De oude matrix zette dit op de helft van het akkerbouwbedrag met als enige toelichting 'lijkt me niet zo duur'.";
+				parameter<Eur_ha> Onverhandelbaar    := Inv_specifiek, Descr = "De aanplant is niet te verplaatsen.";
+				parameter<Eur_ha> Opruimen_specifiek := 1000[Eur_ha], Descr = "Rooien van de stobben. Status: aanname zonder bron.";
+			}
+
+			container Rijst
+			: Descr = "Exotisch gewas op een kansenkaart van WUR, uit sinds 8 september 2026. Status: ontbreekt."
+			{
+				parameter<String> Veldtype           := 'Nat';
+				parameter<Eur_ha> Inv_veld           := ../Rietteelt/Inv_veld,      Descr = "Gelijk aan de natte inrichting van Rietteelt; zie daar. Rijst vraagt een peil dat per perceel te zetten is, net als riet.";
+				parameter<Eur_ha> Opruimen_veld      := ../Rietteelt/Opruimen_veld, Descr = "Gelijk aan Rietteelt; zie daar.";
+				parameter<String> Machinepark        := 'Nat';
+				parameter<Eur_ha> Inv_machines       := ../Rietteelt/Inv_machines,  Descr = "Gelijk aan Rietteelt; zie daar.";
+				parameter<String> Systeem            := 'Rijst';
+				parameter<Eur_ha> Inv_specifiek      := 2000[Eur_ha], Descr = "Zaaigoed en de inrichting die riet niet vraagt. Status: aanname zonder bron. De oude matrix zette rijst op het fruitbedrag met als enige toelichting 'lijjkt me duur om in te richten'.";
+				parameter<Eur_ha> Onverhandelbaar    :=    0[Eur_ha], Descr = "Nul: rijst is een eenjarig gewas, er blijft geen aanplant staan.";
+				parameter<Eur_ha> Opruimen_specifiek :=    0[Eur_ha], Descr = "Nul: zie Onverhandelbaar.";
+			}
+
+			container Yacon
+			: Descr = "Exotisch knolgewas op bouwland, op een kansenkaart van WUR, uit sinds 8 september 2026. Status: ontbreekt."
+			{
+				parameter<String> Veldtype           := ../Aardappelen/Veldtype;
+				parameter<Eur_ha> Inv_veld           := ../Aardappelen/Inv_veld;
+				parameter<Eur_ha> Opruimen_veld      := ../Aardappelen/Opruimen_veld;
+				parameter<String> Machinepark        := ../Aardappelen/Machinepark, Descr = "Yacon is een knolgewas op bouwland en deelt het basiswerktuigenpark met de akkerbouw.";
+				parameter<Eur_ha> Inv_machines       := ../Aardappelen/Inv_machines;
+				parameter<String> Systeem            := 'Yacon';
+				parameter<Eur_ha> Inv_specifiek      := 2000[Eur_ha], Descr = "Plantmateriaal en een eigen oogst- en bewaarlijn. Status: aanname zonder bron. De oude matrix rekende hier wisselend het volle of het halve akkerbouwbedrag, afhankelijk van de herkomst, zonder reden.";
+				parameter<Eur_ha> Onverhandelbaar    := 1000[Eur_ha], Descr = "De helft, als schatting voor het niet-verhandelbare deel. Status: aanname.";
+				parameter<Eur_ha> Opruimen_specifiek :=    0[Eur_ha];
+			}
+
+			container GG_vee_extensief
+			: Descr = "Natuurlijk beheerd grasland: LGN 45, BRP 331, 332 en 1926. Geen melkkoeien en geen bedrijfsgebouw; het gras wordt op stam verkocht (Dairy_T/IsNatuurlijkGrasland). Deelt het veldtype en het werktuigenpark met de melkveeklassen, maar niet het systeem: daar zit precies het punt van #202, want de overgang van gg_vee naar deze klasse is een afwaardering en kostte in de oude matrix nul."
+			{
+				parameter<String> Veldtype           := 'Grasland';
+				parameter<Eur_ha> Inv_veld           := ../GG_vee/Inv_veld,      Descr = "Dezelfde inzaai als productiegrasland; zie GG_vee. Een kruidenrijk mengsel is niet goedkoper dan BG4.";
+				parameter<Eur_ha> Opruimen_veld      := ../GG_vee/Opruimen_veld, Descr = "Hetzelfde scheuren als bij productiegrasland; zie GG_vee.";
+				parameter<String> Machinepark        := 'Grasland';
+				parameter<Eur_ha> Inv_machines       := ../GG_vee/Inv_machines,  Descr = "Hetzelfde graslandwerktuigenpark; zie GG_vee. Het gras moet ook hier gemaaid en afgevoerd worden.";
+				parameter<String> Systeem            := 'NatuurlijkGrasland';
+				parameter<Eur_ha> Inv_specifiek      :=    0[Eur_ha], Descr = "Nul: natuurlijk beheerd grasland vraagt per hectare geen stal, geen mestopslag en geen eigen installatie. Status: keuze.";
+				parameter<Eur_ha> Onverhandelbaar    :=    0[Eur_ha], Descr = "Nul, zie Inv_specifiek.";
+				parameter<Eur_ha> Opruimen_specifiek :=    0[Eur_ha], Descr = "Nul, zie Inv_specifiek.";
+			}
+
+			container GG_vee
+			: Descr = "Productiegrasland met voedergewas: LGN 1 en 2, BRP 265 en 266 en de maiscodes. Dit is de klasse waar #202 het over heeft: hier staat de stal die bij een omschakeling leeg komt te staan."
+			{
+				parameter<String> Veldtype           := 'Grasland';
+				parameter<Eur_ha> Inv_veld           :=  916[Eur_ha], Descr = "Volledige herinzaai van grasland op zandgrond, KWIN Veehouderij 2025-2026 blz. 137 (klei 985): grondonderzoek 78, glyfosaat 33, onkruidbestrijdingsmiddelen 59, zaaizaad 35 kg BG4 264, startgift 30 kg N 42, twee keer spuiten 80, frezen 102, ploegen 144 en inzaai met zaaicombinatie 114. Bekalken zit er niet in; dat staat in dezelfde bron als aanvullende bemesting, 397 op zand, en is geen voorwaarde voor de inzaai. Doorzaai zou 524 kosten (blz. 138) maar dat is graslandvernieuwing en geen aanleg. Status: onderbouwd.";
+				parameter<Eur_ha> Opruimen_veld      :=  320[Eur_ha], Descr = "Het scheuren van de zode wanneer het perceel bouwland wordt: uit dezelfde begroting op blz. 137 de posten die alleen over het opruimen gaan, glyfosaat 33, spuiten 40, frezen 102 en ploegen 144, samen 319. Wageningen Livestock Research rapport 1296 (2022, voor BIJ12) tabel B9.1 geeft 198 op zand en 213 op klei op prijspeil 2020/2021, maar telt het frezen niet mee. LET OP dat dit alleen een bewerking beprijst: op veengrond mag blijvend grasland volgens GLMC 2 helemaal niet worden omgezet, behalve naar natte teelt door peilverhoging. Het model blokkeert akkerbouw op veenweide al langs een andere weg, met AkkerbouwOpVeenAlleenBestaand (#785). Status: onderbouwd.";
+				parameter<String> Machinepark        := 'Grasland';
+				parameter<Eur_ha> Inv_machines       := 4300[Eur_ha], Descr = "Het werktuigenpark van een melkveebedrijf per hectare. KWIN Veehouderij geeft geen park per hectare, dus afgeleid uit het BIN 2020 (WUR-verkenning economische prestatie melkveehouderij, edepot.wur.nl/640609): afschrijving machines 2,47 euro per 100 kg melk bij 17.459 kg melk per hectare is 431 euro per hectare per jaar; bij tien procent afschrijving per jaar hoort daar een vervangingswaarde van 4.310 per hectare bij. Status: afgeleid, afschrijvingspercentage als aanname.";
+				parameter<String> Systeem            := 'Melkvee';
+				parameter<Eur_ha> Inv_specifiek      := 10600[Eur_ha], Descr = "Ligboxenstal met mestopslag, per hectare. KWIN Veehouderij 2025-2026 blz. 155, ligboxenstal voor honderd melkkoeien (2+2) met roostervloer en zes maanden mestopslag: 6.800 tot 7.530 per koeplaats, midden 7.165, maal de referentiedichtheid van 1,48 koe per hectare uit Melkvee_parameters/Dichtheid/Koedichtheid_referentie is 10.604. De honderd koeien sluiten aan op het BIN 2020, dat 110 melkkoeien per bedrijf geeft. De KWIN-post dekt ruwbouw, inrichting, machinekamer, tanklokaal, melkstal, zieken- en afkalfstal, grondwerk, water en elektra; jongveehuisvesting en de melkmachine zitten er NIET in, dus dit is een ondergrens. Kruiscontrole: de forfaitaire vervangingswaarde van veehouderijstallen (Wageningen Economic Research factsheet 2021-019, tabel 24) geeft 838 euro per m2 staloppervlak, bij 9,7 m2 per melkkoe 8.129 per koeplaats, dezelfde orde. Status: onderbouwd.";
+				parameter<Eur_ha> Onverhandelbaar    := 10600[Eur_ha], Descr = "De hele stalinvestering: een stal is niet te verplaatsen en heeft geen tweedehandsmarkt los van de grond. KWIN zet de restwaarde na twintig jaar expliciet op nul.";
+				parameter<Eur_ha> Opruimen_specifiek :=  650[Eur_ha], Descr = "Sloop en afvoer van de stal. Lbv-plus (RVO, prijspeil 2023) rekent 45 euro per m2 staloppervlakte; bij 9,7 m2 per melkkoe is dat 437 per koeplaats, maal 1,48 koe per hectare 646. Bevestigd door DLV Advies (2019) met 30 tot 45 per m2 en Alterra-rapport 2632 (2015) met 25 plus 10 per m2 voor asbest. KWIN Veehouderij blz. 90 en 91 geeft 4,50 per m2 voor sloopwerk alleen en 18 tot 23 per m2 voor een stal met asbest golfplaten. De schrootopbrengst is niet gevonden en dus niet afgetrokken. Status: onderbouwd.";
+			}
+
+			container GG_vee_intensief
+			: Descr = "Plaatshouder zonder basisjaarareaal (#751), per referentie gelijk aan GG_vee en met hetzelfde systeemlabel, dus de overgang tussen beide kost nul. Dat is bewust: de klasse berustte op een veedichtheid uit de landbouwtelling 2014 die de BRP niet meer levert, zij wordt niet gealloceerd (claim nul) en zij blijft alleen bestaan om LU_ModelType niet te hernummeren. Krijgt zij ooit weer een eigen dichtheid, dan hoort Inv_specifiek met die dichtheid mee te schalen en hoort het systeemlabel te verschillen, want dan zijn er extra koeplaatsen nodig. De oude matrix rekende voor intensiveren een halve stal en voor extensiveren nul, zonder reden."
+			{
+				parameter<String> Veldtype           := ../GG_vee/Veldtype;
+				parameter<Eur_ha> Inv_veld           := ../GG_vee/Inv_veld;
+				parameter<Eur_ha> Opruimen_veld      := ../GG_vee/Opruimen_veld;
+				parameter<String> Machinepark        := ../GG_vee/Machinepark;
+				parameter<Eur_ha> Inv_machines       := ../GG_vee/Inv_machines;
+				parameter<String> Systeem            := ../GG_vee/Systeem;
+				parameter<Eur_ha> Inv_specifiek      := ../GG_vee/Inv_specifiek;
+				parameter<Eur_ha> Onverhandelbaar    := ../GG_vee/Onverhandelbaar;
+				parameter<Eur_ha> Opruimen_specifiek := ../GG_vee/Opruimen_specifiek;
+			}
+
+			container Akkerbouw
+			: Descr = "De restklasse akker- en tuinbouw uit #751, vertegenwoordigd door zaaiuien. Per referentie gelijk aan Aardappelen; zie daar."
+			{
+				parameter<String> Veldtype           := ../Aardappelen/Veldtype;
+				parameter<Eur_ha> Inv_veld           := ../Aardappelen/Inv_veld;
+				parameter<Eur_ha> Opruimen_veld      := ../Aardappelen/Opruimen_veld;
+				parameter<String> Machinepark        := ../Aardappelen/Machinepark;
+				parameter<Eur_ha> Inv_machines       := ../Aardappelen/Inv_machines;
+				parameter<String> Systeem            := ../Aardappelen/Systeem;
+				parameter<Eur_ha> Inv_specifiek      := ../Aardappelen/Inv_specifiek;
+				parameter<Eur_ha> Onverhandelbaar    := ../Aardappelen/Onverhandelbaar;
+				parameter<Eur_ha> Opruimen_specifiek := ../Aardappelen/Opruimen_specifiek;
+			}
+
+			container Bollen
+			: Descr = "Bloembollen, vertegenwoordigd door tulp. Deelt het veldtype en het basiswerktuigenpark met de akkerbouw, maar niet het systeem: de bollenschuur met koeling is een eigen investering. Het TOTAAL van de drie componenten is het bedrag van Diogo (2015); de verdeling is nieuw. Wat hier NIET in zit is het bezanden van een perceel om er bollengrond van te maken, circa 120.000 per hectare in 2007 (Groenewoud 2007 via goedbodembeheer.nl): de klasse ligt in dit model op de percelen waar in het basisjaar al bollen staan, dus dat is niet aan de orde."
+			{
+				parameter<String> Veldtype           := ../Aardappelen/Veldtype;
+				parameter<Eur_ha> Inv_veld           := ../Aardappelen/Inv_veld;
+				parameter<Eur_ha> Opruimen_veld      := ../Aardappelen/Opruimen_veld;
+				parameter<String> Machinepark        := ../Aardappelen/Machinepark, Descr = "Hetzelfde basiswerktuigenpark als de akkerbouw: trekkers, ploeg, spuit en kipwagens. De plantmachine, de rooier en de spoelinstallatie staan in Inv_specifiek.";
+				parameter<Eur_ha> Inv_machines       := ../Aardappelen/Inv_machines;
+				parameter<String> Systeem            := 'Bollen';
+				parameter<Eur_ha> Inv_specifiek      := Diogo2015/FlowerGrowing - ../Aardappelen/Inv_veld - ../Aardappelen/Inv_machines, Descr = "Bollenschuur met koeling en ventilatie, plantmachine, rooier en spoelinstallatie: het Diogo-bedrag van 36.756 min de drainage en het basiswerktuigenpark, dus 30.456. KWIN Bloembollen en Bolbloemen (PPO nr. 719, prijspeil 2005) geeft de bouwstenen om dit echt te maken: bollenschuur 223 tot 249 euro per m2 en koelcelinbouw 170 euro per m2, maar zonder een norm voor het aantal m2 per hectare. Status: afgeleid van Diogo, KWIN Bloembollen nodig.";
+				parameter<Eur_ha> Onverhandelbaar    := 20000[Eur_ha], Descr = "De schuur met de koelcellen, geschat op twee derde van Inv_specifiek; de plantmachine en de rooier zijn wel verhandelbaar. Status: aanname.";
+				parameter<Eur_ha> Opruimen_specifiek :=     0[Eur_ha], Descr = "Nul: er is geen bron gevonden voor het terugbrengen van een bollenperceel naar gewoon bouwland, en een bollenschuur hoeft niet gesloopt te worden om het land anders te gebruiken. Status: ontbreekt.";
+			}
+
+			container Boomkwekerij
+			: Descr = "Boomkwekerij, vertegenwoordigd door laanbomen. Zelfde opzet als Bollen: veldtype en basiswerktuigenpark van de akkerbouw, eigen systeem, totaal van Diogo."
+			{
+				parameter<String> Veldtype           := ../Aardappelen/Veldtype;
+				parameter<Eur_ha> Inv_veld           := ../Aardappelen/Inv_veld;
+				parameter<Eur_ha> Opruimen_veld      := ../Aardappelen/Opruimen_veld;
+				parameter<String> Machinepark        := ../Aardappelen/Machinepark;
+				parameter<Eur_ha> Inv_machines       := ../Aardappelen/Inv_machines;
+				parameter<String> Systeem            := 'Boomkwekerij';
+				parameter<Eur_ha> Inv_specifiek      := Diogo2015/TreeNursery - ../Aardappelen/Inv_veld - ../Aardappelen/Inv_machines, Descr = "Containerveld met folie en beregening, potmachine, koelcel en de meerjarige opstand: het Diogo-bedrag van 49.077 min de drainage en het basiswerktuigenpark, dus 42.777. Status: afgeleid van Diogo, KWIN Boomkwekerij nodig.";
+				parameter<Eur_ha> Onverhandelbaar    := 30000[Eur_ha], Descr = "Het containerveld en de koelcel, geschat op twee derde van Inv_specifiek. Status: aanname.";
+				parameter<Eur_ha> Opruimen_specifiek :=     0[Eur_ha], Descr = "Nul: geen bron gevonden voor het opruimen van een containerveld. Status: ontbreekt.";
+			}
+
+			container Overigen
+			: Descr = "De herkomstrij voor een cel die in de herkomstkaart GEEN landbouwklasse draagt. Dat gebeurt waar LU_ModelType/LandbouwK_rel null is, dus buiten de landbouw, en waar de cel wel landbouw is maar geen BRP- of LGN-klasse heeft. Met LandbouwAlleenOpBestaandAreaal op TRUE raakt de allocatie die cellen bijna niet meer aan.
+
+						Alle bedragen nul en alle labels eigen: een onbekende herkomst brengt niets mee dat de bestemming kan gebruiken en laat niets achter dat opgeruimd moet worden. De omschakeling betaalt dus de volledige inrichting van de bestemming. Dat is dezelfde keuze als in de oude matrix en zij is bewust conservatief: een cel zonder bekende herkomst is de duurste om in gebruik te nemen. Deze container hoort NIET in Classifications/Actor/LandbouwKlasses en wordt daarom alleen via de parameters Overigen__<klasse> hieronder gelezen."
+			{
+				parameter<String> Veldtype           := 'Onbekend';
+				parameter<Eur_ha> Inv_veld           := 0[Eur_ha];
+				parameter<Eur_ha> Opruimen_veld      := 0[Eur_ha];
+				parameter<String> Machinepark        := 'Geen';
+				parameter<Eur_ha> Inv_machines       := 0[Eur_ha];
+				parameter<String> Systeem            := 'Onbekend';
+				parameter<Eur_ha> Inv_specifiek      := 0[Eur_ha];
+				parameter<Eur_ha> Onverhandelbaar    := 0[Eur_ha];
+				parameter<Eur_ha> Opruimen_specifiek := 0[Eur_ha];
+			}
+		}
+
+		// ---- De bouwstenen als vector over de landbouwklassen, zodat de matrix ze per herkomst kan indexeren ----
+
+		attribute<String> Veldtype           (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Veldtype', ',')+')';
+		attribute<Eur_ha> Inv_veld           (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Inv_veld', ',')+')';
+		attribute<Eur_ha> Opruimen_veld      (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Opruimen_veld', ',')+')';
+		attribute<String> Machinepark        (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Machinepark', ',')+')';
+		attribute<Eur_ha> Inv_machines       (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Inv_machines', ',')+')';
+		attribute<String> Systeem            (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Systeem', ',')+')';
+		attribute<Eur_ha> Inv_specifiek      (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Inv_specifiek', ',')+')';
+		attribute<Eur_ha> Onverhandelbaar    (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Onverhandelbaar', ',')+')';
+		attribute<Eur_ha> Opruimen_specifiek (/Classifications/Actor/LandbouwKlasses) := ='union_data(/Classifications/Actor/LandbouwKlasses, '+AsList('Bouwstenen/'+/Classifications/Actor/LandbouwKlasses/name+'/Opruimen_specifiek', ',')+')';
+
+		// ---- De rij Overigen ----
+
+		attribute<Eur_ha> Vanuit_Overigen (/Classifications/Actor/LandbouwKlasses) :=
+			  (Bouwstenen/Overigen/Veldtype    != Veldtype    ? Inv_veld      + Bouwstenen/Overigen/Opruimen_veld : 0[Eur_ha])
+			+ (Bouwstenen/Overigen/Machinepark != Machinepark ? Inv_machines                                      : 0[Eur_ha])
+			+ (Bouwstenen/Overigen/Systeem     != Systeem     ? Inv_specifiek + Bouwstenen/Overigen/Opruimen_specifiek + Restwaardeverlies * Bouwstenen/Overigen/Onverhandelbaar : 0[Eur_ha])
+		, Descr = "Dezelfde regel als in unit Transitiekosten, maar dan met Overigen als herkomst, dus met de vectoren aan de BESTEMMINGSkant. Omdat Overigen alle bedragen op nul heeft komt hier de volledige inrichting van de bestemming uit.";
+
+		parameter<Eur_ha> Overigen__Rietteelt        := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Rietteelt];
+		parameter<Eur_ha> Overigen__Aardappelen      := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Aardappelen];
+		parameter<Eur_ha> Overigen__Bieten           := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Bieten];
+		parameter<Eur_ha> Overigen__Granen           := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Granen];
+		parameter<Eur_ha> Overigen__Cranberry        := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Cranberry];
+		parameter<Eur_ha> Overigen__Boomgaard        := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Boomgaard];
+		parameter<Eur_ha> Overigen__Moerasbomen      := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Moerasbomen];
+		parameter<Eur_ha> Overigen__Rijst            := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Rijst];
+		parameter<Eur_ha> Overigen__Yacon            := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Yacon];
+		parameter<Eur_ha> Overigen__GG_vee_extensief := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/GG_vee_extensief];
+		parameter<Eur_ha> Overigen__GG_vee           := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/GG_vee];
+		parameter<Eur_ha> Overigen__GG_vee_intensief := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/GG_vee_intensief];
+		parameter<Eur_ha> Overigen__Akkerbouw        := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Akkerbouw];
+		parameter<Eur_ha> Overigen__Bollen           := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Bollen];
+		parameter<Eur_ha> Overigen__Boomkwekerij     := Vanuit_Overigen[/Classifications/Actor/LandbouwKlasses/V/Boomkwekerij];
 	}
 }
