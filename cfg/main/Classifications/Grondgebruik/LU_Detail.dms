@@ -1,0 +1,374 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De twee klassenindelingen van de derde landgebruikskaart (#783): LU_Detail voor de grondbalans en
+// LU_Hoofdklasse voor het kaartbeeld. De kaarten zelf staan in Templates/Indicatoren/Landgebruikskaart.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+unit<UInt8> VerhardingK : NrOfRows = 5
+, Descr = "De vijf verhardingsklassen waarin wonen en werken worden onderverdeeld (#783). Gevraagd vanuit Deltares: hoe hoger de verharding, hoe dieper de kleur binnen het rood van wonen en het paars van werken.
+
+			Twee reeksen grenzen, want wonen en werken zijn anders verdeeld en delen geen kleurschaal. Het zijn
+			ondergrenzen voor classify(), en de eerste is 0 zodat elke cel een klasse krijgt.
+
+			De grenzen komen van ClassifyEqualCount op de basisjaarverharding, gemeten op 7 september 2026 na de omzetting
+			van Landgebruik_Basis naar LGN en het weghalen van het groen uit LGN_Bebouwd_LU. Elke klasse krijgt daarmee
+			een vijfde van het oppervlak. Gelijke aantallen en niet jenks, omdat de vorige jenks-reeks was geijkt op de
+			BBG-route en na die twee wijzigingen niets meer verdeelde: wonen viel toen voor 0,5 procent in de laagste
+			klasse. Deltares noemde gelijke aantallen expliciet als aanvaardbaar alternatief.
+
+			LET OP dat deze grenzen aan de samenstelling van wonen en werken hangen. Verandert er iets aan de
+			dominantieregel, aan LGN_Bebouwd_LU of aan Landgebruik_Basis, meet ze dan opnieuw met
+			Diagnose783/Tabel_Grenzen; anders verdelen ze het oppervlak niet meer gelijk."
+{
+	attribute<String>  name               : ['Verharding_1_zeer_laag', 'Verharding_2_laag', 'Verharding_3_midden', 'Verharding_4_hoog', 'Verharding_5_zeer_hoog'];
+	attribute<String>  Label              : ['zeer lage verharding', 'lage verharding', 'middelmatige verharding', 'hoge verharding', 'zeer hoge verharding'], DialogType = "LabelText";
+	attribute<Float32> ClassBreaks_Wonen  : [0.0, 0.590, 0.646, 0.694, 0.757], DialogType = "Classification";
+	attribute<Float32> ClassBreaks_Werken : [0.0, 0.502, 0.590, 0.654, 0.753], DialogType = "Classification";
+	attribute<Float32> Kleurfactor        : [0.40, 0.55, 0.70, 0.85, 1.0]
+	, Descr = "Hoe diep de sectorkleur wordt in deze klasse. Nul zou zwart geven en een de volle sectorkleur; de reeks begint op veertig procent zodat de lichtste klasse nog als wonen of werken herkenbaar blijft.";
+
+	container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+}
+
+unit<UInt8> SectorVerhardingK := union_unit_uint8(Actor/Sector/wo_Landbouw, Actor/Sector/wo_Landbouw, Actor/Sector/wo_Landbouw, Actor/Sector/wo_Landbouw, Actor/Sector/wo_Landbouw)
+, Descr = "Elke sector behalve landbouw, maal de vijf verhardingsklassen (#783). Vijf blokken achter elkaar, dus de rij van sector s in verhardingsklasse v staat op v maal het aantal sectoren plus s.
+
+			Ook de sectoren waarvoor de onderverdeling niet is bedoeld krijgen vijf rijen, en dat is een keuze voor
+			eenvoud boven een korte legenda. Waterberging vult in de praktijk alleen de laagste klasse, en de vier lege
+			rijen komen niet in de arealentabel terecht omdat die alleen klassen met oppervlak toont. Een unie die per
+			sector een ander aantal rijen krijgt breekt zodra een sector in ModelParameters/SectorAllocRegio aan of uit
+			gaat."
+{
+	attribute<Actor/Sector/wo_Landbouw> Sector_rel := union_data(., id(Actor/Sector/wo_Landbouw), id(Actor/Sector/wo_Landbouw), id(Actor/Sector/wo_Landbouw), id(Actor/Sector/wo_Landbouw), id(Actor/Sector/wo_Landbouw));
+
+	attribute<VerhardingK> Verharding_rel := union_data(.
+		, const(VerhardingK/V/Verharding_1_zeer_laag, Actor/Sector/wo_Landbouw)
+		, const(VerhardingK/V/Verharding_2_laag,      Actor/Sector/wo_Landbouw)
+		, const(VerhardingK/V/Verharding_3_midden,    Actor/Sector/wo_Landbouw)
+		, const(VerhardingK/V/Verharding_4_hoog,      Actor/Sector/wo_Landbouw)
+		, const(VerhardingK/V/Verharding_5_zeer_hoog, Actor/Sector/wo_Landbouw)
+	);
+
+	attribute<UInt32> Sleutel := uint32(Verharding_rel) * 256 + uint32(Sector_rel)
+	, Descr = "Sector en verhardingsklasse in een getal, zodat de kaart met een rlookup de rij vindt in plaats van met de blokvolgorde te rekenen. Zie Make_LandgebruikskaartDetail_T.";
+
+	attribute<String> Sector_name := Actor/Sector/wo_Landbouw/name[Sector_rel];
+	attribute<String> name        := AsItemName(Sector_name) + '_' + VerhardingK/name[Verharding_rel];
+	attribute<String> Label       := Sector_name + ', ' + VerhardingK/Label[Verharding_rel], DialogType = "LabelText";
+
+	attribute<UInt32> Sectorkleur := Actor/Sector/wo_Landbouw/BrushColor[Sector_rel];
+	attribute<UInt32> BrushColor  := rgb(
+		  uint32(float32(Sectorkleur           % 256) * VerhardingK/Kleurfactor[Verharding_rel])
+		, uint32(float32((Sectorkleur /   256) % 256) * VerhardingK/Kleurfactor[Verharding_rel])
+		, uint32(float32((Sectorkleur / 65536) % 256) * VerhardingK/Kleurfactor[Verharding_rel])
+	), DialogType = "BrushColor"
+	, Descr = "De sectorkleur, verdonkerd naar verhardingsklasse. GeoDMS bewaart een kleur als een uint32 waarin rood, groen en blauw achter elkaar staan, dus de drie kanalen worden er met deling en rest uitgehaald, geschaald en weer samengevoegd.";
+
+	container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+}
+
+// ------------------------------------------------------------------------------------------------------------------
+// De hoofdklassen van het kaartbeeld
+// ------------------------------------------------------------------------------------------------------------------
+
+unit<UInt8> NatuurHoofdK : NrOfRows = 18
+, Descr = "De achttien natuurtypen van INL_Beheertype/NatuurType, een op een (#783). Dit is de hoofdklasse-indeling van de natuur op de kaart; de 84 beheertypen eronder blijven in LU_Detail zichtbaar.
+
+			De drie watertypen N01 grootschalige dynamische natuur, N02 rivieren en N04 stilstaande wateren stonden hier
+			een moment samengevoegd tot een waterklasse. Dat is teruggedraaid toen bleek dat N01 sinds het
+			Natuurbeheerplan van #776 grotendeels land is: van de 35.705 ha is maar 5.132 ha zee en wad, en de rest is
+			10.323 ha duin- en kwelderlandschap, 11.614 ha rivier- en moeraslandschap en 8.636 ha zand- en
+			kalklandschap. Samenvoegen had ruim dertig duizend hectare landnatuur blauw gekleurd."
+{
+	unit<UInt32> Elements := range(uint32, 0, nrAttr * #.)
+	{
+		attribute<String> Text: [
+		// name                          , Label                                  , r    , g    , b
+			'N00_nog_om_te_vormen'       , 'Nog om te vormen naar natuur'         , '190', '200', '170',
+			'N01_dynamische_natuur'      , 'Grootschalige dynamische natuur'      , '140', '190', '210',
+			'N02_rivieren'               , 'Rivieren'                             , ' 80', '130', '240',
+			'N03_beken_en_bronnen'       , 'Beken en bronnen'                     , '100', '160', '235',
+			'N04_stilstaande_wateren'    , 'Stilstaande wateren'                  , ' 58', '101', '254',
+			'N05_moerassen'              , 'Moerassen'                            , '254', '192', '203',
+			'N06_venen_en_vochtige_heide', 'Voedselarme venen en vochtige heiden' , ' 44', '153', '150',
+			'N07_droge_heiden'           , 'Droge heiden'                         , '117', '  0', '117',
+			'N08_open_duinen'            , 'Open duinen'                          , '227', '255', ' 15',
+			'N09_schorren_of_kwelders'   , 'Schorren of kwelders'                 , '175', ' 47', ' 97',
+			'N10_vochtige_schraallanden' , 'Vochtige schraallanden'               , '180', '215', '110',
+			'N11_droge_schraallanden'    , 'Droge schraallanden'                  , '215', '225', '120',
+			'N12_rijke_graslanden'       , 'Rijke graslanden en akkers'           , '150', '205', ' 90',
+			'N13_vogelgraslanden'        , 'Vogelgraslanden'                      , '125', '190', '135',
+			'N14_vochtige_bossen'        , 'Vochtige bossen'                      , ' 12', ' 90', ' 76',
+			'N15_droge_bossen'           , 'Droge bossen'                         , ' 50', '204', '  1',
+			'N16_bossen_productie'       , 'Bossen met productiefunctie'          , '  0', '156', '  0',
+			'N17_cultuurhistorische_bos' , 'Cultuurhistorische bossen'            , ' 90', '150', ' 60'
+		];
+	}
+	parameter<UInt32> nrAttr := 5;
+
+	attribute<String> name       := Elements/Text[value(uint32(id(.)) * nrAttr + 0, Elements)];
+	attribute<String> Label      := Elements/Text[value(uint32(id(.)) * nrAttr + 1, Elements)], DialogType = "LabelText";
+	attribute<UInt32> BrushColor := rgb(
+		  uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 2, Elements)])
+		, uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 3, Elements)])
+		, uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 4, Elements)])
+	), DialogType = "BrushColor";
+
+	container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+}
+
+unit<UInt8> LandbouwHoofdK : NrOfRows = 7
+, Descr = "De landbouw van LandbouwType, samengevat tot zeven groepen voor het kaartbeeld (#783).
+
+			Twee keuzes die niet vanzelf spreken. Mais gaat naar akkerbouw en niet naar grasland, want op de kaart is
+			het een akker; het model rekent mais wel als voedergewas onder gg_vee, dus deze groep en de allocatieklasse
+			zeggen hier iets anders. En boomkwekerij, boomgaard en bos op landbouwgrond zijn een groep geworden: het
+			zijn samen 44.252 ha en drie kleuren die je op een landelijke kaart niet uit elkaar houdt."
+{
+	unit<UInt32> Elements := range(uint32, 0, nrAttr * #.)
+	{
+		attribute<String> Text: [
+		// name                  , Label                            , r    , g    , b
+			'Grasland'           , 'Agrarisch grasland'             , '114', '227', ' 32',
+			'Akkerbouw'          , 'Akkerbouw'                      , '229', '157', ' 32',
+			'Tuinbouw_open'      , 'Tuinbouw, vollegrond'           , '190', '230', '120',
+			'Bollen_bloemen'     , 'Bollen en bloemen'              , '172', '127', '168',
+			'Boom_en_fruitteelt' , 'Boom- en fruitteelt'            , ' 60', '243', ' 69',
+			'Glastuinbouw'       , 'Glastuinbouw'                   , ' 78', '255', '206',
+			'Riet_paludicultuur' , 'Riet en paludicultuur'          , '252', '169', ' 18'
+		];
+	}
+	parameter<UInt32> nrAttr := 5;
+
+	attribute<String> name       := Elements/Text[value(uint32(id(.)) * nrAttr + 0, Elements)];
+	attribute<String> Label      := Elements/Text[value(uint32(id(.)) * nrAttr + 1, Elements)], DialogType = "LabelText";
+	attribute<UInt32> BrushColor := rgb(
+		  uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 2, Elements)])
+		, uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 3, Elements)])
+		, uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 4, Elements)])
+	), DialogType = "BrushColor";
+
+	container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+}
+
+unit<UInt8> RestHoofdK : NrOfRows = 3
+, Descr = "Wat er van LGN overblijft nadat de beheertypenkaart de natuur en de BRP de landbouw heeft verbijzonderd, en nadat de allocatie de stedelijke functies heeft geclaimd (#783).
+
+			Overig is de bak die Deltares expliciet wil houden: er ligt wel iets, maar het model doet er niets mee.
+			Lichtgrijs, zodat hij op de kaart terugtreedt. Erin zitten de bebouwing die de dominantieregel niet als
+			woon- of werkgebied heeft opgepakt, de zonneparken, en het overige grondgebruik in het buitengebied."
+{
+	unit<UInt32> Elements := range(uint32, 0, nrAttr * #.)
+	{
+		attribute<String> Text: [
+		// name              , Label                       , r    , g    , b
+			'Stedelijk_groen', 'Stedelijk groen'           , '166', '243', ' 69',
+			'Infra'          , 'Infrastructuur'            , '133', ' 30', '  5',
+			'Overig'         , 'Overige functies'          , '205', '205', '205'
+		];
+	}
+	parameter<UInt32> nrAttr := 5;
+
+	attribute<String> name       := Elements/Text[value(uint32(id(.)) * nrAttr + 0, Elements)];
+	attribute<String> Label      := Elements/Text[value(uint32(id(.)) * nrAttr + 1, Elements)], DialogType = "LabelText";
+	attribute<UInt32> BrushColor := rgb(
+		  uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 2, Elements)])
+		, uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 3, Elements)])
+		, uint32(Elements/Text[value(uint32(id(.)) * nrAttr + 4, Elements)])
+	), DialogType = "BrushColor";
+
+	container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+}
+
+unit<UInt8> LU_Hoofdklasse := union_unit_uint8(SectorVerhardingK, NatuurHoofdK, LandbouwHoofdK, RestHoofdK)
+, Descr = "De klassenindeling van de kaart die cartografisch te lezen is (#783). De sectoren met hun verhardingsonderverdeling, de natuur naar natuurtype, de landbouw naar hoofdgroep, en stedelijk groen, infrastructuur en overig.
+
+			De volgorde van de vier delen ligt vast; wie er iets tussen zet verschuift alle klassenummers en daarmee de
+			betekenis van eerder weggeschreven tif-bestanden."
+{
+	attribute<String> name       := union_data(., SectorVerhardingK/name, NatuurHoofdK/name, LandbouwHoofdK/name, RestHoofdK/name);
+	attribute<String> Label      := union_data(., SectorVerhardingK/Label, 'Natuur: ' + NatuurHoofdK/Label, 'Landbouw: ' + LandbouwHoofdK/Label, RestHoofdK/Label), DialogType = "LabelText";
+	attribute<UInt32> BrushColor := union_data(., SectorVerhardingK/BrushColor, NatuurHoofdK/BrushColor, LandbouwHoofdK/BrushColor, RestHoofdK/BrushColor), DialogType = "BrushColor";
+
+	attribute<SectorVerhardingK> SectorVerhardingK_rel := union_data(., id(SectorVerhardingK), const(null_b, NatuurHoofdK, SectorVerhardingK), const(null_b, LandbouwHoofdK, SectorVerhardingK), const(null_b, RestHoofdK, SectorVerhardingK));
+
+	container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+}
+
+// ------------------------------------------------------------------------------------------------------------------
+// Van LandgebruikType naar hoofdklasse
+// ------------------------------------------------------------------------------------------------------------------
+
+attribute<NatuurHoofdK> NatuurType_naar_Hoofdklasse (NatuurType) := rlookup(NatuurType/code, substr(NatuurHoofdK/name, 0, 3))
+, IntegrityCheck = "all(IsDefined(this))"
+, Descr = "Van natuurtype naar hoofdklasse, een op een op de code. De namen in NatuurHoofdK beginnen met diezelfde code, dus N05 vindt N05_moerassen; de IntegrityCheck vangt af dat er een type zonder tegenhanger ontstaat.";
+
+unit<UInt8> LandbouwType_naar_Hoofdklasse : NrOfRows = 15
+, Descr = "Van de vijftien landbouwtypen naar de zeven hoofdgroepen. Een eigen tabel en geen kolom in LandbouwType, zodat de kaartindeling van #783 op een plek staat en de stand-administratie er niet mee vervuild raakt."
+{
+	unit<UInt32> Elements := range(uint32, 0, nrAttr * #.)
+	{
+		attribute<String> Text: [
+		// LandbouwType                , LandbouwHoofdK
+			'Grasland_blijvend'        , 'Grasland',
+			'Grasland_tijdelijk'       , 'Grasland',
+			'Grasland_natuurlijk'      , 'Grasland',
+			'Mais'                     , 'Akkerbouw',
+			'Bouwland'                 , 'Akkerbouw',
+			'Bollen_bloemen'           , 'Bollen_bloemen',
+			'Boomkwekerij'             , 'Boom_en_fruitteelt',
+			'Boomgaard_fruit'          , 'Boom_en_fruitteelt',
+			'Glastuinbouw'             , 'Glastuinbouw',
+			'Riet_paludicultuur'       , 'Riet_paludicultuur',
+			'Braak'                    , 'Akkerbouw',
+			'Bos_agrarisch'            , 'Boom_en_fruitteelt',
+			'Grasland_vernat'          , 'Grasland',
+			'Grasland_vernat_kruidenrijk', 'Grasland',
+			'Tuinbouw_open'            , 'Tuinbouw_open'
+		];
+	}
+	parameter<UInt32> nrAttr := 2;
+
+	attribute<String>         Type_name      := Elements/Text[value(uint32(id(.)) * nrAttr + 0, Elements)];
+	attribute<String>         Hoofdklasse_name := Elements/Text[value(uint32(id(.)) * nrAttr + 1, Elements)];
+	attribute<LandbouwType>   LandbouwType_rel := rlookup(lowercase(Type_name), lowercase(LandbouwType/name)), IntegrityCheck = "all(IsDefined(this))";
+	attribute<LandbouwHoofdK> Hoofdklasse_rel  := rlookup(Hoofdklasse_name, LandbouwHoofdK/name), IntegrityCheck = "all(IsDefined(this))";
+}
+
+unit<UInt8> LGN_naar_Hoofdklasse : NrOfRows = 51
+, Descr = "Van de 51 LGN-klassen naar een hoofdklasse. Deze tabel is de terugval: in de praktijk pakt de beheertypenkaart de natuur en de BRP of LGN zelf de landbouw, en houdt LandgebruikType nog tien LGN-klassen over, samen 616.766 ha in het basisjaar. De andere 41 staan op nul hectare, maar krijgen hier wel een groep, zodat er geen klasse zonder bestemming kan ontstaan als een schakelaar omgaat.
+
+			De natuurklassen volgen de toewijzing van BeheertypeHeuristiek, zodat kaart en stand hetzelfde zeggen; loofbos
+			en naaldbos komen daardoor bij de productiebossen uit en niet bij de droge bossen. De twee bossen in bebouwd
+			gebied wijken daar bewust van af en gaan naar stedelijk groen, want dat is waar ze op deze kaart horen."
+{
+	unit<UInt32> Elements := range(uint32, 0, nrAttr * #.)
+	{
+		attribute<String> Text: [
+		// lgn , hoofdklasse                  // LGN-klasse
+			'0'  , 'Overig',                   // onbekend
+			'1'  , 'Grasland',                 // agrarisch gras
+			'2'  , 'Akkerbouw',                // mais
+			'3'  , 'Akkerbouw',                // aardappelen
+			'4'  , 'Akkerbouw',                // bieten
+			'5'  , 'Akkerbouw',                // granen
+			'6'  , 'Akkerbouw',                // overige landbouwgewassen
+			'8'  , 'Glastuinbouw',             // glastuinbouw
+			'9'  , 'Boom_en_fruitteelt',       // boomgaarden
+			'10' , 'Bollen_bloemen',           // bloembollen
+			'11' , 'N16_bossen_productie',     // loofbos
+			'12' , 'N16_bossen_productie',     // naaldbos
+			'16' , 'N04_stilstaande_wateren',   // zoet water
+			'17' , 'N01_dynamische_natuur',     // zout water
+			'18' , 'Overig',                   // bebouwing in primair bebouwd gebied
+			'19' , 'Overig',                   // bebouwing in secundair bebouwd gebied
+			'20' , 'Stedelijk_groen',          // bos in primair bebouwd gebied
+			'22' , 'Stedelijk_groen',          // bos in secundair bebouwd gebied
+			'23' , 'Stedelijk_groen',          // gras in primair bebouwd gebied
+			'26' , 'Overig',                   // bebouwing in buitengebied
+			'27' , 'Overig',                   // overig grondgebruik in buitengebied
+			'28' , 'Stedelijk_groen',          // gras in secundair bebouwd gebied
+			'29' , 'Overig',                   // zonneparken
+			'30' , 'N09_schorren_of_kwelders', // kwelders
+			'31' , 'N08_open_duinen',          // open zand in kustgebied
+			'32' , 'N08_open_duinen',          // duinen met lage vegetatie
+			'33' , 'N08_open_duinen',          // duinen met hoge vegetatie
+			'34' , 'N08_open_duinen',          // duinheide
+			'35' , 'N07_droge_heiden',         // open stuifzand en rivierzand
+			'36' , 'N07_droge_heiden',         // heide
+			'37' , 'N07_droge_heiden',         // matig vergraste heide
+			'38' , 'N07_droge_heiden',         // sterk vergraste heide
+			'39' , 'N06_venen_en_vochtige_heide', // hoogveen
+			'40' , 'N14_vochtige_bossen',      // bos in hoogveengebied
+			'41' , 'N05_moerassen',            // overige moerasvegetatie
+			'42' , 'Riet_paludicultuur',       // rietvegetatie
+			'43' , 'N14_vochtige_bossen',      // bos in moerasgebied
+			'45' , 'Grasland',                 // natuurlijk beheerde agrarische graslanden
+			'46' , 'N08_open_duinen',          // gras in het kustgebied
+			'47' , 'Grasland',                 // overig gras
+			'61' , 'Boom_en_fruitteelt',       // boomkwekerijen
+			'62' , 'Boom_en_fruitteelt',       // fruitkwekerijen
+			'251', 'Infra',                    // hoofdinfrastructuur en spoorbaanlichamen
+			'252', 'Infra',                    // halfverharde wegen, langzaam verkeer en overige
+			'253', 'Infra',                    // smalle wegen
+			'321', 'N06_venen_en_vochtige_heide', // struikvegetatie in hoogveengebied (laag)
+			'322', 'N05_moerassen',            // struikvegetatie in moerasgebied (laag)
+			'323', 'N12_rijke_graslanden',     // overige struikvegetatie (laag)
+			'331', 'N06_venen_en_vochtige_heide', // struikvegetatie in hoogveengebied (hoog)
+			'332', 'N05_moerassen',            // struikvegetatie in moerasgebied (hoog)
+			'333', 'N12_rijke_graslanden'      // overige struikvegetatie (hoog)
+		];
+	}
+	parameter<UInt32> nrAttr := 2;
+
+	attribute<UInt16>         lgn_code         := uint16(Elements/Text[value(uint32(id(.)) * nrAttr + 0, Elements)]);
+	attribute<String>         Hoofdklasse_name := Elements/Text[value(uint32(id(.)) * nrAttr + 1, Elements)];
+	attribute<LGNKlasse>      LGNKlasse_rel    := rlookup(lgn_code, LGNKlasse/code), IntegrityCheck = "all(IsDefined(this))";
+	attribute<LU_Hoofdklasse> Hoofdklasse_rel  := rlookup(Hoofdklasse_name, LU_Hoofdklasse/name), IntegrityCheck = "all(IsDefined(this))";
+}
+
+attribute<LU_Hoofdklasse> Hoofdklasse_van_Type (LandgebruikType) := union_data(LandgebruikType
+	, rlookup(NatuurHoofdK/name[NatuurType_naar_Hoofdklasse[INL_Beheertype/NatuurType_rel]], LU_Hoofdklasse/name)
+	, rlookup(LandbouwHoofdK/name[LandbouwType_naar_Hoofdklasse/Hoofdklasse_rel[invert(LandbouwType_naar_Hoofdklasse/LandbouwType_rel)]], LU_Hoofdklasse/name)
+	, LGN_naar_Hoofdklasse/Hoofdklasse_rel[invert(LGN_naar_Hoofdklasse/LGNKlasse_rel)]
+)
+, IntegrityCheck = "all(IsDefined(this))"
+, Descr = "De aggregatie van de 150 landgebruikstypen naar de hoofdklassen van de kaart (#783). Per deel van de unie een eigen route: het beheertype via zijn natuurtype, het landbouwtype via zijn hoofdgroep, en de LGN-klasse via de tabel hierboven. De IntegrityCheck is de eis van geen enkel type zonder groep; hij vuurt zodra er een rij bijkomt die nergens heen wijst.";
+
+// ------------------------------------------------------------------------------------------------------------------
+// De gedetailleerde indeling
+// ------------------------------------------------------------------------------------------------------------------
+
+unit<UInt8> LU_Detail := union_unit_uint8(SectorVerhardingK, LandgebruikType)
+, Descr = "De klassenindeling van de gedetailleerde landgebruikskaart, bedoeld voor een sluitende grondbalans (#783).
+
+			Twee delen. Eerst de sectoren met hun verhardingsonderverdeling, dus wat de allocatie en de BAG-stand op een
+			cel zetten. Daarna LandgebruikType, de stand-administratie van #751: een natuurbeheertype waar de cel natuur
+			of water is, een landbouwtype waar hij landbouw is, en anders de LGN-klasse zelf, dus bebouwing,
+			infrastructuur en het groen in bebouwd gebied.
+
+			De cel krijgt het sectordeel waar de landgebruikskaart een sector toont en anders het type uit de stand. Die
+			voorrang komt niet hier vandaan maar uit Make_Landgebruikskaart_T, en dat is met opzet: de drie
+			landgebruikskaarten delen een dominantieregel en kunnen zo niet uit elkaar lopen. Zie
+			Templates/Indicatoren/Landgebruikskaart/Make_LandgebruikskaartDetail_T.
+
+			De volgorde van de twee delen ligt vast; wie er iets tussen zet verschuift alle klassenummers en daarmee de
+			betekenis van eerder weggeschreven tif-bestanden. Het eerste deel hangt bovendien aan de actieve sectorenset
+			in ModelParameters/SectorAllocRegio."
+{
+	attribute<String> name       := union_data(., SectorVerhardingK/name, 'Type_' + LandgebruikType/name);
+	attribute<String> Label      := union_data(., SectorVerhardingK/Label, LandgebruikType/Label), DialogType = "LabelText";
+	attribute<UInt32> BrushColor := union_data(., SectorVerhardingK/BrushColor, LandgebruikType/BrushColor), DialogType = "BrushColor";
+
+	attribute<SectorVerhardingK> SectorVerhardingK_rel := union_data(., id(SectorVerhardingK), const(null_b, LandgebruikType, SectorVerhardingK))
+	, Descr = "Welke sector-en-verhardingsrij deze klasse is, leeg voor het tweede deel. Met invert() de weg terug, en dat is hoe de kaart zijn klasse kiest zonder met klassenummers te rekenen.";
+	attribute<LandgebruikType>   LandgebruikType_rel   := union_data(., const(null_b, SectorVerhardingK, LandgebruikType), id(LandgebruikType))
+	, Descr = "Welk landgebruikstype deze klasse is, leeg voor het eerste deel.";
+
+	attribute<LU_Hoofdklasse> Hoofdklasse_rel := union_data(.
+		, invert(LU_Hoofdklasse/SectorVerhardingK_rel)
+		, /Classifications/Grondgebruik/Hoofdklasse_van_Type
+	)
+	, IntegrityCheck = "all(IsDefined(this))"
+	, Descr = "De aggregatie naar de kaartindeling. De sectoren houden hun eigen rij, het type gaat naar zijn hoofdklasse. Dit is de brug tussen kaart 1 en kaart 2: de tweede kaart is de eerste, door deze kolom heen gelezen.";
+
+	container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+}
+
+attribute<Actor/Sector/wo_Landbouw> Sector_van_LU_ModelType (Actor/LU_ModelType) := union_data(Actor/LU_ModelType
+	, id(Actor/Sector/wo_Landbouw)
+	, const(null_b, Actor/LandbouwKlasses, Actor/Sector/wo_Landbouw)
+	, const(null_b, Actor/AdditioneleK,    Actor/Sector/wo_Landbouw)
+)
+, Descr = "Welke sector een klasse van de landgebruikskaart is, leeg voor de landbouwklassen en voor natuur, infra, water en overig. LU_ModelType is de unie van die drie blokken in die volgorde, dus dit is de eerste ervan teruggelezen. Gebruikt door Make_LandgebruikskaartDetail_T om te weten waar de sectoren met hun verhardingsonderverdeling komen te staan (#783).";
+
+attribute<Bool> Sector_VolgtWerkenGrenzen (Actor/Sector/wo_Landbouw) := lowercase(Actor/Sector/wo_Landbouw/name) == lowercase('Werken')
+, Descr = "Welke reeks klassegrenzen geldt voor deze sector. Werken heeft een eigen verdeling, met zeven procent van het oppervlak op volledig verhard; alle andere sectoren volgen de wonenreeks. Zie VerhardingK.";
