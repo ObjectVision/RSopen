@@ -122,5 +122,143 @@ container Diagnose780
 		attribute<Float32> Gealloceerd (Regio) :=
 			sum(float32(IsDefined(Alloc/Allocatie/Alloc_Result)), Alloc/Allocatie_Prep/AllocRegio/Per_CompactedAdminDomain)
 		, Descr = "Hoeveel cellen de allocator werkelijk aan een landbouwklasse heeft gegeven. Moet kleiner of gelijk zijn aan Beschikbaar; is hij groter, dan meet Beschikbaar de verkeerde ruimte.";
+
+		attribute<Float32> GealloceerdPerKlasse (/Classifications/Actor/LandbouwKlasses) := pcount(value(uint8(Alloc/Allocatie/Alloc_Result), /Classifications/Actor/LandbouwKlasses))[float32]
+		, Descr = "Per landbouwklasse het aantal gealloceerde cellen in de hele casus. Alloc_Result draagt de index van LandbouwKlasses: LandbouwK_alloc is de union van LandbouwKlasses en NonLandbouwK, in die volgorde, en de restcategorie NonLandbouw is daar null. De cast is dus een hernoeming en geen herindeling.";
+
+		parameter<String> GealloceerdPerKlasse_ha := AsList(/Classifications/Actor/LandbouwKlasses/name + '=' + string(GealloceerdPerKlasse * AdminDomain/NrHaPerCell[float32]), ' | ') + ' | totaal=' + string(sum(GealloceerdPerKlasse) * AdminDomain/NrHaPerCell[float32])
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_alloc_'+Casus+'_band'+string(/ModelParameters/Landbouw/claims_conservatief/Claimbandbreedte)+'.txt'"
+		, StorageType = "str"
+		, Descr = "Hetzelfde in hectare, als tekstregel. De voor-en-na-vergelijking van de landbouwallocatie in #780 leest dit bestand; de claimbandbreedte staat in de naam omdat de gevoeligheidsmeting op 0,05 en 0,25 naast elkaar moet blijven staan.";
+	}
+
+	container Metingen
+	: Descr = "Eenmalige metingen op de basisjaarkaart voor de parameters van #780, stap 0 van de specificatie van 7 september 2026: het landbouwareaal per HELP-bodemklasse en per bodemtak, het maisaandeel in het gg_vee-areaal per bodemtak, het subsidiabele aandeel van het natuurlijk grasland (gg_vee_extensief) en een telling van AantastingDoorVerzilt als kanarie voor de kolomindex van GewasSoortYR.
+
+				Landbouw is hier de basisjaarkaart LU_Basisjaar met de vlag LU_ModelType/IsLandbouw, dus dezelfde kaart waar de claims en de landbouwstand op rusten. De bodemtak wordt hier onafhankelijk van SourceData/Landbouw/HELP/Bodemtak_rel opgebouwd uit Bodem_HELP, zodat de meting ook voor de veentak van #785 als controle blijft dienen. De uitkomsten staan als tekstregels in %LocalDataProjDir%/Diagnose/meting780_*.txt; vraag de vier Tabel-items op."
+	{
+		attribute</Classifications/Actor/LU_ModelType>       LU        (AdminDomain) := /BaseData/StartState/Landgebruik/LU_Basisjaar;
+		attribute<Bool>                                      IsLb      (AdminDomain) := /Classifications/Actor/LU_ModelType/IsLandbouw[LU];
+		attribute<Bool>                                      IsGgVee   (AdminDomain) := LU == /Classifications/Actor/LU_ModelType/V/Landbouw_GG_vee;
+		attribute<Bool>                                      IsExt     (AdminDomain) := LU == /Classifications/Actor/LU_ModelType/V/Landbouw_GG_vee_extensief;
+		attribute</Classifications/Landbouw/BodemKlasse14k>  Bodem_rel (AdminDomain) := /SourceData/Landbouw/HELP/Bodem_HELP;
+		attribute<Bool>                                      IsVeen    (AdminDomain) := Bodem_rel == /Classifications/Landbouw/BodemKlasse14k/V/V_W;
+		attribute<Bool>                                      IsKlei    (AdminDomain) := Bodem_rel >= /Classifications/Landbouw/BodemKlasse14k/V/K1 && Bodem_rel <= /Classifications/Landbouw/BodemKlasse14k/V/K5;
+		attribute<Bool>                                      IsZand    (AdminDomain) := /SourceData/Landbouw/HELP/Bodem_HELP_zandig;
+
+		unit<uint8> Tak : NrOfRows = 4
+		{
+			attribute<String> name : ['Geen', 'Klei', 'Zand', 'Veen'];
+		}
+		attribute<Tak> Tak_rel (AdminDomain) := switch(case(IsVeen, 3[Tak]), case(IsKlei, 1[Tak]), case(IsZand, 2[Tak]), 0[Tak]);
+
+		parameter<Float32> HaPerCel := AdminDomain/NrHaPerCell[float32];
+
+		attribute<Float32> Ha_Lb_BodemKlasse (/Classifications/Landbouw/BodemKlasse14k) := sum(float32(IsLb), Bodem_rel) * HaPerCel, Descr = "Hectare basisjaarlandbouw per HELP-bodemklasse.";
+		attribute<Float32> Ha_Lb             (Tak)                                    := sum(float32(IsLb), Tak_rel) * HaPerCel, Descr = "Hectare basisjaarlandbouw per bodemtak.";
+
+		attribute<Int32>   BRP_code  (AdminDomain) := /Classifications/Landbouw/BRPGewasType/code[/SourceData/Landbouw/BRP/BRPGewasType_rel], Descr = "De BRP-gewascode per cel, null waar geen perceel ligt.";
+		attribute<Bool>    HeeftBRP  (AdminDomain) := IsDefined(BRP_code);
+		attribute<Bool>    IsMaisBRP (AdminDomain) := BRP_code == 259i || BRP_code == 316i || BRP_code == 317i || BRP_code == 1935i, Descr = "Snijmais, korrelmais, corncob mix en maiskolvensilage.";
+		attribute<Bool>    IsMaisLGN (AdminDomain) := !HeeftBRP && /Classifications/Grondgebruik/LGNKlasse/code[/BaseData/StartState/Landgebruik/LGN] == 2w, Descr = "LGN-klasse 2 mais, alleen op cellen zonder BRP-perceel, want daar komt de klasse gg_vee uit LGN.";
+
+		attribute<Float32> N_ggvee         (Tak) := sum(float32(IsLb && IsGgVee), Tak_rel);
+		attribute<Float32> N_ggvee_BRP     (Tak) := sum(float32(IsLb && IsGgVee && HeeftBRP), Tak_rel);
+		attribute<Float32> N_ggvee_maisBRP (Tak) := sum(float32(IsLb && IsGgVee && IsMaisBRP), Tak_rel);
+		attribute<Float32> N_ggvee_maisLGN (Tak) := sum(float32(IsLb && IsGgVee && IsMaisLGN), Tak_rel);
+		attribute<Float32> Aandeel_mais_BRP  (Tak) := N_ggvee_maisBRP / N_ggvee_BRP, Descr = "Maisaandeel binnen de gg_vee-cellen met een BRP-perceel.";
+		attribute<Float32> Aandeel_mais_alle (Tak) := (N_ggvee_maisBRP + N_ggvee_maisLGN) / N_ggvee, Descr = "Maisaandeel binnen alle gg_vee-cellen, met LGN-mais op de cellen zonder perceel.";
+
+		attribute<Float32> N_ext           (Tak) := sum(float32(IsLb && IsExt), Tak_rel);
+		attribute<Float32> N_ext_331_1926  (Tak) := sum(float32(IsLb && IsExt && (BRP_code == 331i || BRP_code == 1926i)), Tak_rel), Descr = "Natuurlijk grasland met landbouwactiviteiten en agrarisch natuurmengsel: subsidiabel voor de GLB-hectaresteun.";
+		attribute<Float32> N_ext_332       (Tak) := sum(float32(IsLb && IsExt && BRP_code == 332i), Tak_rel), Descr = "Natuurlijk grasland hoofdfunctie natuur: geen basispremie.";
+		attribute<Float32> N_ext_zonderBRP (Tak) := sum(float32(IsLb && IsExt && !HeeftBRP), Tak_rel), Descr = "LGN 45 zonder BRP-perceel; aanname niet subsidiabel.";
+		attribute<Float32> GLB_factor_extensief (Tak) := N_ext_331_1926 / N_ext;
+		parameter<Float32> GLB_factor_extensief_NL := sum(N_ext_331_1926) / sum(N_ext);
+
+		parameter<String> Tabel_Bodem := AsList(/Classifications/Landbouw/BodemKlasse14k/name + '=' + string(Ha_Lb_BodemKlasse), ' | ') + ' || per tak: ' + AsList(Tak/name + '=' + string(Ha_Lb), ' | ') + ' || landbouw totaal=' + string(sum(Ha_Lb)) + ' aandeel Geen=' + string(first(Ha_Lb) / sum(Ha_Lb))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_bodemtak.txt'"
+		, StorageType = "str";
+
+		parameter<String> Tabel_Mais := AsList(Tak/name + ': N_ggvee=' + string(N_ggvee) + ' N_BRP=' + string(N_ggvee_BRP) + ' maisBRP=' + string(N_ggvee_maisBRP) + ' maisLGN=' + string(N_ggvee_maisLGN) + ' aandeel_BRP=' + string(Aandeel_mais_BRP) + ' aandeel_alle=' + string(Aandeel_mais_alle), ' | ')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_mais.txt'"
+		, StorageType = "str";
+
+		parameter<String> Tabel_Extensief := AsList(Tak/name + ': N_ext=' + string(N_ext) + ' 331_1926=' + string(N_ext_331_1926) + ' 332=' + string(N_ext_332) + ' zonderBRP=' + string(N_ext_zonderBRP) + ' factor=' + string(GLB_factor_extensief), ' | ') + ' || NL factor=' + string(GLB_factor_extensief_NL)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_extensief.txt'"
+		, StorageType = "str";
+
+		parameter<String> Tabel_Verzilt := AsList(/Classifications/Landbouw/GewasSoortYR/name + '=' + string(/Classifications/Landbouw/GewasSoortYR/AantastingDoorVerzilt), ' | ') + ' || aantal=' + string(sum(float32(/Classifications/Landbouw/GewasSoortYR/AantastingDoorVerzilt)))
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_verzilt.txt'"
+		, StorageType = "str";
+	}
+
+	container Melkvee
+	: Descr = "Toets van Dairy_T na #780: de netto-opbrengst van gg_vee en gg_vee_extensief op landbouwcellen met bodem, per bodemtak, plus een onafhankelijke nabouw van het saldo per ha (container Hand) met de getallen uit bijlage A van de specificatie, hardgecodeerd en niet uit ModelParameters gelezen, per cel op dezelfde derving. Het verschil met Dairy_T hoort onder 1 euro per ha te blijven. De uitvoer staat in %LocalDataProjDir%/Diagnose/meting780_melkvee_<casus>_<jaar>.txt; vraag Tabel op."
+	{
+		container Suit := ='/VariantData/'+Casus_str+'/Suitability/'+Jaar_str+'/Landbouw';
+
+		attribute<Bool>          IsLbBodem  (AdminDomain) := Metingen/IsLb && /SourceData/Landbouw/HELP/HeeftBodem;
+		attribute<Metingen/Tak>  Tak_rel    (AdminDomain) := Metingen/Tak_rel;
+		attribute<Float32>       YR_gras    (AdminDomain) := Suit/per_ModelType/gg_vee/YieldReduction_Gras;
+		attribute<Float32>       YR_mais    (AdminDomain) := Suit/per_ModelType/gg_vee/YieldReduction_Mais;
+		attribute<Float32>       Saldo_vee  (AdminDomain) := Suit/per_ModelType/gg_vee/Saldo_ha[float32];
+		attribute<Float32>       Saldo_ext  (AdminDomain) := Suit/per_ModelType/gg_vee_extensief/Saldo_ha[float32];
+		attribute<Float32>       NR_vee     (AdminDomain) := Suit/per_ModelType/gg_vee/Net_revenues_ha[float32];
+		attribute<Float32>       NR_ext     (AdminDomain) := Suit/per_ModelType/gg_vee_extensief/Net_revenues_ha[float32];
+
+		attribute<Float32> N_lb        (Metingen/Tak) := sum(float32(IsLbBodem), Tak_rel);
+		attribute<Float32> Mean_vee    (Metingen/Tak) := sum(IsLbBodem ? NR_vee : 0f, Tak_rel) / N_lb;
+		attribute<Float32> Min_vee     (Metingen/Tak) := min(IsLbBodem ? NR_vee : null_f, Tak_rel);
+		attribute<Float32> Max_vee     (Metingen/Tak) := max(IsLbBodem ? NR_vee : null_f, Tak_rel);
+		attribute<Float32> Mean_ext    (Metingen/Tak) := sum(IsLbBodem ? NR_ext : 0f, Tak_rel) / N_lb;
+		attribute<Float32> Mean_YRgras (Metingen/Tak) := sum(IsLbBodem ? YR_gras : 0f, Tak_rel) / N_lb;
+
+		parameter<Float32> Mean_vee_NL_Eur_m2 := sum(IsLbBodem ? NR_vee : 0f) / sum(float32(IsLbBodem)) / 10000f, Descr = "Gemiddelde netto-opbrengst van gg_vee over alle landbouwcellen met bodem, in Eur per m2 per jaar; de specificatie verwacht 0,32 tot 0,42.";
+		parameter<Float32> Min_vee_NL_Eur_m2  := min(IsLbBodem ? NR_vee : null_f) / 10000f, Descr = "Laagste netto-opbrengst van gg_vee op een landbouwcel met bodem; de specificatie verwacht boven 0,20.";
+
+		container Hand
+		: Descr = "Nabouw van Dairy_T met de handgetallen uit bijlage A van de specificatie van #780. De beleidsstand staat als parameters bovenaan, zodat de toets per commit mee kan: commit 1 GLB 345 met 30 extra op IsVeenGrond binnen TotaalSubsidie en mestprijs 25; vanaf commit 2 de paden per variant en zichtjaar."
+		{
+			parameter<Float32> GLB                  := 345f;
+			parameter<Float32> GLB_veen_extra       := 30f,   Descr = "Commit 1: de 30 euro ANLb-veen op IsVeenGrond zit nog in TotaalSubsidie.";
+			parameter<Float32> Mestprijs            := 25f;
+			parameter<Float32> Factor_ext           := 0.806f;
+			parameter<Float32> Diensten_ext         := 0f;
+			parameter<Float32> Veen_vergoeding      := 0f;
+			parameter<Bool>    VeenExtraInGLBfactor := TRUE, Descr = "Commit 1: op extensief wordt de 30 euro op IsVeenGrond met de GLB-factor vermenigvuldigd omdat hij in TotaalSubsidie zit.";
+
+			attribute<Float32> gras_netto (/Classifications/Landbouw/Bodemtak) : [0, 9.99511, 10.25362, 9.56430], Descr = "bruto 11,6 11,9 11,1 maal 0,907 maal 0,95";
+			attribute<Float32> mais_netto (/Classifications/Landbouw/Bodemtak) : [0, 13.49, 13.87, 13.87],        Descr = "bruto 14,2 14,6 14,6 maal 0,95";
+			attribute<Float32> am         (/Classifications/Landbouw/Bodemtak) : [0, 0.117, 0.269, 0.091];
+			attribute<Float32> gk         (/Classifications/Landbouw/Bodemtak) : [0, 510, 474, 434];
+			attribute<Float32> mk         (/Classifications/Landbouw/Bodemtak) : [0, 885, 892, 892];
+
+			attribute</Classifications/Landbouw/Bodemtak> tak (AdminDomain) := /SourceData/Landbouw/HELP/Bodemtak_rel;
+			attribute<Float32> DD    (AdminDomain) := /SourceData/Landbouw/HELP/DDPossible;
+			attribute<Float32> veen  (AdminDomain) := float32(Suit/IsVeenGrond);
+			attribute<Float32> gras  (AdminDomain) := (gras_netto[tak] + 0.25f * DD) * (1f - YR_gras) * (1f - am[tak]);
+			attribute<Float32> mais  (AdminDomain) := mais_netto[tak] * (1f - YR_mais) * am[tak];
+			attribute<Float32> bal   (AdminDomain) := gras + mais - 1.48f * 6.5f;
+			attribute<Float32> voer  (AdminDomain) := bal > 0f ? bal * 101f : bal * 160f;
+			attribute<Float32> grond (AdminDomain) := gk[tak] * (1f - am[tak]) + mk[tak] * am[tak] + 117f * DD;
+			parameter<Float32> mest                 := (1.48f * (116.5f + 0.38f * 32.3f + 0.38f * 66.9f) - 170f) / 4f * Mestprijs;
+			attribute<Float32> glb_cel (AdminDomain) := GLB + GLB_veen_extra * veen;
+			attribute<Float32> saldo_vee (AdminDomain) := 1.48f * 3149f + voer - grond - mest + glb_cel;
+			attribute<Float32> saldo_ext (AdminDomain) := 5f * 75f * (1f - YR_gras) + (VeenExtraInGLBfactor ? glb_cel : GLB) * Factor_ext + Diensten_ext + Veen_vergoeding * veen;
+
+			attribute<Float32> verschil_vee (AdminDomain) := IsLbBodem ? abs(saldo_vee - Saldo_vee) : 0f;
+			attribute<Float32> verschil_ext (AdminDomain) := IsLbBodem ? abs(saldo_ext - Saldo_ext) : 0f;
+			parameter<Float32> MaxVerschil_vee := max(verschil_vee);
+			parameter<Float32> MaxVerschil_ext := max(verschil_ext);
+			parameter<Float32> gras_klei := gras_netto[1[/Classifications/Landbouw/Bodemtak]] * (1f - am[1[/Classifications/Landbouw/Bodemtak]]) + mais_netto[1[/Classifications/Landbouw/Bodemtak]] * am[1[/Classifications/Landbouw/Bodemtak]];
+			parameter<Float32> grond_klei := gk[1[/Classifications/Landbouw/Bodemtak]] * (1f - am[1[/Classifications/Landbouw/Bodemtak]]) + mk[1[/Classifications/Landbouw/Bodemtak]] * am[1[/Classifications/Landbouw/Bodemtak]];
+			parameter<Float32> Saldo_vee_bijDervingNul_klei := 1.48f * 3149f + (gras_klei - 1.48f * 6.5f) * 101f - grond_klei - mest + GLB
+			, Descr = "De handwaarde op klei bij derving nul, ter controle van de nabouw zelf tegen bijlage A.";
+		}
+
+		parameter<String> Tabel := AsList(Metingen/Tak/name + ': N_lb=' + string(N_lb) + ' vee mean=' + string(MakeDefined(Mean_vee, -1f)) + ' min=' + string(MakeDefined(Min_vee, -1f)) + ' max=' + string(MakeDefined(Max_vee, -1f)) + ' ext mean=' + string(MakeDefined(Mean_ext, -1f)) + ' YRgras=' + string(MakeDefined(Mean_YRgras, -1f)), ' | ') + ' || NL vee mean Eur_m2=' + string(Mean_vee_NL_Eur_m2) + ' min Eur_m2=' + string(Min_vee_NL_Eur_m2) + ' || handverschil vee max=' + string(Hand/MaxVerschil_vee) + ' ext max=' + string(Hand/MaxVerschil_ext) + ' hand klei derving nul=' + string(Hand/Saldo_vee_bijDervingNul_klei)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_melkvee_'+Casus_str+'_'+Jaar_str+'.txt'"
+		, StorageType = "str";
 	}
 }
