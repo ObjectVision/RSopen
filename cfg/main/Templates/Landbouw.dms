@@ -34,6 +34,10 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 		parameter<Jaar>          PeriodDuRation           := (EndYear - StartYear)[jaar];
 		attribute<LU_ModelType>  gg_LandbouwK   (rdc_25m) := /BaseData/StartState/Landgebruik/LU_Landbouw;
 		attribute<Bool>          gg_IsStedelijk (rdc_25m) := /BaseData/StartState/Landgebruik/IsWoonlocatie || /BaseData/StartState/Landgebruik/IsWerklocatie;
+		attribute<Bool>          AkkerbouwOpVeen_toegestaan (rdc_25m) := /ModelParameters/Landbouw/AkkerbouwOpVeenAlleenBestaand
+																		? !/SourceData/Landbouw/HELP/Bodem_HELP_veen || LandbouwKlasses/templatetype[LU_ModelType/LandbouwK_rel[gg_LandbouwK]] == 'Akkerbouw'
+																		: const(TRUE, rdc_25m)
+		, Descr = "Mag een akkerbouwklasse (elke klasse met sjabloon Akkerbouw_T) op deze cel een netto-opbrengst krijgen? Buiten de bodemtak Veen altijd; op V_W alleen waar de basisjaarkaart al een akkerbouwklasse draagt, dus op de moerige en dalgronden waar de praktijk laat zien dat akkerbouw kan. Op de overige V_W-cellen zet Akkerbouw_T de netto-opbrengst op nul, net als op de tak Geen. Zie ModelParameters/Landbouw/AkkerbouwOpVeenAlleenBestaand voor de reden en de meting; met die schakelaar op FALSE is dit overal waar. Cellen zonder landbouw in het basisjaar hebben geen klasse, de vergelijking geeft daar FALSE (null-semantiek), en dat is bedoeld: ook daar geen akkerbouw op veen.";
 		
 		unit<UInt8>              ModelType                := LandbouwKlasses;
 		parameter<Float32>       RentevoetDezeBoer        := = 'ModelParameters/Landbouw/Rentevoet_'+/ModelParameters/Landbouw/Boervariant_name;
@@ -41,7 +45,9 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 		// ---- beleid per variant en zichtjaar (#780): stuksgewijs lineair pad door de ankers basisjaar, 2028, 2040 en 2050, daarna constant ----
 		parameter<Float32> jr     := EndYear[float32], Descr = "Het zichtjaar als getal, voor de padberekening hieronder.";
 		parameter<Float32> jr0    := /ModelParameters/Model_StartYear[float32], Descr = "Het basisjaar als getal.";
-		parameter<Float32> f_2028 := min_elem(max_elem((jr - jr0)   / (2028f - jr0), 0f), 1f), Descr = "Fractie van de stap van het basisjaar naar 2028, geklemd tussen 0 en 1.";
+		parameter<Float32> f_2028 := jr0 < 2028f ? min_elem(max_elem((jr - jr0) / (2028f - jr0), 0f), 1f) : 1f
+		, IntegrityCheck = "jr0 < 2028f"
+		, Descr = "Fractie van de stap van het basisjaar naar 2028, geklemd tussen 0 en 1. De noemer is alleen positief zolang Model_StartYear voor 2028 ligt. Zou het basisjaar op 2028 staan, dan is de deling 0/0, een null, en max_elem(null, 0f) geeft stil 0; na 2028 is de noemer negatief en klemt de fractie ook op 0. In beide gevallen zou de stap van het basisjaaranker naar het 2028-anker nooit worden gezet terwijl f_2040 gewoon vanaf 2028 telt, en kwam GLB_Hectaresteun in 2040 op 233 + 125 - 138 = 220 in plaats van 125 uit, zonder foutmelding. Daarom zet de tak de fractie dan op 1 (het basisjaaranker doet niet meer mee) en laat de IntegrityCheck het model omvallen: bij een opgeschoven basisjaar moeten de ankers basisjaar en 2028 in ModelParameters/Landbouw/Beleid opnieuw worden gezet. De check zit in de rekengraaf omdat GLB_Hectaresteun, GLB_Eco en de drie andere paden dit item lezen.";
 		parameter<Float32> f_2040 := min_elem(max_elem((jr - 2028f) / 12f,           0f), 1f), Descr = "Fractie van de stap van 2028 naar 2040, geklemd tussen 0 en 1.";
 		parameter<Float32> f_2050 := min_elem(max_elem((jr - 2040f) / 10f,           0f), 1f), Descr = "Fractie van de stap van 2040 naar 2050, geklemd tussen 0 en 1; na 2050 blijft alles op het 2050-anker.";
 
@@ -148,7 +154,8 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 			for_each_ne(
 				LandbouwKlasses/name
 				, LandbouwKlasses/Templatetype+'_T('+quote(LandbouwKlasses/name)+')'
-			), using = "ModelParameters/Landbouw"
+			)
+		, Descr = "Per landbouwklasse een instantie van Dairy_T of Akkerbouw_T. Zonder using: tot 7 september 2026 stond hier using = ModelParameters/Landbouw, en een using wordt VOOR de ouder doorzocht (gemeten in een losse testconfiguratie op GeoDms20.17.0.m). Zodra iemand in ModelParameters/Landbouw een item Mestprijs, Gebruiksnorm_N, TotaalSubsidie, Veen_vergoeding of GLB_Diensten_extensief naast Beleid zou zetten, hadden de sjablonen dat item stil gelezen in plaats van het pad per variant en zichtjaar uit Suitability_T. Alle verwijzingen naar ModelParameters in de sjablonen zijn absoluut of lopen vanaf de root."
 		{
 			container NonLandbouw
 			{
