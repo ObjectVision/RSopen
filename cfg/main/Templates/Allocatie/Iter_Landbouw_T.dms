@@ -96,17 +96,48 @@ Template Iter_Landbouw_T
 
 					De toets geldt ook voor NonLandbouw, en dat is de bedoeling: buiten het landbouwareaal hoort deze allocatie niets aan te raken, ook niet om er de restcategorie neer te zetten.";
 
+		attribute<Float32> Stand_Landbouw_max (CompactedAdminDomain) :=
+			='max_elem('+asItemList('MakeDefined(float32(StateVoorAllocatie/Landbouw/'+/Classifications/Actor/LandbouwKlasses/name+'), 0f)')+')'
+		, Descr = "De grootste landbouwstand per cel aan het begin van dit zichtjaar, over de vijftien klassen. Nul waar de cel geen landbouw draagt.";
+
+		parameter<Bool> IsEersteZichtjaar := lowercase(Context/ThisZichtjaar/name) == lowercase(first(Time/Zichtjaar/name));
+
+		attribute<LandbouwKlasses> HuidigeKlasse_Basisjaar (CompactedAdminDomain) :=
+			collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, LU_ModelType/LandbouwK_rel[/BaseData/StartState/Landgebruik/LU_Landbouw])
+		, Descr = "De landbouwklasse van het basisjaar uit de landgebruikskaart, dezelfde bron als gg_LandbouwK in Templates/Landbouw.dms. In het eerste zichtjaar is dit de herkomst, want de compacte allocatiestand draagt in dat zichtjaar geen landbouwstanden (die zijn daar null, zie de vrijstelling voor StandVar/IsLandbouw in Zichtjaar_T/Impl); gemeten op 8 september 2026.";
+
+		attribute<LandbouwKlasses> HuidigeKlasse_Stand (CompactedAdminDomain) :=
+			='(ArgMax('+asItemList('MakeDefined(float32(StateVoorAllocatie/Landbouw/'+/Classifications/Actor/LandbouwKlasses/name+'), 0f)')+') / uint32(Stand_Landbouw_max > 0f))[LandbouwKlasses]'
+		, Descr = "De landbouwklasse uit de stand die dit zichtjaar binnenkrijgt, dus de uitkomst van het vorige zichtjaar inclusief wat daar exogeen is opgelegd. Null waar geen klasse staat (de deling door nul is de gangbare constructie, zie Allocatie_T/SubSector_rel_dominant_landuse).";
+
+		attribute<LandbouwKlasses> HuidigeKlasse (CompactedAdminDomain) := =IsEersteZichtjaar ? 'HuidigeKlasse_Basisjaar' : 'HuidigeKlasse_Stand'
+		, Descr = "De landbouwklasse die de cel aan het BEGIN van dit zichtjaar draagt: in het eerste zichtjaar uit de basisjaarkaart, daarna uit de stand van het vorige zichtjaar.
+
+					Dit is de herkomst voor de transitiekosten (#262). Tot 8 september 2026 las de allocator de Suitability uit VariantData, en die trekt de transitiekosten af ten opzichte van het basisjaargebruik (Dairy_T en Akkerbouw_T, Conversion_costs0 op gg_LandbouwK), in elk zichtjaar opnieuw. Een boer die in 2040 van gras naar aardappelen ging betaalde in 2050 dus nog eens de omschakeling vanaf gras, en een cel die in 2040 aardappelen was geworden kende in 2050 geen drempel om terug te gaan. VariantData kent de vorige zichtjaarstand niet (zie Zichtjaar_T: alleen hier in de allocatie is StateVoorAllocatie beschikbaar), dus de reparatie zit hier en niet in de geschiktheidssjablonen. De Suitability in VariantData blijft bestaan voor de indicatoren; de allocator bouwt haar hieronder opnieuw op uit Net_revenues, de kapitalisatiefactor en deze herkomst.";
+
+		container Conversiekosten :=
+			for_each_nedv(
+				  Subsector/name
+				, IsDefined(Subsector/LandbouwK_rel)   // NIET '!= null' schrijven: een vergelijking met null geeft altijd FALSE
+					? 'MakeDefined(/ModelParameters/Landbouw/Transitiekosten/'+Subsector/name+'[HuidigeKlasse], /ModelParameters/Landbouw/Transitiekosten_src/Overigen__'+Subsector/name+')[Eur_m2] * (1f + /ModelParameters/Landbouw/ConversionCostPremium_'+/ModelParameters/Landbouw/Boervariant_name+')'
+					: 'const(0[Eur_m2], CompactedAdminDomain)'
+				, CompactedAdminDomain
+				, Eur_m2
+			), Descr = "Transitiekosten per kandidaatklasse per cel, in euro per m2, van de klasse die de cel aan het begin van dit zichtjaar draagt (HuidigeKlasse) naar de kandidaat, uit ModelParameters/Landbouw/Transitiekosten (herkomst in rijen, bestemming in kolommen), met de rij Overigen waar de cel geen landbouwklasse draagt, maal een plus de opslag van de boervariant. Dezelfde formule als Economic_performance/Conversion_costs in Dairy_T en Akkerbouw_T, alleen met de herkomst van dit zichtjaar in plaats van het basisjaar (#262). NonLandbouw heeft geen transitiekosten.";
+
 		container Suitabilities :=
 			for_each_nedv(
 				Subsector/name
 				, 'Subsectoren/'+Subsector/name+'/CompactedAdminDomain/Beschikbaar 
 					&& MagLandbouwWorden
 					&& collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ExogeenOpleggen/Beschikbaar) 
-						? value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_ModelType/'+Subsector/name+'/Suitability) * 100f, int32) 
+						? '+(IsDefined(Subsector/LandbouwK_rel)
+							? 'value(value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_ModelType/'+Subsector/name+'/Economic_performance/Net_revenues) * ThisVariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_ModelType/'+Subsector/name+'/Kapitalisatie/factor - Conversiekosten/'+Subsector/name+', Float32) * 100f, int32)'
+							: 'value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_ModelType/'+Subsector/name+'/Suitability) * 100f, int32)')+' 
 						: null_i'
 				, CompactedAdminDomain
 				, int32
-			), Descr = "Suitability maps voor alle subsectoren, met 100 vermenigvuldigd. Dit is nodig omdat discr_alloc alleen met integers kan werken. Omdat de suitability tussen 0 en 1 ligt, en we precisie willen behouden, vermenigvuldigen we met 100. Dus een suitability van 0.75 wordt 75 in de int map."
+			), Descr = "Suitability maps voor alle subsectoren, met 100 vermenigvuldigd. Voor de vijftien landbouwklassen wordt de suitability hier opnieuw opgebouwd als Net_revenues maal de kapitalisatiefactor van de boervariant min Conversiekosten met de herkomst van dit zichtjaar (#262); alleen NonLandbouw leest nog de Suitability uit VariantData, die daar nul is. Dit is nodig omdat discr_alloc alleen met integers kan werken. De suitability is een contante waarde in Eur_m2, sinds #780 op landbouwgrond in de orde van 0,5 tot 9; maal 100 en afgerond op int32 houdt zij een resolutie van een cent per m2, en de omschakeldrempel van circa 1 Eur_m2 tussen de akkerbouwklassen blijft daarmee scherp."
 		{
 			attribute<Subsector> ArgMax  (CompactedAdminDomain) := ='ArgMax_ifdefined('+asItemList(Subsector/name)+')[Subsector]', Descr = "Deze attribute geeft per cel aan welke subsector de hoogste suitability heeft. Enkel voor debug purposes.";
 			attribute<int32>     MaxElem (CompactedAdminDomain) := ='max_elem_ifdefined('+asItemList(Subsector/name)+')', Descr = "Deze attribute geeft per cel aan welke subsector de hoogste suitability heeft. Enkel voor debug purposes.";
