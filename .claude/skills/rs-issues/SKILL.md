@@ -9,11 +9,15 @@ De repo ObjectVision/RSopen is openbaar en elke comment mailt direct alle betrok
 
 ## Wat je zelf plaatst en wat niet
 
-Zegt de gebruiker "plaats", "maak", "sluit" of iets anders in de gebiedende wijs, dan is dat de toestemming en voer je het uit. Dat geldt voor een nieuw issue, voor een comment op een bestaand issue, voor het sluiten van een issue en voor een PR-beschrijving. Meld daarna het nummer of de link. Een concept aanleveren en op akkoord wachten is dan niet wat er gevraagd is, ook niet als extra zorgvuldigheid bedoeld.
+Plaats niets voordat de gebruiker de tekst heeft gezien en zegt dat hij geplaatst mag worden. De toestemming hoort bij het concept en niet bij het voornemen. Dat geldt voor een comment, een nieuw issue, een PR-beschrijving en het sluiten van een issue.
 
-Zonder zo'n opdracht lever je de tekst eerst als concept aan, in de ik-vorm, en plaats je hem pas na akkoord. Dat is de stand bij "wat vind je hiervan", bij een voorstel dat je zelf doet, en bij alles waar de gebruiker nog geen handeling heeft genoemd.
+Een opdracht als "plaats in het issue of dat correct is" of "leg die vraag maar voor" zegt wat er in de tekst moet komen te staan. Het is een opdracht om te schrijven, nog geen akkoord op wat jij ervan maakt. Schrijf het concept dan meteen en volledig, toon het in de chat, en wacht. Zegt de gebruiker daarna "plaats maar", dan plaats je zonder verdere vragen en meld je de link.
 
-Instemming met een plan blijft geen instemming met publiceren. Een akkoord op een aanpak, op "de vragen terugleggen" of op een conclusie is dus geen opdracht om te plaatsen. Daarvoor is een opdracht nodig die de handeling zelf noemt.
+Instemming met een plan is dus zeker geen instemming met publiceren. Een akkoord op een aanpak, op "de vragen terugleggen" of op een conclusie brengt je hooguit tot het concept.
+
+Deze regel is op 2026-09-07 aangescherpt, nadat er in een uur twee comments onder #660 waren geplaatst op grond van twee opdrachten in de gebiedende wijs. De tweede kondigde een besluit van team RS aan, wees op een tegenspraak in de aannamen van de tegenpartij, en kruiste een antwoord dat Deltares op dat moment aan het schrijven was. Een concept dat een minuut later alsnog geplaatst wordt kost niets; een comment die niet had gemoeten mailt het hele projectteam en is niet terug te nemen.
+
+De andere kant van de weegschaal blijft ook gelden: lever dat concept meteen en compleet aan en vraag niet eerst of je het mag schrijven.
 
 Schrijf het concept in de ik-vorm, namens de gebruiker. Niet in de wij-vorm en niet namens Object Vision als collectief. Geen verwijzing naar Claude of co-authorship, ook niet in commit messages.
 

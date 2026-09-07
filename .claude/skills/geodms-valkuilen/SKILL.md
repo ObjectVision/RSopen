@@ -252,6 +252,14 @@ Wil je ruis houden zonder spikkels, trek hem dan op een grover raster en middel 
 
 Let bij `discrete_alloc_sp` op de taakverdeling tussen de termen. Een term die voor alle typen gelijk is bepaalt welke cellen meedoen, maar valt bij de keuze tussen typen tegen elkaar weg. Welk type een cel wordt hangt dus uitsluitend af van het verschil tussen de typen. Wil je dat de typen als vlekken naast elkaar liggen en niet door elkaar heen, dan moet juist die verschilterm ruimtelijk glad zijn.
 
+### Een noemer per type is een schaalverschil tussen typen
+
+`discrete_alloc_sp` maximaliseert de SOM van de geschiktheid onder de claims per regio per type. Een constante OPSLAG per type doet daar niets, want die levert alleen de claim maal die constante op. Een constante FACTOR per type doet wel iets: hij rekt of krimpt de spreiding van dat type, en het type met de grootste spreiding krijgt zijn voorkeur het eerst ingewilligd.
+
+Dat gaat mis bij de gebruikelijke normalisatie. Wie de geschiktheid van elk type deelt door de som van de gewichten die DAT type draagt, zodat hij netjes tussen 0 en 1 ligt, geeft een type met meer termen daarmee een kleinere spreiding per term. Voeg je aan een type een term toe om het ergens naartoe te sturen, dan verlaag je tegelijk het gewicht van al zijn andere termen ten opzichte van de typen die de nieuwe term niet dragen, en het netto-effect kan de andere kant op wijzen dan bedoeld.
+
+De regel: normaliseer met een noemer die voor alle typen gelijk is, namelijk de som van alle gewichten die ergens in de teller kunnen voorkomen. Dat de geschiktheid van een type dan nooit 1 haalt is geen bezwaar, want alleen de verhoudingen tellen en het restant-type staat op nul. Toegepast bij de veenbouwstenen in #660, `Templates/VariantData/Natuur/Veen_T/Noemer`; daarvoor deelden de bouwstenen door 1,5 of door 2,5 naar gelang zij de diepteterm droegen.
+
 Meet het, want met het oog op een uitgezoomde kaart zie je het niet. Het getal dat het vangt is het aandeel buurcellen binnen 50 meter dat dezelfde bestemming krijgt, gemiddeld over de gealloceerde cellen, afgezet tegen wat een willekeurige trekking uit dezelfde zeef zou geven. Bij zand ging dat van 0,19 naar 0,80.
 
 ## Er is geen CalcCache meer

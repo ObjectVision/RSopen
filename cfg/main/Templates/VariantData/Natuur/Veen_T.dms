@@ -111,10 +111,12 @@ Template Veen_T
 	, Descr = "Over welke straal de aanhaking bij bestaande natuur en bestaand water wordt uitgesmeerd (Aanhaken_Natuur_100m en Aanhaken_Water_100m), de termen die trap 1 via BouwsteenType/AanhakenPad leest. Vijfhonderd meter is een schijf van 78 ha; de bouwsteenvlekken zelf krijgen hun korrel van Cluster_Straal_Bouwsteen.";
 
 	parameter<float32> Ruis_Amplitude := /ModelParameters/Natuur/Trekking/Veen/Ruis_Amplitude
-	, Descr = "Hoe zwaar de ruis meeweegt ten opzichte van de aanhaking, in de geschiktheid van trap 1 (Geschiktheid_Bouwsteen en BouwsteenType/NoemerPad). Beide lopen van 0 tot 1 en de som wordt door 1 plus dit getal gedeeld, zodat de geschiktheid tussen 0 en 1 blijft zoals NatuurAlloc_T verlangt. De aanhakingsterm is voor alle bouwstenen gelijk en bepaalt welke cellen het eerst aan de beurt zijn; welke bouwsteen een cel wordt beslist de ruis, die per bouwsteen glad is.";
+	, Descr = "Hoe zwaar de ruis meeweegt ten opzichte van de aanhaking, in de geschiktheid van trap 1 (Geschiktheid_Bouwsteen en Noemer). Beide lopen van 0 tot 1 en de som van alle termen wordt door Noemer gedeeld, zodat de geschiktheid tussen 0 en 1 blijft zoals NatuurAlloc_T verlangt. De aanhakingsterm is voor alle terrestrische bouwstenen gelijk en bepaalt welke cellen het eerst aan de beurt zijn; welke bouwsteen een cel wordt beslissen de herkomstvoorkeur en, waar die niet uitmaakt, de ruis, die per bouwsteen glad is.";
 
 	attribute<float32> Natuur_Aandeel_100m      (rdc_100m) := mean(float32(Basisjaar/IsNatuur), AdminDomain/rdc_100m_rel);
 	attribute<float32> Water_Aandeel_100m       (rdc_100m) := mean(float32(Basisjaar/IsWater),  AdminDomain/rdc_100m_rel);
+	attribute<float32> Landbouw_Aandeel_100m    (rdc_100m) := mean(float32(Basisjaar/IsLandbouw), AdminDomain/rdc_100m_rel)
+	, Descr = "Het aandeel landbouwgrond in de 100m-cel, tussen 0 en 1. De derde van deze drie, en de enige die niet ook als aanhakingsterm over een schijf wordt uitgesmeerd: hij zegt wat de cel zelf is en niet wat er in de buurt ligt. Bouwsteen 9a leest hem als herkomstvoorkeur, zie BouwsteenType/VoorrangPad (#660).";
 
 	attribute<float32> Aanhaken_Natuur_100m (rdc_100m) :=
 		='potential(Natuur_Aandeel_100m, /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
@@ -162,14 +164,16 @@ Template Veen_T
 		attribute<string> ZeefPad (.) :=
 			  IsBestaandWater ? 'Zeef_Bouwsteen && Basisjaar/IsWater'
 			: IsNieuwWater    ? 'Zeef_Bouwsteen && !Basisjaar/IsWater'
-			:                   'Zeef_Bouwsteen'
+			:                   'Zeef_Bouwsteen' + WaterZeef_Terrestrisch
 		, Descr = "Waar deze bouwsteen mag landen. Sinds #768 staan 9a en 9b niet meer op dezelfde zeef als de rest.
 
 					9b beschrijft bestaand open water met extra buffercapaciteit en mag daarom alleen landen op water dat er al ligt. Tot #768 kon hij overal in het veengebied terechtkomen, en dan zou het model nieuw water maken op droge grond waar de levering bestaand water bedoelde.
 
-					9a is juist het nieuwe open water en landt daarom buiten het bestaande water. Waar binnen die ruimte volgt uit de geschiktheid, zie AanhakenPad en DiepteTermPad.
+					9a is juist het nieuwe open water en landt daarom buiten het bestaande water. Waar binnen die ruimte volgt uit de geschiktheid, zie AanhakenPad, DiepteTermPad en VoorrangPad.
 
-					De overige tien bouwstenen kunnen nog steeds op bestaand water landen. Of dat mag is een open vraag in #660 en niet hier beslist.";
+					Het antwoord van Deltares op 4 september 2026 bevestigt deze twee regels: 9b komt enkel op bestaand water, en dat is de enige van de vier regels die als zeef is geformuleerd en niet als voorkeur.
+
+					De overige tien bouwstenen dragen sinds 7 september dezelfde watertoets als 9a, langs WaterMagLandWorden. Lees de toelichting daar voordat je die schakelaar omzet.";
 
 		attribute<string> AanhakenPad (.) := IsNieuwWater || IsBestaandWater ? 'Aanhaken_Water_100m' : 'Aanhaken_Natuur_100m'
 		, Descr = "Waar deze bouwsteen bij aanhaakt: de waterbouwstenen bij bestaand open water, de rest bij bestaande natuur.";
@@ -177,8 +181,20 @@ Template Veen_T
 		attribute<string> DiepteTermPad (.) := IsNieuwWater ? 'Diepte_Gewicht * Diepte_Norm_100m' : '0f'
 		, Descr = "Alleen 9a krijgt de diepte mee, want daar gaat het om nieuw open water op de diepste plekken. Zie Diepte_Norm_100m voor de maat en ModelParameters/Natuur/Trekking/Veen/Diepte_Gewicht voor het gewicht (#768).";
 
-		attribute<string> NoemerPad (.) := IsNieuwWater ? '(1f + Diepte_Gewicht + Ruis_Amplitude)' : '(1f + Ruis_Amplitude)'
-		, Descr = "Waar de geschiktheid door gedeeld wordt om tussen 0 en 1 te blijven, zoals NatuurAlloc_T verlangt. Loopt mee met welke termen de bouwsteen draagt.";
+		attribute<float32> Natuurdeel (.) := NbSVeen/NbSBouwsteen/Fr_NTypen[NbSVeen/NbSBouwsteen/MetBrondata/org_rel]
+		, Descr = "Welk deel van de bouwsteen een natuurbeheertype wordt: kolom AZ van de bouwstenentabel, de som van de achttien N-typen in Fracties_vd_Bouwsteen. Loopt van nul bij de landbouwbouwstenen 1, 2, 3b en 4b tot een bij bouwsteen 6, veenvormend moeras. Dit is het gewicht waarmee de voorkeur voor bestaande natuur per bouwsteen meetelt, zie VoorrangPad.";
+
+		attribute<string> VoorrangPad (.) :=
+			  IsNieuwWater    ? 'Voorrang_Gewicht * Landbouw_Aandeel_100m'
+			: IsBestaandWater ? '0f'
+			:                   'Voorrang_Gewicht * BouwsteenType/Natuurdeel[value(' + string(id(.)) + ', BouwsteenType)] * Natuur_Aandeel_100m'
+		, Descr = "De herkomstvoorkeur: hoe zwaar telt het voor deze bouwsteen mee dat de cel nu al is wat de bouwsteen ervan wil maken. Uit het antwoord van Deltares op 4 september 2026 in #660, dat natuur bij voorkeur op bestaande natuur komt en het nieuwe open water van 9a bij voorkeur op landbouwgrond.
+
+					De tien terrestrische bouwstenen kijken naar bestaande natuur, gewogen met hun eigen natuurdeel. Bouwsteen 6 is volledig natuur en biedt op een natuurcel dus het hoogst, bouwsteen 5, 7 en 8 voor zeventig procent, 4a voor bijna de helft, 3a voor een kwart, en de vier bouwstenen zonder natuurdeel helemaal niet. Dat verschil is wat de voorkeur uitvoerbaar maakt: de aanhakingsterm is voor alle terrestrische bouwstenen gelijk en valt in de keuze tussen bouwstenen weg, dus een voorkeur die voor iedereen even zwaar telt zou niets sturen. Een aparte voorkeur voor landbouwgrond bij de landbouwbouwstenen is niet nodig, die volgt hieruit: wie op een natuurcel niets biedt komt daar vanzelf niet terecht zolang een ander er wel biedt.
+
+					9a draagt in plaats daarvan de voorkeur voor landbouwgrond, naast zijn dieptemaat en zijn aanhaking bij bestaand water. 9b draagt geen voorkeur, want zijn zeef pint hem al op bestaand open water; zie ZeefPad.
+
+					De vorm is met opzet een voorkeur en geen zeef. Deltares schrijft eerst en niet enkel, en een zeef zou de opgave laten mislukken zodra er in een peilgebied minder bestaande natuur ligt dan de natuurbouwstenen vragen. Nu landt het overschot gewoon op de volgende cellen in de rangorde. Het gewicht staat in ModelParameters/Natuur/Trekking/Veen/Voorrang_Gewicht; op nul is dit de geschiktheid van voor 7 september 2026.";
 	}
 
 	parameter<string> Cluster_Straal_Bouwsteen := /ModelParameters/Natuur/Trekking/Veen/Cluster_Straal_Bouwsteen
@@ -186,6 +202,16 @@ Template Veen_T
 
 	parameter<float32> Diepte_Gewicht := /ModelParameters/Natuur/Trekking/Veen/Diepte_Gewicht
 	, Descr = "Hoe zwaar de diepte meeweegt in de geschiktheid van bouwsteen 9a. Staat hier als lokale parameter naast Ruis_Amplitude, want de geschiktheidsexpressie wordt per bouwsteen als tekst opgebouwd en die tekst wordt binnen deze container opgelost.";
+
+	parameter<float32> Voorrang_Gewicht := /ModelParameters/Natuur/Trekking/Veen/Voorrang_Gewicht
+	, Descr = "Hoe zwaar de herkomstvoorkeur meeweegt: natuur op bestaande natuur, en het nieuwe open water van 9a op landbouwgrond (#660). Staat hier om dezelfde reden lokaal als Diepte_Gewicht. Zie BouwsteenType/VoorrangPad voor de vorm per bouwsteen.";
+
+	parameter<float32> Noemer := 1f + Diepte_Gewicht + Voorrang_Gewicht + Ruis_Amplitude
+	, Descr = "Waar de geschiktheid van elke bouwsteen door gedeeld wordt om tussen 0 en 1 te blijven, zoals NatuurAlloc_T verlangt: de som van alle gewichten die in de teller kunnen voorkomen, dus de aanhaking met gewicht een, de diepte, de herkomstvoorkeur en de ruis.
+
+				Een noemer voor alle bouwstenen samen, en niet per bouwsteen zijn eigen. Tot 7 september 2026 deelde elke bouwsteen door de som van alleen de termen die hij zelf droeg, en dat is een schaalverschil tussen bouwstenen: discrete_alloc_sp maximaliseert de som van de geschiktheid, dus een bouwsteen met een grotere spreiding krijgt zijn voorkeur eerder ingewilligd dan een met een kleinere. Met een noemer per bouwsteen zou een bouwsteen die de herkomstvoorkeur draagt daardoor overal een lagere bieding uitbrengen dan een die hem niet draagt, en dat is het omgekeerde van wat #660 vraagt. Nu telt elke term overal even zwaar, en zegt het verschil tussen twee bouwstenen op dezelfde cel alleen iets over de termen die ze werkelijk dragen.
+
+				Dat de geschiktheid daardoor voor de meeste bouwstenen nergens meer een haalt maakt niets uit. Alleen de verhouding tussen cellen en tussen bouwstenen telt, het type Rest staat op nul en krijgt van NatuurAlloc_T geen opslag, en de schaal van een miljoen daar houdt ruim genoeg cijfers over.";
 
 	parameter<uint32> Seed_Bouwsteen := /ModelParameters/Natuur/Trekking/Veen/Seed_Bouwsteen
 	, Descr = "Eigen seed voor trap 1, zodat de bouwsteentrekking niet samenvalt met die van de typen in Ruis. Per bouwsteen een eigen trekking, seed plus het rijnummer in BouwsteenType.";
@@ -201,16 +227,49 @@ Template Veen_T
 	, Descr = "Een glad ruisoppervlak per bouwsteen, tussen 0 en 1. Een eigen seed per bouwsteen en een ruimere straal dan trap 2.";
 
 	attribute<bool> Zeef_Bouwsteen (AdminDomain) := IsVeenCel
-	, Descr = "Waar mag een bouwsteen landen: overal in het veengebied binnen het studiegebied. Geen toets op de bebouwingstypekaart, want die is wat deze allocatie vervangt (#684); geen toets op bestaande natuur, conform het antwoord in #660 dat de levering een eindtoestand beschrijft; geen toets op bestaand water, want die hoort bij trap 2; en geen pandentoets sinds #768, zie NatuurAlloc_T/NatuurNietOpPanden. Het opleggingsmasker uit #641 zit er wel in, maar niet hier: NatuurAlloc_T past dat zelf toe op elke allocatie.";
+	, Descr = "Waar mag een bouwsteen landen: overal in het veengebied binnen het studiegebied. Geen toets op de bebouwingstypekaart, want die is wat deze allocatie vervangt (#684); geen toets op bestaande natuur, conform het antwoord in #660 dat de levering een eindtoestand beschrijft; geen toets op bestaand water, want die hoort bij trap 2; en geen pandentoets sinds #768, zie NatuurAlloc_T/NatuurNietOpPanden. Het opleggingsmasker uit #641 zit er wel in, maar niet hier: NatuurAlloc_T past dat zelf toe op elke allocatie.
+
+				Dat er geen toets op bestaande natuur staat betekent niet dat de allocatie er onverschillig over is. Sinds het antwoord van Deltares op 4 september 2026 zoekt zij die cellen juist op, alleen als voorkeur in de geschiktheid en niet als zeef; zie BouwsteenType/VoorrangPad.";
 
 	container Geschiktheid_Bouwsteen :=
 		for_each_nedv(
 			BouwsteenType/name
-			, BouwsteenType/ZeefPad + ' ? ((' + BouwsteenType/AanhakenPad + ' + ' + BouwsteenType/DiepteTermPad + ' + Ruis_Amplitude * Ruis_Bouwsteen/' + BouwsteenType/name + ') / ' + BouwsteenType/NoemerPad + ')[AdminDomain/rdc_100m_rel] : null_f'
+			, BouwsteenType/ZeefPad + ' ? ((' + BouwsteenType/AanhakenPad + ' + ' + BouwsteenType/DiepteTermPad + ' + ' + BouwsteenType/VoorrangPad + ' + Ruis_Amplitude * Ruis_Bouwsteen/' + BouwsteenType/name + ') / Noemer)[AdminDomain/rdc_100m_rel] : null_f'
 			, AdminDomain
 			, float32
 		)
-	, Descr = "Geschiktheid per bouwsteen: dezelfde vorm als bij de typen, aanhaking plus ruis, en null buiten de zeef. De aanhakingsterm is voor alle bouwstenen gelijk en valt dus weg in de keuze tussen bouwstenen; hij bepaalt alleen welke cellen het eerst aan de beurt zijn. Welke bouwsteen een cel wordt hangt uitsluitend af van de ruis, en die is per bouwsteen glad, zodat ze als vlekken naast elkaar komen te liggen.";
+	, Descr = "Geschiktheid per bouwsteen: aanhaking plus diepte plus herkomstvoorkeur plus ruis, gedeeld door Noemer, en null buiten de zeef.
+
+				De aanhakingsterm is voor alle terrestrische bouwstenen gelijk en valt dus weg in de keuze tussen bouwstenen; hij bepaalt alleen welke cellen het eerst aan de beurt zijn. Wat een cel wordt volgt uit de twee termen die per bouwsteen verschillen. De herkomstvoorkeur gaat voor: op bestaande natuur biedt een bouwsteen naar rato van haar natuurdeel, op landbouwgrond biedt 9a extra (#660). Waar die voorkeur niets zegt, en dat is het grootste deel van het veengebied, beslist de ruis, en die is per bouwsteen glad zodat de bouwstenen als vlekken naast elkaar komen te liggen in plaats van als spikkels door elkaar.
+
+				Dat is ook de reden dat de voorkeur zwaarder weegt dan de ruis en niet andersom: de ruis heeft na het uitsmeren over een schijf van duizend meter nog maar een spreiding van ongeveer een tiende, dus een voorkeur die daar niet ruim bovenuit komt zou in de praktijk niets sturen.";
+
+	parameter<bool> WaterMagLandWorden := FALSE
+	, Descr = "Mag een bouwsteen die geen water oplegt landen op grond die in het basisjaar open water is, en daar land van maken?
+
+				Staat uit sinds 7 september 2026, op besluit van team RS in afwachting van het antwoord van Deltares in #660: bestaand open water wordt niet gedempt. De tien terrestrische bouwstenen dragen daarmee dezelfde watertoets als 9a, en alleen 9b landt nog op bestaand water. Waar een peilgebied meer water heeft dan zijn 9b-opgave beslaat, blijft dat water buiten de allocatie en houdt het zijn huidige grondgebruik.
+
+				Aan geeft het gedrag van voor die datum. Gemeten op 7 september 2026, NbSGenuanceerd Y2040, in beide standen:
+
+				| | aan | uit |
+				|---|---|---|
+				| bestaand open water met een bouwsteen erop, ha | 47.645,5 | 27.044,1 |
+				| daarvan blijft open water | 25.597,0 | 25.151,1 |
+				| wordt natte teelt of vernat grasland | 11.535,9 | 0 |
+				| wordt terrestrische natuur | 9.067,5 | 540,8 |
+				| wordt bebouwd of niet-vernat grasland | 1.445,1 | 1.352,2 |
+				| opgelegde natuur, ha | 187.535,6 | 176.496,7 |
+				| sloopgebied uit de bouwsteen, ha | 250.067,4 | 234.137,8 |
+				| tekort op de opgave, ha | 11.341,1 | 29.812,5 |
+
+				De prijs is dus 18.471,4 ha opgave die niet meer landt, en die staat aan de claimkant. De aangeleverde fractie geldt volgens #761 over het deel van het peilgebied dat het model mag omzetten, en daar zit bestaand open water wel in terwijl de tien terrestrische bouwstenen er nu niet meer bij kunnen. In peilgebieden met veel water levert dat een tekort op, net zoals de 9b-opgave dat doet in peilgebieden met weinig water. Controle_Bouwsteen/Tekort_BS splitst het uit: van de 29.812,5 ha zit 10.891,1 bij 9b, 206,0 bij 9a en 18.715,4 bij de tien terrestrische bouwstenen samen, met bouwsteen 7 als grootste post.
+
+				Dat is geen sluitend model maar een openstaande vraag in #660. De levering zelf rekent haar percentages over het hele peilgebied, want volgens Deltares is het deel dat niet optelt tot honderd procent het bebouwde gebied; bestaand open water zit dus in hun noemer. De regel dat water water blijft en de lezing dat de fracties een eindtoestand voor het hele peilgebied beschrijven kunnen daarom niet allebei waar zijn waar een peilgebied meer water heeft dan zijn 9b-aandeel.
+
+				En de schakelaar haalt de conversie niet helemaal weg: bouwsteen 9b legt volgens de brontabel op 5 procent van zijn cellen bebouwd gebied en op 2 procent N05.03 open duinvallei, en zijn cellen zijn per definitie bestaand water. De 540,8 plus 1.352,2 ha hierboven is precies dat. Dat restant is op 7 september bewust aanvaard: het volgt uit de levering en niet uit de allocatie, en het weghalen zou betekenen dat het model 9b als volledig water leest en daarmee de aangeleverde samenstelling overschrijft.";
+
+	parameter<string> WaterZeef_Terrestrisch := WaterMagLandWorden ? '' : ' && !Basisjaar/IsWater'
+	, Descr = "Het stukje zeeftekst dat WaterMagLandWorden aan de tien terrestrische bouwstenen toevoegt. Als tekst en niet als toets, want BouwsteenType/ZeefPad bouwt de zeef per bouwsteen als expressie op.";
 
 	parameter<bool> ClaimReferentieOppExclBebouwd := TRUE
 	, Descr = "Over welk oppervlak gelden de aangeleverde percentages: het hele peilgebied, of het deel dat het model mag omzetten?
@@ -245,7 +304,9 @@ Template Veen_T
 
 				Een tweede trap die de opgave van een vol peilgebied elders binnen het deelgebied laat landen heeft hier op 3 september 2026 een halve dag gestaan, naar het voorbeeld van de overloop die #660 voor de typenallocatie had gebouwd. Deltares heeft beide diezelfde dag laten vervallen: de verdeling van bouwstenen binnen een peilgebied volgt uit de water- en bodemkundige eigenschappen van dat gebied, dus een opgave die daar niet past hoort niet ergens anders te gaan liggen. Wat niet past blijft liggen. Zie #761.
 
-				Dat het nauwelijks meer kost komt door #768. Sinds de pandentoets uit staat is het opleggingsmasker uit #641 de enige uitsluiting, en dat is precies de afbakening die ClaimReferentieOppExclBebouwd als referentieoppervlak gebruikt. Referentieoppervlak en kandidaatruimte vallen daarmee samen, en omdat de twaalf geleverde fracties per peilgebied optellen tot ongeveer 0,907 past de opgave er per constructie in. Gemeten op 2026-09-03: opgave 441.808,8 ha, kandidaatruimte 476.792,6 ha, en een tekort van 311,3 ha ofwel 0,07 procent. Dat restant is afrondingsgruis, want MaxClaims kapt elke opgave per peilgebied per bouwsteen af op hele cellen van 0,0625 ha; het opruimen daarvan was het enige dat de tweede trap nog deed.";
+				Dat het nauwelijks meer kost komt door #768. Sinds de pandentoets uit staat is het opleggingsmasker uit #641 de enige uitsluiting, en dat is precies de afbakening die ClaimReferentieOppExclBebouwd als referentieoppervlak gebruikt. Referentieoppervlak en kandidaatruimte vallen daarmee samen, en omdat de twaalf geleverde fracties per peilgebied optellen tot ongeveer 0,907 past de opgave er per constructie in. Gemeten op 2026-09-07: opgave 441.808,8 ha, kandidaatruimte 476.792,6 ha, gerealiseerd 430.467,8 ha.
+
+				Gerealiseerd was 411.996,3 ha, dus een tekort van 29.812,5 ha. Dat komt sinds 7 september uit twee watertoetsen en niet uit de verdeling: 10.891,1 ha bij 9b, die alleen op bestaand open water mag landen terwijl de levering in die peilgebieden meer 9b vraagt dan er water ligt, en 18.715,4 ha bij de tien terrestrische bouwstenen, die sinds WaterMagLandWorden juist niet meer op bestaand water mogen. Beide zijn een openstaande vraag aan Deltares in #660 en geen tekortkoming van de allocatie. Wat daarnaast overblijft is afrondingsgruis, want MaxClaims kapt elke opgave per peilgebied per bouwsteen af op hele cellen van 0,0625 ha; met beide watertoetsen uit was het landelijke tekort 311,3 ha. De uitsplitsing per bouwsteen staat in Controle_Bouwsteen/Tekort_BS.";
 
 	// ---- de bouwsteenkaart als uitlevering, #764 ----
 
@@ -355,21 +416,42 @@ Template Veen_T
 	parameter<float32> Ordening_Max    := max(Ordening_Cel);
 	parameter<float32> Ordening_Bereik := Ordening_Max - min(Ordening_Cel) + 1f;
 
-	attribute<bool> HeeftPand_Cel (BouwsteenCel) := MakeDefined(/BaseData/Omgeving/Opleggingsmasker/HeeftPanden[BouwsteenCel/AdminDomain_rel], FALSE)
-	, Descr = "Staat er een BAG-pand in deze cel? Dezelfde toets die tot #768 de allocatie van bebouwde cellen weghield. Sinds die toets uit staat is hij hier vrij voor iets nuttigers: de bebouwde fractie van de bouwsteen op de werkelijke bebouwing leggen.";
+	attribute<bool> IsBestaandeBebouwing (AdminDomain) := MakeDefined(/BaseData/Omgeving/Opleggingsmasker/HeeftPanden, FALSE) || Basisjaar/IsBebouwd
+	, Descr = "Ligt er in het basisjaar bebouwing op deze cel? Een BAG-pand, of een landgebruikstype dat bebouwing of verharding is; dat laatste vangt ook het erf, de verharding en de wegen die geen pand dragen.
+
+				De pandentoets alleen was te smal voor de regel die Deltares op 4 september 2026 in #660 geeft, dat het bebouwde deel van een bouwsteen op bestaande bebouwing komt. Team Veen rekent haar bebouwd gebied als wonen plus infrastructuur plus verhard werken en overig, en dat is de bebouwing zoals het landgebruik haar ziet en niet zoals de BAG haar ziet. Gemeten op 3 september 2026 met alleen de pandentoets vulde de aangeleverde bebouwde fractie zich voor 39 procent met werkelijke bebouwing, 1.696 van 4.351 ha; Controle_Uitkomst meet wat de bredere toets ervan maakt.
+
+				Het tweede deel van diezelfde regel, buiten de urban contour, staat niet hier en hoeft dat ook niet: het opleggingsmasker uit #641 sluit bestaand bebouwd gebied uit van elke oplegging, dus geen enkele veenbouwsteen landt binnen de contour. Wat hier overblijft is per definitie de verspreide bebouwing daarbuiten.";
+
+	attribute<bool> IsBestaandeBebouwing_Cel (BouwsteenCel) := IsBestaandeBebouwing[BouwsteenCel/AdminDomain_rel];
+	attribute<bool> IsBestaandeNatuur_Cel    (BouwsteenCel) := Basisjaar/IsNatuur[BouwsteenCel/AdminDomain_rel];
 
 	attribute<float32> Fr_Bebouwd_Cel (BouwsteenCel) := Fr_perUitkomst/Bebouwd[Bouwsteen_Cel]
-	, Descr = "Het bebouwde aandeel van de bouwsteen die op deze cel ligt. Nul bij de vier sloopbouwstenen en bij 3b en 4b; daar heeft voorrang voor pandcellen geen zin en zou hij alleen de eerste band van iets anders naar de bebouwing trekken.";
+	, Descr = "Het bebouwde aandeel van de bouwsteen die op deze cel ligt. Nul bij de vier sloopbouwstenen en bij 3b en 4b; daar heeft voorrang voor bebouwde cellen geen zin en zou hij alleen de eerste band van iets anders naar de bebouwing trekken.";
 
-	attribute<float64> PandVoorrang (BouwsteenCel) := HeeftPand_Cel && Fr_Bebouwd_Cel > 0f ? 0d : 0.5d
-	, Descr = "De grove helft van de sorteersleutel: cellen met een pand voorop, maar alleen binnen bouwstenen die uberhaupt een bebouwd aandeel hebben. Zie Sleutel voor hoe dit uitpakt.";
+	attribute<float32> Natuurdeel_Cel (BouwsteenCel) := BouwsteenType/Natuurdeel[Bouwsteen_Cel]
+	, Descr = "Het natuurdeel van de bouwsteen die op deze cel ligt, kolom AZ van de bouwstenentabel. Dezelfde rol als Fr_Bebouwd_Cel aan de andere kant van de rangorde: alleen binnen een bouwsteen die uberhaupt natuur oplegt heeft voorrang voor bestaande natuur zin.";
 
-	attribute<float64> Sleutel (BouwsteenCel) := float64(uint32(Regio_Cel)) + PandVoorrang + 0.5d * float64((Ordening_Max - Ordening_Cel) / Ordening_Bereik)
+	attribute<float64> Voorrang (BouwsteenCel) :=
+		  IsBestaandeBebouwing_Cel && Fr_Bebouwd_Cel > 0f ? 0d
+		: IsBestaandeNatuur_Cel    && Natuurdeel_Cel > 0f ? 0.66d
+		:                                                   0.33d
+	, Descr = "De grove helft van de sorteersleutel, in drie groepen: bebouwde cellen voorop, bestaande natuur achteraan, de rest ertussen. Zie Sleutel voor hoe dit uitpakt.
+
+				De volgorde volgt die van UitkomstType, waar de zes hoofdtypen landgebruik vooraan staan met bebouwd als eerste en de achttien natuurbeheertypen achteraan. Wie vooraan in de rangorde staat krijgt de eerste band, wie achteraan staat de laatste. Zo landt het bebouwde deel van de bouwsteen op de bebouwing die er al staat en het natuurdeel op de natuur die er al ligt, allebei uit het antwoord van Deltares in #660.
+
+				Beide voorwaarden staan er om dezelfde reden bij: zonder de toets op het aandeel zou de voorrang binnen een bouwsteen die het betreffende type helemaal niet oplegt de band van iets anders naar die cellen trekken.";
+
+	attribute<float64> Sleutel (BouwsteenCel) := float64(uint32(Regio_Cel)) + Voorrang + 0.33d * float64((Ordening_Max - Ordening_Cel) / Ordening_Bereik)
 	, Descr = "Sorteersleutel: het regionummer als geheel deel en het breukdeel strikt kleiner dan 1. Oplopend sorteren geeft daarmee per regio een aaneengesloten blok. Zelfde constructie als bij de rivierenlevering, want GeoDMS kent geen rangschikking per groep.
 
-				Het breukdeel bestaat sinds #768 uit twee delen. Voorop de pandvoorrang, een halve eenheid, en daarachter de gladde ordening geschaald op een halve eenheid. Cellen met een pand komen daardoor als groep voorop en houden binnen die groep hun eigen ordening; samen blijft het onder de een, wat de regioblokken heel houdt.
+				Het breukdeel bestaat uit twee delen. Voorop de voorrang in drie groepen van 0,33 breed, en daarachter de gladde ordening geschaald op 0,33. Cellen uit dezelfde groep komen daardoor bij elkaar te staan en houden binnen die groep hun eigen ordening; samen blijft het onder de een, wat de regioblokken heel houdt.
 
-				Waarom dat mag en waarom het nuttig is. Bebouwd staat sinds diezelfde wijziging vooraan in UitkomstType en krijgt dus de laagste band. Die band valt daarmee op de cellen waar werkelijk bebouwing staat in plaats van op een willekeurig deel van de bouwsteen. Het aandeel verandert niet, alleen de ligging. Past de band niet op alle pandcellen, en dat is de regel want er is meer bebouwing dan vijf procent, dan krijgen de overige pandcellen gewoon de volgende band en blijft de bebouwing eronder staan, precies zoals #768 het beschrijft.";
+				Waarom dat mag en waarom het nuttig is. Bebouwd staat sinds #768 vooraan in UitkomstType en krijgt dus de laagste band, de achttien natuurbeheertypen staan achteraan en krijgen de hoogste. De bebouwde band valt daarmee op de cellen waar werkelijk bebouwing staat en de natuurbanden op de cellen die in het basisjaar al natuur zijn, in plaats van allebei op een willekeurig deel van de bouwsteen. De aandelen veranderen niet, alleen de ligging.
+
+				Past een band niet op alle cellen van zijn groep, dan krijgen de overige cellen gewoon de volgende band. Bij bebouwing is dat de regel, want er staat meer bebouwing dan de vijf procent die de tabel ervoor vrijhoudt, en die bebouwing blijft dan onder de opgelegde bouwsteen staan zoals #768 het beschrijft. Andersom schuift de natuurband door naar de cellen die in de ordening volgen zodra een peilgebied minder bestaande natuur heeft dan het natuurdeel van de bouwsteen vraagt.
+
+				Tot 7 september 2026 waren het twee groepen van een halve eenheid en telde alleen de pandvoorrang. De derde groep en de bredere bebouwingstoets komen uit het antwoord van Deltares in #660: natuur eerst op bestaande natuur, bebouwd op bestaande bebouwing.";
 
 	attribute<uint64> Rang_Globaal   (BouwsteenCel) := invert(index(Sleutel))[uint64];
 	attribute<uint64> Aantal_Cellen  (Regio)        := pcount(Regio_Cel);
@@ -425,7 +507,24 @@ Template Veen_T
 				Wat blijft staan als aanname: de drie landgebruiksklassen die trap 2 aan natte teelt en vernat grasland toekent zijn een keuze van het model en niet door Deltares bevestigd, zie NbSLandgebruik/LU_ModelType_name en #684.";
 
 	container Controle_Uitkomst
-	: Descr = "Twee toetsen op trap 2. De eerste bewaakt de cumulatieve reeks, de tweede legt het gerealiseerde areaal per type naast de opgave."
+	: Descr = "Toetsen op trap 2. De eerste bewaakt de cumulatieve reeks, de arealen daarna leggen het gerealiseerde areaal per type naast de opgave en meten of de herkomstvoorkeur uit #660 doet wat zij belooft: natuur op bestaande natuur en het bebouwde deel op bestaande bebouwing, elk naast het areaal dat daarvoor beschikbaar was.
+
+				Gemeten op 7 september 2026, NbSGenuanceerd Y2040, GeoDms20.17.0.m, met en zonder de voorkeur (Voorrang_Gewicht op 1 en op 0, en de rangorde van trap 2 in drie groepen tegenover de twee van #768). Beide kolommen zijn gemeten met WaterMagLandWorden nog aan, dus ze zeggen iets over de voorkeur en niet over de huidige stand; de watertoets kwam er diezelfde dag na:
+
+				| | zonder | met |
+				|---|---|---|
+				| opgelegde natuur, ha | 187.535,4 | 187.535,6 |
+				| daarvan op bestaande natuur | 24.089,0 | 37.473,7 |
+				| bestaande natuur onder een natuurbouwsteen | 37.710,6 | 42.102,2 |
+				| bebouwde band, ha | 4.350,6 | 4.349,9 |
+				| daarvan op bestaande bebouwing | 1.737,4 | 1.920,6 |
+				| bestaande bebouwing onder een bouwsteen met bebouwd aandeel | 4.228,4 | 3.894,4 |
+				| bouwsteen 9a, ha | 11.582,6 | 11.569,4 |
+				| daarvan op landbouwgrond | 10.192,3 | 10.367,1 |
+
+				Drie dingen om te lezen. De totalen per type veranderen niet, alleen de ligging; dat hoort ook, want de aandelen komen uit de brontabel. De natuur gaat van 63,9 naar 89,0 procent van de bestaande natuur die onder een natuurbouwsteen ligt, en die 63,9 procent is precies wat een blinde verdeling geeft, want het gewogen natuurdeel van de bouwstenen is ongeveer dat getal. En de winst zit voor een deel in trap 1: er komt 4.391,6 ha bestaande natuur meer onder een bouwsteen die uberhaupt natuur oplegt.
+
+				De bebouwing wint veel minder, 183,2 ha, en 9a bijna niets, 174,9 ha. Bij de bebouwing komt dat doordat de band per peilgebied 5 procent is terwijl de bebouwing ongelijk over de peilgebieden ligt: waar meer bebouwing staat dan de band breed is blijft de rest liggen, en waar geen bebouwing staat valt de band toch. Bij 9a komt het doordat het veengebied bijna overal landbouwgrond is en zijn zeef bestaand water al uitsluit, dus hij landde er ook zonder voorkeur al voor 88,0 procent op."
 	{
 		attribute<float32> Cum_Laatste (BouwsteenType) := ='CumFractie/CumFr_' + last(UitkomstType/name)
 		, IntegrityCheck = "all(abs(this - 1f) < 0.01f)"
@@ -436,6 +535,42 @@ Template Veen_T
 		parameter<Ha> Opp_Natuur     := sum(float32(IsDefined(Natuur_uitBouwsteen)) * AdminDomain/NrHaPerCell[float32])[Ha];
 		parameter<Ha> Opp_Water      := sum(float32(IsDefined(Water_uitBouwsteen))  * AdminDomain/NrHaPerCell[float32])[Ha];
 		parameter<Ha> Opp_Landbouw   := sum(float32(IsDefined(Landbouw_uitBouwsteen)) * AdminDomain/NrHaPerCell[float32])[Ha];
+		parameter<Ha> Opp_Bebouwd    := sum(float32(Uitkomst_rel == rlookup('Bebouwd', UitkomstType/name)) * AdminDomain/NrHaPerCell[float32])[Ha];
+
+		parameter<Ha> Opp_Natuur_OpBestaandeNatuur := sum(float32(IsDefined(Natuur_uitBouwsteen) && Basisjaar/IsNatuur) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Hoeveel van de opgelegde natuur op cellen landt die in het basisjaar al natuur zijn. Dit is de maat op de regel uit #660 dat natuur eerst op bestaande natuur komt, en hij loopt over beide trappen: trap 1 stuurt de natuurrijke bouwstenen naar die cellen en trap 2 legt binnen de bouwsteen de natuurbanden erop.";
+
+		parameter<Ha> Opp_Bebouwd_OpBestaandeBebouwing := sum(float32((Uitkomst_rel == rlookup('Bebouwd', UitkomstType/name)) && IsBestaandeBebouwing) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Idem voor de bebouwde band: hoeveel ervan op bestaande bebouwing valt. Met alleen de pandentoets was dat op 3 september 2026 1.696 van 4.351 ha.";
+
+		parameter<Ha> Opp_BestaandeNatuur_OnderBouwsteen := sum(float32(HeeftBouwsteen && Basisjaar/IsNatuur) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "De andere kant van dezelfde meting: hoeveel bestaande natuur er onder de bouwstenen ligt. Zonder dit getal is niet te zien of een lage voorkeurscore betekent dat de voorkeur niet werkt of dat er niet meer bestaande natuur is; meet altijd tweezijdig.";
+
+		parameter<Ha> Opp_BestaandeBebouwing_OnderBouwsteen := sum(float32(HeeftBouwsteen && IsBestaandeBebouwing) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Idem voor de bebouwing.";
+
+		parameter<Ha> Opp_BestaandeNatuur_OnderNatuurBouwsteen := sum(float32(HeeftBouwsteen && Basisjaar/IsNatuur && MakeDefined(BouwsteenType/Natuurdeel[Bouwsteen_rel], 0f) > 0f) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "En de noemer die er werkelijk toe doet: bestaande natuur onder een bouwsteen die zelf natuur oplegt. Alleen daar kan de voorkeur iets doen. Ligt bestaande natuur onder bouwsteen 1, 2, 3b of 4b, die geen enkel natuurbeheertype opleggen, dan wordt zij hoe dan ook landbouw, en dat is geen tekortkoming van de voorkeur maar de levering die het daar zo wil.";
+
+		parameter<Ha> Opp_BestaandeBebouwing_OnderBebouwdBouwsteen := sum(float32(HeeftBouwsteen && IsBestaandeBebouwing && MakeDefined(Fr_perUitkomst/Bebouwd[Bouwsteen_rel], 0f) > 0f) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Idem voor de bebouwing: bestaande bebouwing onder een bouwsteen die een bebouwd aandeel draagt. Dat zijn er maar vijf van de twaalf, en de vier grote sloopbouwstenen zitten er niet bij, dus dit getal ligt ver onder het vorige.";
+
+		parameter<Ha> Opp_BestaandWater_OnderBouwsteen := sum(float32(HeeftBouwsteen && Basisjaar/IsWater) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Bestaand open water waar een bouwsteen op ligt. De vier getallen hieronder splitsen dit uit naar wat trap 2 ervan maakt en tellen er samen toe op.
+
+					Dit is de meetkant van de openstaande vraag in #660: er is geen regel die zegt dat bestaand open water water moet blijven. Alleen 9b is aan bestaand water gebonden, en dat is de omgekeerde richting; de andere elf bouwstenen mogen er gewoon op landen en leggen er op wat hun samenstelling zegt.";
+
+		parameter<Ha> Opp_BestaandWater_BlijftWater := sum(float32(HeeftBouwsteen && Basisjaar/IsWater && IsWater_uitBouwsteen) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Daarvan het deel dat water blijft: 9b, plus het waterdeel van de andere bouwstenen dat toevallig op een watercel valt.";
+
+		parameter<Ha> Opp_BestaandWater_NaarNatuur := sum(float32(HeeftBouwsteen && Basisjaar/IsWater && IsDefined(Natuur_uitBouwsteen)) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Het deel dat een terrestrisch natuurbeheertype krijgt, dus water dat land wordt met een natuurfunctie.";
+
+		parameter<Ha> Opp_BestaandWater_NaarLandbouw := sum(float32(HeeftBouwsteen && Basisjaar/IsWater && IsDefined(Landbouw_uitBouwsteen)) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Het deel dat natte teelt of vernat grasland wordt, dus water dat landbouwgrond wordt. Dit is het getal waar de vraag in #660 om draait: een landbouwbouwsteen die op bestaand open water landt maakt daar akker of weiland van, en of dat mag is niet beantwoord.";
+
+		parameter<Ha> Opp_BestaandWater_NaarRest := Opp_BestaandWater_OnderBouwsteen - Opp_BestaandWater_BlijftWater - Opp_BestaandWater_NaarNatuur - Opp_BestaandWater_NaarLandbouw
+		, Descr = "Wat er overblijft: de bebouwde band en het niet-vernatte grasland, de twee uitkomsttypen die geen beheertype en geen landbouwklasse dragen.";
 
 		parameter<String> Uitdraai :=
 			  'opp_natteteelt;'      + string(Opp_NatteTeelt)
@@ -443,6 +578,18 @@ Template Veen_T
 			+ '|opp_landbouw_totaal;'+ string(Opp_Landbouw)
 			+ '|opp_natuur;'         + string(Opp_Natuur)
 			+ '|opp_water;'          + string(Opp_Water)
+			+ '|opp_bebouwd;'        + string(Opp_Bebouwd)
+			+ '|opp_natuur_op_bestaande_natuur;'      + string(Opp_Natuur_OpBestaandeNatuur)
+			+ '|opp_bestaande_natuur_onder_bouwsteen;'+ string(Opp_BestaandeNatuur_OnderBouwsteen)
+			+ '|opp_bebouwd_op_bestaande_bebouwing;'  + string(Opp_Bebouwd_OpBestaandeBebouwing)
+			+ '|opp_bestaande_bebouwing_onder_bouwsteen;' + string(Opp_BestaandeBebouwing_OnderBouwsteen)
+			+ '|opp_bestaande_natuur_onder_natuurbouwsteen;'      + string(Opp_BestaandeNatuur_OnderNatuurBouwsteen)
+			+ '|opp_bestaande_bebouwing_onder_bebouwdbouwsteen;'  + string(Opp_BestaandeBebouwing_OnderBebouwdBouwsteen)
+			+ '|opp_bestaandwater_onder_bouwsteen;' + string(Opp_BestaandWater_OnderBouwsteen)
+			+ '|opp_bestaandwater_blijft_water;'    + string(Opp_BestaandWater_BlijftWater)
+			+ '|opp_bestaandwater_naar_natuur;'     + string(Opp_BestaandWater_NaarNatuur)
+			+ '|opp_bestaandwater_naar_landbouw;'   + string(Opp_BestaandWater_NaarLandbouw)
+			+ '|opp_bestaandwater_naar_rest;'       + string(Opp_BestaandWater_NaarRest)
 		, StorageName = "%LocalDataProjDir%/Diagnose/684_trap2.txt"
 		, StorageType = "str";
 	}
@@ -464,8 +611,27 @@ Template Veen_T
 		parameter<Ha> Tekort_NL       := Alloc_Bouwsteen/Controle/Tekort_NL
 		, Descr = "Het verschil, en het getal dat verklaart waarom de opgelegde natuur onder de opgave kan uitkomen. Een bouwsteen die niet landt levert ook zijn natuurdeel niet. De belangrijkste bron van tekort is het opleggingsmasker uit #641: binnen bestaand bebouwd gebied landt geen bouwsteen, dus daar is ook geen sloop en geen omzetting.";
 
+		parameter<Ha> Opp_NieuwWater := sum(float32(MakeDefined(BouwsteenType/IsNieuwWater[Bouwsteen_rel], FALSE)) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Hoeveel hectare bouwsteen 9a er landt, het nieuwe open water voor waterbuffering.";
+
+		parameter<Ha> Opp_NieuwWater_OpLandbouw := sum(float32(MakeDefined(BouwsteenType/IsNieuwWater[Bouwsteen_rel], FALSE) && Basisjaar/IsLandbouw) * AdminDomain/NrHaPerCell[float32])[Ha]
+		, Descr = "Daarvan het deel dat op landbouwgrond ligt. Dit is de maat op de regel uit #660 dat 9a eerst op landbouw komt; de rest van 9a ligt op bestaande natuur of op bebouwing, want bestaand water sluit zijn zeef al uit.";
+
+		attribute<Ha> Claim_BS        (BouwsteenType) := ='union_data(BouwsteenType, ' + AsItemList('sum(Claim_Bouwsteen/'+BouwsteenType/name+')') + ')'
+		, Descr = "De opgave per bouwsteen, landelijk opgeteld over de peilgebieden.";
+		attribute<Ha> Gerealiseerd_BS (BouwsteenType) := ='union_data(BouwsteenType, ' + AsItemList('sum(Alloc_Bouwsteen/Controle/Gerealiseerd/'+BouwsteenType/name+')') + ')'
+		, Descr = "Wat de allocatie daarvan haalt.";
+		attribute<Ha> Tekort_BS       (BouwsteenType) := Claim_BS - Gerealiseerd_BS
+		, Descr = "Het verschil per bouwsteen. Dit is de uitsplitsing die het landelijke tekort verklaart, en zij hoort bij elke wijziging aan de zeef of de geschiktheid gelezen te worden: een tekort dat bij een bouwsteen met een eigen zeef zit heeft een andere oorzaak dan een tekort dat over alle twaalf verspreid ligt.
+
+					Gemeten op 7 september 2026, met WaterMagLandWorden uit: 29.812,5 ha tekort, waarvan 10.891,1 bij 9b, 206,0 bij 9a en 18.715,4 bij de tien terrestrische bouwstenen. De twee posten hebben verschillende oorzaken. Die van 9b is dat de levering in die peilgebieden meer bestaand open water vraagt dan er ligt, de waarneming die op 3 september in #660 is voorgelegd. Die van de tien is de watertoets van diezelfde schakelaar: hun opgave geldt over een peilgebiedoppervlak waar bestaand water in zit, terwijl zij daar niet meer op mogen landen. Zet je die schakelaar aan, dan zakt het totaal naar 11.341,1 ha en blijft alleen de 9b-post plus afrondingsgruis van tussen de 2 en 68 ha per bouwsteen over.
+
+					Diagnose/VeenNatuur/Bouwstenen/perbouwsteen schrijft deze drie kolommen weg; die uitdraai loopt mee in elke productierun.";
+
 		parameter<String> Uitdraai :=
 			  'opp_slopen_uit_bouwsteen;' + string(Opp_Slopen_uitBouwsteen)
+			+ '|opp_9a;'             + string(Opp_NieuwWater)
+			+ '|opp_9a_op_landbouw;' + string(Opp_NieuwWater_OpLandbouw)
 			+ '|trap1_claim;'        + string(Claim_NL)
 			+ '|trap1_gerealiseerd;' + string(Gerealiseerd_NL)
 			+ '|trap1_tekort;'       + string(Tekort_NL)
@@ -506,6 +672,32 @@ Template Veen_T
 		, Descr = "Hoeveel van elk peilgebied in het basisjaar al natuur of open water is. Nodig om te bepalen bij welke lezing van de aangeleverde percentages de opgave nog past: over het hele peilgebied, of over het deel dat niet al natuur of water is. Zie Diagnose/VeenNatuur/Bouwstenen.";
 		parameter<Ha> Areaal_AlNatuur        := sum(IsVeengebied && Basisjaar/IsNatuur ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Hoeveel van het veengebied in het basisjaar al natuur is, en dus onder bouwsteen 0a valt.";
 		parameter<Ha> Areaal_AlWater         := sum(IsVeengebied && Basisjaar/IsWater  ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Idem voor bestaand open water, de plek waar bouwsteen 9b hoort te landen.";
+
+		parameter<string> Naam_BestaandWater := AsList(BouwsteenType/IsBestaandWater ? NbSVeen/NbSBouwsteen/MetBrondata/name : '', '')
+		, Descr = "De itemnaam van de bouwsteen die bestaand open water beschrijft, uit de vlag en niet uit de code overgetypt. De lege string voor de andere elf valt bij het aaneenrijgen weg, en de IntegrityCheck op IsBestaandWater bewaakt dat er precies een overblijft.";
+
+		attribute<Ha> Opp_BestaandWater_PerPeilvak (Peilvak) := sum(float32(Basisjaar/IsWater[VeenCel/AdminDomain_rel]), Peilvak_rel_Cel) * AdminDomain/NrHaPerCell
+		, Descr = "Het bestaande open water per peilgebied volgens de stand-administratie van het model.";
+
+		attribute<Ha> Claim_BestaandWater_PerPeilvak (Peilvak) := ='Claim_Bouwsteen/' + Naam_BestaandWater
+		, Descr = "Wat de levering per peilgebied aan bouwsteen 9b vraagt. Volgens Deltares (#660, 7 september 2026) is 9b in hun shape het bestaande water, dus deze twee horen per peilgebied gelijk te zijn.";
+
+		parameter<Ha> Water_TeWeinigVoor9b := sum(max_elem(Claim_BestaandWater_PerPeilvak - Opp_BestaandWater_PerPeilvak, 0[Ha]))
+		, Descr = "De ene kant van het verschil: waar de levering meer bestaand water vraagt dan er in onze kaart ligt. Dit is het tekort dat 9b niet kan halen.";
+
+		parameter<Ha> Water_MeerDan9b := sum(max_elem(Opp_BestaandWater_PerPeilvak - Claim_BestaandWater_PerPeilvak, 0[Ha]))
+		, Descr = "De andere kant: waar onze kaart meer bestaand water heeft dan de levering aan 9b vraagt. Dat water blijft nu buiten de allocatie, want 9b kan het niet gebruiken en de tien terrestrische bouwstenen mogen er sinds WaterMagLandWorden niet meer op. Dit is de bron van hun tekort.
+
+					Meet deze twee altijd samen. Ze heffen elkaar landelijk grotendeels op, en juist daarom is het geen verschil in totaal wateroppervlak maar een verschil in ligging tussen twee waterkaarten. Welke kaart en welk peiljaar onder de 9b-fractie zit is de openstaande vraag in #660.";
+
+		parameter<String> Uitdraai_Water :=
+			  'water_in_model_ha;'      + string(Areaal_AlWater)
+			+ '|claim_9b_ha;'           + string(sum(Claim_BestaandWater_PerPeilvak))
+			+ '|water_te_weinig_voor_9b_ha;' + string(Water_TeWeinigVoor9b)
+			+ '|water_meer_dan_9b_ha;'  + string(Water_MeerDan9b)
+		, StorageName = "%LocalDataProjDir%/Diagnose/660_waterkaartverschil.txt"
+		, StorageType = "str"
+		, Descr = "De twee kanten van het verschil tussen de waterkaart van het model en de 9b-fractie van de levering, voor de terugkoppeling aan team Veen.";
 	}
 
 	// ---- wat Natuur_T van dit landschap leest ----
