@@ -1,0 +1,134 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #263 en #782, verwijderen zodra de getallen in het issue staan.
+//
+// De vraag: wat doen de grondwaterstanden die de veenbouwstenen opleggen met de opbrengstderving van
+// NbSGenuanceerd? Tot 8 september 2026 las die variant de standen van BAU, dus de vernatting kwam niet
+// terug in het gewasmodel. Dit harnas legt voor en na naast elkaar, per bouwsteen en per gewas.
+//
+// Voor is SourceData/Water/Grondwaterstanden/BAU, na is .../NbSGenuanceerd. Beide kanten lezen de
+// weggeschreven dervingskaarten, dus ze dragen dezelfde bandindex en zijn onderling vergelijkbaar.
+//
+// Zichtjaar 2040 leest de WWL-kaarten van 2050; zie Templates/Landbouw/Suitability_T/KlimaatZichtjaar.
+//
+// Draai de drie Tabel-items.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose263
+: using = "Geography"
+{
+	parameter<String> Uit := '%LocalDataProjDir%/Diagnose/';
+
+	unit<uint8>  BS  := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata;
+	unit<uint32> Gew := /SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen;
+
+	attribute<BS>      Bouwsteen  (AdminDomain) := /SourceData/Water/Grondwaterstanden/NbSGenuanceerd/Bouwsteen;
+	attribute<float32> Opgelegd   (AdminDomain) := float32(/SourceData/Water/Grondwaterstanden/NbSGenuanceerd/Opgelegd);
+	attribute<float32> NatteTeelt (AdminDomain) := float32(MakeDefined(BS/code[Bouwsteen] == '3b' || BS/code[Bouwsteen] == '4b', FALSE))
+	, Descr = "De twee bouwstenen waarvan de brontabel zegt dat het hele oppervlak natte teelt is, dus Fr_NatteTeelt gelijk aan 1.";
+
+	parameter<float32> HaPerCel  := AdminDomain/NrHaPerCell[float32];
+	parameter<float32> N_opg     := sum(Opgelegd);
+	parameter<float32> N_nat     := sum(NatteTeelt);
+
+	// ---- per bouwsteen: hoeveel schuift de stand op ----
+	attribute<float32> N_BS       (BS) := sum(const(1f, AdminDomain), Bouwsteen);
+	attribute<float32> GLG_bau_BS (BS) := N_BS > 0f ? mean(MakeDefined(/SourceData/Water/Grondwaterstanden/BAU/GLG_2050, 0f), Bouwsteen) : null_f;
+	attribute<float32> GHG_bau_BS (BS) := N_BS > 0f ? mean(MakeDefined(/SourceData/Water/Grondwaterstanden/BAU/GHG_2050, 0f), Bouwsteen) : null_f;
+	attribute<float32> GLG_na_BS  (BS) := N_BS > 0f ? mean(MakeDefined(/SourceData/Water/Grondwaterstanden/NbSGenuanceerd/GLG_2050, 0f), Bouwsteen) : null_f;
+	attribute<float32> GHG_na_BS  (BS) := N_BS > 0f ? mean(MakeDefined(/SourceData/Water/Grondwaterstanden/NbSGenuanceerd/GHG_2050, 0f), Bouwsteen) : null_f;
+
+	parameter<String> Tabel_Bouwsteen :=
+		'zichtjaar 2040 leest WWL 2050; standen in m -mv, positief naar beneden || '
+		+ AsList(BS/code + ': n=' + string(N_BS) + ' ha=' + string(N_BS * HaPerCel)
+			+ ' GLG ' + string(GLG_bau_BS) + ' > ' + string(GLG_na_BS)
+			+ ' GHG ' + string(GHG_bau_BS) + ' > ' + string(GHG_na_BS), ' | ')
+		+ ' || opgelegde cellen n=' + string(N_opg) + ' ha=' + string(N_opg * HaPerCel)
+		+ ' || natte teelt 3b en 4b n=' + string(N_nat) + ' ha=' + string(N_nat * HaPerCel)
+	, StorageName = "=Uit + 'meting263_bouwsteen.txt'"
+	, StorageType = "str";
+
+	// ---- per gewas: de opbrengstderving voor en na ----
+	container Voor := for_each_nedv(Gew/name, '/SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_Dynamisch/BAU/Y2050/'+Gew/name+'/Read_Opbrengstderving', AdminDomain, float32);
+	container Na   := for_each_nedv(Gew/name, '/SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_Dynamisch/NbSGenuanceerd/Y2050/'+Gew/name+'/Read_Opbrengstderving', AdminDomain, float32);
+
+	container Voor_opg := for_each_nedv(Gew/name, 'sum(Opgelegd * float32(IsDefined(Voor/'+Gew/name+')) * MakeDefined(Voor/'+Gew/name+', 0f)) / sum(Opgelegd * float32(IsDefined(Voor/'+Gew/name+')))', void, float32);
+	container Na_opg   := for_each_nedv(Gew/name, 'sum(Opgelegd * float32(IsDefined(Na/'+Gew/name+')) * MakeDefined(Na/'+Gew/name+', 0f)) / sum(Opgelegd * float32(IsDefined(Na/'+Gew/name+')))', void, float32);
+	container Voor_nat := for_each_nedv(Gew/name, 'sum(NatteTeelt * float32(IsDefined(Voor/'+Gew/name+')) * MakeDefined(Voor/'+Gew/name+', 0f)) / sum(NatteTeelt * float32(IsDefined(Voor/'+Gew/name+')))', void, float32);
+	container Na_nat   := for_each_nedv(Gew/name, 'sum(NatteTeelt * float32(IsDefined(Na/'+Gew/name+')) * MakeDefined(Na/'+Gew/name+', 0f)) / sum(NatteTeelt * float32(IsDefined(Na/'+Gew/name+')))', void, float32);
+
+	container Regel_opg := for_each_nedv(Gew/name, quote(Gew/name) + " + '=' + string(Voor_opg/" + Gew/name + ") + ' > ' + string(Na_opg/" + Gew/name + ")", void, string);
+	container Regel_nat := for_each_nedv(Gew/name, quote(Gew/name) + " + '=' + string(Voor_nat/" + Gew/name + ") + ' > ' + string(Na_nat/" + Gew/name + ")", void, string);
+
+	parameter<String> Tabel_Gewas := = quote('gemiddelde opbrengstderving op de OPGELEGDE cellen, voor > na || ') + ' + ' + AsList("Regel_opg/" + Gew/name, " + ' | ' + ")
+	, StorageName = "=Uit + 'meting263_gewas_opgelegd.txt'"
+	, StorageType = "str";
+
+	parameter<String> Tabel_Gewas_Nat := = quote('gemiddelde opbrengstderving op de NATTE TEELT-cellen 3b en 4b, voor > na || ') + ' + ' + AsList("Regel_nat/" + Gew/name, " + ' | ' + ")
+	, StorageName = "=Uit + 'meting263_gewas_nat.txt'"
+	, StorageType = "str";
+
+	// ---- komt de allocatie er nog doorheen, en met welke krimpfactor ----
+	container Krimp
+	: Descr = "De krimpfactor die Iter_Landbouw_T op onder- en bovengrens van de landbouwclaim loslaat, per provincie. Kleiner dan 1 betekent dat de ondergrenzen samen niet meer in de regio passen en teruggeschaald worden; zie Restclaim/Krimp_Totaal. Dit item zit VOOR de allocatie in de keten, dus het is los van Alloc_Result op te vragen en kost geen allocatie."
+	{
+		parameter<String> Casus := replace_value(expand(., '%env:RSO_CASUS%'), 'env:RSO_CASUS', 'NbSGenuanceerd');
+		parameter<String> Jaar  := replace_value(expand(., '%env:RSO_JAAR%'),  'env:RSO_JAAR',  'Y2040');
+
+		container Alloc := ='/Allocatie/WLO_hoog_'+Casus+'/Zichtjaren/'+Jaar+'/Sequences/Seq_0/SectorAllocRegios/Provincie_Landbouw/Iters/Iter_0';
+
+		unit<uint32> Regio := Alloc/Allocatie_Prep/AllocRegio
+		{
+			attribute<String> naam := Alloc/Allocatie_Prep/AllocRegio/name;
+		}
+
+		attribute<Float32> Krimp_Totaal (Regio) := Alloc/Allocatie_Prep/Claims/Restclaim/Krimp_Totaal;
+		attribute<Float32> Ruimte       (Regio) := Alloc/Allocatie_Prep/Claims/Restclaim/Ruimte_Totaal[Float32];
+		attribute<Float32> Gevraagd     (Regio) := Alloc/Allocatie_Prep/Claims/Restclaim/Gevraagd_Totaal[Float32];
+
+		parameter<String> Tabel_Krimp := 'krimpfactor per provincie, casus ' + Casus + ' ' + Jaar
+			+ ' (claimbandbreedte ' + string(/ModelParameters/Landbouw/claims_conservatief/Claimbandbreedte) + ') || '
+			+ AsList(Regio/naam + '=' + string(Krimp_Totaal) + ' (gevraagd ' + string(Gevraagd) + ' van ' + string(Ruimte) + ')', ' | ')
+			+ ' || laagste=' + string(min(Krimp_Totaal))
+		, StorageName = "=Uit + 'meting263_krimp_' + Casus + '_' + Jaar + '.txt'"
+		, StorageType = "str";
+	}
+
+	// ---- het landelijke cijfer op landbouwgrond, de vraag uit #782 over de 31 tot 45 procent ----
+	unit<uint8> Casussen : NrOfRows = 2
+	{
+		attribute<string> name : ['BAU', 'NbSGenuanceerd'];
+	}
+
+	Template Landelijk_T
+	{
+		parameter<String> Casus_str;
+		//
+
+		container YR    := ='/VariantData/'+Casus_str+'/Suitability/Y2040/Landbouw/factoren/YieldReduction/Result';
+		container Stand := /BaseData/StartState/StateBasisjaar/State/Landbouw;
+
+		attribute<Float32> LandbouwHa (AdminDomain) := ='add('+AsItemList('MakeDefined(float32(Stand/'+/Classifications/Actor/LandbouwKlasses/name+'), 0f)')+')'
+		, Descr = "Hectares landbouw per cel in het basisjaar, over alle vijftien klassen opgeteld. Zelfde maat als Diagnose780, zodat de getallen naast die meting te leggen zijn.";
+
+		attribute<Float32> IsLb (AdminDomain) := LandbouwHa > 0f ? 1f : 0f;
+		parameter<Float32> N_lb := sum(IsLb);
+
+		container Gem :=
+			for_each_nedv(
+				 /Classifications/Landbouw/GewasSoortYR/name
+				, 'sum(IsLb * MakeDefined(YR/'+/Classifications/Landbouw/GewasSoortYR/name+', 0f)) / N_lb'
+				, void
+				, Float32
+			);
+
+		container Regel := for_each_nedv(/Classifications/Landbouw/GewasSoortYR/name, quote(/Classifications/Landbouw/GewasSoortYR/name) + " + '=' + string(Gem/" + /Classifications/Landbouw/GewasSoortYR/name + ")", void, string);
+
+		parameter<String> Tabel := = quote('gemiddelde opbrengstderving op basisjaar-landbouwgrond, zichtjaar 2040, casus ') + " + Casus_str + ' || ' + " + AsList("Regel/" + /Classifications/Landbouw/GewasSoortYR/name, " + ' | ' + ")
+		, StorageName = "=/Diagnose/PerIssue/Diagnose263/Uit + 'meting263_landelijk_' + Casus_str + '.txt'"
+		, StorageType = "str";
+	}
+
+	container Landelijk := for_each_ne(Casussen/name, 'Landelijk_T('+quote(Casussen/name)+')');
+}
