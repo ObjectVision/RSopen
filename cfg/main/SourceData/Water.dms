@@ -69,6 +69,57 @@ container Water : Source = "Bron19, 2 september 2021, via filesender.surf, GIS D
 			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GLG_R2085BP18_tijdreeks1974-2003.tif"
 			,	StorageType = "gdal.grid";
 		}
+
+		container NbSGenuanceerd
+		: Descr = "De grondwaterstanden waarmee het gewasmodel in NbSGenuanceerd rekent (#263, #782). Geen eigen levering van Deltares maar de BAU-stand met daaroverheen de stand die de veenbouwsteen per cel oplegt.
+
+					WAAROM DIT ER IS. Tot 8 september 2026 las NbSGenuanceerd via VariantK/Hydrologie_Levering onvoorwaardelijk de BAU-standen. De vernatting die het hele punt van die variant is, natte teelt en vernat grasland op ruim 165.000 ha, kwam daarmee niet terug in de opbrengstderving: het gewasmodel rekende daar met de standen van business as usual. Deltares heeft in #782 bevestigd dat dat niet verdedigbaar is en dat de standen per bouwsteen verschillen.
+
+					WAT DE BRON GEEFT. Een getal per bouwsteen, kolom M van tabblad totaal van de bouwstenentabel, overgenomen in Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/GLG_cm. Dat is een GLG; een GHG staat er niet in, ook al noemt #782 er twee. Daarom legt dit blok de GLG op en schuift het de GHG met hetzelfde aantal centimeters mee, zodat de plaatselijke afstand tussen hoogste en laagste stand uit de hydrologische levering overeind blijft. De alternatieven, GHG en GLG allebei op het bouwsteengetal of de GHG onveranderd laten, halen die fluctuatie er juist uit. Deze keuze staat als vraag in #782.
+
+					WELKE ZICHTJAREN. De 2050- en 2085-kaarten wel, de 2017-kaart niet. De bouwstenentabel rekent haar cumulatieve effecten bij implementatie van de maatregelen in 2030 (kolommen T en W), dus in het basisjaar liggen ze er nog niet. Er zit geen pad in tussen 2030 en de eindtoestand: zodra de vernatting meedoet doet ze volledig mee.
+
+					DE BOUWSTEENKAART IS ONTKOPPELD. Dit blok leest de tif die Templates/VariantData/Natuur/Veen_T wegschrijft en niet het item zelf, want dat item staat in VariantData en SourceData leest daar nergens uit. Zie Bouwsteenkaart_Pad hieronder voor wat dat betekent voor de volgorde van draaien."
+		{
+			parameter<string> Bouwsteenkaart_Pad := '%LocalDataProjDir%/Indicatoren/Veenbouwstenen_NbSGenuanceerd_' + /ModelParameters/StudyArea + '.tif'
+			, Descr = "Waar de gealloceerde veenbouwsteen per cel staat. Letterlijk hetzelfde pad als Bouwsteenkaart_Pad in Templates/VariantData/Natuur/Veen_T, dat het bestand schrijft; als tekst herhaald omdat PropValue op een StorageName de expressietekst teruggeeft en niet het uitgerekende pad.
+
+						DIT BESTAND ONTSTAAT NIET VANZELF. Write_Bouwsteenkaart staat in geen enkele Generate-lijst, dus het komt er alleen als je er expliciet om vraagt:
+
+						GeoDmsRun ... /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen/Write_Bouwsteenkaart
+
+						Ontbreekt het, dan meldt GeoDMS geen leesfout maar Unknown identifier op een subitem hier beneden, en die melding kan ver van deze plek opduiken. Verandert de veenlevering of de zeef, dan hoort de kaart opnieuw gemaakt te worden en daarna de opbrengstdervingskaarten van deze levering; er is geen fingerprint die dat bewaakt.";
+
+			attribute</Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata> Bouwsteen (rdc_25m)
+			:	StorageName = "=Bouwsteenkaart_Pad"
+			,	StorageType = "gdal.grid"
+			,	StorageReadOnly = "True"
+			, Descr = "De gealloceerde bouwsteen per cel, null buiten het veengebied en op de cellen die in het type Rest vallen. De klassewaarden zijn de rijnummers van MetBrondata, precies zoals Veen_T ze wegschrijft.";
+
+			attribute<bool>    Opgelegd (rdc_25m) := MakeDefined(/Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/HeeftGLG[Bouwsteen], FALSE)
+			, Descr = "Legt de bouwsteen op deze cel een grondwaterstand op? Onwaar buiten het veengebied, en ook binnen het veengebied bij open water en bij de twee bebouwde bouwstenen, want daar geeft de bron geen stand. Die cellen houden de BAU-stand.";
+
+			attribute<float32> GLG_Opgelegd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/GLG_cm[Bouwsteen] / 100f
+			, IntegrityCheck = "/ModelParameters/Advanced/AdminDomain_ref == '25m'"
+			, Descr = "De opgelegde stand in meters onder maaiveld, positief naar beneden, dus in dezelfde eenheid en met hetzelfde teken als de tifs van Deltares hierboven. Dat is wat SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_T met gxg_scale en gxg_sign verwacht.
+
+						De IntegrityCheck hangt hier en niet apart, zodat hij in de rekengraaf zit: dit item is leverancier van alle vier de standen hieronder. Hij bewaakt dat het AdminDomain 25 meter is. De bouwsteenkaart wordt op AdminDomain weggeschreven en hier op rdc_25m teruggelezen, en GeoDMS leest een raster op georeferentie; op een configuratie met een AdminDomain van 100 meter zou dat stil de verkeerde cellen koppelen.";
+
+			attribute<float32> GHG_2017 (rdc_25m) := Referentie/GHG_2017_TR29_11;
+			attribute<float32> GLG_2017 (rdc_25m) := Referentie/GLG_2017_TR29_11;
+
+			attribute<float32> Verschuiving_2050 (rdc_25m) := BAU/GLG_2050 - GLG_Opgelegd, Descr = "Hoeveel meter de stand omhoog moet ten opzichte van de BAU-levering om op de opgelegde GLG uit te komen. Positief is natter.";
+			attribute<float32> Verschuiving_2085 (rdc_25m) := BAU/GLG_2085 - GLG_Opgelegd;
+
+			attribute<float32> GLG_2050 (rdc_25m) := Opgelegd ? GLG_Opgelegd : BAU/GLG_2050;
+			attribute<float32> GHG_2050 (rdc_25m) := Opgelegd ? max_elem(0f, BAU/GHG_2050 - Verschuiving_2050) : BAU/GHG_2050
+			, Descr = "De GHG schuift mee met de GLG en wordt geklemd op maaiveld. Die klem kan de afstand tussen GHG en GLG kleiner maken maar nooit de volgorde omdraaien, want hij verlaagt alleen de GHG.
+
+						Waar de BAU-levering geen waarde heeft blijft het resultaat null, ook op een opgelegde cel. Dat is bedoeld: zonder GHG uit de levering is er niets om mee te schuiven, en de opbrengstderving valt daar net als voorheen terug op de tak zonder treffer in de WWL-tabel.";
+
+			attribute<float32> GLG_2085 (rdc_25m) := Opgelegd ? GLG_Opgelegd : BAU/GLG_2085;
+			attribute<float32> GHG_2085 (rdc_25m) := Opgelegd ? max_elem(0f, BAU/GHG_2085 - Verschuiving_2085) : BAU/GHG_2085;
+		}
 	}
 
 	#include<WBS.dms>
