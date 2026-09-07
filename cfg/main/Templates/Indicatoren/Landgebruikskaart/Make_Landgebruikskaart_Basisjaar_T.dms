@@ -90,11 +90,19 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 	parameter<LU_ModelType> Wonen_LUT              := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? 'LU_ModelType/V/Wonen_Totaal' : 'null_b[LU_ModelType]';
 	parameter<LU_ModelType> Werken_LUT             := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector ? 'LU_ModelType/V/Werken_Totaal' : 'null_b[LU_ModelType]';
 	parameter<LU_ModelType> Verblijfsrecreatie_LUT := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector ? 'LU_ModelType/V/Verblijfsrecreatie_Totaal' : 'null_b[LU_ModelType]';
+	parameter<LU_ModelType> Waterberging_LUT       := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWaterbergingSector ? 'LU_ModelType/V/Waterberging_Totaal' : 'null_b[LU_ModelType]';
+
+	// #766: waterberging is de enige gealloceerde sector zonder eigen case in de switch hieronder, en viel daardoor op de
+	// generieke allocatiecase achteraan. Deze vlag geeft hem er wel een. Op de vergelijking met de LUT en niet op
+	// Stand/Sector_rel, zodat hij dezelfde bron leest als HeeftEigenCase in Toets_AllocatieZonderEigenCase; staat de sector
+	// uit, dan is de LUT null en levert de vergelijking null, vandaar de MakeDefined.
+	attribute<bool> SubResult_Waterberging (AdminDomain) := MakeDefined(Allocatie == Waterberging_LUT, FALSE);
 	
 	attribute<LU_ModelType> Result (AdminDomain) := switch(
 		 case(IsLU_NoData, gg_prev)
 		,case(lowercase(Zichtjaar_name) != lowercase('Basisjaar') && IsDefined(ExogeenOpleggen), ExogeenOpleggen)
 		,case(IsLU_Water, gg_prev)
+		,case(SubResult_Waterberging, Waterberging_LUT)
 		,case(IsLU_exogenous || IsLU_Wonen || IsLU_Verblijfsrecreatie, gg_prev)
 		,case(SubResult_Wonen, Wonen_LUT)
 		,case(SubResult_Werken, Werken_LUT)
@@ -136,12 +144,27 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 				alleen via de sector Waterberging wordt bereikt: het open water van veenbouwsteen 9a en 9b wordt niet
 				opgelegd maar als voorkeurslocatie aan die sector gegeven (#664).
 
+				Waterberging staat sinds #766 als eigen case direct achter de water-case, en dat is dezelfde redenering een stap
+				verder. De water-case bestaat omdat het oppervlak werkelijk water is en dat voor de kaart zwaarder weegt dan wat
+				de stand er aan bebouwing op zet. Een gealloceerd bergingsgebied is dezelfde uitspraak over hetzelfde oppervlak,
+				alleen nieuw in plaats van bestaand, en er is geen reden om de ene wel en de andere niet boven de afscherming te
+				zetten. Hij staat er bewust achter en niet ervoor: op een cel die al water was verandert het ruimtebeslag niet,
+				en dan hoort de bestaande waterklasse te blijven staan in plaats van te wisselen naar de bergingsklasse (#664,
+				bouwsteen 9b ligt op bestaande plassen).
+
+				Tot #766 had waterberging geen eigen case en viel hij op de generieke allocatiecase achteraan, waar de
+				afscherming van bestaand bebouwd gebied hem kon wegnemen. De arealenindicator las daardoor 42 procent minder
+				waterberging dan de stand telde en leest sinds dat issue de stand; de kaart liep nog achter. Wat er per zichtjaar
+				werkelijk werd gemaskeerd is klein, 2,0 ha op Y2040 en 4,5 ha op Y2050, steeds op bestaand wonen; het grote
+				verschil in #766 kwam van een gemengde vintage en niet van de switch. De reparatie is dus geen verschuiving van
+				betekenis maar het wegnemen van een plek waar kaart en stand stil uit elkaar konden lopen.
+
 				Daarna de allocatie, en als niets van dat alles geldt, de vorige kaart.
 
-				Die allocatiecase is de enige route voor elke gealloceerde sector die hierboven geen eigen case heeft, en dat is
-				vandaag alleen waterberging. Alles wat eerder wint maskeert daar de gealloceerde klasse, en hoeveel dat is telt
-				Toets_AllocatieZonderEigenCase onderaan. Sinds #766 leest de arealenindicator voor waterberging daarom de stand
-				en niet deze kaart; de kaart houdt haar voorrangsregel en het verschil tussen de twee is een gemeten getal.";
+				Die allocatiecase is de route voor elke gealloceerde sector die hierboven geen eigen case heeft. Vandaag is dat
+				er geen enkele; zet een van de uitgecommentarieerde regels in ModelParameters/SectorAllocRegio aan en landbouw,
+				zon of wind komen erbij. Alles wat eerder wint maskeert daar de gealloceerde klasse, en hoeveel dat is telt
+				Toets_AllocatieZonderEigenCase onderaan.";
 	
 	// Ook het basisjaar krijgt Casus_name in het pad. De basisjaarkaart is namelijk niet casusonafhankelijk: hij
 	// loopt via Stand, en die hangt aan de variant. Zonder Casus_name schreven twee casussen over elkaars
@@ -178,9 +201,14 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 		, Descr = "Dezelfde voorwaarde als de opleggingscase hierboven, die voor de water-case gaat. Als indirecte expressie geschreven zodat het in het basisjaar een constante zonder supplier is.";
 		
 		attribute<Bool> ZouWonenZijnGeweest (AdminDomain) :=
-			!IsOplegging && !IsLU_exogenous &&
+			!IsOplegging && !IsLU_exogenous && !SubResult_Waterberging &&
 			(SubResult_Wonen || (!SubResult_Werken && !SubResult_Verblijfsrecreatie && Allocatie == Wonen_LUT))
-		, Descr = "Wat de switch hierboven had opgeleverd als de water-case er niet stond: eerst de twee cases die er nog voor gaan uitsluiten, dan de dominantieregel voor wonen, en anders de allocatie voor zover die wonen aanwijst. IsLU_Wonen en IsLU_Verblijfsrecreatie hoeven niet te worden uitgesloten, want gg_prev kan niet tegelijk water en wonen zijn.";
+		, Descr = "Wat de switch hierboven had opgeleverd als de water-case er niet stond: eerst de cases die er nog voor gaan uitsluiten, dan de dominantieregel voor wonen, en anders de allocatie voor zover die wonen aanwijst. IsLU_Wonen en IsLU_Verblijfsrecreatie hoeven niet te worden uitgesloten, want gg_prev kan niet tegelijk water en wonen zijn.
+
+					De waterbergingscase van #766 staat direct achter de water-case, dus zonder de water-case zou zij als eerste
+					aan de beurt zijn en niet wonen opleveren. Vandaar de aftrek van SubResult_Waterberging; dat is precies wat
+					de laatste alinea van de toelichting hierboven voorschrijft voor wie een case tussen de water-case en de
+					allocatie zet.";
 		
 		attribute<Bool> Cel (AdminDomain) := IsWaterOpKaart && ZouWonenZijnGeweest
 		, Descr = "De cel waar de water-case wonen wegneemt. Is ZouWonenZijnGeweest waar en is de kaart toch water, dan kan dat alleen doordat de water-case vuurde.";
@@ -200,7 +228,12 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 	}
 
 	container Toets_AllocatieZonderEigenCase
-	: Descr = "Hoeveel gealloceerd oppervlak laat deze kaart niet zien? Wonen, werken en verblijfsrecreatie hebben elk een eigen case in de switch hierboven en komen daar hoe dan ook doorheen. Elke andere gealloceerde sector heeft alleen de generieke allocatiecase, en die staat achter de afscherming van de oplegging, van water en van bestaand bebouwd gebied. Vandaag is waterberging de enige sector in die positie; zet een van de uitgecommentarieerde regels in ModelParameters/SectorAllocRegio aan en landbouw, zon of wind komen erbij.
+	: Descr = "Hoeveel gealloceerd oppervlak laat deze kaart niet zien? Wonen, werken, verblijfsrecreatie en sinds #766 ook waterberging hebben elk een eigen case in de switch hierboven en komen daar hoe dan ook doorheen. Elke andere gealloceerde sector heeft alleen de generieke allocatiecase, en die staat achter de afscherming van de oplegging, van water en van bestaand bebouwd gebied.
+
+				Sinds waterberging die eigen case heeft is er vandaag geen sector meer in die positie, dus deze teller hoort nul
+				te zijn. Hij blijft staan als kanarie: zet een van de uitgecommentarieerde regels in ModelParameters/SectorAllocRegio
+				aan en landbouw, zon of wind komen erbij, en dan meet hij weer wat de kaart van die sector niet laat zien. De
+				getallen verderop in deze toelichting zijn dus historisch en beschrijven de toestand voor de reparatie.
 
 				Dit is een teller en geen harde controle, om dezelfde reden als bij Toets_WonenOpWater hierboven: de toestand
 				bestaat vandaag al en zij volgt uit een voorrangsregel die met opzet zo staat. Wat er niet mocht bestaan is dat
@@ -236,7 +269,8 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 			   MakeDefined(Allocatie == Wonen_LUT,              FALSE)
 			|| MakeDefined(Allocatie == Werken_LUT,             FALSE)
 			|| MakeDefined(Allocatie == Verblijfsrecreatie_LUT, FALSE)
-		, Descr = "Wijst de allocatie hier een klasse aan die een eigen case in de switch heeft? Die drie komen langs de dominantieregel op de kaart en hangen niet aan de generieke allocatiecase. Staat zo'n sector uit, dan is de bijbehorende LUT null en levert de vergelijking null; vandaar MakeDefined om de heen.";
+			|| SubResult_Waterberging
+		, Descr = "Wijst de allocatie hier een klasse aan die een eigen case in de switch heeft? De eerste drie komen langs de dominantieregel op de kaart en hangen niet aan de generieke allocatiecase. Staat zo'n sector uit, dan is de bijbehorende LUT null en levert de vergelijking null; vandaar MakeDefined om de heen. Waterberging staat er sinds #766 bij, met een eigen case direct achter de water-case; SubResult_Waterberging draagt die MakeDefined zelf al.";
 
 		attribute<Bool> IsOplegging (AdminDomain) := =IsStartJaar ? 'const(FALSE, AdminDomain)' : 'IsDefined(ExogeenOpleggen)'
 		, Descr = "Dezelfde voorwaarde als de opleggingscase hierboven. Als indirecte expressie geschreven zodat het in het basisjaar een constante zonder supplier is, net als bij Toets_WonenOpWater.";
