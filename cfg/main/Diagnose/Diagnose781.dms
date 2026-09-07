@@ -1,0 +1,67 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #781, verwijderen zodra de getallen in het issue staan.
+//
+// Meet het exogeen-schild: hoeveel hectare de bodemstatistiek afschermt, waar het semi-verharde deel
+// daarvan ligt, en hoe ver een schild uit de BGT daarbij in de buurt komt. Draai Tabel_Exogeen,
+// Tabel_SemiVerhard en Tabel_SchildVergelijking. Verhuisd uit Diagnose783 toen dat issue werd gesloten.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose781
+: using = "Geography"
+, Descr = "Tijdelijk meetharnas voor #781: de omvang en de samenstelling van het exogeen-schild, en wat een BGT-schild ervan dekt."
+{
+	parameter<Float32> CelHa := AdminDomain/NrHaPerCell[Float32];
+
+	// ---- omvang van het BBG-schild, per klasse ----
+
+	unit<UInt8> ExogeenKlassen := /Classifications/Grondgebruik/CBSKlasse
+	{
+		attribute<Float32> ha := pcount(/Classifications/Grondgebruik/CBSKlasse/IsExogeen[/BaseData/StartState/Landgebruik/gg_CBS] ? /BaseData/StartState/Landgebruik/gg_CBS : null_b)[Float32] * CelHa;
+	}
+
+	parameter<Float32> ha_schild_totaal := sum(MakeDefined(/Classifications/Grondgebruik/CBSKlasse/IsExogeen[/BaseData/StartState/Landgebruik/gg_CBS], FALSE) ? CelHa : 0f);
+
+	parameter<String> Tabel_Exogeen :=
+		  'klasse;ha'
+		+ AsList('|' + /Classifications/Grondgebruik/CBSKlasse/name + ';' + string(ExogeenKlassen/ha), '')
+		+ '|TOTAAL;' + string(ha_schild_totaal)
+	, StorageName = "='%LocalDataProjDir%/Diagnose/781_exogeenschild.txt'", StorageType = "str"
+	, Descr = "Hoeveel hectare het BBG-schild CBSKlasse/IsExogeen dekt, per klasse. Dit is wat een vervanging op BGT en BRT moet reproduceren. Gemeten 7 september 2026: 86.689 ha, waarvan hoofdweg 66.020, spoorterrein 8.554, begraafplaats 5.153, semi-verhard overig terrein 3.893, vliegveld 2.693 en metro en sneltram 376.";
+
+	// ---- waar ligt het semi-verharde deel ----
+
+	attribute<Bool> IsSemiVerhard (AdminDomain) := MakeDefined(
+		lowercase(/Classifications/Grondgebruik/CBSKlasse/name[/BaseData/StartState/Landgebruik/gg_CBS]) == lowercase('Semi_verhard_overig_terrein'), FALSE);
+
+	unit<UInt32> SemiPerGemeente := /SourceData/RegioIndelingen/Gemeente
+	{
+		attribute<Float32> ha := sum(IsSemiVerhard ? CelHa : 0f, /SourceData/RegioIndelingen/Gemeente/Per_AdminDomain_Fijn);
+	}
+
+	parameter<String> Tabel_SemiVerhard := 'gemeente;ha'
+		+ AsList('|' + /SourceData/RegioIndelingen/Gemeente/name + ';' + string(SemiPerGemeente/ha), '')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/781_semiverhard_per_gemeente.txt'", StorageType = "str"
+	, Descr = "Waar de 3.893 ha semi-verhard overig terrein van het schild ligt. Getoetst op het vermoeden dat dit de banenzones van de luchthavens zijn; dat bleek niet zo. Haarlemmermeer heeft 4 ha, Eindhoven en Maastricht nul. De top is Rotterdam 405, Schouwen-Duiveland 217, Reimerswaal 167, Sudwest-Fryslan 160 en Veere 156, dus dijken, dammen en havenareaal, verspreid over 137 gemeenten.";
+
+	// ---- het BGT-schild ernaast ----
+
+	attribute<Bool> IsExogeen_BBG (AdminDomain) := MakeDefined(
+		/Classifications/Grondgebruik/CBSKlasse/IsExogeen[/BaseData/StartState/Landgebruik/gg_CBS], FALSE);
+
+	attribute<Float32> ExogeenOpp (AdminDomain) := Float32(/SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/ExogeenOpp_AdminDomain);
+	attribute<Bool> IsExogeen_BGT_iets  (AdminDomain) := MakeDefined(ExogeenOpp >  0f, FALSE), Descr = "Elke cel waar de BGT iets exogeens ziet, hoe weinig ook.";
+	attribute<Bool> IsExogeen_BGT_helft (AdminDomain) := MakeDefined(ExogeenOpp > 312.5f, FALSE), Descr = "Cellen waar het meer dan de helft van de 625 vierkante meter beslaat.";
+
+	parameter<String> Tabel_SchildVergelijking :=
+		  'post;ha'
+		+ '|bbg_schild;'            + string(sum(IsExogeen_BBG ? CelHa : 0f))
+		+ '|bgt_schild_iets;'       + string(sum(IsExogeen_BGT_iets ? CelHa : 0f))
+		+ '|bgt_schild_halve_cel;'  + string(sum(IsExogeen_BGT_helft ? CelHa : 0f))
+		+ '|beide_iets;'            + string(sum(IsExogeen_BBG && IsExogeen_BGT_iets ? CelHa : 0f))
+		+ '|alleen_bbg;'            + string(sum(IsExogeen_BBG && !IsExogeen_BGT_iets ? CelHa : 0f))
+		+ '|alleen_bgt;'            + string(sum(!IsExogeen_BBG && IsExogeen_BGT_iets ? CelHa : 0f))
+	, StorageName = "='%LocalDataProjDir%/Diagnose/781_schildvergelijking.txt'", StorageType = "str"
+	, Descr = "Het schild uit de bodemstatistiek naast dat uit de BGT. Gemeten 8 september 2026: BBG 86.689 ha, BGT 45.368, overlap 26.346, alleen BBG 60.343 en alleen BGT 19.022. De BGT-set van zeven wegdeelklassen dekt dus maar 30 procent van het schild, en dat is geen randverschil maar een verschil in wat de bronnen beschrijven: de bodemstatistiek kent een wegzone inclusief bermen en knooppunten, de BGT kent de rijbaan als object. Bermen staan in BGT als ondersteunendwegdeel, maar dat onderscheidt niet tussen een snelwegberm en een straatberm, dus die laag erbij nemen schiet de andere kant op.";
+}
