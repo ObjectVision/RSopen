@@ -68,12 +68,12 @@ Template Zichtjaar_T
 			for_each_neidvn(
 				StandVar/path
 				, 'Stand_with_path_UNCHECKED/'+StandVar/path
-				, StandVar/name == 'OP_rel' || StandVar/name == 'SubSector_rel' ? 'LegendaKlopt' : ''
+				, StandVar/name == 'OP_rel' || StandVar/name == 'SubSector_rel' || StandVar/name == 'Landgebruik_Type' ? 'LegendaKlopt' : ''
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
 			)
-		, Descr = "De ontkoppelde stand met de legendatoets op de twee positionele kolommen (#721): OP_rel en SubSector_rel worden alleen doorgegeven als het zijbestand naast de OP_rel-tif dezelfde sets noemt als de lopende configuratie. Een stand met een andere setindeling, bijvoorbeeld van voor #721, faalt daarmee hard in plaats van stil naar de verkeerde pakketten te wijzen."
+		, Descr = "De ontkoppelde stand met de legendatoets op de drie positionele kolommen (#721, #751): OP_rel, SubSector_rel en Landgebruik_Type worden alleen doorgegeven als het zijbestand naast de OP_rel-tif dezelfde sets noemt als de lopende configuratie. Een stand met een andere setindeling, bijvoorbeeld van voor #721, faalt daarmee hard in plaats van stil naar de verkeerde pakketten te wijzen."
 		{
 			parameter<string> LegendaFileName := replace(AllocatieFileName, '@STANDPATH@', 'OP_rel') + '.params.txt';
 			parameter<String> LegendaGelezen: StorageName = "=ExistingFile('%projDir%/cfg/no_fingerprint.txt', LegendaFileName)", StorageType = "str", StorageReadOnly = "True"
@@ -393,7 +393,7 @@ Template Zichtjaar_T
 			// (Landgebruikskaart/Result_SA) afwijkt van het basisjaar-landgebruik (LU_Basisjaar). Alleen veranderde
 			// cellen krijgen een nieuwe (sector-/beheertype-)NDVI; onveranderde cellen behouden hun echte
 			// basisjaar-LGN-waarde, zodat de DeltaTovBasisjaar niet vervuild wordt door meetmethode-verschil.
-			attribute<Bool> IsVeranderd (AdminDomain) := = IsStartYear ? 'const(FALSE, AdminDomain)' : 'Landgebruikskaart/Result_SA != Landgebruikskaart/LU_Basisjaar';
+			attribute<Bool> IsVeranderd (AdminDomain) := = IsStartYear ? 'const(FALSE, AdminDomain)' : 'MakeDefined(Stand/Landgebruik_Type != Basisjaar/Stand/Landgebruik_Type, FALSE) || Landgebruikskaart/Result_SA != Landgebruikskaart/LU_Basisjaar', Descr = "Is het landgebruik van deze cel sinds het basisjaar veranderd? Sinds #751 op het type in de stand-administratie, zodat ook een oplegging van natuur op natuur (in het veen, #660) meetelt, en daarnaast op de landgebruikskaart voor de gealloceerde sectoren, die het type niet veranderen.";
 			
 			container NDVI
 			{
@@ -401,9 +401,11 @@ Template Zichtjaar_T
 				{
 					// #778: dit las tot 4 september 2026 alleen Natuur_BT. Een cel die volgens de veenbouwstenen natte teelt of
 					// vernat grasland wordt, viel daarmee door naar de groenindex van het basisjaar, terwijl de landgebruikskaart
-					// wel veranderde. Het gaat in NbSGenuanceerd om 194.375 ha. Beheertype_Effectief dekt nu ook de waterstroom,
-					// die vandaag nergens wordt opgelegd maar wel zou meelopen zodra VariantK/ExogeenWaterOpleggen aangaat.
-					attribute<float32> UitGrondgebruikExogeen (AdminDomain) := = IsStartYear ? 'const(null_b, AdminDomain)' : 'MakeDefined(INL_Beheertype/ndvi_'+NDVI_variant_ref+'[ThisVariantData/ExogeenOpleggen/Beheertype_Effectief], LGNKlasse/ndvi_'+NDVI_variant_ref+'[/Classifications/Actor/LU_ModelType/LGNKlasse_rel[ThisVariantData/ExogeenOpleggen/Landbouw_Effectief]])';
+					// wel veranderde. Het gaat in NbSGenuanceerd om 194.375 ha. Sinds #751 komt de band uit het type in de
+					// stand-administratie, via de best passende LGN-klasse van dat type (LandgebruikType/ndvi_*), dus natuur,
+					// water en de landbouwstroom langs een sleutel.
+					attribute<float32> UitGrondgebruikExogeen (AdminDomain) := = IsStartYear ? 'const(null_b, AdminDomain)' : 'MakeDefined(Stand/Landgebruik_Type != Basisjaar/Stand/Landgebruik_Type, FALSE) ? /Classifications/Grondgebruik/LandgebruikType/ndvi_'+NDVI_variant_ref+'[Stand/Landgebruik_Type] : null_f'
+					, Descr = "De groenindex van het type, alleen waar het type sinds het basisjaar is veranderd. Elders null, zodat Src hieronder op een cel die alleen op de kaart verschoof (dominantieregel, sloop zonder nieuw gebruik) de gemeten basisjaarwaarde houdt en niet de klassewaarde van een onveranderd type; anders ontstaat daar een verandering op locatie die er niet is.";
 					attribute<float32> UitGrondgebruikAlloc   (AdminDomain) := = IsStartYear ? 'const(null_b, AdminDomain)' : 'LGNKlasse/ndvi_'+NDVI_variant_ref+'[ThisVariantClassifications/Actor/Sector/LGNKlasse_rel[Stand/Sector_rel]]';
 					
 					container UitGrondgebruikOPAlloc
@@ -640,7 +642,7 @@ Template Zichtjaar_T
 		, Descr = "Oorzaak een: de cel wordt leeggemaakt en er komt nieuwe natuur of water voor in de plaats (#519). Tot #620 was de oplegging zelf de sloopgrond en viel dit masker samen met de oplegging; nu de sloop de sloopkaart van de levering volgt is het de doorsnede van de twee. De snede op WordtGesloopt is wat de indicator van dubbeltelling vrijhoudt.";
 
 		attribute<Bool> OverigeBouwstenen    (AdminDomain) := WordtGesloopt && !KrijgtOplegging
-		, Descr = "Oorzaak twee: de cel wordt leeggemaakt en er komt geen oplegging voor in de plaats. Dat is de sloop die uit de bouwstenenkaarten volgt zonder dat er natuur landt; in NbSGenuanceerd vooral de agrarische ecotopen bij rivieren en het open water van de veenbouwstenen 9a en 9b zolang ExogeenWaterOpleggen uit staat.";
+		, Descr = "Oorzaak twee: de cel wordt leeggemaakt en er komt geen oplegging voor in de plaats. Dat is de sloop die uit de bouwstenenkaarten volgt zonder dat er natuur landt; in NbSGenuanceerd vooral de agrarische ecotopen bij rivieren en het open water van de veenbouwstenen 9a en 9b, dat niet wordt opgelegd maar naar de sector Waterberging gaat (#664).";
 
 		attribute<Bool> WaterbergingVeen     (AdminDomain) := IsWaterbergingsCel && IsVeenDeelgebied && !WordtGesloopt
 		, Descr = "Oorzaak drie: de cel wordt leeggemaakt voor gealloceerde waterberging in het veen (#575, #636). Anders dan de andere twee wordt waterberging niet opgelegd maar gealloceerd, dus het masker komt uit de stand. De aftrek van de hele opgelegde sloop voorkomt dat een cel die in het eerste zichtjaar al door de oplegging of het bouwregime is geleegd hier nog een keer wordt geteld.";

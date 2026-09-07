@@ -7,7 +7,13 @@
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
-// Deep Drainage scenario Grass Yield Uiteindelijke suitability die aan de alloc module wordt meegegeven.
+// Template voor de economische berekening van de drie melkveeklassen (gg_vee_extensief, gg_vee, gg_vee_intensief), #780.
+// Saldo per hectare = koeien per ha maal het KWIN-saldo per koe, plus de ruwvoerbalans, min de grondkosten per ha, min de
+// mestafzet boven de gebruiksnorm, plus de GLB per ha. Parameters in ModelParameters/Landbouw/Melkvee_parameters.dms.
+// Kapitalisatie en transitiekosten zijn identiek aan Akkerbouw_T.
+//
+// Tot 7 september 2026 stond hier het voedermodel uit LUS_AgriVali2011 (FCE, TotalFeed, Feed_concentrates, Holding_costs), met
+// klasseparameters die uit PBL 2016 (Dalende bodems, stijgende kosten, tabel B6) bleken te komen. Zie #780 voor de herleiding.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -15,95 +21,86 @@ Template Dairy_T : using = "Classifications/Landbouw"
 {
 	parameter<String>           LandbouwKlasse_name;
 	//
-	
-	container                   ParametersKlasse              := ='ModelParameters/Landbouw/per_ModelType/'+LandbouwKlasse_name;
-	
-	attribute<ton_ha_jaarlijks> DDGrassYield (rdc_25m) := Classifications/Landbouw/DeepDrainageK/DDGrassYield[DeepDrainageVariant] * /SourceData/Landbouw/HELP/DDPossible, Descr = "Deep Drainage scenario Grass Yield";
-	attribute<Eur_m2>           Totaal_NonAugmented      (rdc_25m) := Economic_performance/Net_revenues * Kapitalisatie/factor - Economic_performance/Conversion_costs;
+
+	container                   ParametersKlasse              := ='/ModelParameters/Landbouw/per_ModelType/'+LandbouwKlasse_name;
+
+	attribute<Eur_m2>           Totaal_NonAugmented      (rdc_25m) := Economic_performance/Net_revenues * Kapitalisatie/factor - Economic_performance/Conversion_costs
+	, Descr = "Contante waarde van het saldo per hectare over de afschrijvingsperiode tegen de rentevoet van de boervariant, min de transitiekosten. Het saldo bevat geen arbeid (KWIN Veehouderij 2025-2026: berekende loonkosten ondernemer 79.800 per jaar), geen gebouwen (ligboxenstal 5.320 tot 9.370 per koeplaats bij 7 procent jaarkosten is 550 tot 1.000 per ha bij de referentiedichtheid, blz. 154 en 155), geen machines en geen rente over vee of omlopend kapitaal; BIN 2024 rekent voor kapitaal en prive 18,47 euro per 100 kg melk, met een kritieke melkprijs van 45,6 tot 49 cent. De gekapitaliseerde waarde is dus een bovengrens voor de betalingsbereidheid voor grond en geen winst. De niet-toegerekende kosten liggen voor melkvee per ha hoger dan voor akkerbouw, dus de vergelijking op saldo zet melkvee eerder te gunstig dan te ongunstig.";
 	attribute<Eur_m2>           NPV                      (rdc_25m) := Economic_performance/Net_revenues * KapitalisatieMaatschappelijk/Factor - Economic_performance/Conversion_costs, Descr = "NPV";
 	attribute<Eur_m2>           Totaal                   (rdc_25m) := Totaal_NonAugmented;
 	attribute<Float32>          Suitability              (rdc_25m) := Totaal, Descr = "Uiteindelijke suitability die aan de alloc module wordt meegegeven.";
 	attribute<Eur_m2_jaarlijks> NetRevenue               (rdc_25m) := Economic_performance/Net_revenues;
-	
+
 	container Kapitalisatie                := ='Kapitalisatie_T(LandbouwKlasses/V/'+LandbouwKlasse_name+', RentevoetDezeBoer, ModelParameters/Landbouw/afschrijvingsperiode)';
 	container KapitalisatieMaatschappelijk := ='Kapitalisatie_T(LandbouwKlasses/V/'+LandbouwKlasse_name+', ModelParameters/Landbouw/Rentevoet, PeriodDuRation)';
-	
-	container Gras_met_herinzaai
-	{
-		parameter<String>           sub_gewas                      := rjoin('gras_met_herinzaaikosten', LowerCase(GewasSoortYR/Rotatieklasse), GewasSoortYR/name);
-		parameter<GewasSoortYR>     Gewas                          := ='GewasSoortYR/V/'+sub_gewas;
-		container                   ParametersGewas                := ='ModelParameters/Landbouw/per_Gewas/Dairy/'+sub_gewas;
-		
-		attribute<Ratio>            Rotation             (rdc_25m) := switch(
-																	 case(/SourceData/Landbouw/HELP/Bodem_HELP_kleiig, ParametersGewas/Rotation_BodemK_kleiig)
-																	,case(/SourceData/Landbouw/HELP/Bodem_HELP_zandig, ParametersGewas/Rotation_BodemK_zandig) 
-																	,0[Ratio]);
-																	
-		attribute<Eur_Ha_jaarlijks> Production_costs     (rdc_25m) := ParametersGewas/Production_costs * Rotation;   // updaten of speciferen per intensiteitsklasse? // wat zijn dit precies (paper vasco)?
-		attribute<Float32>          YieldReduction       (rdc_25m) := ='factoren/YieldReduction/Result/'+GewasSoortYR/name[Gewas];
-		attribute<ton_ha_jaarlijks> DM_yield             (rdc_25m) := (ParametersKlasse/MaxYieldGrass + DDGrassYield) * (1f - YieldReduction) * Rotation, Descr = "Dry matter yield";
-		
-		attribute<Eur_Ha_jaarlijks> Feed_costs           (rdc_25m) := Production_costs + (DM_yield * ParametersGewas/Feeding_costs);
-	}
-	
-	container Snijmais
-	{
-		parameter<String>           sub_gewas                      := 'Mais';
-		parameter<GewasSoortYR>     Gewas                          := ='GewasSoortYR/V/'+sub_gewas;
-		container                   ParametersGewas                := ='ModelParameters/Landbouw/per_Gewas/Dairy/'+sub_gewas;
-		attribute<Ratio>            Rotation             (rdc_25m) := switch(
-																	 case(/SourceData/Landbouw/HELP/Bodem_HELP_kleiig, ParametersGewas/Rotation_BodemK_kleiig)
-																	,case(/SourceData/Landbouw/HELP/Bodem_HELP_zandig, ParametersGewas/Rotation_BodemK_zandig) 
-																	,0[Ratio]);
-																	
-		attribute<Eur_Ha_jaarlijks> Production_costs     (rdc_25m) := switch(
-																	 case(/SourceData/Landbouw/HELP/Bodem_HELP_kleiig, ParametersGewas/Production_costs_BodemK_kleiig) 
-																	,case(/SourceData/Landbouw/HELP/Bodem_HELP_zandig, ParametersGewas/Production_costs_BodemK_zandig) 
-																	,0[Eur_Ha_jaarlijks]) * Rotation;
-																	
-		attribute<Float32>          YieldReduction       (rdc_25m) := ='factoren/YieldReduction/Result/'+GewasSoortYR/name[Gewas];
-		attribute<ton_ha_jaarlijks> DM_yield             (rdc_25m) := switch(
-																	 case(/SourceData/Landbouw/HELP/Bodem_HELP_kleiig, ParametersGewas/DM_yield_BodemK_kleiig * (1[Ratio] - YieldReduction)) 
-																	,case(/SourceData/Landbouw/HELP/Bodem_HELP_zandig, ParametersGewas/DM_yield_BodemK_kleiig * (1[Ratio] - YieldReduction)) 
-																	,0[ton_ha_jaarlijks]) * Rotation;
-																	
-		attribute<Eur_Ha_jaarlijks> CAP_subsidy          (rdc_25m) := Rotation * ParametersGewas/CAP_subsidy; // Te speciferen per soc. econ. scenario of voor gevoeligheidsanalyse?
-		
-		attribute<ton_ha_jaarlijks> Feed_requirement     (rdc_25m) := Economic_performance/TotalFeed/Instant - Economic_performance/feed_concentrates/requirement - (Gras_met_herinzaai/DM_yield);
-		attribute<Eur_Ha_jaarlijks> Feed_surplus_deficit (rdc_25m) := (DM_yield - Feed_requirement) * ParametersGewas/Price_DM_ton;  
-		attribute<Eur_Ha_jaarlijks> Feed_costs           (rdc_25m) := Production_costs - CAP_subsidy - Feed_surplus_deficit + (Feed_requirement * ParametersGewas/feeding_costs);
-	}
-	
+
+	// ---- 1. bodem en dichtheid ----
+
+	attribute</Classifications/Landbouw/Bodemtak> Bodemtak_rel (rdc_25m) := /SourceData/Landbouw/HELP/Bodemtak_rel;
+	attribute<Bool>   HeeftBodem   (rdc_25m) := /SourceData/Landbouw/HELP/HeeftBodem;
+	attribute<koe_ha> Koedichtheid (rdc_25m) := /ModelParameters/Landbouw/Melkvee/Dichtheid/D_ref[Bodemtak_rel] * ParametersKlasse/Koedichtheid_factor
+	, Descr = "Melkkoeien per ha voor de geschiktheid: de referentiedichtheid per bodemtak maal de klassefactor (0 op natuurlijk grasland, 1 op productiegrasland). Dit is de aansluiting voor de CBS-koedichtheid per gemeente (StatLine 80781ned) en het regime per variant, de volgende ronde van #780: vervang alleen de rechterkant.";
+	parameter<Float32> NietNatuurlijk := ParametersKlasse/IsNatuurlijkGrasland ? 0f : 1f
+	, Descr = "Nul op natuurlijk beheerd grasland, een op productiegrasland; schakelt mais en deep drainage uit op natuurlijk grasland. IsNatuurlijkGrasland is een parameter, dus alle keuzes hieronder zijn gewone iif-keuzes en geen meta-expressies.";
+
+	// ---- 2. voeraanbod, ton droge stof per ha per jaar ----
+
+	attribute<Ratio>            Aandeel_mais        (rdc_25m) := /ModelParameters/Landbouw/Melkvee/Grond/Aandeel_mais[Bodemtak_rel] * NietNatuurlijk;
+	attribute<Ratio>            Aandeel_gras        (rdc_25m) := 1[Ratio] - Aandeel_mais;
+	attribute<Float32>          YieldReduction_Gras (rdc_25m) := factoren/YieldReduction/Result/Gras, Descr = "Opbrengstderving gras uit de Water Wijzer Landbouw plus verzilting, als fractie tussen nul en een; Result garandeert dat met min_elem en een IntegrityCheck, dus hier is geen null-risico.";
+	attribute<Float32>          YieldReduction_Mais (rdc_25m) := factoren/YieldReduction/Result/Mais;
+	attribute<ton_ha_jaarlijks> DDGrassYield        (rdc_25m) := /Classifications/Landbouw/DeepDrainageK/DDGrassYield[DeepDrainageVariant] * /SourceData/Landbouw/HELP/DDPossible * NietNatuurlijk, Descr = "Extra grasopbrengst door deep drainage waar dat kan, alleen op productiegrasland.";
+	attribute<ton_ha_jaarlijks> Grasopbrengst_netto (rdc_25m) := ParametersKlasse/IsNatuurlijkGrasland
+																? /ModelParameters/Landbouw/Melkvee/Grond/Grasopbrengst_natuurlijk
+																: /ModelParameters/Landbouw/Melkvee/Grond/Grasopbrengst_bruto[Bodemtak_rel] * /ModelParameters/Landbouw/Melkvee/Grond/Verlies_veld_inkuil * /ModelParameters/Landbouw/Melkvee/Grond/Verlies_beweiding + DDGrassYield
+	, Descr = "Netto benutbare grasopbrengst per ha grasland bij derving nul: bruto opbrengst per bodemtak maal het veld- en inkuilverlies maal het beweidingsverlies, plus deep drainage; op natuurlijk grasland de netto opbrengst van de zoogkoeientabel.";
+	attribute<ton_ha_jaarlijks> Gras_DM             (rdc_25m) := Grasopbrengst_netto * (1f - YieldReduction_Gras) * Aandeel_gras;
+	attribute<ton_ha_jaarlijks> Mais_DM             (rdc_25m) := /ModelParameters/Landbouw/Melkvee/Grond/Maisopbrengst_bruto[Bodemtak_rel] * /ModelParameters/Landbouw/Melkvee/Grond/Verlies_inkuil_mais * (1f - YieldReduction_Mais) * Aandeel_mais;
+	attribute<ton_ha_jaarlijks> Ruwvoer_aanbod      (rdc_25m) := Gras_DM + Mais_DM, Descr = "Eigen ruwvoer per ha van de klasse, na derving.";
+
+	// ---- 3. saldo per hectare ----
+
+	parameter<Eur_koe_jaarlijks> Saldo_dier_koe := /ModelParameters/Landbouw/Melkvee/Dier/Melk_per_koe * /ModelParameters/Landbouw/Melkvee/Dier/MilkPrice * /VariantParameters/VariantK/PriceMult_Melk[variant_rel]
+	                                             + /ModelParameters/Landbouw/Melkvee/Dier/Omzet_en_aanwas - /ModelParameters/Landbouw/Melkvee/Dier/Dierkosten - /ModelParameters/Landbouw/Melkvee/Dier/Afrastering
+	, Descr = "KWIN-saldo per melkkoe zonder de grondposten en zonder loonwerk: 9.000 kg maal 49 cent maal de prijsmultiplier, plus omzet en aanwas 465, min dierkosten 1.656, min afrastering 70; 3.149 bij PriceMult_Melk 1. Staat hier en niet in Melkvee_parameters omdat variant_rel hier bekend is.";
+
+	attribute<Eur_Ha_jaarlijks> Saldo_dier       (rdc_25m) := Koedichtheid * Saldo_dier_koe;
+	attribute<ton_ha_jaarlijks> Ruwvoer_behoefte (rdc_25m) := Koedichtheid * /ModelParameters/Landbouw/Melkvee/Dier/Ruwvoer_per_koe;
+	attribute<ton_ha_jaarlijks> Ruwvoer_balans   (rdc_25m) := Ruwvoer_aanbod - Ruwvoer_behoefte, Descr = "Positief is een overschot dat wordt verkocht, negatief een tekort dat wordt gekocht.";
+	parameter<Eur_ton>          Prijs_verkoop             := ParametersKlasse/IsNatuurlijkGrasland ? /ModelParameters/Landbouw/Melkvee/Grond/Prijs_natuurgras : /ModelParameters/Landbouw/Melkvee/Grond/Prijs_ruwvoer_verkoop;
+	attribute<Eur_Ha_jaarlijks> Voerbalans       (rdc_25m) := max_elem(Ruwvoer_balans, 0[ton_ha_jaarlijks]) * Prijs_verkoop
+	                                                        + min_elem(Ruwvoer_balans, 0[ton_ha_jaarlijks]) * /ModelParameters/Landbouw/Melkvee/Grond/Prijs_ruwvoer_aankoop
+	, Descr = "Overschot verkocht als gras op stam (101 per ton ds, natuurgras 75), tekort gekocht als ingekuilde snijmais (160). Dit is het boersperspectief: de koedichtheid blijft staan en de opbrengstderving kost voeraankoop en geen koeien, want een ton ds derving kost 160 euro aankoop tegen circa 485 euro saldo per ton als de koe zou verdwijnen. Gevolg: melkvee is in de allocatie veel minder gevoelig voor de hydrologie dan akkerbouw; 30 procent derving kost gg_vee op klei circa 450 per ha en aardappelen circa 2.400. Dat is een keuze en geen bijproduct, zie #780 en de dervingsklassen in Diagnose/PerIssue/Diagnose780. Wie de geschiktheid op koeienafbouw wil laten rekenen vervangt Koedichtheid door min_elem(Koedichtheid, Ruwvoer_aanbod / Ruwvoer_per_koe); dat is de enige regel die dan verandert. Beide termen zijn gedefinieerd omdat Ruwvoer_balans gedefinieerd is; min_elem en max_elem met een null zouden anders stil de constante teruggeven.";
+
+	parameter<Eur_Ha_jaarlijks> Graslandkosten_kv := /ModelParameters/Landbouw/Kostenvoet_InclusiefLoonwerk ? /ModelParameters/Landbouw/Melkvee/Grond/Graslandkosten_loonwerk : 0[Eur_Ha_jaarlijks];
+	attribute<Eur_Ha_jaarlijks> Grondkosten      (rdc_25m) := (ParametersKlasse/IsNatuurlijkGrasland
+	                                                             ? /ModelParameters/Landbouw/Melkvee/Grond/Graslandkosten_natuurlijk
+	                                                             : /ModelParameters/Landbouw/Melkvee/Grond/Graslandkosten[Bodemtak_rel] + Graslandkosten_kv) * Aandeel_gras
+	                                                        + (/ModelParameters/Landbouw/Melkvee/Grond/Maiskosten[Bodemtak_rel]
+	                                                           + (/ModelParameters/Landbouw/Kostenvoet_InclusiefLoonwerk ? /ModelParameters/Landbouw/Melkvee/Grond/Maiskosten_loonwerk[Bodemtak_rel] : 0[Eur_Ha_jaarlijks])) * Aandeel_mais
+	                                                        + /Classifications/Landbouw/DeepDrainageK/DD_costs[DeepDrainageVariant] * /SourceData/Landbouw/HELP/DDPossible * NietNatuurlijk
+	, Descr = "Toegerekende grondkosten per ha: graslandkosten maal het grasaandeel plus maiskosten maal het maisaandeel, op de kostenvoet eigen mechanisatie; de loonwerkregels komen er alleen bij als Kostenvoet_InclusiefLoonwerk aan staat. Plus de kosten van deep drainage waar dat kan.";
+
+	attribute<kg_ha_jaarlijks>  N_productie      (rdc_25m) := Koedichtheid * /ModelParameters/Landbouw/Melkvee/Mest/N_excretie_per_koe;
+	attribute<kg_ha_jaarlijks>  N_overschot      (rdc_25m) := max_elem(N_productie - Gebruiksnorm_N, 0[kg_ha_jaarlijks]), Descr = "Stikstof boven de gebruiksnorm van Suitability_T/Gebruiksnorm_N (per variant), die moet worden afgevoerd.";
+	attribute<m3_ha_jaarlijks>  Mest_afvoer      (rdc_25m) := N_overschot / /ModelParameters/Landbouw/Melkvee/Mest/N_per_m3;
+	attribute<Eur_Ha_jaarlijks> Mestafzetkosten  (rdc_25m) := Mest_afvoer * Mestprijs, Descr = "Afzet van de mest boven de gebruiksnorm tegen Suitability_T/Mestprijs (per variant en zichtjaar): bij 1,48 koe per ha en 154,2 kg N per koe is dat 58 kg N, 14,5 m3 per ha.";
+
+	parameter<Ratio>            GLB_factor                := ParametersKlasse/IsNatuurlijkGrasland ? /ModelParameters/Landbouw/Beleid/GLB_factor_extensief : 1[Ratio];
+	attribute<Eur_Ha_jaarlijks> Subsidie         (rdc_25m) := TotaalSubsidie * GLB_factor
+	                                                        + (ParametersKlasse/IsNatuurlijkGrasland ? GLB_Diensten_extensief : 0[Eur_Ha_jaarlijks])
+	                                                        + (/SourceData/Landbouw/HELP/Bodem_HELP_veen ? Veen_vergoeding : 0[Eur_Ha_jaarlijks])
+	, Descr = "GLB (hectaresteun plus eco-regeling, Suitability_T/TotaalSubsidie per variant en zichtjaar) op de hele hectare, op natuurlijk grasland maal GLB_factor_extensief omdat BRP 332 niet subsidiabel is; GLB_Diensten_extensief alleen op natuurlijk grasland; Veen_vergoeding op veengrond (Bodem_HELP_veen, dezelfde indeling als de bodemtak) voor beide graslandklassen en niet voor de akkerbouw, want ANLb-veen en de RVO-veenweideregeling zijn graslandpakketten. Tot #785 stond de veenvergoeding op IsVeenGrond, de GeoTOP-veendikte boven 0,5 m, een andere kaart dan de bodemtak.";
+
+	attribute<Eur_Ha_jaarlijks> Saldo_ha         (rdc_25m) := Saldo_dier + Voerbalans - Grondkosten - Mestafzetkosten + Subsidie
+	, Descr = "Saldo per ha per jaar op de kostenvoet eigen mechanisatie: dier plus voerbalans min grondkosten min mestafzet plus GLB. Bij derving nul in zichtjaar 2040 van BAU (GLB 190, mestprijs 30) is dit op klei 3.939, op zand 3.990 en op veen 4.002 (met de veenvergoeding van 30); natuurlijk grasland 528, op veen 558.";
+	attribute<Eur_Ha_jaarlijks> Net_revenues_ha  (rdc_25m) := HeeftBodem ? Saldo_ha : 0[Eur_Ha_jaarlijks], Descr = "Nul op cellen zonder bodemcode (water, verhard, geen gegevens); dat is 0,05 procent van het landbouwareaal, gemeten op 7 september 2026.";
+	attribute<Eur_m2_jaarlijks> Net_revenues     (rdc_25m) := Net_revenues_ha[Eur_m2_jaarlijks];
+
 	container Economic_performance
+	: Descr = "De koppeling naar Iter_Landbouw_T en Export.dms: Net_revenues en Conversion_costs staan hier omdat Totaal_NonAugmented, NPV en NetRevenue ze zo lezen, net als in Akkerbouw_T."
 	{
-		container Feed_composition 
-		{
-			parameter<Ratio>        Grass                       := ModelParameters/Landbouw/per_Gewas/Dairy/feed_composition_share_grass * ParametersKlasse/Perc_FeedDryMatter;
-			parameter<Ratio>        Mais                        := ModelParameters/Landbouw/per_Gewas/Dairy/feed_composition_share_mais * ParametersKlasse/Perc_FeedDryMatter; 
-		}
-		
-		parameter<Eur_ton>          MilkPrice                   := (ModelParameters/Landbouw/per_Gewas/Dairy/MilkPrice + ParametersKlasse/MilkPricePremium) * VariantParameters/VariantK/PriceMult_Melk[variant_rel]; // uitgangspunten en normen bedrijfsbegroting melkveehouderij, 5 - 06 - 2014. Te speciferen per soc. econ. scenario of voor gevoeligheidsanalyse?
-		
-		container TotalFeed
-		{
-			attribute<ton_ha_jaarlijks>     Exo      (rdc_25m) := const(ParametersKlasse/MaxYieldGrass[ton_ha_jaarlijks] / ParametersKlasse/Perc_FeedDryMatter, rdc_25m);   // per intensiteitsklasse te speciferen door LEI, obv pg 22 achtergronddoc (feed_c)
-			attribute<ton_ha_jaarlijks>     Endo     (rdc_25m) := Gras_met_herinzaai/DM_yield / Feed_composition/grass; // Kan vervangen door onderstaande. Afhankerlijk van yr. Is grass yield als feed comp grass is 100%. Als feed comp grass lager is, bijv 50%, dan is het 2 maal grass yield. Dit is vreemd. Waarom niet total feed vastzetten? P{roductiecapaciteit staat toch ook vast (koeien etc.)? Nu varieert voedsel met yield reduction gras, ZELFS ALS FEED COMP GRASS LAAG IS!
-			attribute<ton_ha_jaarlijks>     instant  (rdc_25m) := =/ModelParameters/Landbouw/per_Gewas/Dairy/TotalFeedExo ? 'exo' : 'endo' ;
-		}
-		
-		container Feed_concentrates
-		{
-			attribute<ton_ha_jaarlijks> requirement  (rdc_25m) := TotalFeed/Instant * (1[Ratio] - ParametersKlasse/Perc_FeedDryMatter); // Dit kan ook blijven staan.
-			attribute<Eur_Ha_jaarlijks> Feed_costs   (rdc_25m) := requirement * (ModelParameters/Landbouw/per_Gewas/Dairy/feed_concentrates/Price_DM_ton + ModelParameters/Landbouw/per_Gewas/Dairy/feed_concentrates/feeding_costs);
-		}
-		
-		attribute<Eur_Ha_jaarlijks> DD_costs          (rdc_25m) := DeepDrainageK/DD_costs[DeepDrainageVariant] * /SourceData/Landbouw/HELP/DDPossible;
-		attribute<Eur_Ha_jaarlijks> total_costs       (rdc_25m) := Gras_met_herinzaai/Feed_costs + Snijmais/Feed_costs + Feed_concentrates/Feed_costs + DD_costs;
-		attribute<ton_ha_jaarlijks> milk_production   (rdc_25m) := TotalFeed/Instant * ParametersKlasse/FCE[Ratio];
-		attribute<Eur_ton>          total_costs_milk  (rdc_25m) := Total_costs / Milk_production;
-		attribute<Eur_Ha_jaarlijks> Gross_revenues    (rdc_25m) := Milk_production * (MilkPrice + ModelParameters/Landbouw/per_Gewas/Dairy/Manure_revenue - ModelParameters/Landbouw/per_Gewas/Dairy/Holding_costs);
-		attribute<Eur_Ha_jaarlijks> Net_revenues_ha   (rdc_25m) := Gross_revenues - total_costs;
-		attribute<Eur_m2_jaarlijks> Net_revenues      (rdc_25m) := Net_revenues_ha[Eur_m2_jaarlijks];
+		attribute<Eur_m2_jaarlijks> Net_revenues      (rdc_25m) := ../Net_revenues;
 		attribute<Eur_m2>           Conversion_costs0 (rdc_25m) := = 'MakeDefined(FActoren/transitiekosten/'+ LandbouwKlasse_name + '[LU_ModelType/LandbouwK_rel[gg_LandbouwK]], /ModelParameters/Landbouw/Transitiekosten_src/Overigen__'+ LandbouwKlasse_name + ')[Eur_m2]';
 		attribute<Eur_m2>           Conversion_costs  (rdc_25m) := = '(1f + /ModelParameters/Landbouw/ConversionCostPremium_'+/ModelParameters/Landbouw/Boervariant_name+') * Conversion_costs0';
 	}

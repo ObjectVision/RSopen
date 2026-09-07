@@ -183,7 +183,7 @@ container Landbouw : using = "Classifications/Landbouw"
 			parameter<String> Variant;
 			
 			unit<UInt32> Kansenkaart 
-			: StorageName = "='%RS_Lb_DataDir%/Gewassen/WUR_Kansenkaarten/'+Variant_name+' 2050/'+gewas_name+'.gpkg'"
+			: StorageName = "='%RS_Lb_DataDir%/Gewassen/WUR_Kansenkaarten/'+/VariantParameters/VariantK/Kansenkaart_Levering[rlookup(Variant_name, /VariantParameters/VariantK/name)]+' 2050/'+gewas_name+'.gpkg'"
 			, StorageType = "gdal.vect"
 			, StorageReadOnly = "TRUE"
 			, DialogData = "rdc_meter"
@@ -313,7 +313,8 @@ container Landbouw : using = "Classifications/Landbouw"
 				, 'OpbrengstenDerving_T('+string(id(OpbrengstendervingsVarianten))+'[OpbrengstendervingsVarianten])'
 			)
 		{
-			parameter<String> generate := 'Ready', explicitsuppliers = "=AsList(OpbrengstendervingsVarianten/name+'/opbrengstderving', ';')";
+			parameter<String> generate := 'Ready', explicitsuppliers = "=AsList(OpbrengstendervingsVarianten/name+'/Write_opbrengstderving', ';')"
+			, Descr = "Maakt de opbrengstdervingskaarten opnieuw. Noemt met opzet Write_Opbrengstderving en niet Opbrengstderving: dat laatste valt bij OpbrengstdervingOntkoppeld terug op de leeskant, en dan zou deze haak de bestanden lezen die hij hoort te maken.";
 		}
 
 		unit<uint8> OpbrengstendervingsVarianten := combine_uint8(NL2120_Varianten, WWL_Zichtjaren, WWL_relatie_database/WWL_Gewassen)
@@ -332,7 +333,18 @@ container Landbouw : using = "Classifications/Landbouw"
 
 			parameter<string>  NL2120_Varianten_name := NL2120_Varianten/label[OpbrengstendervingsVarianten/NL2120_Varianten_rel[OpbrengstendervingsVarianten_rel]];
 			parameter<string>  WWL_Zichtjaar         := WWL_Zichtjaren/name[OpbrengstendervingsVarianten/WWL_Zichtjaren_rel[OpbrengstendervingsVarianten_rel]];
-			parameter<uint32>  Zichtjaar_klimaat     := uint32(WWL_Klimaatscenarios/v/WarmHoog);
+			parameter<uint32>  Zichtjaar_klimaat     := WWL_Zichtjaar == '2017'
+																? uint32(WWL_Klimaatscenarios/v/Referentie)
+																: NL2120_Varianten_name == 'BAU'
+																	? uint32(WWL_Klimaatscenarios/v/WarmHoog)
+																	: uint32(WWL_Klimaatscenarios/v/Referentie)
+			, Descr = "Welke klimaatvariant van de WWL-schaderelatie deze kaart gebruikt.
+
+						Hier stond tot 5 september 2026 onvoorwaardelijk WarmHoog, ook voor het basisjaar en ook voor BAU2. Dat is inconsistent met de grondwaterstanden, die wel per variant verschillen: SourceData/Water/Grondwaterstanden leest voor BAU de bestanden W2050BP18 en W2085BP18, dus het warme scenario, en voor BAU2 de bestanden R2050BP18 en R2085BP18, dus de referentie. Het klimaat komt in deze keten twee keer binnen, via de grondwaterstanden en via de schaderelatie, en die twee hoorden hetzelfde te zeggen.
+
+						BAU2 rekende daarmee een warme schaderelatie op referentiestanden, wat de schade daar overschat. Het basisjaar gebruikt voor beide varianten REF2017BP18 en hoort dus ook de referentierelatie te krijgen.
+
+						LET OP dat dit de gemeten hoge opbrengstderving NIET verklaart. Op landbouwgrond ligt die voor BAU op 31 tot 41 procent, gemeten op zichtjaar 2040 na het koppelen van het beregeningsscenario, en BAU gebruikte hier al WarmHoog. Of die combinatie van W2050-standen en een warme schaderelatie voor een zichtjaar 2040 de bedoeling is, is een vraag voor Deltares.";
 			parameter<uint32>  Gewas_code            := WWL_relatie_database/WWL_Gewassen/code[OpbrengstendervingsVarianten/WWL_Gewassen_rel[OpbrengstendervingsVarianten_rel]];
 			parameter<string>  Gewas_name            := WWL_relatie_database/WWL_Gewassen/label[OpbrengstendervingsVarianten/WWL_Gewassen_rel[OpbrengstendervingsVarianten_rel]];
 
@@ -370,7 +382,19 @@ container Landbouw : using = "Classifications/Landbouw"
 			{
 				attribute<uint32>  bodem_code   (AdminDomain) := SourceData/Bodem/BOFEK/BOFEK_CODE;
 				attribute<uint32>  gewas_code   (AdminDomain) := const(../Gewas_code, AdminDomain);
-				attribute<uint32>  beregenings_code (AdminDomain)  := uint32(Beregeningskaart_Basisprognoses_2018/WWL_Beregenings_rel);
+				attribute<uint32>  beregenings_code (AdminDomain)  := =
+						/ModelParameters/Landbouw/BeregeningScenario_name == 'A_GeenBeregening'
+							? 'const(uint32(/Classifications/Landbouw/WWL_BeregeningsK/v/GeenBeregening), AdminDomain)'
+							: /ModelParameters/Landbouw/BeregeningScenario_name == 'B1_Beregening_allepercelen_ongelim'
+								? 'const(uint32(/Classifications/Landbouw/WWL_BeregeningsK/v/WelBeregening), AdminDomain)'
+								: 'uint32(Beregeningskaart_Basisprognoses_2018/WWL_Beregenings_rel)'
+				, Descr = "Welke beregeningsvariant de WWL-schaderelatie per cel gebruikt. De relatiedatabase kent er twee, GeenBeregening en WelBeregening, en dit item kiest welke.
+
+							Hier stond tot 5 september 2026 onvoorwaardelijk de Beregeningskaart_Basisprognoses_2018, een vaste kaart die aangeeft welke percelen in 2018 een beregeningsinstallatie hadden. ModelParameters/Landbouw/BeregeningScenario_name bestond wel, met A_GeenBeregening, B1_Beregening_allepercelen_ongelim en B2_Beregening_percelenmetinstal_ongelim, en was zelfs via een omgevingsvariabele instelbaar, maar hij werd alleen gelezen in Templates/Landbouw container WWL2. Geen enkel gewas gebruikt die bron: alle vijftien staan in GewasSoortYR op WWL_dyn of Exotisch. Het scenario was dus dode configuratie en de default B1 loog: het model rekende B2.
+
+							De koppeling is een op een. A betekent nergens beregening, B1 overal, en B2 is precies wat de kaart van 2018 zegt, namelijk alleen de percelen met een installatie. Die derde tak is dus het oude gedrag, en wie de oude uitkomsten wil reproduceren zet het scenario op B2.
+
+							Dit is geen cosmetische wijziging. De opbrengstderving lag op landbouwgrond op 34 tot 45 procent, gemeten op zichtjaar 2040 van BAU, en dat is de dominante term in de netto-opbrengst; op ongeveer een kwart van de landbouwgrond had geen enkel gewas een positieve contante waarde. Van B2 naar B1 gaan haalt de droogteschade omlaag op elk perceel dat nu geen installatie heeft.";
 				attribute<float32> ghg_cm       (AdminDomain) := ='gxg_scale * gxg_sign * SourceData/Water/Grondwaterstanden/'+NL2120_Varianten_name+'/GHG_'+WWL_Zichtjaar+'';
 				attribute<float32> glg_cm       (AdminDomain) := ='gxg_scale * gxg_sign * SourceData/Water/Grondwaterstanden/'+NL2120_Varianten_name+'/GLG_'+WWL_Zichtjaar+'';
 
@@ -382,7 +406,25 @@ container Landbouw : using = "Classifications/Landbouw"
 			attribute<uint32>  match            (AdminDomain) := rlookup(key, lut/key);
 
 			// ----- RESULT
-			attribute<float32> Opbrengstderving (AdminDomain) := lut/dmgtot_stack[match] / 100f, StorageName = "='%RS_Lb_DataDir%/Gewassen/WWL_Opbrengstderving/'+NL2120_Varianten_name+'_'+WWL_Zichtjaar+'_'+Gewas_name+'.tif'", StorageType = "gdalwrite.grid";
+			parameter<String> StorageStr := '%LocalDataProjDir%/BaseData/Landbouw/WWL_Opbrengstderving/'+NL2120_Varianten_name+'_'+WWL_Zichtjaar+'_'+Gewas_name+'_'+/ModelParameters/StudyArea+'.tif'
+			, Descr = "Waar de opbrengstdervingskaart van deze variant, dit zichtjaar en dit gewas komt te staan.
+
+						Dit pad stond tot 5 september 2026 onder %RS_Lb_DataDir%, dus in de gedeelde brondata op Nextcloud, en werd bij elke run herschreven. Op een account met alleen schrijfrechten geeft dat geen foutmelding maar een conflicted copy naast het origineel. Dit is bovendien geen brondata: de invoer is de WWL-relatiedatabase plus de grondwaterstanden, en die staan er los naast.
+
+						De studiegebied-suffix hoort erbij omdat AdminDomain met het studiegebied meebeweegt. Zonder die suffix leest een Friesland-run het Nederland-bestand in een kleiner domein, en dat geeft een FileTileArray-fout met exitcode 0 en een leeg resultaat.";
+
+			attribute<float32> Write_Opbrengstderving (AdminDomain) := lut/dmgtot_stack[match] / 100f, StorageName = "=StorageStr", StorageType = "gdalwrite.grid"
+			, Descr = "De opbrengstderving per gewas, afgeleid uit BOFEK, de WWL-relatiedatabase en de grondwaterstanden van dit zichtjaar.
+
+						Deze tif stond tot 5 september 2026 onder %RS_Lb_DataDir%, dus in de gedeelde brondata op Nextcloud. Dat is de verkeerde kant op: het item rekent de kaart elke keer opnieuw uit en schrijft hem dan weg, zodat elke run de bestanden van de vorige overschreef. Op een account met alleen schrijfrechten en geen overschrijfrechten levert dat geen foutmelding op maar een conflicted copy naast het origineel, en een half bijgewerkte map die niemand meer kan terugdraaien. Dit is bovendien geen brondata: de invoer is de WWL-database plus de grondwaterstanden, en die staan er los naast.
+
+						De zware kant van de keten zit hier: per gewas worden honderden banden uit WWL_relatie_database gelezen. Vraag daarom Read_Opbrengstderving en niet dit item, tenzij je de kaart bewust opnieuw wilt maken.";
+
+			attribute<float32> Read_Opbrengstderving  (AdminDomain) : StorageName = "=PropValue(Write_Opbrengstderving, 'StorageName')", StorageType = "gdal.grid"
+			, Descr = "De weggeschreven kaart teruglezen, zonder de netcdf aan te raken.";
+
+			attribute<float32> Opbrengstderving       (AdminDomain) := =/ModelParameters/OpbrengstdervingOntkoppeld ? 'Read_Opbrengstderving' : 'Write_Opbrengstderving'
+			, Descr = "Wat de rest van het model leest. Zie ModelParameters/OpbrengstdervingOntkoppeld voor waarom de leeskant de default is.";
 		}
 
 		// ================================================================================================================================================================
