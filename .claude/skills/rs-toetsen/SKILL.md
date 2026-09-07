@@ -148,6 +148,30 @@ Concreet voor die vergelijking, mocht hij herhaald moeten worden. De basis was `
 
 Meld altijd expliciet wat je niet getoetst hebt. Bij die vergelijking waren dat de werken-schakelaars afzonderlijk, de NbS-variant en de zeeflaag.
 
+## Een A/B-schakelaar die geen bestand hoeft te zijn
+
+Draai je takken vanuit een bevroren kopie van `cfg` en wissel je per tak een heel bestand om, dan mag de behandelversie nooit uit de doelmap komen. Die map draagt de versie van de vorige tak, dus na een afgebroken run staat daar de referentie in, worden beide toggle-bestanden gelijk, en meet je niets terwijl alles doorloopt met exitcode 0. Haal de behandelversie uit de werkkopie en de referentie uit `git show HEAD:`, en zet er een harde toets op:
+
+```powershell
+$verschil = (Compare-Object (Get-Content $Ref) (Get-Content $Behandeld)).Count
+if ($verschil -eq 0) { throw "referentie en behandeling zijn gelijk, er valt niets te meten" }
+```
+
+Dit is dezelfde faalvorm als de kanarie uit `harnas-dat-niemand-aanroept`: een toets die per constructie niets kan vinden geeft geen fout maar een geruststellend nulverschil. Bij een A/B is nul verschil tussen twee takken dus altijd eerst een verdenking op de opzet, en pas daarna een uitkomst over het model.
+
+Een bevroren kopie werkt verder goed als iemand anders tegelijk in `cfg` zit te editten. Kopieer `cfg` naar een zusterproject; `LocalDataProjDir` is namelijk `LocalDataDir` uit de registersleutel `HKCU:\SOFTWARE\ObjectVision\OVSRV08\GeoDMS` plus de naam van de projectmap, dus de kopie krijgt vanzelf een eigen lege LocalData.
+
+Maak van die LocalData geen junction naar de echte in zijn geheel. Dan deel je namelijk ook de allocatiemap, en zodra iemand een standtif in de GUI open heeft valt je run om met `Permission denied` bij het wegschrijven, na alle rekentijd. Maak in plaats daarvan een echte map met junctions per onderdeel, en laat alleen de uitvoer lokaal:
+
+```powershell
+foreach ($m in @('BaseData','VariantData','Vastgoed','Indicatoren','Diagnose')) {
+    New-Item -ItemType Junction -Path (Join-Path $LD $m) -Target (Join-Path $Bron $m) | Out-Null
+}
+New-Item -ItemType Directory -Path (Join-Path $LD 'Allocatie')
+```
+
+Wil je een bestaande junction opheffen, gebruik dan `[IO.Directory]::Delete($pad, $false)` en nooit `Remove-Item -Recurse`: dat laatste kan door het reparse point heen de echte LocalData opruimen.
+
 ## Wat een bevinding is
 
 Meld een uitkomst pas als bevinding wanneer je kunt zeggen welk getal je verwachtte en waarom. Een verschil zonder verwachting is een waarneming, geen bevinding. Noem bij elke bevinding het gemeten getal, de referentie en het pad in de config, zodat het na te rekenen is. Een holle OK is geen uitkomst: is een controle niet gedraaid, zeg dat dan.
@@ -184,3 +208,49 @@ openstond: van de 2.872 ha gealloceerde waterberging in de stand van 31 augustus
 landgebruikskaart, en de ontbrekende 1.210 ha werd afgevangen door de opleggingscase. Op de stand van
 2 september, uit dezelfde reeks als de basisdata, was datzelfde getal 0 ha. Zonder de bewaarde stand was
 dat niet meer vast te stellen geweest.
+
+## Ruimtelijke patronen zonder het model: de standtifs zelf lezen
+
+De RS-testomgeving vergelijkt twee runs op bestandsniveau. Wil je een uitkomst per subsector uitsplitsen,
+dan kan dat rechtstreeks op `Allocatie/<casus>/Stand<jaar>/`, in numpy, zonder GeoDMS en zonder herdraai.
+Op 2026-09-05 leverde dat de hele werkareaalvraag op in ongeveer twintig minuten rekentijd.
+
+Wat er ligt en wat het betekent:
+
+- `SubSector_rel_<gebied>_SS-<n>.tif`, uint8, 255 is null. Alleen cellen die het model heeft toegewezen;
+  de basisjaarvoorraad staat er niet in. Eerste-wint over de zichtjaren, dus het getal in Y2120 is de
+  cumulatieve allocatie sinds het basisjaar en het verschil tussen twee zichtjaren is wat er in die
+  periode bij kwam.
+- De indexering is de unie uit `Classifications/Actor/Sector/xSubsector`, in de volgorde van
+  `ModelParameters/SectorAllocRegio/Uq_Sectors`. Bij de NL2120-opzet: 0 tot en met 3 wonen
+  (WP2xVSSH, met WP2 het snelst lopend), 4 tot en met 9 werken in Jobs6-volgorde (Nijverheid, Logistiek,
+  Detailhandel, Ov_consumentendiensten, Zak_dienstverlening, Overheid_kw_diensten), 10 waterberging. De
+  `SS-11` in de bestandsnaam is het aantal subsectoren en is dus de controle op die telling.
+- IJk de indexering voordat je hem gebruikt: kruis elke index met de zes `Werken/<naam>.tif`. Op de cellen
+  van index k hoort de baanstand van subsector k in bijna honderd procent van de gevallen groter dan nul
+  te zijn en die van de andere vijf laag. Gemeten kwam dat op 0,987 tot 1,000 tegen 0,002 tot 0,181.
+- `Werken/<naam>.tif` is de volledige baanstand per cel, basisjaar plus nieuw, niet de toename.
+  `PandFootprint/<naam>.tif` idem voor de voetafdruk in m2. Delen geeft m2 per baan; dat maal de
+  dichtheid per hectare geeft de bebouwde fractie van de cel, en dat is de maat die zegt of een subsector
+  zuinig met zijn grond omgaat.
+
+Voor de vraag waar iets landt is `kaarten_basisjaar/Landgebruikskaart_Basisjaar.tif` de goede referentie:
+klasse 0 is wonen en 1 is werken, en het bestand is bit voor bit gelijk in alle leveringen, dus het is
+over runs heen vergelijkbaar. Toets dat met een md5 voordat je erop bouwt.
+
+Gebruik de kaart `Verstedelijking.tif` niet om twee runs te vergelijken. Die leest `UrbanContour`, en
+#749 heeft die begrenzing tussen de leveringen van augustus en september veranderd van de
+CBS-bevolkingskernen van 2011 naar de eigen afleiding met peiljaar 2022. Het aandeel buiten de contour
+verschuift daardoor om definitieredenen.
+
+Beter is een afstandsprofiel: `scipy.ndimage.distance_transform_edt` op het complement van de bebouwde
+basisjaarcellen, en dan per subsector een histogram over afstandsbanden. Daaruit is elke drempel achteraf
+af te lezen, waaronder de 250 meter waarmee de voorrangstrede voor verzorgend werken werkt
+(`ModelParameters/Werken/VerzorgendWoongebiedStraal`). Reken de EDT op 50 meter en herhaal hem per
+strook naar 25 meter: een float64-EDT op het volle raster van 13.000 bij 11.200 kost ruim een gigabyte,
+en dat kun je niet nemen terwijl er een productierun draait.
+
+Twee laatste dingen. Kijk voor je begint met `Get-Process` of er een GeoDmsRun loopt en hoeveel geheugen
+die heeft; op 5 september stond er een op 69 GB en was er 4 GB vrij. En de bestanden staan op de
+Nextcloud-share, dus de eerste lezing is traag en de tweede niet; plan de metingen zo dat je elke tif
+eenmaal opent.

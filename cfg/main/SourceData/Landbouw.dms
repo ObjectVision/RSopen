@@ -99,7 +99,7 @@ container Landbouw : using = "Classifications/Landbouw"
 
 		container Decoupling_Gewascode := /Templates/DecoupledFile_T(FileName_Gewascode, Fingerprint_Gewascode);
 
-		attribute<Int32> Make_Gewascode (rdc_25m) := Calc_Gewascode, StorageName = "=FileName_Gewascode", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_Gewascode/Write_Fingerprint;Controle/Ratio"
+		attribute<Int32> Make_Gewascode (rdc_25m) := Calc_Gewascode, StorageName = "=FileName_Gewascode", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_Gewascode/Write_Fingerprint;Controle/Afwijking"
 		, Descr = "Schrijft de gerasterde gewascode eenmalig weg. Het rasteren kost ongeveer een minuut en leest 2,9 GB van de gesynchroniseerde schijf; ontkoppelen scheelt dat bij elke volgende aanroep.";
 
 		attribute<Int32> Read_Gewascode (rdc_25m) : StorageName = "=FileName_Gewascode", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
@@ -125,11 +125,24 @@ container Landbouw : using = "Classifications/Landbouw"
 			parameter<Ha> Areaal_Raster := sum(IsDefined(Calc_Gewascode) ? rdc_25m/NrHaPerCell : 0[Ha])
 			, Descr = "Hetzelfde areaal zoals het model het op 25 meter gerasterd heeft.";
 
+			parameter<Bool> IsHeelNederland := /ModelParameters/StudyArea == 'Nederland'
+			, Descr = "Draait het model over het hele land? Bepaalt hoe streng de toets hieronder kan zijn.";
+
 			parameter<float32> Ratio := Areaal_Raster / Areaal_Vector
-			, IntegrityCheck = "abs(this - 1f) < 0.01f"
 			, Descr = "De verhouding tussen die twee, gemeten op 2026-09-04 op 0,99994. Het rasteren kost dus 0,006 procent, want percelen zijn groot ten opzichte van een cel van 25 meter en wat aan de ene rand afvalt komt er aan de andere bij. De marge van een procent is daarmee ruim, en toch scherp genoeg voor het soort fout dat hij moet vangen: bij #613 verdween twaalf procent.
 
 						Deze toets hangt via ExplicitSuppliers aan Make_Gewascode en vuurt dus alleen wanneer de tif werkelijk wordt gemaakt. Dat is bewust, want aan de leeskant zou hij het gpkg bij elke run opnieuw openen en daarmee het ontkoppelen zinloos maken. Het betekent wel dat hij de fingerprint niet vervangt maar aanvult: wat de sleutel niet ziet leidt niet tot een remake, en dan zwijgt deze toets ook. Daarom staat de SqlString in de sleutel.";
+
+			parameter<float32> Afwijking := IsHeelNederland
+				? abs(Ratio - 1f)
+				: (Ratio > 0.01f && Ratio < 1.01f ? 0f : 1f)
+			, IntegrityCheck = "Afwijking < 0.01f"
+			, Descr = "Waar de toets werkelijk op valt. Op heel Nederland is dat de afstand van Ratio tot 1, en die moet onder de 0,01 blijven.
+
+						Op een kleiner studiegebied kan Ratio nooit 1 worden. Areaal_Vector telt alle percelen in het gpkg, dus het hele land, terwijl Areaal_Raster over rdc_25m loopt en dus alleen het studiegebied beslaat. Op Noord-Holland gaf de oude vorm 'abs(this - 1f) < 0.01f' daardoor een harde fout terwijl er niets mis was, en dat blokkeerde elke provincierun in de basisdatastap.
+
+						Een centroide-filter op de vectorkant lost dat niet op: percelen op de provinciegrens tellen dan heel mee terwijl ze half gerasterd worden, en die scheeftrekking is bij een provincie groter dan de marge van 0,01. Daarom wordt de toets buiten het landelijke geval bewust zwakker: hij eist alleen nog dat er iets gerasterd is en niet meer dan de vectorkant. Dat vangt de grove faalvormen, een query die alles wegfiltert of een raster dat leegblijft, en laat de scherpe toets staan waar de productieruns draaien.";
+
 		}
 	}
 
