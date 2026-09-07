@@ -7,55 +7,106 @@
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
-// Tweede landgebruikskaart naast Landgebruikskaart, met landbouw samengevoegd en natuur uitgesplitst. Zie #633.
+// Derde en vierde landgebruikskaart: de grondbalanskaart op LU_NL2120 en de kaartbeeldkaart op LU_Hoofdklasse. Zie #783.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classifications/Grondgebruik"
-, Descr = "Leidt een tweede landgebruikskaart af uit de gewone landgebruikskaart van hetzelfde jaar. Twee verschillen, allebei gevraagd vanuit Deltares in #633: de twaalf landbouwklassen worden een klasse, en natuur wordt uitgesplitst naar de beheertypen van INL_Beheertype.
+, Descr = "Leidt twee kaarten af uit de gewone landgebruikskaart, de stand-administratie en de verharding van hetzelfde jaar (#783).
 
-			Bewust afgeleid van Landgebruikskaart/Result_SA en niet ernaast opnieuw opgebouwd. Alle dominantielogica, de exogene oplegging en de groepsfilters staan daarmee op een plek en de twee kaarten kunnen niet uit elkaar lopen."
+			De eerste, Result, is bedoeld voor een sluitende grondbalans: de sectoren zoals de allocatie en de BAG-stand
+			ze neerzetten, elk in vijf verhardingsklassen, en daaronder het volledige LandgebruikType van #751, dus
+			natuurbeheertype, landbouwtype of LGN-klasse. De tweede, Result_Hoofdklasse, is dezelfde kaart gelezen door
+			de aggregatiekolom, met natuur op natuurtype, landbouw op hoofdgroep, en stedelijk groen, infrastructuur en
+			overig als eigen groepen.
+
+			Bewust afgeleid van Landgebruikskaart/Result_SA en niet ernaast opnieuw opgebouwd, om dezelfde reden als bij
+			Make_LandgebruikskaartNL2120_T: alle dominantielogica, de exogene oplegging en de groepsfilters staan zo op
+			een plek en de kaarten kunnen niet uit elkaar lopen. De landgebruikskaart beslist dus welke cel een sector
+			is; wat eronder ligt komt uit de stand.
+
+			De twee bronnen hoeven het niet eens te zijn over wat landbouw en wat natuur is; Toets_KaartTegenStand
+			onderaan telt hoe vaak ze verschillen. Dat is dezelfde soort meting als Toets_AllocatieZonderEigenCase in de
+			gewone landgebruikskaart, en om dezelfde reden: een verschil hoort een gemeten getal te zijn en geen aanname."
 {
 	//
 	parameter<String> Zichtjaar_name;
 	container         SrcLandgebruikskaart;
+	container         SrcStand;
+	container         SrcVerharding;
 	//
 
-	parameter<Bool> IsStartJaar := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	attribute<LU_ModelType>    LU         (AdminDomain) := SrcLandgebruikskaart/Result_SA
+	, Descr = "De gewone landgebruikskaart van dit jaar. Rechtstreeks naar Landgebruikskaart verwijzen kan niet: dit sjabloon staat zelf in een container met die naam, en die schermt de naam op de aanroepplek af.";
 
-	attribute<LU_ModelType> LU (AdminDomain) := SrcLandgebruikskaart/Result_SA, Descr = "De gewone landgebruikskaart van dit jaar, meegegeven als sjabloonparameter. Rechtstreeks naar Landgebruikskaart verwijzen kan niet: dit sjabloon staat zelf in een container met die naam, en die schermt de naam op de aanroepplek af.";
+	attribute<LandgebruikType> Type       (AdminDomain) := SrcStand/Landgebruik_Type
+	, Descr = "Het landgebruikstype uit de stand van dit jaar, de standvariabele van #751. Draagt de exogene oplegging al mee, dus een cel die deze variant natuur maakt heeft hier haar beheertype.";
 
-	attribute<INL_Beheertype> BT_Exogeen (AdminDomain) := =IsStartJaar
-		? 'const(null_b, AdminDomain, INL_Beheertype)'
-		: 'ThisVariantData/ExogeenOpleggen/Beheertype'
-	, Descr = "Het beheertype van exogeen opgelegde natuur en water, per variant. In het basisjaar leeg: daar wordt nog niets opgelegd, precies zoals in de gewone landgebruikskaart. Las tot 5 september 2026 alleen Natuur_BT; de watertypen (N02.01, N04.02) vielen daardoor terug op het basisjaartype of Natuur_Onbekend, terwijl de klassekeuze in Result het beheertype toch alleen gebruikt waar de kaart natuur toont.";
+	attribute<Float32>         Verharding (AdminDomain) := SrcVerharding/Result
+	, Descr = "De verharde fractie van de cel in dit jaar, de basis van de onderverdeling van wonen en werken.";
 
-	attribute<INL_Beheertype> BT_Basisjaar (AdminDomain) := /SourceData/Grondgebruik/Natuur/Basisjaar/INL_Beheertype_rel_AD
-	, Descr = "Het beheertype van natuur die er al is en niet exogeen wordt opgelegd. De bron is BaseData/StartState/Landgebruik/Beheertype, de beheertypenkaart van het basisjaar (het Natuurbeheerplan, met de MNP-kaart en een heuristiek als aanvulling, #751 en #776), alleen waar de stand natuur of water ziet. Cellen die volgens het plan natuur worden maar het nog niet zijn, krijgen hier geen beheertype, en dat is juist: die horen bij de oplegging van de variant en niet bij de bestaande natuur. Tot 26 augustus 2026 stond hier de volle MNP-planpotentieelkaart met een schakelaar ernaast, daarna dezelfde kaart met een masker op de natuur van het basisjaar.";
+	// -- de sectorkant --
 
-	attribute<INL_Beheertype> BT (AdminDomain) := MakeDefined(BT_Exogeen, BT_Basisjaar)
-	, Descr = "Het beheertype per cel. Eerst de exogene oplegging van de variant, dan de terugval voor bestaande natuur. Waar allebei leeg zijn valt de cel in de restklasse Natuur_Onbekend.
+	attribute<Actor/Sector/wo_Landbouw> Sector_rel (AdminDomain) := Sector_van_LU_ModelType[LU]
+	, Descr = "De sector die de landgebruikskaart hier toont, leeg op landbouw, natuur, infra, water en overig.";
 
-				Geen doorgifte per zichtjaar nodig: de exogene oplegging is voor alle zichtjaren dezelfde kaart, dus wat in een zichtjaar natuur wordt houdt in latere zichtjaren hetzelfde beheertype.";
+	attribute<Bool> VolgtWerkenGrenzen (AdminDomain) := MakeDefined(Sector_VolgtWerkenGrenzen[Sector_rel], FALSE);
+
+	attribute<VerhardingK> Verhardingsklasse (AdminDomain) :=
+		VolgtWerkenGrenzen
+			? Classify(Verharding, VerhardingK/ClassBreaks_Werken)
+			: Classify(Verharding, VerhardingK/ClassBreaks_Wonen)
+	, Descr = "In welke van de vijf verhardingsklassen de cel valt, met de reeks grenzen die bij haar sector hoort. Buiten de sectoren heeft dit geen betekenis en wordt het niet gebruikt.";
+
+	attribute<SectorVerhardingK> SectorVerharding_rel (AdminDomain) :=
+		rlookup(uint32(Verhardingsklasse) * 256 + uint32(Sector_rel), SectorVerhardingK/Sleutel)
+	, Descr = "De rij in SectorVerhardingK die bij deze sector en deze verhardingsklasse hoort. Via de samengestelde sleutel en niet via de blokvolgorde, zodat een wijziging in de opbouw van die unit hier geen stille verschuiving geeft.";
+
+	// -- de twee kaarten --
 
 	attribute<LU_NL2120> Result (AdminDomain) := switch(
-		 case(IsNull(LU)                 , null_b[LU_NL2120])
-		,case(LU_ModelType/IsLandbouw[LU], LU_NL2120/V/Landbouw)
-		,case(LU_ModelType/IsNatuur[LU]  , MakeDefined(rlookup(BT, LU_NL2120/INL_Beheertype_rel), LU_NL2120/V/Natuur_Onbekend))
-		, rlookup(LU, LU_NL2120/LU_ModelType_rel)
-	), Descr = "Landbouw naar de ene landbouwklasse, natuur naar het beheertype, de rest een op een over uit LU_ModelType.";
+		 case(IsNull(LU), null_b[LU_NL2120])
+		,case(IsDefined(Sector_rel), invert(LU_NL2120/SectorVerhardingK_rel)[SectorVerharding_rel])
+		, invert(LU_NL2120/LandgebruikType_rel)[Type]
+	), Descr = "Waar de landgebruikskaart een sector toont de sector met haar verhardingsklasse, en anders het type uit de stand. Waar de kaart niets weet blijft de cel leeg; waar zij wel iets weet en de stand niet, is de cel ook leeg en telt Toets_KaartTegenStand hem.";
 
-	parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/LandgebruikNL2120/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+	attribute<LU_Hoofdklasse> Result_Hoofdklasse (AdminDomain) :=
+		IsNull(LU)
+			? null_b[LU_Hoofdklasse]
+			: MakeDefined(LU_NL2120/Hoofdklasse_rel[Result], LU_Hoofdklasse/V/Overig)
+	, Descr = "Dezelfde kaart, gelezen door de aggregatiekolom van LU_NL2120. Een cel waarvoor de stand geen type heeft valt hier op Overig terug en niet op leeg: op de kaart hoort geen gat te vallen waar wel iets ligt, en Deltares heeft die restbak expliciet gevraagd. Hoeveel dat er zijn staat in Areaal_ZonderType.";
+
+	// -- wegschrijven --
+
+	parameter<string> StorageStr_Detail      := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/LandgebruikNL2120/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+	parameter<string> StorageStr_Hoofdklasse := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/LandgebruikHoofdklasse/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
 
 	attribute<LU_NL2120> Write_Result_SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Result : null_b
-	, StorageName = "=StorageStr"
+	, StorageName = "=StorageStr_Detail"
 	, StorageType = "gdalwrite.grid"
-	, Descr = "Wegschrijven alleen, zonder lees-terug-schakelaar. Deze kaart is een afgeleide van de gewone landgebruikskaart en wordt dus altijd opnieuw uitgerekend; er komt geen ontkoppeld bestand bij dat een fingerprint zou moeten bijhouden.";
+	, Descr = "Wegschrijven alleen, zonder lees-terug-schakelaar, net als bij de NL2120-kaart: dit is een afgeleide en wordt altijd opnieuw uitgerekend.";
 
-	parameter<Ha> Areaal_Natuur           := sum(LU_ModelType/IsNatuur[LU]             ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: alle natuur in dit jaar volgens de gewone landgebruikskaart.";
-	parameter<Ha> Areaal_Natuur_MetType   := sum(LU_ModelType/IsNatuur[LU] && IsDefined(BT) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: de natuur waarvoor een beheertype bekend is.";
-	parameter<Ha> Areaal_Natuur_Onbekend  := Areaal_Natuur - Areaal_Natuur_MetType, Descr = "Controlegetal: de natuur die in de restklasse valt. Loopt dit op, dan zegt de kaart wel waar natuur ligt maar niet welke.";
-	parameter<Ha> Areaal_Landbouw         := sum(LU_ModelType/IsLandbouw[LU]           ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: de twaalf landbouwklassen samen.";
-	
-	parameter<UInt32> AantalBeheertypenInBeeld := sum_uint32(pcount(BT)[uint32] > 0[uint32]), Descr = "Controlegetal: hoeveel van de 84 beheertypen daadwerkelijk voorkomen. Handig om te zien of de legenda in te korten valt.";
+	attribute<LU_Hoofdklasse> Write_Result_Hoofdklasse_SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Result_Hoofdklasse : null_b
+	, StorageName = "=StorageStr_Hoofdklasse"
+	, StorageType = "gdalwrite.grid";
+
+	// -- controlegetallen --
+
+	parameter<Ha> Areaal_Totaal      := sum(Geography/rdc_meter/IsStudyArea_AdminDomain            ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het studiegebied, waar alle arealen hieronder bij op moeten tellen.";
+	parameter<Ha> Areaal_Sector      := sum(IsDefined(Sector_rel) && IsDefined(LU)                 ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat de sectoren van de kaart beslaan; die krijgen hun verhardingsonderverdeling.";
+	parameter<Ha> Areaal_ZonderType  := sum(IsDefined(LU) && IsNull(Sector_rel) && IsNull(Type)    ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen waar de kaart wel een klasse heeft en de stand geen type. Die vallen in de detailkaart leeg en in de kaartbeeldkaart op Overig. In het basisjaar ging het om 89,25 ha van de 3.509.101; loopt dit op, dan is de stand-administratie ergens niet dekkend.";
+	parameter<Ha> Areaal_ZonderKaart := sum(IsNull(LU)                                             ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen buiten de landgebruikskaart. Die blijven in beide kaarten leeg.";
+
+	parameter<Ha> Areaal_Natuur := sum(IsDefined(LU) && LU_ModelType/IsNatuur[LU] ? AdminDomain/NrHaPerCell : 0[Ha])
+	, Descr = "Controlegetal: alle natuur in dit jaar volgens de gewone landgebruikskaart. Stond eerder in de NL2120-kaart van #633 en is met #783 meeverhuisd, want Diagnose leest hem als controlewaarde.";
+
+	parameter<Ha> Toets_KaartTegenStand_Landbouw := sum(
+		IsDefined(LU) && IsNull(Sector_rel) && IsDefined(Type) && LU_ModelType/IsLandbouw[LU] != LandgebruikType/IsLandbouw[Type]
+			? AdminDomain/NrHaPerCell : 0[Ha])
+	, Descr = "Hoeveel hectare de kaart en de stand het oneens zijn over landbouw, buiten de sectoren om. Niet per se een fout: de kaart heeft een voorrangsregel die de stand niet kent, en de allocatie kan een cel van klasse laten wisselen zonder dat het type meebeweegt. Wel een getal om te kennen voordat iemand de grondbalans als sluitend presenteert.";
+
+	parameter<Ha> Toets_KaartTegenStand_Natuur := sum(
+		IsDefined(LU) && IsNull(Sector_rel) && IsDefined(Type) && LU_ModelType/IsNatuur[LU] != LandgebruikType/IsNatuur[Type]
+			? AdminDomain/NrHaPerCell : 0[Ha])
+	, Descr = "Idem voor natuur. Let op dat LandgebruikType/IsNatuur het water uitsluit en LU_ModelType/IsNatuur ook, dus de twee vlaggen zijn vergelijkbaar.";
 }
