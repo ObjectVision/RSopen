@@ -362,9 +362,25 @@ Template CarbonStorageSequestration_T
 			// maximum van 15 ton C per ha en dus een afboeking van de hele voorraad. Zodra Landbouw weer in
 			// ModelParameters/SectorAllocRegio staat draagt het hele landelijk gebied een subsector en gaat heel Nederland zo de
 			// boeken in. De toets is nu dezelfde als elders in het model, zie Templates/Indicatoren/Grondgebruik.dms.
-			attribute<bool>        IsStedelijk (AdminDomain) := MakeDefined(/Classifications/Actor/Sector/IsStedelijk[Stand/Sector_rel], FALSE), Descr = "Draagt deze cel een gealloceerde stedelijke sector? Niet-stedelijke sectoren, zoals waterberging, veranderen hier niet van koolstofklasse; wat daar met de voorraad hoort te gebeuren is onderdeel van #657.";
+			attribute<bool>        IsStedelijk (AdminDomain) := MakeDefined(/Classifications/Actor/Sector/IsStedelijk[Stand/Sector_rel], FALSE), Descr = "Draagt deze cel een gealloceerde stedelijke sector? Waterberging is de enige gealloceerde sector die niet stedelijk is en staat hieronder apart.";
 
-			attribute<CarbonClass> CC         (AdminDomain) := IsStedelijk ? CarbonClass/v/Dichtbebouwde_stedelijke_gebieden : LandgebruikType/CarbonClass_rel[Type], Descr = "De koolstofklasse van dit zichtjaar: Dichtbebouwd waar een stedelijke sector is gealloceerd, anders de klasse van het type in de stand.";
+			// #778, bevinding 6. Een gealloceerde sector verzet Stand/Landgebruik_Type niet: dat item neemt de oplegging in
+			// het eerste zichtjaar over en reist daarna mee. Voor de stedelijke sectoren vangt de regel hierboven dat op, maar
+			// waterberging is niet stedelijk en viel daardoor door beide zeven heen: op de landgebruikskaart wordt zo'n cel
+			// water via de allocatiecase in Make_Landgebruikskaart_Basisjaar_T, en hier hield hij de klasse van zijn oude
+			// gebruik. Gevolg: geen methaankental waar de kaart open water toont, en op veenbodem liep de emissiefactor voor
+			// gedraineerd veen gewoon door. SOMERS deed het al wel goed, zie IsStedelijk_Nu in SOMERS_CO2_T.
+			//
+			// De klasse is 16, grote zoetwaterlichamen. Dat is de klasse die VeenBroeikasgas/Regel zelf aanwijst met de
+			// herkomst 'bouwsteen 9a en 9b, open water', dus de tabel rekende al op deze route; alleen de bedrading ontbrak.
+			// Hij draagt Cseq nul en MagAfboeken nul, dus de bodemkoolstof blijft staan en er wordt niets afgeboekt: een
+			// bergingsgebied dekt de bodem niet af en graaft hem niet weg.
+			attribute<bool>        IsWaterberging (AdminDomain) := MakeDefined(/Classifications/Actor/Sector/IsWaterberging[Stand/Sector_rel], FALSE), Descr = "Draagt deze cel de gealloceerde sector Waterberging? Op de sectorvlag en niet op V/Waterberging, zodat de expressie blijft staan wanneer de sector uit ModelParameters/SectorAllocRegio wordt gehaald.";
+
+			attribute<CarbonClass> CC         (AdminDomain) := IsStedelijk    ? CarbonClass/v/Dichtbebouwde_stedelijke_gebieden
+															: IsWaterberging ? CarbonClass/v/Grote_zoetwaterlichamen_meren_
+															:                  LandgebruikType/CarbonClass_rel[Type]
+			, Descr = "De koolstofklasse van dit zichtjaar: Dichtbebouwd waar een stedelijke sector is gealloceerd, open water waar waterberging is gealloceerd (#778), anders de klasse van het type in de stand.";
 			
 			attribute<OP> OP_rel (AdminDomain) := Stand/OP_rel;
 			
@@ -638,6 +654,77 @@ Template CarbonStorageSequestration_T
 				attribute<ton_ha> Result_ha (AdminDomain) := Bovenlaag_ha + Veenreserve_ha;
 				attribute<ton>    Result    (AdminDomain) := Result_ha * AdminDomain/NrHaPerCell;
 			}
+
+			// #758: het saldo van deze periode uit elkaar gelegd naar de post die het veroorzaakt. De vraag vanuit Deltares
+			// was om de verschillende bronnen en typen oxidatie los weg te schrijven, met als eis dat ze niet dubbeltellen
+			// en dus bij elkaar opgeteld kunnen worden. Dat kan hier exact, want de voorraadbalans van deze periode bestaat
+			// uit precies vijf termen:
+			//
+			//     Flow/Result_ha = Vastlegging - Afboeking - UitVoorraad - UitReserve
+			//
+			// De eerste is de aanwas, de tweede de afboeking naar het klassemaximum bij een bodemingreep, en de laatste twee
+			// samen zijn de oxidatie die de boekhouding werkelijk heeft verwerkt. Die oxidatie is per cel aan precies een van
+			// de drie bronnen toe te schrijven, want Oxidatie/Vraag_Totaal_ha telt drie posten op die elkaar per cel
+			// uitsluiten: SOMERS op de veenweidepercelen, de emissiefactor op het veen daarbuiten, en het kental van team
+			// Veen in de NbS-varianten. Die uitsluiting is een aanname over de bedrading, en die wordt hieronder getoetst.
+			//
+			// Waarom per periode en niet cumulatief sinds het basisjaar. Cumuleren vraagt om een keten langs PrevZichtjaar,
+			// zoals Ongedekt_Cumulatief_ha die heeft, en dat is per post een raster dat over de zichtjaren heen blijft
+			// staan. Acht van die ketens erbij is een veelvoud van wat deze indicator vandaag vasthoudt. Per periode is even
+			// sluitend en kost niets extra: de vijf posten tellen op tot Flow/Result_ha, en dat is dezelfde grootheid als de
+			// kolom CO2Flow_Zichtjaar in de exporttabel. Wie het cumulatieve beeld wil telt de zichtjaren bij elkaar op; de
+			// som daarvan is per constructie CO2Flow_TovBasisjaar.
+			//
+			// Het teken is dat van de bijdrage aan het saldo, dus vastlegging positief en de vier andere posten negatief,
+			// gelijk aan CO2FlowTovBasisjaar zelf. De ongedekte oxidatie staat er apart onder: die raakt de voorraad per
+			// definitie niet en hoort dus niet in de som, maar hij is wel de enige post die zegt welke bron uitstoot
+			// rapporteert waar geen koolstof meer tegenover staat (#733).
+			container Herkomst
+			: Descr = "Het koolstofsaldo van deze periode uitgesplitst naar de post die het veroorzaakt, zo dat de posten optellen tot Flow/Result_ha (#758)."
+			{
+				attribute<bool> DoorSOMERS     (AdminDomain) := Oxidatie/Vraag_ha     > 0[ton_ha], Descr = "Komt de oxidatievraag op deze cel uit SOMERS? Nul buiten de veenweidepercelen, en nul waar het kental van team Veen de SOMERS-stroom vervangt.";
+				attribute<bool> DoorEF         (AdminDomain) := BuitenSOMERS/Vraag_ha > 0[ton_ha], Descr = "Komt de oxidatievraag uit de emissiefactor voor veen buiten de SOMERS-percelen? Zie de schakelaar Koolstof_OxidatieBuitenSOMERS.";
+				attribute<bool> DoorVeenkental (AdminDomain) := VeenKental/Vraag_ha   > 0[ton_ha], Descr = "Komt de oxidatievraag uit het kental van team Veen? Alleen in de NbS-varianten, en daar in de plaats van SOMERS.";
+
+				attribute<ton_ha> Vastlegging_ha (AdminDomain) := Stock/NaGroei_ha - Stock/Prev_ha
+				, IntegrityCheck = "all(this >= 0[ton_ha])"
+				, Descr = "Wat er in deze periode is vastgelegd, in ton C per hectare. Nul waar oxidatie loopt, want NaGroei_ha houdt de voorraad daar op de stand van de vorige periode.";
+
+				attribute<ton_ha> Afboeking_ha (AdminDomain) := Stock/Result_ha - Stock/NaOxidatie_ha
+				, IntegrityCheck = "all(this <= 0[ton_ha])"
+				, Descr = "Wat er is afgeboekt naar het klassemaximum omdat het landgebruik naar een klasse ging die de bodem afdekt of afgraaft. Nul waar RuimteNeemtAf FALSE is; zie de schakelaars Koolstof_AfboekenAlleenBijBodemingreep en Koolstof_AfboekenAlleenBijLagerMaximum.";
+
+				attribute<ton_ha> Oxidatie_ha (AdminDomain) := 0[ton_ha] - (Stock/UitReserve_ha + Stock/UitVoorraad_ha)
+				, IntegrityCheck = "all(this <= 0[ton_ha])"
+				, Descr = "De veenoxidatie die de boekhouding in deze periode werkelijk heeft verwerkt, over beide pools samen. Dit is niet de gevraagde oxidatie: wat de reserve en de voorraad niet konden dragen staat in Stock/Ongedekt_ha, en hieronder per bron.";
+
+				attribute<ton_ha> Oxidatie_SOMERS_ha     (AdminDomain) := DoorSOMERS     ? Oxidatie_ha : 0[ton_ha], Descr = "Het deel van die oxidatie dat uit SOMERS komt.";
+				attribute<ton_ha> Oxidatie_EF_ha         (AdminDomain) := DoorEF         ? Oxidatie_ha : 0[ton_ha], Descr = "Het deel dat uit de emissiefactor buiten de SOMERS-percelen komt.";
+				attribute<ton_ha> Oxidatie_Veenkental_ha (AdminDomain) := DoorVeenkental ? Oxidatie_ha : 0[ton_ha], Descr = "Het deel dat uit het kental van team Veen komt.";
+
+				attribute<ton_ha> Ongedekt_SOMERS_ha     (AdminDomain) := DoorSOMERS     ? Stock/Ongedekt_ha : 0[ton_ha], Descr = "Oxidatie uit SOMERS waar geen koolstof meer tegenover stond. Telt niet mee in Totaal_ha, want deze post raakt de voorraad niet; zie #733.";
+				attribute<ton_ha> Ongedekt_EF_ha         (AdminDomain) := DoorEF         ? Stock/Ongedekt_ha : 0[ton_ha], Descr = "Idem voor de emissiefactor buiten de percelen.";
+				attribute<ton_ha> Ongedekt_Veenkental_ha (AdminDomain) := DoorVeenkental ? Stock/Ongedekt_ha : 0[ton_ha], Descr = "Idem voor het kental van team Veen.";
+
+				// De sluitcontrole die in de vraag van #758 zit, in twee delen. Het eerste toetst de aanname waarop de
+				// toerekening rust, namelijk dat de drie oxidatiebronnen elkaar per cel uitsluiten; zonder die aanname zou
+				// Oxidatie_ha meer dan een keer worden geteld. Het tweede toetst dat de vijf posten samen het saldo van deze
+				// periode zijn. Valt er een om, dan is er een term in de voorraadbalans bijgekomen die niet in de
+				// uitsplitsing zit, en dan telt de som niet meer op tot de indicator.
+				attribute<ton_ha> Totaal_ha (AdminDomain) := Vastlegging_ha + Afboeking_ha + Oxidatie_SOMERS_ha + Oxidatie_EF_ha + Oxidatie_Veenkental_ha
+				, IntegrityCheck = "all(!(DoorSOMERS && DoorEF) && !(DoorSOMERS && DoorVeenkental) && !(DoorEF && DoorVeenkental)) && all(abs((Totaal_ha - Flow/Result_ha) / 1[ton_ha]) < 0.01f)"
+				, Descr = "De vijf posten bij elkaar. Hoort per cel gelijk te zijn aan Flow/Result_ha, en landelijk aan de kolom CO2Flow_Zichtjaar in de exporttabel.";
+
+				parameter<mton> Vastlegging_StGebied         := sum(Vastlegging_ha         * AdminDomain/NrHaPerCell)[mton], Descr = "Landelijk totaal van deze post over deze periode, in Mton C. Maal 44/12 geeft Mton CO2.";
+				parameter<mton> Afboeking_StGebied           := sum(Afboeking_ha           * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Oxidatie_SOMERS_StGebied     := sum(Oxidatie_SOMERS_ha     * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Oxidatie_EF_StGebied         := sum(Oxidatie_EF_ha         * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Oxidatie_Veenkental_StGebied := sum(Oxidatie_Veenkental_ha * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Ongedekt_SOMERS_StGebied     := sum(Ongedekt_SOMERS_ha     * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Ongedekt_EF_StGebied         := sum(Ongedekt_EF_ha         * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Ongedekt_Veenkental_StGebied := sum(Ongedekt_Veenkental_ha * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Totaal_StGebied              := sum(Totaal_ha              * AdminDomain/NrHaPerCell)[mton], Descr = "Hoort gelijk te zijn aan de som van Carbon/Flow/Result over het studiegebied.";
+			}
 		}
 		
 		container CO2
@@ -651,6 +738,30 @@ Template CarbonStorageSequestration_T
 			// het is de SOMERS-uitstoot waar geen koolstof tegenover stond, dus geen voorraad en geen stroom maar het verschil
 			// tussen wat SOMERS rapporteert en wat de balans heeft kunnen verwerken.
 			attribute<ton> Ongedekt_Cumulatief (AdminDomain) := Carbon/Stock/Ongedekt_Cumulatief * C_to_CO2, Descr = "De ongedekte veenoxidatie sinds het basisjaar in ton CO2, per cel.";
+
+			// #758: dezelfde uitsplitsing als Carbon/Herkomst, maar in ton CO2 per cel, zodat de exporttabel er niet zelf
+			// mee hoeft te rekenen. De eerste vijf tellen op tot Flow, de kolom CO2Flow_Zichtjaar; de laatste drie horen
+			// daar niet bij opgeteld te worden en staan naast CO2Ongedekt_Cumulatief.
+			//
+			// Alle negen dragen hetzelfde studiegebiedmasker als de Write-items onderaan deze template. Dat is geen
+			// cosmetiek: de exportkolom CO2Flow_Zichtjaar leest Write_CO2Flow_Zichtjaar en telt dus alleen cellen binnen
+			// het studiegebied, terwijl Carbon/Herkomst over het hele raster staat. Zonder dit masker zou de uitsplitsing
+			// in de tabel op een provincierun niet optellen tot de kolom waar hij bij hoort, en dan is de sluitcontrole
+			// die de hele vraag van #758 is precies op de plek waar hij gelezen wordt niet waar.
+			container PerBron
+			: Descr = "Het saldo van dit zichtjaar per veroorzakende post, in ton CO2, binnen het studiegebied (#758). De eerste vijf optellen mag en hoort uit te komen op Write_CO2Flow_Zichtjaar."
+			{
+				attribute<ton> Vastlegging         (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Vastlegging_ha         * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "Vastlegging in dit zichtjaar, positief.";
+				attribute<ton> Afboeking           (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Afboeking_ha           * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "Afboeking naar het klassemaximum bij een bodemingreep, negatief.";
+				attribute<ton> Oxidatie_SOMERS     (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Oxidatie_SOMERS_ha     * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "Verwerkte veenoxidatie uit SOMERS, negatief.";
+				attribute<ton> Oxidatie_EF         (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Oxidatie_EF_ha         * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "Verwerkte veenoxidatie uit de emissiefactor buiten de SOMERS-percelen, negatief.";
+				attribute<ton> Oxidatie_Veenkental (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Oxidatie_Veenkental_ha * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "Verwerkte veenoxidatie uit het kental van team Veen, negatief. Nul in BAU en BAU2.";
+				attribute<ton> Totaal              (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Totaal_ha              * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "De vijf posten hierboven bij elkaar. Hoort gelijk te zijn aan Write_CO2Flow_Zichtjaar, dus aan Flow binnen het studiegebied.";
+
+				attribute<ton> Ongedekt_SOMERS     (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Ongedekt_SOMERS_ha     * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "Gevraagde oxidatie uit SOMERS waar geen koolstof meer tegenover stond. Niet bij de vijf optellen; zie #733.";
+				attribute<ton> Ongedekt_EF         (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Ongedekt_EF_ha         * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "Idem voor de emissiefactor buiten de percelen.";
+				attribute<ton> Ongedekt_Veenkental (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Ongedekt_Veenkental_ha * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, Descr = "Idem voor het kental van team Veen.";
+			}
 		}
 	}
 	
