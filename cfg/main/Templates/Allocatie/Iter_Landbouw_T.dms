@@ -122,28 +122,118 @@ Template Iter_Landbouw_T
 		container Claims
 		{
 			parameter<Ha> AreaalStudyGebied := area(rdc_meter/geometry[0], meter2_f64)[meter2][ha];
-			
-			container MaxClaims := 
+
+			container Gevraagd_Min :=
 				for_each_nedv(
 					  Subsector/name
-					, replace('uint32(max_elem(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MaxClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' - ExogeenOpleggen/Ha_PerAllocRegio/'+Subsector/name+', 0[Ha]) / AdminDomain/NrHaPerCell)'
+					, replace('max_elem(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MinClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' - ExogeenOpleggen/Ha_PerAllocRegio/'+Subsector/name+', 0[Ha])'
 							,'@Z@' , Context/ThisZichtjaar/name
 							,'@SC@', Scenario_name
 							,'@AS@', Context/ThisSectorAllocRegio/name)
 					, AllocRegio
-					, uint32
-				), Descr = "MaxClaims per subsector per allocatieregio. Dit is het maximum areaal dat geclaimd kan worden in de allocatieregio, verdeeld over de cells in de allocatieregio. Dit is dus een absolute bovengrens, die niet overschreden kan worden. Het kan dus zijn dat er minder wordt geclaimd, maar nooit meer. Dit is een harde grens.";
-			
-			container MinClaims := 
+					, Ha
+				), Descr = "De ondergrens per klasse per allocatieregio in hectare, zoals hij uit de claimcontainer komt, met de exogeen opgelegde hectares eraf. Die zijn immers al gerealiseerd en de allocator kan ze niet meer plaatsen. Dit is de vraag; Restpost hieronder toetst hem aan het aanbod.";
+
+			container Gevraagd_Max :=
 				for_each_nedv(
 					  Subsector/name
-					, replace('uint32(max_elem(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MinClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' - ExogeenOpleggen/Ha_PerAllocRegio/'+Subsector/name+', 0[Ha]) / AdminDomain/NrHaPerCell)'
+					, replace('max_elem(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MaxClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' - ExogeenOpleggen/Ha_PerAllocRegio/'+Subsector/name+', 0[Ha])'
 							,'@Z@' , Context/ThisZichtjaar/name
 							,'@SC@', Scenario_name
 							,'@AS@', Context/ThisSectorAllocRegio/name)
 					, AllocRegio
+					, Ha
+				), Descr = "Idem voor de bovengrens.";
+
+			container Restpost
+			: Descr = "De landbouwclaim beweegt mee met de ruimte die er in deze variant en dit zichtjaar nog voor landbouw is.
+
+						Dit is het antwoord van Deltares op de derde openstaande vraag in #780: landbouw als geheel is een restpost, elke gridcel moet in 2120 gevuld zijn, en de LGN-stand van het basisjaar is de gewasverdeling waarop wordt teruggevallen zolang een regio geen gebiedspecifieke opgave voor 2120 levert. De claim uit ModelParameters/Landbouw/claims_conservatief geeft die verdeling; deze container schaalt het TOTAAL naar wat er over is en laat de onderlinge verhouding staan.
+
+						Zonder deze schaling loopt een variant die veel landbouwgrond een andere bestemming geeft vast op de IntegrityCheck van discrete_alloc_sp. Gemeten op 7 september 2026, zichtjaar 2040 van WLO_hoog_NbSGenuanceerd: landelijk was er 268.662 cellen speling, maar regionaal ontbrak 49.134 cellen, waarvan 41.348 in een enkele provincie. Landelijk optellen verbergt dat dus; de allocator rekent per allocatieregio en valt daar om.
+
+						De toets is per constructie noodzakelijk en niet voldoende. Dat een klasse haar ondergrens kwijt kan, en dat alle klassen samen hun ondergrenzen kwijt kunnen, betekent nog niet dat er een toewijzing bestaat die aan beide voldoet; dat is de voorwaarde van Hall en die toetsen we niet. Daarvoor staat ModelParameters/Landbouw/Krimpmarge, en daarom staat die niet op 1."
+			{
+				attribute<Bool> HeeftRuimteVoorLandbouw (CompactedAdminDomain) :=
+					='('+AsList('IsDefined(Suitabilities/'+/Classifications/Actor/LandbouwKlasses/name+')', ' || ')+')'
+				, Descr = "Mag hier minstens een van de vijftien landbouwklassen landen? De restcategorie NonLandbouw telt met opzet niet mee: die is ruimer beschikbaar en heeft geen ondergrens, dus meetellen zou de ruimte kunstmatig groot maken.";
+
+				attribute<Ha> Ruimte_Totaal (AllocRegio) :=
+					sum(HeeftRuimteVoorLandbouw ? CompactedAdminDomain/NrHaPerCell : 0[Ha], AllocRegio/Per_CompactedAdminDomain)
+				, Descr = "Wat de allocator in deze regio aan landbouw kwijt kan. Dit is de beschikbaarheid zoals de allocator hem zelf ziet, dus inclusief de zeef van dit zichtjaar, de exogene oplegging, de schijftoets MinimalLandAvailability_Landbouw en wat eerdere sectoren in dit zichtjaar al hebben genomen.";
+
+				container Ruimte :=
+					for_each_nedv(
+						  Subsector/name
+						, 'sum(IsDefined(Suitabilities/'+Subsector/name+') ? CompactedAdminDomain/NrHaPerCell : 0[Ha], AllocRegio/Per_CompactedAdminDomain)'
+						, AllocRegio
+						, Ha
+					), Descr = "Hetzelfde per klasse, want elke klasse heeft haar eigen beschikbaarheid.";
+
+				attribute<Ha> Gevraagd_Totaal (AllocRegio) :=
+					='add('+AsItemList('Gevraagd_Min/'+/Classifications/Actor/LandbouwKlasses/name)+')'
+				, Descr = "De ondergrenzen van de vijftien landbouwklassen samen. NonLandbouw telt niet mee, want die heeft geen ondergrens en vult juist de rest.";
+
+				attribute<Float32> Krimp_Totaal (AllocRegio) :=
+					Gevraagd_Totaal > Ruimte_Totaal
+						? (Ruimte_Totaal * Krimpmarge) / Gevraagd_Totaal
+						: 1f
+				, Descr = "Past de som van de ondergrenzen nog in de regio? Zo ja, dan verandert er niets en is deze factor 1. Zo nee, dan schaalt hij alle ondergrenzen samen terug tot ze passen. De factor is nooit groter dan 1: landbouw komt er niet bij, zie ModelParameters/Landbouw/LandbouwAlleenOpBestaandAreaal.";
+
+				container Krimp_Klasse :=
+					for_each_nedv(
+						  Subsector/name
+						, IsDefined(Subsector/LandbouwK_rel)
+							? 'Gevraagd_Min/'+Subsector/name+' > Ruimte/'+Subsector/name+' ? (Ruimte/'+Subsector/name+' * Krimpmarge) / Gevraagd_Min/'+Subsector/name+' : 1f'
+							: 'const(1f, AllocRegio, Float32)'
+						, AllocRegio
+						, Float32
+					), Descr = "Idem per klasse. In de praktijk staat dit vrijwel altijd op 1, want de landbouwzeef verschilt nauwelijks per klasse en de ondergrens van een enkele klasse is klein tegenover de ruimte in de hele regio. De regel staat er voor het geval een klasse wel een eigen beperking krijgt.";
+
+				container Krimpfactor :=
+					for_each_nedv(
+						  Subsector/name
+						, IsDefined(Subsector/LandbouwK_rel)   // NIET '!= null' schrijven: een vergelijking met null geeft altijd FALSE, ook !=
+							? 'min_elem(Krimp_Totaal, Krimp_Klasse/'+Subsector/name+')'
+							: 'const(1f, AllocRegio, Float32)'
+						, AllocRegio
+						, Float32
+					), Descr = "De factor die op onder- en bovengrens van deze klasse wordt losgelaten: de strengste van de twee toetsen hierboven. NonLandbouw houdt 1, want die restcategorie moet juist kunnen opvangen wat de landbouwklassen laten liggen.";
+
+				container Geen_Krimp :=
+					for_each_nedv(
+						  Subsector/name
+						, 'const(1f, AllocRegio, Float32)'
+						, AllocRegio
+						, Float32
+					), Descr = "De terugvalstand voor ModelParameters/Landbouw/ClaimVolgtBeschikbareRuimte op FALSE: overal 1, dus geen schaling.";
+
+				parameter<Float32> Krimpmarge := /ModelParameters/Landbouw/Krimpmarge;
+
+				parameter<Float32> Krimp_Minimum := min(Krimp_Totaal)
+				, Descr = "De sterkst geknepen regio, als kengetal. Staat dit op 1, dan paste de claim overal en heeft deze container niets gedaan.";
+			}
+
+			container MaxClaims :=
+				for_each_nedv(
+					  Subsector/name
+					, 'uint32(Gevraagd_Max/'+Subsector/name+' / AdminDomain/NrHaPerCell * '+ToegepasteFactor+'/'+Subsector/name+')'
+					, AllocRegio
 					, uint32
-				), Descr = "MinClaims per subsector per allocatieregio. Dit is het minimum areaal dat geclaimd moet worden in de allocatieregio, verdeeld over de cells in de allocatieregio. Dit is dus een absolute ondergrens, die niet onderschreden kan worden. Het kan dus zijn dat er meer wordt geclaimd, maar nooit minder. Dit is een harde grens.";
+				), Descr = "MaxClaims per subsector per allocatieregio, in cellen. Dit is het maximum areaal dat in de allocatieregio geclaimd kan worden. Er kan dus minder worden geclaimd, maar nooit meer. Dit is een harde grens.
+
+							De krimpfactor van Restpost geldt ook hier, en dat is geen bijvangst. Onder- en bovengrens zijn samen een bandbreedte rond de basisjaarverdeling; schaal je alleen de ondergrens, dan mag een enkele klasse in een regio waar nog maar de helft van de landbouwgrond over is nog steeds naar 105 procent van haar basisjaarareaal groeien en verdringt zij de rest. Door beide te schalen blijft de verhouding tussen de gewassen staan en krimpt alleen het totaal.";
+
+			container MinClaims :=
+				for_each_nedv(
+					  Subsector/name
+					, 'uint32(Gevraagd_Min/'+Subsector/name+' / AdminDomain/NrHaPerCell * '+ToegepasteFactor+'/'+Subsector/name+')'
+					, AllocRegio
+					, uint32
+				), Descr = "MinClaims per subsector per allocatieregio, in cellen. Dit is het minimum areaal dat in de allocatieregio geclaimd moet worden. Er kan dus meer worden geclaimd, maar nooit minder. Dit is een harde grens.";
+
+			parameter<String> ToegepasteFactor := /ModelParameters/Landbouw/ClaimVolgtBeschikbareRuimte ? 'Restpost/Krimpfactor' : 'Restpost/Geen_Krimp'
+			, Descr = "Welke factor de claims dragen. Op FALSE staat het model weer op de stand van voor 7 september 2026: de claim is dan een bandbreedte rond het basisjaar en trekt zich niets aan van de ruimte, en een variant die veel landbouwgrond herbestemt haalt de allocatie niet.";
 		}
 		
 		parameter<Int32> threshold := -999999i, Descr = "Threshold voor suitability maps in discr_alloc. Omdat de suitability maps met 100 vermenigvuldigd zijn, is deze threshold ook met 100 vermenigvuldigd. Dus een threshold van 50 betekent dat alleen cells met een suitability van 0.50 of hoger in aanmerking komen voor allocatie. Een threshold van -999999 betekent dat alle cells in aanmerking komen.";
