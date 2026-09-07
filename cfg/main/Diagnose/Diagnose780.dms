@@ -187,6 +187,34 @@ container Diagnose780
 		attribute<Float32> GLB_factor_extensief (Tak) := N_ext_331_1926 / N_ext;
 		parameter<Float32> GLB_factor_extensief_NL := sum(N_ext_331_1926) / sum(N_ext);
 
+		attribute</Classifications/Actor/LandbouwKlasses> LbK_rel (AdminDomain) := /Classifications/Actor/LU_ModelType/LandbouwK_rel[LU];
+		container Ha_per_klasse :=
+			for_each_nedv(
+				 /Classifications/Actor/LandbouwKlasses/name
+				, 'sum(float32(IsLb && LbK_rel == /Classifications/Actor/LandbouwKlasses/V/'+/Classifications/Actor/LandbouwKlasses/name+'), Tak_rel) * HaPerCel'
+				, Tak
+				, Float32
+			), Descr = "Hectare basisjaarlandbouw per klasse per bodemtak.";
+		container Regel_klasse :=
+			for_each_nedv(
+				 /Classifications/Actor/LandbouwKlasses/name
+				, quote(/Classifications/Actor/LandbouwKlasses/name)+' + '+quote(': ')+' + AsList(string(Ha_per_klasse/'+/Classifications/Actor/LandbouwKlasses/name+'), '+quote('/')+') + '+quote(' | ')
+				, void
+				, String
+			);
+		parameter<String> Tabel_KlasseTak := = AsList('Regel_klasse/'+/Classifications/Actor/LandbouwKlasses/name, ' + ')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_klassetak.txt'"
+		, StorageType = "str"
+		, Descr = "Per landbouwklasse de hectares basisjaarlandbouw in de volgorde Geen/Klei/Zand/Veen.";
+
+		attribute<Float32> Ha_VW_prov (/SourceData/RegioIndelingen/Provincie) := sum(float32(IsLb && IsVeen), /SourceData/RegioIndelingen/Provincie/Per_AdminDomain) * HaPerCel;
+		attribute<Float32> Ha_Lb_prov (/SourceData/RegioIndelingen/Provincie) := sum(float32(IsLb), /SourceData/RegioIndelingen/Provincie/Per_AdminDomain) * HaPerCel;
+		parameter<Float32> N_tak_verschil := sum(float32(uint8(Tak_rel) != uint8(/SourceData/Landbouw/HELP/Bodemtak_rel))), Descr = "Cellen waar de hier onafhankelijk bepaalde bodemtak afwijkt van SourceData/Landbouw/HELP/Bodemtak_rel; hoort sinds #785 nul te zijn.";
+		parameter<String> Tabel_VW_Provincie := AsList(/SourceData/RegioIndelingen/Provincie/name + '=' + string(Ha_VW_prov) + ' van ' + string(Ha_Lb_prov), ' | ') + ' || cellen met afwijkende tak=' + string(N_tak_verschil)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_vw_provincie.txt'"
+		, StorageType = "str"
+		, Descr = "Hectare basisjaarlandbouw op V_W per provincie, naast het landbouwtotaal van de provincie, zodat het aandeel moerige grond in Drenthe, Overijssel en Friesland zichtbaar is.";
+
 		parameter<String> Tabel_Bodem := AsList(/Classifications/Landbouw/BodemKlasse14k/name + '=' + string(Ha_Lb_BodemKlasse), ' | ') + ' || per tak: ' + AsList(Tak/name + '=' + string(Ha_Lb), ' | ') + ' || landbouw totaal=' + string(sum(Ha_Lb)) + ' aandeel Geen=' + string(first(Ha_Lb) / sum(Ha_Lb))
 		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_bodemtak.txt'"
 		, StorageType = "str";
@@ -236,7 +264,7 @@ container Diagnose780
 			parameter<Float32> Mestprijs            := 30f,  Descr = "Zichtjaar 2040 van BAU; basisjaar 25, NbS-varianten 20.";
 			parameter<Float32> Factor_ext           := 0.806f;
 			parameter<Float32> Diensten_ext         := 0f,   Descr = "BAU; NbSMax 500, NbSGenuanceerd 300.";
-			parameter<Float32> Veen_vergoeding      := 30f,  Descr = "Op IsVeenGrond, voor beide graslandklassen.";
+			parameter<Float32> Veen_vergoeding      := 30f,  Descr = "Op Bodem_HELP_veen (V_W), voor beide graslandklassen; tot #785 op IsVeenGrond.";
 			parameter<Bool>    VeenExtraInGLBfactor := FALSE, Descr = "Sinds commit 2 van #780 onwaar: de veenvergoeding staat los van de GLB-factor.";
 
 			attribute<Float32> gras_netto (/Classifications/Landbouw/Bodemtak) : [0, 9.99511, 10.25362, 9.56430], Descr = "bruto 11,6 11,9 11,1 maal 0,907 maal 0,95";
@@ -247,7 +275,7 @@ container Diagnose780
 
 			attribute</Classifications/Landbouw/Bodemtak> tak (AdminDomain) := /SourceData/Landbouw/HELP/Bodemtak_rel;
 			attribute<Float32> DD    (AdminDomain) := /SourceData/Landbouw/HELP/DDPossible;
-			attribute<Float32> veen  (AdminDomain) := float32(Suit/IsVeenGrond);
+			attribute<Float32> veen  (AdminDomain) := float32(/SourceData/Landbouw/HELP/Bodem_HELP_veen);
 			attribute<Float32> gras  (AdminDomain) := (gras_netto[tak] + 0.25f * DD) * (1f - YR_gras) * (1f - am[tak]);
 			attribute<Float32> mais  (AdminDomain) := mais_netto[tak] * (1f - YR_mais) * am[tak];
 			attribute<Float32> bal   (AdminDomain) := gras + mais - 1.48f * 6.5f;
@@ -374,6 +402,42 @@ container Diagnose780
 		attribute<Float32> Mean_draagkracht (Metingen/Tak) := sum(IsLbBodem ? Suit/per_ModelType/gg_vee/Ruwvoer_aanbod[float32] / 6.5f : 0f, Tak_rel) / N_lb;
 		parameter<String> Tabel_Draagkracht := AsList(Metingen/Tak/name + ': balans_mean_ton=' + string(MakeDefined(Mean_balans, -1f)) + ' aandeel_overschot=' + string(MakeDefined(Aandeel_overschot, -1f)) + ' draagkracht_mean=' + string(MakeDefined(Mean_draagkracht, -1f)), ' | ')
 		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_draagkracht_'+Casus_str+'_'+Jaar_str+'.txt'"
+		, StorageType = "str";
+	}
+
+	container VeenToets
+	: Descr = "Voor-en-na-toets van de veentak (#785, onderdeel van #780). Vraag voor de commit Schrijf_gg_vee en Schrijf_Aardappelen op: die schrijven de netto-opbrengst in euro per ha, afgerond op hele euro's, als int16-tif weg. Vraag na de commit Tabel op: die leest ze terug en telt de cellen waar de netto-opbrengst meer dan een euro per ha verschilt, gesplitst naar V_W en niet V_W. Buiten V_W hoort die telling nul te zijn. De tifs staan in %LocalDataProjDir%/Diagnose en kunnen daarna weg."
+	{
+		container Suit := ='/VariantData/'+Casus_str+'/Suitability/'+Jaar_str+'/Landbouw';
+
+		attribute<Int16> Schrijf_gg_vee      (AdminDomain) := int16(round(Suit/per_ModelType/gg_vee/NetRevenue[float32] * 10000f)),      StorageName = "%LocalDataProjDir%/Diagnose/meting780_voor_gg_vee.tif",      StorageType = "gdalwrite.grid";
+		attribute<Int16> Schrijf_Aardappelen (AdminDomain) := int16(round(Suit/per_ModelType/Aardappelen/NetRevenue[float32] * 10000f)), StorageName = "%LocalDataProjDir%/Diagnose/meting780_voor_aardappelen.tif", StorageType = "gdalwrite.grid";
+
+		attribute<Int16> Voor_gg_vee         (AdminDomain) : StorageName = "%LocalDataProjDir%/Diagnose/meting780_voor_gg_vee.tif",      StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Int16> Voor_Aardappelen    (AdminDomain) : StorageName = "%LocalDataProjDir%/Diagnose/meting780_voor_aardappelen.tif", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+
+		attribute<Bool>  IsVW (AdminDomain) := /SourceData/Landbouw/HELP/Bodem_HELP == /Classifications/Landbouw/BodemKlasse14k/V/V_W;
+		attribute<Int16> Na_gg_vee      (AdminDomain) := int16(round(Suit/per_ModelType/gg_vee/NetRevenue[float32] * 10000f));
+		attribute<Int16> Na_Aardappelen (AdminDomain) := int16(round(Suit/per_ModelType/Aardappelen/NetRevenue[float32] * 10000f));
+		attribute<Int32> Delta_vee      (AdminDomain) := int32(Na_gg_vee) - int32(Voor_gg_vee);
+		attribute<Int32> Delta_aard     (AdminDomain) := int32(Na_Aardappelen) - int32(Voor_Aardappelen);
+		attribute<Bool>  Verschil_vee   (AdminDomain) := abs(Delta_vee) > 1i;
+		attribute<Bool>  Verschil_aard  (AdminDomain) := abs(Delta_aard) > 1i;
+
+		parameter<Float32> N_VW                  := sum(float32(IsVW));
+		parameter<Float32> N_vee_verschil_VW     := sum(float32(IsVW && Verschil_vee));
+		parameter<Float32> N_vee_verschil_buiten := sum(float32(!IsVW && Verschil_vee));
+		parameter<Float32> N_aard_verschil_VW    := sum(float32(IsVW && Verschil_aard));
+		parameter<Float32> N_aard_verschil_buiten := sum(float32(!IsVW && Verschil_aard));
+		parameter<Float32> Mean_delta_vee_VW      := sum(IsVW ? float32(Delta_vee) : 0f) / N_VW;
+		parameter<Float32> Mean_delta_aard_VW     := sum(IsVW ? float32(Delta_aard) : 0f) / N_VW;
+		parameter<Int32>   Min_delta_vee_buiten   := min(IsVW ? null_i : Delta_vee), Descr = "Kleinste verschil buiten V_W; de verhuizing van de veenvergoeding van IsVeenGrond naar Bodem_HELP_veen in #785 geeft daar precies min 30 op de cellen met GeoTOP-veen buiten V_W.";
+		parameter<Int32>   Max_delta_vee_buiten   := max(IsVW ? null_i : Delta_vee);
+		parameter<Int32>   Min_delta_aard_buiten  := min(IsVW ? null_i : Delta_aard);
+		parameter<Int32>   Max_delta_aard_buiten  := max(IsVW ? null_i : Delta_aard);
+
+		parameter<String> Tabel := 'V_W cellen=' + string(N_VW) + ' | gg_vee verschil op V_W=' + string(N_vee_verschil_VW) + ' buiten V_W=' + string(N_vee_verschil_buiten) + ' gemiddelde delta op V_W (Eur/ha)=' + string(Mean_delta_vee_VW) + ' | aardappelen verschil op V_W=' + string(N_aard_verschil_VW) + ' buiten V_W=' + string(N_aard_verschil_buiten) + ' gemiddelde delta op V_W (Eur/ha)=' + string(Mean_delta_aard_VW) + ' || delta buiten V_W: gg_vee ' + string(Min_delta_vee_buiten) + '..' + string(Max_delta_vee_buiten) + ' aardappelen ' + string(Min_delta_aard_buiten) + '..' + string(Max_delta_aard_buiten)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/meting780_veentoets_'+Casus_str+'_'+Jaar_str+'.txt'"
 		, StorageType = "str";
 	}
 }
