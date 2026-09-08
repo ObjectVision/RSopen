@@ -161,6 +161,26 @@ Dat kost seconden. Een configuratie die halverwege een reeks stukgaat kost de he
 
 `PropValue(item, 'StorageName')` geeft de expressietekst terug, niet de uitkomst. Dat werkt als je hem meteen weer als StorageName gebruikt, maar niet als invoer voor iets dat een echt pad verwacht, zoals `ExistingFile`. Zet het pad dan als eigen `parameter<String>` neer en verwijs daar vanuit beide kanten naar.
 
+## `modus` negeert nulls en blaast daarmee een dunne kaart op
+
+`modus(waarde, partitie_rel)` telt alleen de gevulde cellen. Een groep met een gevulde waarde en negenennegentig nulls krijgt die ene waarde, niet null. Gemeten op 2026-09-08, GeoDms20.17.0.m, met een groep van tien waarvan een gevuld: de modus geeft die waarde.
+
+Dat is precies wat je wilt zolang je een TYPE kiest binnen iets dat er al is. Het gaat mis zodra dezelfde aanroep ook moet beslissen OF de grovere cel meedoet, en dat is wat elke vergroving van een dunbezette kaart doet. Elke doelcel die ook maar een gevulde broncel raakt wordt volledig gevuld, dus het areaal kan alleen maar groeien, en het groeit het hardst waar de bron het meest versnipperd is.
+
+Bij `#795` werd de MNP-planpotentieelkaart zo van 2,5 naar 25 meter gebracht, honderd broncellen per modelcel. Areaal in de bron 1.400.397 ha, na de modus 1.612.584 ha, ruim vijftien procent erbij zonder foutmelding. Het zat in de staart: 2.116.499 cellen hadden 1 tot 9 van hun honderd broncellen gevuld en beslaan zo 132.281 ha voor 3.532 ha bronnatuur, een factor 37. Per type liep het uiteen van bijna niets op grote vlakken (zee en wad plus 0,4 procent) tot plus 160 procent op de kruiden- en faunarijke akker, want dat zijn akkerranden van een paar meter breed. Het kaartbeeld was een spikkelkaart, en dat was hoe het werd opgemerkt.
+
+Splits de twee vragen dan uit elkaar:
+
+```
+attribute<UInt32> Dekking (Doel) := sum(uint32(IsDefined(Bron)), Bron_Doel_rel);
+attribute<K>      Modus   (Doel) := modus(Bron, Bron_Doel_rel);
+attribute<K>      Uit     (Doel) := Dekking >= MinimumDekking ? Modus : null_b[K];
+```
+
+`sum` geeft op een lege groep nul en geen null, dus de drempeltoets werkt zonder `MakeDefined`. Op de halve cel kwam het areaal in #795 op 0,1 procent van de bron uit. Weet wel wat je met een drempel opgeeft: smalle lijnvormige klassen verliezen structureel, want die halen nergens de halve cel. Beek en bron ging er 25 procent op achteruit. Wil je die ook op hun bronareaal houden, dan moet je per klasse tellen in plaats van drempelen: rangschik de doelcellen op hun dekkingsgraad voor die klasse en kap af op het bronareaal, zoals `Rivieren_NbSGenuanceerd` het doet.
+
+Dezelfde valkuil zit in elke `modus` op een regiokaart: daar verbreedt hij de regiogrens naar buiten in plaats van het areaal. Zie #705.
+
 ## `max` en `min` geven op een lege groep geen null
 
 Een groepsaggregatie over een partitie levert voor een groep zonder waarden geen null op maar het uiterste van het waardetype: `max` geeft de kleinste float32, `min` de grootste. Gemeten op 2026-09-02, GeoDms20.17.0.m: `min_jongste_waar_gem_bestaat` kwam uit op -3,4028235e+38.
