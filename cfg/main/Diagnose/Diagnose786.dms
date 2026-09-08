@@ -1,0 +1,151 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #786, verwijderen zodra de tabel is opgeleverd en de getallen in het issue staan.
+//
+// Het areaal natuur in het basisjaar en in 2120, voor BAU en NbSGenuanceerd, landelijk en per landschapsgebied (#760).
+//
+// Waarom dit zonder allocatierun kan. Natuur is in deze toepassing geen gealloceerde sector: in
+// ModelParameters/SectorAllocRegio staan alleen wonen, werken en waterberging. Nieuwe natuur komt uitsluitend uit
+// VariantData/<variant>/ExogeenOpleggen, en die oplegging is variantdata, dus per zichtjaar gelijk. In de switch van
+// Templates/Indicatoren/Landgebruikskaart/Make_Landgebruikskaart_Basisjaar_T staat de oplegging bovendien op de tweede
+// case, meteen na geen data, en niets daaronder kan haar nog maskeren. De kaart van een zichtjaar is daarmee de
+// basisjaarkaart met de oplegging eroverheen, op één ding na: wonen, werken en waterberging kunnen een cel die in het
+// basisjaar natuur was overnemen. Dat is de enige post die hier ontbreekt, en die kant op wijst dit dus een bovengrens.
+// Hoe groot die post is, is uit een eerdere ronde bekend (diagnosewaarde verdwenennatuur_ha, codestand met
+// Landgebruik_Basis op BBG): in BAU ongeveer 2.100 ha en in NbSGenuanceerd ongeveer 21.800 ha, waarvan het NbSG-deel
+// grotendeels de oplegging zelf is en niet de allocatie. Zie de kolom Verdwenen_natuur_*_ha hieronder, die telt wat de
+// oplegging van de bestaande natuur afhaalt.
+//
+// Definitie van natuur: de klasse Natuur_Totaal van de landgebruikskaart, dus LU_ModelType/IsNatuur, dezelfde definitie
+// als Templates/Indicatoren/Grondgebruik gebruikt voor NieuweNatuur en VerdwenenNatuur.
+//
+// De vier landschapsgebieden van #760 OVERLAPPEN elkaar en dekken samen niet heel Nederland, dus de kolommen tellen niet
+// op tot de regel Nederland. De regel Geen_landschap maakt het verschil zichtbaar.
+//
+// Draai het item Tabel; dat schrijft de csv.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose786
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #786: het areaal natuur in het basisjaar en in 2120, per variant en per landschapsgebied, langs de preprocessingroute."
+{
+	container LG    := /SourceData/Landschap/Landschapsgebieden;
+	unit<uint8> LU_MT := /Classifications/Actor/LU_ModelType;
+
+	parameter<float32> CelHa       := AdminDomain/NrHaPerCell[float32];
+	attribute<bool>    InSA (AdminDomain) := rdc_meter/IsStudyArea_AdminDomain, Descr = "Het studiegebied. Kust loopt ver op zee door, dus zonder deze snede telt de kustregel de Noordzee mee.";
+
+	unit<uint8> Gebieden : nrofrows = 6
+	, Descr = "De rapportagegebieden. LET OP: de volgorde hier moet gelijk lopen met de volgorde van de argumenten in Aggr_T/Ha."
+	{
+		attribute<string> name  : ['Nederland', 'Kust', 'Rivieren', 'Veen', 'Zand', 'Geen_landschap'];
+		attribute<string> Label := name;
+	}
+
+	container Maskers
+	: Descr = "Per gebied de cellen die meetellen, alle vier binnen het studiegebied."
+	{
+		attribute<bool> Nederland      (AdminDomain) := InSA;
+		attribute<bool> Kust           (AdminDomain) := InSA && LG/Impl/IsKust;
+		attribute<bool> Rivieren       (AdminDomain) := InSA && LG/Impl/IsRivieren;
+		attribute<bool> Veen           (AdminDomain) := InSA && LG/Impl/IsVeen;
+		attribute<bool> Zand           (AdminDomain) := InSA && LG/Impl/IsZand;
+		attribute<bool> Geen_landschap (AdminDomain) := InSA && !LG/Impl/IsKust && !LG/Impl/IsRivieren && !LG/Impl/IsVeen && !LG/Impl/IsZand;
+	}
+
+	container Kaarten
+	: Descr = "De landgebruikskaart van het basisjaar per variant, en de kaart van 2120 langs de preprocessingroute: de oplegging over de basisjaarkaart heen."
+	{
+		attribute<LU_MT> Basisjaar_BAU  (AdminDomain) := /Indicatoren/WLO_hoog_BAU/Basisjaar/Landgebruikskaart/Result
+		, Descr = "Met opzet Result en niet Result_SA: die laatste valt bij ModelParameters/LandUseMapOntkoppeld terug op het weggeschreven bestand, en schrijft het anders zelf weg. Het studiegebiedmasker zit hier in Maskers.";
+		attribute<LU_MT> Basisjaar_NbSG (AdminDomain) := /Indicatoren/WLO_hoog_NbSGenuanceerd/Basisjaar/Landgebruikskaart/Result
+		, Descr = "De basisjaarkaart is niet casusonafhankelijk, want hij loopt via Stand. Daarom staat hij hier per variant; de kolom Basisjaar_verschil_ha in Tabel laat zien of dat voor natuur iets uitmaakt.";
+
+		attribute<LU_MT> Oplegging_BAU  (AdminDomain) := /VariantData/BAU/ExogeenOpleggen/Totaal;
+		attribute<LU_MT> Oplegging_NbSG (AdminDomain) := /VariantData/NbSGenuanceerd/ExogeenOpleggen/Totaal;
+
+		attribute<LU_MT> Y2120_BAU  (AdminDomain) := IsDefined(Basisjaar_BAU)  ? MakeDefined(Oplegging_BAU,  Basisjaar_BAU)  : null_b[LU_MT]
+		, Descr = "De eerste twee cases van de switch in de landgebruikskaart: geen data blijft geen data, en daaronder wint de oplegging van alles wat er lag.";
+		attribute<LU_MT> Y2120_NbSG (AdminDomain) := IsDefined(Basisjaar_NbSG) ? MakeDefined(Oplegging_NbSG, Basisjaar_NbSG) : null_b[LU_MT];
+	}
+
+	container Vlaggen
+	: Descr = "De kaarten teruggebracht tot de vraag natuur ja of nee, en water ja of nee."
+	{
+		attribute<bool> Natuur_bas_BAU  (AdminDomain) := MakeDefined(LU_MT/IsNatuur[Kaarten/Basisjaar_BAU],  FALSE);
+		attribute<bool> Natuur_bas_NbSG (AdminDomain) := MakeDefined(LU_MT/IsNatuur[Kaarten/Basisjaar_NbSG], FALSE);
+		attribute<bool> Natuur_2120_BAU  (AdminDomain) := MakeDefined(LU_MT/IsNatuur[Kaarten/Y2120_BAU],  FALSE);
+		attribute<bool> Natuur_2120_NbSG (AdminDomain) := MakeDefined(LU_MT/IsNatuur[Kaarten/Y2120_NbSG], FALSE);
+
+		attribute<bool> Nieuw_BAU      (AdminDomain) := Natuur_2120_BAU  && !Natuur_bas_BAU;
+		attribute<bool> Nieuw_NbSG     (AdminDomain) := Natuur_2120_NbSG && !Natuur_bas_NbSG;
+		attribute<bool> Verdwenen_BAU  (AdminDomain) := Natuur_bas_BAU   && !Natuur_2120_BAU
+		, Descr = "Bestaande natuur die de oplegging omzet in iets anders: open water uit de landschapsleveringen, of de landbouwstroom van de veenbouwstenen. De allocatie zit hier niet in; zie de kop van dit bestand.";
+		attribute<bool> Verdwenen_NbSG (AdminDomain) := Natuur_bas_NbSG  && !Natuur_2120_NbSG;
+
+		attribute<bool> Basisjaar_verschil (AdminDomain) := Natuur_bas_BAU != Natuur_bas_NbSG
+		, Descr = "Zelftoets: wijkt de basisjaarkaart tussen de twee varianten af op de vraag of een cel natuur is? Hoort nul te zijn.";
+
+		attribute<bool> Water_bas_BAU   (AdminDomain) := MakeDefined(Kaarten/Basisjaar_BAU == LU_MT/V/Water_Totaal, FALSE);
+		attribute<bool> Water_2120_BAU  (AdminDomain) := MakeDefined(Kaarten/Y2120_BAU     == LU_MT/V/Water_Totaal, FALSE);
+		attribute<bool> Water_2120_NbSG (AdminDomain) := MakeDefined(Kaarten/Y2120_NbSG    == LU_MT/V/Water_Totaal, FALSE);
+
+		attribute<bool> Alles (AdminDomain) := const(TRUE, AdminDomain), Descr = "Voor de oppervlaktekolom; de snede op het studiegebied zit in Maskers.";
+	}
+
+	template Aggr_T
+	: using = "Units;Geography"
+	, Descr = "Aggregeert een booleaanse kaart naar de zes rapportagegebieden. De argumentvolgorde van union_data volgt Gebieden/name; wie daar een regel invoegt moet hier mee."
+	{
+		attribute<bool> Kaart (AdminDomain);
+
+		parameter<float64> v_Nederland      := sum(float64(float32(Kaart && /Diagnose/PerIssue/Diagnose786/Maskers/Nederland)      * /Diagnose/PerIssue/Diagnose786/CelHa));
+		parameter<float64> v_Kust           := sum(float64(float32(Kaart && /Diagnose/PerIssue/Diagnose786/Maskers/Kust)           * /Diagnose/PerIssue/Diagnose786/CelHa));
+		parameter<float64> v_Rivieren       := sum(float64(float32(Kaart && /Diagnose/PerIssue/Diagnose786/Maskers/Rivieren)       * /Diagnose/PerIssue/Diagnose786/CelHa));
+		parameter<float64> v_Veen           := sum(float64(float32(Kaart && /Diagnose/PerIssue/Diagnose786/Maskers/Veen)           * /Diagnose/PerIssue/Diagnose786/CelHa));
+		parameter<float64> v_Zand           := sum(float64(float32(Kaart && /Diagnose/PerIssue/Diagnose786/Maskers/Zand)           * /Diagnose/PerIssue/Diagnose786/CelHa));
+		parameter<float64> v_Geen_landschap := sum(float64(float32(Kaart && /Diagnose/PerIssue/Diagnose786/Maskers/Geen_landschap) * /Diagnose/PerIssue/Diagnose786/CelHa));
+
+		attribute<float64> Ha (/Diagnose/PerIssue/Diagnose786/Gebieden) :=
+			union_data(/Diagnose/PerIssue/Diagnose786/Gebieden, v_Nederland, v_Kust, v_Rivieren, v_Veen, v_Zand, v_Geen_landschap);
+	}
+
+	container Opp             := Aggr_T(Vlaggen/Alles);
+	container Nat_bas_BAU     := Aggr_T(Vlaggen/Natuur_bas_BAU);
+	container Nat_bas_NbSG    := Aggr_T(Vlaggen/Natuur_bas_NbSG);
+	container Nat_2120_BAU    := Aggr_T(Vlaggen/Natuur_2120_BAU);
+	container Nat_2120_NbSG   := Aggr_T(Vlaggen/Natuur_2120_NbSG);
+	container Nat_nieuw_BAU   := Aggr_T(Vlaggen/Nieuw_BAU);
+	container Nat_nieuw_NbSG  := Aggr_T(Vlaggen/Nieuw_NbSG);
+	container Nat_weg_BAU     := Aggr_T(Vlaggen/Verdwenen_BAU);
+	container Nat_weg_NbSG    := Aggr_T(Vlaggen/Verdwenen_NbSG);
+	container Nat_bas_versch  := Aggr_T(Vlaggen/Basisjaar_verschil);
+	container Wat_bas_BAU     := Aggr_T(Vlaggen/Water_bas_BAU);
+	container Wat_2120_BAU    := Aggr_T(Vlaggen/Water_2120_BAU);
+	container Wat_2120_NbSG   := Aggr_T(Vlaggen/Water_2120_NbSG);
+
+	unit<uint8> Tabel := Gebieden
+	,	StorageName = "%LocalDataProjDir%/Diagnose/786_arealen_natuur.csv"
+	,	StorageType = "gdalwrite.vect"
+	,	Descr = "De uitdraai van #786. Een regel per gebied, alle arealen in hectare binnen het studiegebied."
+	{
+		attribute<string>  Gebied                    := Gebieden/name;
+		attribute<float64> Oppervlak_ha              := Opp/Ha,            Descr = "Het studiegebied binnen dit gebied. Controlegetal.";
+		attribute<float64> Natuur_basisjaar_ha       := Nat_bas_BAU/Ha;
+		attribute<float64> Natuur_2120_BAU_ha        := Nat_2120_BAU/Ha;
+		attribute<float64> Natuur_2120_NbSG_ha       := Nat_2120_NbSG/Ha;
+		attribute<float64> Verschil_NbSG_min_BAU_ha  := Nat_2120_NbSG/Ha - Nat_2120_BAU/Ha;
+		attribute<float64> Nieuwe_natuur_BAU_ha      := Nat_nieuw_BAU/Ha;
+		attribute<float64> Nieuwe_natuur_NbSG_ha     := Nat_nieuw_NbSG/Ha;
+		attribute<float64> Verdwenen_natuur_BAU_ha   := Nat_weg_BAU/Ha;
+		attribute<float64> Verdwenen_natuur_NbSG_ha  := Nat_weg_NbSG/Ha;
+		attribute<float64> Water_basisjaar_ha        := Wat_bas_BAU/Ha;
+		attribute<float64> Water_2120_BAU_ha         := Wat_2120_BAU/Ha;
+		attribute<float64> Water_2120_NbSG_ha        := Wat_2120_NbSG/Ha;
+
+		attribute<float64> Toets_basisjaar_ha := Nat_bas_versch/Ha,   Descr = "Zelftoets: waar de twee varianten in het basisjaar een andere natuurvlag geven. Hoort nul te zijn.";
+		attribute<float64> Toets_sluit_BAU    := Nat_2120_BAU/Ha  - (Nat_bas_BAU/Ha  + Nat_nieuw_BAU/Ha  - Nat_weg_BAU/Ha),  Descr = "Zelftoets: 2120 is basisjaar plus nieuw min verdwenen. Hoort nul te zijn.";
+		attribute<float64> Toets_sluit_NbSG   := Nat_2120_NbSG/Ha - (Nat_bas_NbSG/Ha + Nat_nieuw_NbSG/Ha - Nat_weg_NbSG/Ha), Descr = "Idem voor NbSGenuanceerd.";
+	}
+}
