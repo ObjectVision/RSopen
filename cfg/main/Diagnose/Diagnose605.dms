@@ -1,0 +1,154 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #605, verwijderen zodra de getallen in het issue staan.
+//
+// De vraag: is de evident-benut-toets van de landbouw nodig, en zo ja, hoort zij op het BBG of op LGN?
+// Het model heeft er twee. De actieve loopt via VariantParameters/EvidentBenut/Landbouw/BinnenPlancapaciteit
+// op de CBS-bodemgebruiksklasse; de tweede, VariantParameters/EvidentBenut/Landbouw/Default op de LGN-klasse,
+// wordt alleen aangewezen door Zeef_Basisjaar_T/Impl/EvidentBenutLandbouw_obv_LGN en dat item heeft zelf
+// geen afnemer.
+//
+// Gemeten wordt steeds op de basisjaarcellen die een landbouwklasse dragen, want met
+// ModelParameters/Landbouw/LandbouwAlleenOpBestaandAreaal op TRUE raakt de allocatie alleen die cellen aan.
+// Alles wat de evident-benut-toets daarbuiten uitsluit is per definitie overbodig.
+//
+// Draai Tabel_Totalen, Tabel_BBG_PerKlasse en Tabel_LGN_PerKlasse.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose605
+: using = "Geography"
+, Descr = "Tijdelijk meetharnas voor #605: doet de evident-benut-toets van de landbouw nog werk boven op LandbouwAlleenOpBestaandAreaal, en verschillen de BBG- en de LGN-lijst."
+{
+	parameter<Float32> CelHa := AdminDomain/NrHaPerCell[Float32];
+
+	// ---- de basisjaarcellen die landbouw dragen; zelfde maat als Diagnose263 en Diagnose780 ----
+
+	attribute</Classifications/Actor/LandbouwKlasses> Klasse_Basisjaar (AdminDomain) :=
+		/Classifications/Actor/LU_ModelType/LandbouwK_rel[/BaseData/StartState/Landgebruik/LU_Landbouw]
+	, Descr = "De landbouwklasse van het basisjaar uit de landgebruikskaart, dezelfde bron als gg_LandbouwK in Templates/Landbouw.dms en als HuidigeKlasse_Basisjaar in Iter_Landbouw_T. Null waar de cel geen landbouwklasse draagt. Gebruikt in plaats van StateBasisjaar/State/Landbouw, want die tak bestaat alleen wanneer de landbouwsector in ModelParameters/SectorAllocRegio aanstaat.";
+
+	attribute<Bool> IsLb (AdminDomain) := IsDefined(Klasse_Basisjaar);
+
+	// ---- de twee lijsten, elk op hun eigen bron ----
+
+	attribute</Classifications/Grondgebruik/CBSKlasse> gg_CBS (AdminDomain) := /BaseData/StartState/Bodemstatistiek/gg_CBS;
+	attribute</Classifications/Grondgebruik/LGNKlasse> gg_LGN (AdminDomain) := /SourceData/Grondgebruik/LGN/m25;
+
+	attribute<Bool> EB_BBG (AdminDomain) := MakeDefined(/VariantParameters/EvidentBenut/Landbouw/BinnenPlancapaciteit/Default[gg_CBS], FALSE)
+	, Descr = "De ACTIEVE lijst: evident benut volgens de CBS-bodemgebruiksklasse. BinnenPlancapaciteit en BuitenPlancapaciteit zijn voor landbouw hetzelfde item, en BAU en WBS zijn per referentie gelijk aan Default, dus de variantkeuze doet hier niets.";
+
+	attribute<Bool> EB_LGN (AdminDomain) := MakeDefined(/VariantParameters/EvidentBenut/Landbouw/Default[gg_LGN], FALSE)
+	, Descr = "De DODE lijst: evident benut volgens de LGN-klasse, zoals EvidentBenutLandbouw_obv_LGN hem zou lezen.";
+
+	// ---- de totalen ----
+
+	parameter<Float32> ha_landbouw      := sum(IsLb ? CelHa : 0f);
+	parameter<Float32> ha_bbg_totaal    := sum(EB_BBG ? CelHa : 0f);
+	parameter<Float32> ha_lgn_totaal    := sum(EB_LGN ? CelHa : 0f);
+	parameter<Float32> ha_lb_bbg        := sum(IsLb && EB_BBG ? CelHa : 0f);
+	parameter<Float32> ha_lb_lgn        := sum(IsLb && EB_LGN ? CelHa : 0f);
+	parameter<Float32> ha_lb_beide      := sum(IsLb && EB_BBG && EB_LGN ? CelHa : 0f);
+	parameter<Float32> ha_lb_alleen_bbg := sum(IsLb && EB_BBG && !EB_LGN ? CelHa : 0f);
+	parameter<Float32> ha_lb_alleen_lgn := sum(IsLb && !EB_BBG && EB_LGN ? CelHa : 0f);
+	parameter<Float32> ha_lb_geen       := sum(IsLb && !EB_BBG && !EB_LGN ? CelHa : 0f);
+
+	parameter<String> Tabel_Totalen :=
+		  'grootheid;ha'
+		+ '|basisjaarlandbouw (noemer);'            + string(ha_landbouw)
+		+ '|BBG-lijst landelijk;'                   + string(ha_bbg_totaal)
+		+ '|LGN-lijst landelijk;'                   + string(ha_lgn_totaal)
+		+ '|daarvan op basisjaarlandbouw, BBG;'     + string(ha_lb_bbg)
+		+ '|daarvan op basisjaarlandbouw, LGN;'     + string(ha_lb_lgn)
+		+ '|door beide uitgesloten;'                + string(ha_lb_beide)
+		+ '|alleen door BBG uitgesloten;'           + string(ha_lb_alleen_bbg)
+		+ '|alleen door LGN uitgesloten;'           + string(ha_lb_alleen_lgn)
+		+ '|door geen van beide uitgesloten;'       + string(ha_lb_geen)
+	, StorageName = "='%LocalDataProjDir%/Diagnose/605_evidentbenut_totalen.txt'", StorageType = "str"
+	, Descr = "De kern van de vraag. De eerste regel is de noemer: alles wat de allocatie met LandbouwAlleenOpBestaandAreaal nog kan aanraken. De twee landelijke regels laten zien hoeveel van elke lijst buiten dat areaal valt en dus geen werk doet.
+
+				GEMETEN 8 september 2026, GeoDms20.17.0.m, basisjaar 2023 met BRP 2025, LGN 2025 en BBG 2022:
+				basisjaarlandbouw 2.072.184 ha; BBG-lijst landelijk 1.988.181 ha waarvan 114.431 op landbouwgrond (5,8 procent van de lijst);
+				LGN-lijst landelijk 2.624.941 ha waarvan 89.265 op landbouwgrond (3,4 procent); door beide uitgesloten 16.257;
+				alleen door BBG 98.175; alleen door LGN 73.009; door geen van beide 1.884.744.
+
+				Twee dingen springen eruit. Ten eerste doet ruim 94 procent van elke lijst geen werk zolang LandbouwAlleenOpBestaandAreaal
+				aanstaat, want zij ligt buiten het areaal dat de allocatie sowieso niet aanraakt. Ten tweede overlappen de twee lijsten
+				nauwelijks: van de 187.440 ha die minstens een van beide uitsluit doen zij het maar op 16.257 ha samen. Zij zeggen dus niet
+				hetzelfde in twee talen, zij meten iets anders. Dat is te verwachten, want het BBG is functie en LGN is bedekking.";
+
+	// ---- waar de BBG-lijst op landbouwgrond ingrijpt ----
+
+	unit<UInt8> BBG_PerKlasse := /Classifications/Grondgebruik/CBSKlasse
+	{
+		attribute<Float32> ha_uitgesloten := sum(IsLb && EB_BBG ? CelHa : 0f, gg_CBS);
+		attribute<Float32> ha_landbouw    := sum(IsLb ? CelHa : 0f, gg_CBS);
+	}
+
+	parameter<String> Tabel_BBG_PerKlasse :=
+		  'CBSklasse;ha basisjaarlandbouw;ha daarvan uitgesloten'
+		+ AsList('|' + /Classifications/Grondgebruik/CBSKlasse/name + ';' + string(BBG_PerKlasse/ha_landbouw) + ';' + string(BBG_PerKlasse/ha_uitgesloten), '')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/605_evidentbenut_bbg.txt'", StorageType = "str"
+	, Descr = "Per CBS-bodemgebruiksklasse hoeveel basisjaarlandbouw er ligt en hoeveel daarvan de actieve lijst uitsluit. Laat zien welke klassen het werk doen.
+
+				GEMETEN 8 september 2026: van de 114.431 ha doen open droog natuurlijk terrein 50.665 en open nat natuurlijk terrein 18.945
+				samen 61 procent, met hoofdweg 14.054 en bos 10.632 erachter. Woonterrein 3.298, bouwterrein 3.218, stedelijk groen 2.828,
+				overig binnenwater 2.711 en de rest onder de 1.500.
+
+				Die eerste twee zijn het verhaal. Dat zijn percelen die de teler in de BRP heeft opgegeven en die het CBS als natuurterrein
+				afbakent: agrarisch natuurbeheer binnen een natuurgebied. Het model kent daar een eigen klasse voor, GG_vee_extensief, en de
+				lijst haalt daar een derde van weg; zie Tabel_PerLandbouwKlasse. Alleen de posten die een onomkeerbare verandering na de
+				gewaskaart aanwijzen (bouwterrein, zonnepark, woonterrein, bedrijfsterrein, hoofdweg, spoorterrein) doen hier werk dat de
+				gewaskaart zelf niet al doet.";
+
+	// ---- waar de LGN-lijst op landbouwgrond zou ingrijpen ----
+
+	unit<UInt8> LGN_PerKlasse := /Classifications/Grondgebruik/LGNKlasse
+	{
+		attribute<Float32> ha_uitgesloten := sum(IsLb && EB_LGN ? CelHa : 0f, gg_LGN);
+		attribute<Float32> ha_landbouw    := sum(IsLb ? CelHa : 0f, gg_LGN);
+	}
+
+	parameter<String> Tabel_LGN_PerKlasse :=
+		  'LGNklasse;ha basisjaarlandbouw;ha daarvan uitgesloten'
+		+ AsList('|' + /Classifications/Grondgebruik/LGNKlasse/name + ';' + string(LGN_PerKlasse/ha_landbouw) + ';' + string(LGN_PerKlasse/ha_uitgesloten), '')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/605_evidentbenut_lgn.txt'", StorageType = "str"
+	, Descr = "Idem voor de dode LGN-lijst.
+
+				GEMETEN 8 september 2026: van de 89.265 ha is bloembollen met 30.981 veruit de grootste post, gevolgd door bos in
+				moerasgebied 6.316, kwelders 4.891, zoet water 1.787 en loofbos 1.039.
+
+				Die bloembollenpost is het bewijs dat deze lijst achterloopt: sinds #780 is Bollen een eigen landbouwklasse met een eigen
+				claim, en deze lijst zou haar hele basisjaarareaal wegzeven.";
+
+	// ---- welke landbouwklassen de twee lijsten wegzeven ----
+
+	unit<UInt8> PerLandbouwKlasse := /Classifications/Actor/LandbouwKlasses
+	{
+		attribute<Float32> ha_totaal   := sum(IsLb ? CelHa : 0f, Klasse_Basisjaar);
+		attribute<Float32> ha_uit_bbg  := sum(IsLb && EB_BBG ? CelHa : 0f, Klasse_Basisjaar);
+		attribute<Float32> ha_uit_lgn  := sum(IsLb && EB_LGN ? CelHa : 0f, Klasse_Basisjaar);
+	}
+
+	parameter<String> Tabel_PerLandbouwKlasse :=
+		  'landbouwklasse;ha basisjaar;ha uit door BBG;ha uit door LGN'
+		+ AsList('|' + /Classifications/Actor/LandbouwKlasses/name + ';' + string(PerLandbouwKlasse/ha_totaal) + ';' + string(PerLandbouwKlasse/ha_uit_bbg) + ';' + string(PerLandbouwKlasse/ha_uit_lgn), '')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/605_evidentbenut_perklasse.txt'", StorageType = "str"
+	, Descr = "De vraag die telt: welke landbouwklassen verliezen basisjaarareaal aan de evident-benut-toets? Een klasse die veel verliest kan haar eigen ondergrens niet meer halen, want die ondergrens is op datzelfde basisjaarareaal gezet.
+
+				GEMETEN 8 september 2026, aandeel van het basisjaarareaal van de klasse dat de lijst wegzeeft.
+
+				De ACTIEVE lijst op het BBG: Moerasbomen 96,4 procent (6.025 van 6.248 ha), Rietteelt 89,1 procent (4.825 van 5.418),
+				GG_vee_extensief 32,7 procent (40.323 van 123.287) en GG_vee 4,6 procent (59.883 van 1.308.557, de grootste absolute post).
+				De akkerbouwklassen verliezen minder dan een procent.
+
+				De DODE lijst op LGN: Bollen 100 procent (30.840 ha), Boomkwekerij 100 procent (17.914), Moerasbomen 100 procent (6.248) en
+				Boomgaard 85,2 procent (15.747 van 18.490). Boomgaard valt niet via de fruitklasse maar via bloembollen: waar de BRP fruit
+				zegt en LGN bloembollen, wint de BRP in de basisjaarkaart en zeeft de LGN-lijst de cel alsnog weg.
+
+				WAT DIT BETEKENT. De ondergrens per klasse komt uit claims_conservatief en staat op het basisjaarareaal per allocatieregio,
+				ongezeefd. De zeef haalt daar bij GG_vee_extensief een derde van weg. De ondergrens van die klasse is daarmee in een deel van
+				de regio's niet haalbaar en de Krimp_Klasse van Iter_Landbouw_T/Allocatie_Prep/Claims/Restclaim moet haar terugknijpen. Dat
+				spreekt de Descr daar tegen, die zegt dat Krimp_Klasse in de praktijk vrijwel altijd op 1 staat; dat is niet gemeten met de
+				landbouwsector aan. Toets dat als eerste zodra de sector meedoet.";
+}
