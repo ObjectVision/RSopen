@@ -1,4 +1,4 @@
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+﻿////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
@@ -315,9 +315,20 @@ Template Zichtjaar_T
 			attribute<OP>   OP_rel  (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, StateVoorAllocatie/OP_rel), Descr = "Het ontwikkelpakket dat in een eerder zichtjaar in deze cel is gealloceerd.";
 			attribute<bool> IsOPCel (AdminDomain) := = IsEersteZichtjaar ? 'const(FALSE, AdminDomain)' : 'IsDefined(OP_rel) && !IsBAGnieuwbouwWonen', Descr = "Cel waar de allocatie een ontwikkelpakket fysiek heeft ingericht; die inrichting bepaalt dan de natuur- en watercelwaarde.";
 
-			attribute<LU_ModelType> Gealloceerd (AdminDomain) := = IsEersteZichtjaar ? 'const(null_b, AdminDomain)' : 'Sector/xSubsector/LU_ModelType_rel[recollect_by_cond(AdminDomain/IsCompactedDomain, StateVoorAllocatie/SubSector_rel)]', Descr = "Het landgebruik dat volgt uit de allocatie van eerdere zichtjaren; SubSector_rel is alleen gevuld waar de allocatie sinds het basisjaar heeft toegeslagen. In het eerste zichtjaar staat hier alleen de BAG-nieuwbouw, en die is gebouwd in dezelfde periode als waarover dit zichtjaar alloceert, dus die telt nog niet mee.";
-			attribute<LU_ModelType> Exogeen     (AdminDomain) := = IsEersteZichtjaar ? 'const(null_b, AdminDomain)' : 'ThisVariantData/ExogeenOpleggen/Totaal', Descr = "De exogeen opgelegde natuur, voor zover al gerealiseerd. Het gaat om ExogeenOpleggen/Totaal, dus precies wat het model ook echt oplegt en met de zeef vrijhoudt.";
-			attribute<LU_ModelType> LU_Mutatie  (AdminDomain) := MakeDefined(Exogeen, Gealloceerd), Descr = "Het nieuwe landgebruik waar dat sinds het basisjaar is veranderd, anders null. De exogene oplegging gaat voor de allocatie, net als in de landgebruikskaart: die cellen worden leeggemaakt en blijven leeg.";
+			attribute<Sector> Sector_Mutatie (AdminDomain) := = IsEersteZichtjaar ? 'const(null_b, AdminDomain, Sector)' : 'Sector/xSubsector/Sector_rel[recollect_by_cond(AdminDomain/IsCompactedDomain, StateVoorAllocatie/SubSector_rel)]'
+			, Descr = "Welke sector de allocatie hier in een eerder zichtjaar heeft neergezet, anders leeg. SubSector_rel is alleen gevuld waar de allocatie sinds het basisjaar heeft toegeslagen. In het eerste zichtjaar staat hier alleen de BAG-nieuwbouw, en die is gebouwd in dezelfde periode als waarover dit zichtjaar alloceert, dus die telt nog niet mee.";
+			attribute</Classifications/Grondgebruik/LandgebruikType> Type_Mutatie (AdminDomain) := = IsEersteZichtjaar ? 'const(null_b, AdminDomain, /Classifications/Grondgebruik/LandgebruikType)' : 'MakeDefined(/Classifications/Grondgebruik/LandgebruikType/Van_INL[ThisVariantData/ExogeenOpleggen/Beheertype_Kaart], /Classifications/Grondgebruik/LandgebruikType/Van_LandbouwType[ThisVariantData/ExogeenOpleggen/LandbouwType_rel])'
+			, Descr = "Welk landgebruikstype de variant hier exogeen oplegt, als type uit de stand-administratie en niet als klasse van de landgebruikskaart. Natuur en water komen langs Beheertype_Kaart, de landbouwstroom van de veenbouwstenen langs LandbouwType_rel; dat zijn dezelfde twee stromen die samen ExogeenOpleggen/Totaal vormen.";
+
+			// De drie hedonische vlaggen die het gedeelde sjabloon verwacht. De oplegging gaat voor de allocatie,
+			// net als in de landgebruikskaart. Natuur en water komen van het type, want dat zegt wat de cel is;
+			// waterberging en landbouw komen van de sector, want dat zegt wie de cel bezet. Tot 8 september 2026
+			// liep dit alles via een LU_ModelType, die beide vragen met een klasse beantwoordde en daarmee het
+			// beheertype van de natuur plat sloeg tot een enkele LGN-code.
+			attribute<bool> IsMutatie          (AdminDomain) := IsDefined(Type_Mutatie) || IsDefined(Sector_Mutatie);
+			attribute<bool> Mutatie_IsNatuur   (AdminDomain) := MakeDefined(/Classifications/Grondgebruik/LandgebruikType/IsNatuur_hedonisch[Type_Mutatie], FALSE);
+			attribute<bool> Mutatie_IsWater    (AdminDomain) := IsDefined(Type_Mutatie) ? MakeDefined(/Classifications/Grondgebruik/LandgebruikType/IsWater_hedonisch[Type_Mutatie], FALSE) : MakeDefined(Sector/IsWaterberging[Sector_Mutatie], FALSE);
+			attribute<bool> Mutatie_IsLandbouw (AdminDomain) := IsDefined(Type_Mutatie) ? MakeDefined(/Classifications/Grondgebruik/LandgebruikType/IsLandbouw[Type_Mutatie], FALSE) : MakeDefined(Sector/IsLandbouw[Sector_Mutatie], FALSE);
 		}
 
 		container Fracties := Templates/Suitabilities/Groenfracties_T(Bron), Descr = "Zelfde sjabloon, zelfde definities en zelfde noemers als de indicator WaardeNabijheidGroen (#566), maar dan gevoed met de beginstand in plaats van de eindstand.";
@@ -341,18 +352,13 @@ Template Zichtjaar_T
 		container Bron
 		: Descr = "Zelfde beginstand-bron als GroenNabijheid (#637): het nieuwe landgebruik waar dat sinds het basisjaar is veranderd, anders null."
 		{
-			attribute<LU_ModelType> LU_Mutatie (AdminDomain) := GroenNabijheid/Bron/LU_Mutatie;
-
-			//doelklassen conform de gg-indeling van de logit: wonen naar residential, werken naar otherbuiltup (telt alleen via de 1000m-buurtterm), natuur (hedonische definitie, inclusief riet en moerasbos, #637) naar nature, water inclusief waterberging naar unavailable
-			attribute<bool> LU_IsResidential  (LU_ModelType) := lowercase(LU_ModelType/Sector_name) == lowercase('Wonen');
-			attribute<bool> LU_IsOtherBuiltup (LU_ModelType) := lowercase(LU_ModelType/Sector_name) == lowercase('Werken');
-			attribute<bool> LU_IsNature       (LU_ModelType) := LU_ModelType/IsNatuur_hedonisch;
-			attribute<bool> LU_IsWater        (LU_ModelType) := LU_ModelType/IsWater_hedonisch;
-
-			attribute<float32> NieuwResidential  (AdminDomain) := float32(MakeDefined(LU_IsResidential[LU_Mutatie], FALSE));
-			attribute<float32> NieuwOtherBuiltup (AdminDomain) := float32(MakeDefined(LU_IsOtherBuiltup[LU_Mutatie], FALSE));
-			attribute<float32> NieuwNature       (AdminDomain) := float32(MakeDefined(LU_IsNature[LU_Mutatie], FALSE));
-			attribute<float32> NieuwWater        (AdminDomain) := float32(MakeDefined(LU_IsWater[LU_Mutatie], FALSE));
+			// doelklassen conform de gg-indeling van de logit: wonen naar residential, werken naar otherbuiltup
+			// (telt alleen via de 1000m-buurtterm), natuur naar nature, water inclusief waterberging naar
+			// unavailable. Wie de cel bezet komt van de sector, wat de cel is van het type; zie GroenNabijheid/Bron.
+			attribute<float32> NieuwResidential  (AdminDomain) := float32(MakeDefined(Sector/IsWonen[GroenNabijheid/Bron/Sector_Mutatie], FALSE) && !IsDefined(GroenNabijheid/Bron/Type_Mutatie));
+			attribute<float32> NieuwOtherBuiltup (AdminDomain) := float32(MakeDefined(Sector/IsWerken[GroenNabijheid/Bron/Sector_Mutatie], FALSE) && !IsDefined(GroenNabijheid/Bron/Type_Mutatie));
+			attribute<float32> NieuwNature       (AdminDomain) := float32(GroenNabijheid/Bron/Mutatie_IsNatuur);
+			attribute<float32> NieuwWater        (AdminDomain) := float32(GroenNabijheid/Bron/Mutatie_IsWater);
 		}
 
 		container Deltas

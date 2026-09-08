@@ -1,4 +1,4 @@
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+﻿////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
@@ -32,14 +32,23 @@ Template Groenfracties_T
 	// Bron levert per AdminDomain-cel:
 	//   IsOPCel    (bool)         : is hier een ontwikkelpakket fysiek ingericht?
 	//   OP_rel     (OP)           : welk ontwikkelpakket, gebruikt waar IsOPCel geldt
-	//   LU_Mutatie (LU_ModelType) : het nieuwe landgebruik waar dat sinds het basisjaar is veranderd, anders null
+	//   IsMutatie          (bool) : is er sinds het basisjaar iets veranderd in deze cel?
+	//   Mutatie_IsNatuur   (bool) : telt die verandering hedonisch als natuur?
+	//   Mutatie_IsWater    (bool) : telt die verandering hedonisch als water?
+	//   Mutatie_IsLandbouw (bool) : is de verandering een landbouwklasse?
+	//
+	// De aanroeper levert deze vier als booleans en niet als een landgebruiksklasse. Tot 8 september 2026
+	// stond hier LU_Mutatie, een Actor/LU_ModelType, en las dit sjabloon de drie vlaggen daarvan. Dat zette
+	// een vertaalstap tussen de bron en het antwoord die detail plat sloeg: LU_ModelType kent een
+	// natuurklasse met een LGN-code, dus alle natuur kreeg dezelfde hedonische uitkomst. De aanroepers
+	// bepalen de vlaggen nu zelf uit de stand-administratie en de sector, en die twee weten allebei meer.
 
 	parameter<String> AD_short := ModelParameters/Advanced/AdminDomain_ref;
 
 	unit<UInt8> OP       := ThisVariantClassifications/Vastgoed/OP;
 	container   OP_Buurt := ='ThisVariantClassifications/Vastgoed/OP_Buurt';
 	unit<UInt8> WP4      := /Classifications/Vastgoed/WP4;
-	unit<UInt8> LU       := /Classifications/Actor/LU_ModelType;
+	// De unit LU is op 8 september 2026 vervallen; dit sjabloon kent geen landgebruiksclassificatie meer.
 
 	attribute<float32> Natuur_Basisjaar    (AdminDomain) := /SourceData/Grondgebruik/LGN/Groenfracties/fr_natuur_tot2500m[AdminDomain/rdc_25m_rel], Descr = "Aandeel natuur in de schijf 0-2500m, basisjaar (LGN).";
 	attribute<float32> Water_Basisjaar     (AdminDomain) := /SourceData/Grondgebruik/LGN/Groenfracties/fr_water_500m[AdminDomain/rdc_25m_rel],      Descr = "Aandeel water in de schijf 0-500m, basisjaar (LGN).";
@@ -87,23 +96,23 @@ Template Groenfracties_T
 
 	attribute<float32> WaterBehoudCel (AdminDomain) := Bron/IsOPCel ? (IsDrijvendCel ? /ModelParameters/Wonen/DrijvendBehoudtWaterFractie : 0f) * WaterCel_Basisjaar : 0f, IntegrityCheck = "all(this >= 0f && this <= 1f)", Descr = "Het deel van de cel dat onder een drijvend ontwikkelpakket water blijft: de behoudfractie maal het water dat er in het basisjaar lag. De toets op Bron/IsOPCel staat er omdat OP_rel ook gevuld is waar geen pakket is ingericht: de BAG-nieuwbouwcellen uit #550 dragen een gematchte OP_rel terwijl IsOPCel expliciet FALSE is.";
 
-	attribute<bool>    IsLandbouwMutatie   (AdminDomain) := MakeDefined(LU/IsLandbouw[Bron/LU_Mutatie], FALSE), Descr = "Is de mutatie een landbouwklasse? De landbouwallocatie wisselt elk zichtjaar gewassen over vrijwel het hele landelijk gebied, en dat is in hedonische zin geen verandering van de landsdekking. Een gewaswissel mag de LGN-basisjaarwaarde daarom niet verlagen; alleen de expliciet natte klassen (riet, moerasbomen) tellen als winst. Zie #637.";
-	attribute<float32> NatuurCel_Mutatie   (AdminDomain) := float32(LU/IsNatuur_hedonisch[Bron/LU_Mutatie]);
-	attribute<float32> WaterCel_Mutatie    (AdminDomain) := float32(LU/IsWater_hedonisch[Bron/LU_Mutatie]);
+	attribute<bool>    IsLandbouwMutatie   (AdminDomain) := Bron/Mutatie_IsLandbouw, Descr = "Is de mutatie een landbouwklasse? De landbouwallocatie wisselt elk zichtjaar gewassen over vrijwel het hele landelijk gebied, en dat is in hedonische zin geen verandering van de landsdekking. Een gewaswissel mag de LGN-basisjaarwaarde daarom niet verlagen; alleen de expliciet natte klassen (riet, moerasbomen) tellen als winst. Zie #637.";
+	attribute<float32> NatuurCel_Mutatie   (AdminDomain) := float32(Bron/Mutatie_IsNatuur);
+	attribute<float32> WaterCel_Mutatie    (AdminDomain) := float32(Bron/Mutatie_IsWater);
 
 	attribute<float32> NatuurCel (AdminDomain) := switch(
 			case(Bron/IsOPCel, (1f - WaterBehoudCel) * fr_natuur_OP[Bron/OP_rel])
 			, case(IsLandbouwMutatie, max_elem(NatuurCel_Basisjaar, NatuurCel_Mutatie))
-			, case(IsDefined(Bron/LU_Mutatie), NatuurCel_Mutatie)
+			, case(Bron/IsMutatie, NatuurCel_Mutatie)
 			, NatuurCel_Basisjaar
 		), Descr = "Natuur per cel bij de aangeleverde stand (hedonische definitie). Volgorde: een fysiek ingericht ontwikkelpakket bepaalt de celwaarde via zijn groen (#566, dus ook bij herontwikkeling waar het landgebruikstype gelijk blijft); daarna een landbouwmutatie, die de basisjaarwaarde alleen kan verhogen; daarna bepaalt de nieuwe klasse de waarde via de hedonische LGN-vlag; zonder mutatie blijft de LGN-basisjaarwaarde staan.";
 
 	attribute<float32> WaterCel (AdminDomain) := switch(
 			case(Bron/IsOPCel, WaterBehoudCel + (1f - WaterBehoudCel) * fr_water_OP[Bron/OP_rel])
 			, case(IsLandbouwMutatie, max_elem(WaterCel_Basisjaar, WaterCel_Mutatie))
-			, case(IsDefined(Bron/LU_Mutatie), WaterCel_Mutatie)
+			, case(Bron/IsMutatie, WaterCel_Mutatie)
 			, WaterCel_Basisjaar
-		), Descr = "Water per cel bij de aangeleverde stand, met dezelfde volgorde als NatuurCel. Sinds #637 telt niet alleen de wateraanleg binnen een ontwikkelpakket mee, maar ook gealloceerde waterberging en exogeen opgelegd open water, via LU_ModelType/IsWater_hedonisch.";
+		), Descr = "Water per cel bij de aangeleverde stand, met dezelfde volgorde als NatuurCel. Sinds #637 telt niet alleen de wateraanleg binnen een ontwikkelpakket mee, maar ook gealloceerde waterberging en exogeen opgelegd open water. De waterberging komt sinds 8 september 2026 langs de sectorkant van de aanroeper en niet meer uit een vlag op de landgebruiksklasse.";
 
 	// fracties: zelfde kernels en (statische) noemers als de basisjaar-meting
 
