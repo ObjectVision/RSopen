@@ -1,0 +1,80 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// TIJDELIJK meetharnas voor #793, verwijderen zodra de getallen in het issue staan.
+//
+// Hoeveel van het veenbouwsteenareaal draagt werkelijk bebouwing?
+//
+// Waarom deze meting. De bouwstenentabel van 24 augustus gaf bijna elke bouwsteen een bebouwd aandeel van 0,05, een vast
+// getal en geen meting. In de levering van 8 september staat dat aandeel overal op nul, behalve bij 10a en 10b. Daarmee
+// eist de bouwsteen de hele cel op, ook waar panden staan, terwijl #768 zegt dat die panden administratief blijven
+// staan. Op zulke cellen komt dan grasland of natte teelt op de landgebruikskaart terwijl er in de stand een woning zit.
+//
+// De vraag is of dat de moeite waard is om te repareren, en dat hangt af van hoe groot het werkelijk bebouwde deel is.
+// Deze meting geeft dat getal per bouwsteen, zodat de keuze tussen de geleverde nul en een gemeten fractie op een getal
+// rust en niet op een indruk.
+//
+// Definitie van bebouwd: BaseData/Omgeving/Opleggingsmasker/HeeftPanden, dezelfde bron als de eerste helft van
+// IsBestaandeBebouwing in Templates/VariantData/Natuur/Veen_T. De tweede helft daar, Basisjaar/IsBebouwd, is
+// templatelokaal en hier niet bereikbaar; deze meting is daarmee een ONDERGRENS van wat Veen_T bebouwd noemt.
+//
+// De bouwsteenkaart is ontkoppeld. Dit harnas leest de tif die Templates/VariantData/Natuur/Veen_T wegschrijft, net als
+// SourceData/Water/Grondwaterstanden/NbSGenuanceerd doet. Ontbreekt die, dan meldt GeoDMS geen leesfout maar Unknown
+// identifier op een subitem hieronder. Maken met:
+//
+//   GeoDmsRun ... /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen/Write_Bouwsteenkaart
+//
+// Draai het item Tabel; dat schrijft de csv.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose793
+: using = "Units;Geography"
+, Descr = "Tijdelijk meetharnas voor #793: het werkelijk bebouwde aandeel per veenbouwsteen, tegenover het aandeel dat de bouwstenentabel opgeeft."
+{
+	unit<uint8> BS := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata;
+
+	parameter<string> Bouwsteenkaart_Pad := '%LocalDataProjDir%/Indicatoren/Veenbouwstenen_NbSGenuanceerd_' + /ModelParameters/StudyArea + '.tif'
+	, Descr = "Letterlijk hetzelfde pad als Bouwsteenkaart_Pad in Veen_T en in SourceData/Water, als tekst herhaald omdat PropValue op een StorageName de expressietekst teruggeeft en niet het uitgerekende pad.";
+
+	attribute<BS> Bouwsteen (rdc_25m)
+	:	StorageName = "=Bouwsteenkaart_Pad"
+	,	StorageType = "gdal.grid"
+	,	StorageReadOnly = "True";
+
+	attribute<bool>  HeeftPanden (AdminDomain) := MakeDefined(/BaseData/Omgeving/Opleggingsmasker/HeeftPanden, FALSE);
+	attribute<BS>    BS_rel      (AdminDomain) := Bouwsteen[AdminDomain/rdc_25m_rel];
+	parameter<float32> CelHa                   := AdminDomain/NrHaPerCell[float32];
+
+	container Meting
+	{
+		attribute<float32> Areaal_ha       (BS) := sum(float32(IsDefined(BS_rel)) * CelHa, BS_rel);
+		attribute<float32> Bebouwd_ha      (BS) := sum(float32(IsDefined(BS_rel) && HeeftPanden) * CelHa, BS_rel);
+		attribute<float32> Fractie_gemeten (BS) := Areaal_ha > 0f ? Bebouwd_ha / Areaal_ha : 0f
+		, Descr = "Het gemeten bebouwde aandeel per bouwsteen. Ondergrens, want alleen panden en niet het bebouwde landgebruik van het basisjaar.";
+
+		attribute<float32> Fractie_tabel   (BS) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/Fr_Bebouwd[BS/org_rel]
+		, Descr = "Wat de bouwstenentabel opgeeft. Sinds de levering van 8 september nul op elke bouwsteen behalve 10a en 10b.";
+
+		parameter<float32> Areaal_totaal_ha  := sum(Areaal_ha);
+		parameter<float32> Bebouwd_totaal_ha := sum(Bebouwd_ha);
+		parameter<float32> Fractie_totaal    := Areaal_totaal_ha > 0f ? Bebouwd_totaal_ha / Areaal_totaal_ha : 0f;
+	}
+
+	unit<uint8> Regels := BS
+	{
+		attribute<string> code            := BS/code;
+		attribute<string> areaal_ha       := string(uint32(Meting/Areaal_ha));
+		attribute<string> bebouwd_ha      := string(uint32(Meting/Bebouwd_ha));
+		attribute<string> fractie_gemeten := string(float32(round(Meting/Fractie_gemeten * 10000f)) / 10000f);
+		attribute<string> fractie_tabel   := string(Meting/Fractie_tabel);
+		attribute<string> regel           := code + ';' + areaal_ha + ';' + bebouwd_ha + ';' + fractie_gemeten + ';' + fractie_tabel;
+	}
+
+	parameter<string> Tabel :=
+		'bouwsteen;areaal_ha;bebouwd_ha;fractie_gemeten;fractie_tabel'
+		+ '\n' + AsList(Regels/regel, '\n')
+		+ '\n' + 'TOTAAL;' + string(uint32(Meting/Areaal_totaal_ha)) + ';' + string(uint32(Meting/Bebouwd_totaal_ha))
+		+ ';' + string(float32(round(Meting/Fractie_totaal * 10000f)) / 10000f) + ';'
+	, StorageName = "='%LocalDataProjDir%/Diagnose/793_bebouwd_per_bouwsteen.csv'"
+	, StorageType = "str";
+}
