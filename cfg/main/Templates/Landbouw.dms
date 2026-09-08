@@ -33,10 +33,29 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 
 					Er zijn drie leveringen: BAU, BAU2 en sinds 8 september 2026 NbSGenuanceerd, dat de BAU-stand neemt met daaroverheen de grondwaterstand van de veenbouwsteen die op de cel is gealloceerd (#263, #782). NbSMax staat nog op BAU; Deltares heeft in #782 gezegd dat die variant genegeerd kan worden.";
 
-		parameter<string>        KlimaatZichtjaar         := /classifications/Landbouw/WWL_Zichtjaren/label[min_index(abs(int32(/classifications/Landbouw/WWL_Zichtjaren/jaar) - int32(EndYear)))]
-		, Descr = "Welke WWL-kaart bij dit zichtjaar hoort: die van het dichtstbijzijnde jaar waarvoor invoer bestaat. Dat zijn er drie, 2017, 2050 en 2085, en meer zijn er niet geleverd. Zichtjaar 2040 leest dus de 2050-kaarten en zichtjaar 2030 de 2017-kaarten; het omslagpunt ligt bij 2033,5.
+		unit<uint8>              WWL_Zichtjaren           := /Classifications/Landbouw/WWL_Zichtjaren;
+		parameter<float32>       WWL_jr                   := EndYear[float32];
 
-					Deltares heeft die regel in #782 bevestigd. Zij is de reden dat de opbrengstderving in dit model tijdsafhankelijk is (#263): tot en met 2033 rekent het model met waargenomen standen en de referentieband, daarna met de projectie van het scenario. Er zit geen interpolatie tussen de drie kaarten, dus de derving springt bij dat omslagpunt.";
+		parameter<uint32>        WWL_i_boven              := min_elem(sum(uint32(float32(WWL_Zichtjaren/jaar) < WWL_jr)), uint32(#WWL_Zichtjaren) - 1u)
+		, Descr = "Het bovenste van de twee ankers die dit zichtjaar omsluiten: het aantal WWL-jaren dat strikt onder het zichtjaar ligt, geklemd op het laatste anker. Voor 2040 geeft dat anker 1 (2050), voor 2060 anker 2 (2085), en voor alles vanaf 2085 blijft het op anker 2 staan.";
+
+		parameter<uint32>        WWL_i_onder              := max_elem(WWL_i_boven, 1u) - 1u
+		, Descr = "Het onderste anker, altijd een lager dan het bovenste. De max_elem vangt het geval af waarin het zichtjaar voor het eerste anker ligt; dat komt in deze configuratie niet voor, want het eerste zichtjaar is 2040.";
+
+		parameter<string>        WWL_Onder                := WWL_Zichtjaren/label[value(WWL_i_onder, WWL_Zichtjaren)];
+		parameter<string>        WWL_Boven                := WWL_Zichtjaren/label[value(WWL_i_boven, WWL_Zichtjaren)];
+		parameter<float32>       WWL_jr_onder             := float32(WWL_Zichtjaren/jaar[value(WWL_i_onder, WWL_Zichtjaren)]);
+		parameter<float32>       WWL_jr_boven             := float32(WWL_Zichtjaren/jaar[value(WWL_i_boven, WWL_Zichtjaren)]);
+
+		parameter<float32>       WWL_Gewicht              := WWL_jr_boven > WWL_jr_onder
+											? min_elem(max_elem((WWL_jr - WWL_jr_onder) / (WWL_jr_boven - WWL_jr_onder), 0f), 1f)
+											: 1f
+		, Descr = "Hoe zwaar het bovenste anker meetelt, tussen nul en een. Geklemd, zodat een zichtjaar voorbij het laatste anker volledig op dat anker uitkomt: vanaf 2085 is dit 1 en leest het model alleen de kaarten van 2085.
+
+					De waarden over de negen zichtjaren: 2040 op 0,697 tussen 2017 en 2050; 2050 op 1; 2060 op 0,286, 2070 op 0,571 en 2080 op 0,857 tussen 2050 en 2085; 2090 en later op 1.
+
+					Hier stond tot 8 september 2026 KlimaatZichtjaar, dat het DICHTSTBIJZIJNDE anker koos. Over negen zichtjaren leverde dat twee niveaus op met een sprong bij 2067,5. Op die datum is vastgesteld dat er geinterpoleerd moet worden (#263)."
+		, IntegrityCheck = "WWL_Gewicht >= 0f && WWL_Gewicht <= 1f";
 		parameter<DeepDrainageK> DeepDrainageVariant      := ='WaterbeheerOpties/DeepDrainageK_rel[WaterbeheerOpties/v/'+Waterbeheeroptie_name+']';
 		parameter<Jaar>          PeriodDuRation           := (EndYear - StartYear)[jaar];
 		attribute<LU_ModelType>  gg_LandbouwK   (rdc_25m) := /BaseData/StartState/Landgebruik/LU_Landbouw;
@@ -128,13 +147,35 @@ container Landbouw : using = "Classifications/Landbouw;Classifications/Actor"
 
 							De min_elem kapt aan de bovenkant af op een. Aan de onderkant staat met opzet geen max_elem maar een IntegrityCheck, want een negatieve opbrengstderving is geen waarde die je stil wilt afronden: hij betekent dat er ergens een NoData-vlag als getal is meegerekend. Die situatie heeft tot 5 september 2026 bestaan, zie de toelichting bij Exotisch, en zij was in de uitkomst niet zichtbaar omdat de claimplafonds de gevolgen opvingen. Deze check is daar de kanarie voor.";
 				
-				container WWL_dyn :=  
-					for_each_nedv( 
+				container WWL_Anker_Onder :=
+					for_each_nedv(
 						/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam
-						, '/SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_Dynamisch/'+Hydrologie_Variant+'/'+KlimaatZichtjaar+'/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/name+'/OpbrengstDerving'
+						, '/SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_Dynamisch/'+Hydrologie_Variant+'/'+WWL_Onder+'/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/name+'/OpbrengstDerving'
 						, rdc_25m
 						, float32
-					);
+					), Descr = "De dervingskaart van het onderste klimaatanker van dit zichtjaar.";
+
+				container WWL_Anker_Boven :=
+					for_each_nedv(
+						/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam
+						, '/SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_Dynamisch/'+Hydrologie_Variant+'/'+WWL_Boven+'/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/name+'/OpbrengstDerving'
+						, rdc_25m
+						, float32
+					), Descr = "Idem voor het bovenste anker. Valt samen met het onderste zodra het zichtjaar voorbij het laatste anker ligt; dan is WWL_Gewicht 1 en telt alleen deze mee.";
+
+				container WWL_dyn :=
+					for_each_nedv(
+						/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam
+						, 'IsDefined(WWL_Anker_Onder/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+') && IsDefined(WWL_Anker_Boven/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+')'
+							+ ' ? (1f - WWL_Gewicht) * WWL_Anker_Onder/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam
+							+ ' + WWL_Gewicht * WWL_Anker_Boven/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam
+							+ ' : MakeDefined(WWL_Anker_Boven/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+', WWL_Anker_Onder/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+')'
+						, rdc_25m
+						, float32
+					)
+				, Descr = "De opbrengstderving van dit zichtjaar, lineair tussen de twee klimaatankers die het omsluiten (#263). Tot 8 september 2026 werd hier onvoorwaardelijk het dichtstbijzijnde anker gelezen.
+
+							DE TWEE TAKKEN ZIJN GEEN OMSLACHTIGHEID. Een float-null propageert door een vermenigvuldiging met nul, dus (1f - 1f) * null is null en niet nul. Zonder de IsDefined-toets zou een zichtjaar met gewicht 1, zoals 2050 en alles vanaf 2085, overal null worden waar het ANDERE anker geen treffer heeft, ook al telt dat anker niet mee. Waar maar een van de twee een treffer geeft neemt de tweede tak die ene; waar geen van beide iets geeft blijft het null, en Result maakt daar via min_elem(null, 1f) een volledige derving van, wat betekent dat dit gewas hier niet kan.";
 				
 				container Exotisch :=
 					for_each_nedv(
