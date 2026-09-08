@@ -61,8 +61,10 @@ Template Iter_Landbouw_T
 			attribute<LU_ModelType> Totaal          (AdminDomain) := ThisVariantData/ExogeenOpleggen/Totaal;
 			attribute<Bool>         Beschikbaar     (AdminDomain) := IsNull(Totaal);
 
-			attribute<LandbouwKlasses/Actief> LandbouwK_rel (AdminDomain) := LU_ModelType/LandbouwK_rel[Totaal]
-			, Descr = "De landbouwklasse van de oplegging, null waar de oplegging natuur of water is.";
+			attribute<LandbouwKlasses> LandbouwK_rel (AdminDomain) := LU_ModelType/LandbouwK_rel[Totaal]
+			, Descr = "De landbouwklasse van de oplegging, null waar de oplegging natuur of water is.
+
+						De volle LandbouwKlasses en niet de subsectorlijst Actief: de oplegging komt uit de landgebruikskaart en die kent alle klassen, en per_SectorxSubsector hieronder zoekt hem op tegen Sector/xSubsector/LandbouwK_rel, dat ook op de volle unit staat. Legt een levering een klasse op die deze run niet alloceert, dan vindt die rlookup niets en blijft de cel leeg, wat het juiste antwoord is: opleggen is geen alloceren.";
 
 			attribute<Sector/xSubsector> per_SectorxSubsector (CompactedAdminDomain) :=
 				rlookup(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, LandbouwK_rel), Sector/xSubsector/LandbouwK_rel)
@@ -102,15 +104,22 @@ Template Iter_Landbouw_T
 
 		parameter<Bool> IsEersteZichtjaar := lowercase(Context/ThisZichtjaar/name) == lowercase(first(Time/Zichtjaar/name));
 
-		attribute<LandbouwKlasses/Actief> HuidigeKlasse_Basisjaar (CompactedAdminDomain) :=
+		// De HERKOMST is een klasse uit de volle LandbouwKlasses en niet uit de subsectorlijst Actief. Een cel kan
+		// in het basisjaar een gewas dragen dat deze run niet alloceert, bijvoorbeeld cranberry uit de BRP met
+		// ExotenActief uit, en daar hoort nog steeds een transitie vandaan gerekend te worden. De transitiematrix
+		// in ModelParameters/Landbouw/Transitiekosten heeft de volle unit dan ook als domein: herkomst in de rijen,
+		// bestemming in de kolommen. Alleen de BESTEMMING is beperkt tot wat er gealloceerd mag worden.
+		attribute<LandbouwKlasses> HuidigeKlasse_Basisjaar (CompactedAdminDomain) :=
 			collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, LU_ModelType/LandbouwK_rel[/BaseData/StartState/Landgebruik/LU_Landbouw])
 		, Descr = "De landbouwklasse van het basisjaar uit de landgebruikskaart, dezelfde bron als gg_LandbouwK in Templates/Landbouw.dms. In het eerste zichtjaar is dit de herkomst, want de compacte allocatiestand draagt in dat zichtjaar geen landbouwstanden (die zijn daar null, zie de vrijstelling voor StandVar/IsLandbouw in Zichtjaar_T/Impl); gemeten op 8 september 2026.";
 
-		attribute<LandbouwKlasses/Actief> HuidigeKlasse_Stand (CompactedAdminDomain) :=
-			='(ArgMax('+asItemList('MakeDefined(float32(StateVoorAllocatie/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'), 0f)')+') / uint32(Stand_Landbouw_max > 0f))[LandbouwKlasses/Actief]'
-		, Descr = "De landbouwklasse uit de stand die dit zichtjaar binnenkrijgt, dus de uitkomst van het vorige zichtjaar inclusief wat daar exogeen is opgelegd. Null waar geen klasse staat (de deling door nul is de gangbare constructie, zie Allocatie_T/SubSector_rel_dominant_landuse).";
+		attribute<LandbouwKlasses> HuidigeKlasse_Stand (CompactedAdminDomain) :=
+			='LandbouwKlasses/Actief/org_rel[(ArgMax('+asItemList('MakeDefined(float32(StateVoorAllocatie/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'), 0f)')+') / uint32(Stand_Landbouw_max > 0f))[LandbouwKlasses/Actief]]'
+		, Descr = "De landbouwklasse uit de stand die dit zichtjaar binnenkrijgt, dus de uitkomst van het vorige zichtjaar inclusief wat daar exogeen is opgelegd. Null waar geen klasse staat (de deling door nul is de gangbare constructie, zie Allocatie_T/SubSector_rel_dominant_landuse).
 
-		attribute<LandbouwKlasses/Actief> HuidigeKlasse (CompactedAdminDomain) := =IsEersteZichtjaar ? 'HuidigeKlasse_Basisjaar' : 'HuidigeKlasse_Stand'
+					De ArgMax loopt over de standvariabelen, en die bestaan alleen voor de subsectoren, dus zijn uitkomst is een rij van Actief. LandbouwKlasses/Actief/org_rel zet die om naar de volle unit, zodat deze klasse dezelfde betekenis heeft als HuidigeKlasse_Basisjaar hierboven en in de transitiematrix als herkomst kan dienen.";
+
+		attribute<LandbouwKlasses> HuidigeKlasse (CompactedAdminDomain) := =IsEersteZichtjaar ? 'HuidigeKlasse_Basisjaar' : 'HuidigeKlasse_Stand'
 		, Descr = "De landbouwklasse die de cel aan het BEGIN van dit zichtjaar draagt: in het eerste zichtjaar uit de basisjaarkaart, daarna uit de stand van het vorige zichtjaar.
 
 					Dit is de herkomst voor de transitiekosten (#262). Tot 8 september 2026 las de allocator de Suitability uit VariantData, en die trekt de transitiekosten af ten opzichte van het basisjaargebruik (Dairy_T en Akkerbouw_T, Conversion_costs0 op gg_LandbouwK), in elk zichtjaar opnieuw. Een boer die in 2040 van gras naar aardappelen ging betaalde in 2050 dus nog eens de omschakeling vanaf gras, en een cel die in 2040 aardappelen was geworden kende in 2050 geen drempel om terug te gaan. VariantData kent de vorige zichtjaarstand niet (zie Zichtjaar_T: alleen hier in de allocatie is StateVoorAllocatie beschikbaar), dus de reparatie zit hier en niet in de geschiktheidssjablonen. De Suitability in VariantData blijft bestaan voor de indicatoren; de allocator bouwt haar hieronder opnieuw op uit Net_revenues, de kapitalisatiefactor en deze herkomst.";
