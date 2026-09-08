@@ -9,7 +9,7 @@
 // Voor is SourceData/Water/Grondwaterstanden/BAU, na is .../NbSGenuanceerd. Beide kanten lezen de
 // weggeschreven dervingskaarten, dus ze dragen dezelfde bandindex en zijn onderling vergelijkbaar.
 //
-// Zichtjaar 2040 leest de WWL-kaarten van 2050; zie Templates/Landbouw/Suitability_T/KlimaatZichtjaar.
+// Zichtjaar 2040 interpoleert tussen de WWL-kaarten van 2017 en 2050; zie Templates/Landbouw/Suitability_T/WWL_Gewicht.
 //
 // Draai de drie Tabel-items.
 //
@@ -107,12 +107,11 @@ container Diagnose263
 		//
 
 		container YR    := ='/VariantData/'+Casus_str+'/Suitability/Y2040/Landbouw/factoren/YieldReduction/Result';
-		container Stand := /BaseData/StartState/StateBasisjaar/State/Landbouw;
+		attribute<Bool> IsLb_kaart (AdminDomain) := /Classifications/Actor/LU_ModelType/IsLandbouw[/BaseData/StartState/Landgebruik/LU_Basisjaar]
+		, Descr = "Draagt deze cel in het basisjaar landbouw? Uit de LANDGEBRUIKSKAART en niet uit de stand-administratie. De stand zegt wat er in een zichtjaar is gealloceerd en verdwijnt bovendien zodra de sector Landbouw in ModelParameters/SectorAllocRegio uit staat; op 8 september 2026 brak deze meting daarop. De kaart is ook inhoudelijk de juiste maat, zie de skill geodms-valkuilen. LET OP dat de getallen daardoor iets afwijken van de eerdere meting in dit harnas, die de stand gebruikte.";
 
-		attribute<Float32> LandbouwHa (AdminDomain) := ='add('+AsItemList('MakeDefined(float32(Stand/'+/Classifications/Actor/LandbouwKlasses/name+'), 0f)')+')'
-		, Descr = "Hectares landbouw per cel in het basisjaar, over alle vijftien klassen opgeteld. Zelfde maat als Diagnose780, zodat de getallen naast die meting te leggen zijn.";
+		attribute<Float32> IsLb (AdminDomain) := float32(IsLb_kaart);
 
-		attribute<Float32> IsLb (AdminDomain) := LandbouwHa > 0f ? 1f : 0f;
 		parameter<Float32> N_lb := sum(IsLb);
 
 		container Gem :=
@@ -155,7 +154,7 @@ container Diagnose263
 
 	// ---- wat is er tijdsafhankelijk: het pad per zichtjaar ----
 	container Tijdpad
-	: Descr = "Per zichtjaar welke WWL-kaart wordt gelezen, de grootheid die de opbrengstderving door de tijd laat lopen. Alleen parameters, dus dit kost geen rasterwerk. Casus BAU; de klimaatband is sinds #782 voor alle varianten gelijk. De verziltingskolom is hier op 8 september 2026 uit gehaald: sinds #782 staat Verzilting_Meetellen op FALSE en bijt die term nergens meer."
+	: Descr = "Per zichtjaar tussen welke twee WWL-ankers wordt geinterpoleerd en met welk gewicht, de grootheid die de opbrengstderving door de tijd laat lopen. Alleen parameters, dus dit kost geen rasterwerk. Casus BAU; de klimaatband is sinds #782 voor alle varianten gelijk. De verziltingskolom is hier op 8 september 2026 uit gehaald: sinds #782 staat Verzilting_Meetellen op FALSE en bijt die term nergens meer."
 	{
 		container Per := for_each_ne(/Classifications/Time/Zichtjaar/name, 'Regel_T('+quote(/Classifications/Time/Zichtjaar/name)+')');
 
@@ -164,11 +163,35 @@ container Diagnose263
 			parameter<String> Jaar_str;
 			//
 			container Src := ='/VariantData/BAU/Suitability/'+Jaar_str+'/Landbouw';
-			parameter<String> Regel := Jaar_str + ': WWL=' + Src/KlimaatZichtjaar;
+			parameter<String> Regel := Jaar_str + ': ' + Src/WWL_Onder + ' naar ' + Src/WWL_Boven + ' gewicht=' + string(Src/WWL_Gewicht);
 		}
 
-		parameter<String> Tabel := = quote('per zichtjaar: welke WWL-kaart || ') + ' + ' + AsList("Per/" + /Classifications/Time/Zichtjaar/name + "/Regel", " + ' | ' + ")
+		parameter<String> Tabel := = quote('per zichtjaar: tussen welke WWL-ankers en met welk gewicht op het bovenste || ') + ' + ' + AsList("Per/" + /Classifications/Time/Zichtjaar/name + "/Regel", " + ' | ' + ")
 		, StorageName = "=/Diagnose/PerIssue/Diagnose263/Uit + 'meting263_tijdpad.txt'"
+		, StorageType = "str";
+	}
+
+	// ---- wat doet de interpolatie tussen de twee klimaatankers ----
+	container Interpolatie
+	: Descr = "Wat de interpolatie tussen de twee klimaatankers doet, zonder een schakelaar om te zetten. Voor zichtjaar 2040 was het oude gedrag exact het BOVENSTE anker, want dat was ook het dichtstbijzijnde; WWL_Anker_Boven is dus de voor-kant en WWL_dyn de na-kant, in dezelfde run en op dezelfde cellen.
+
+				De maat is de basisjaar-landgebruikskaart en niet de stand-administratie, dus deze meting werkt ook met de sector Landbouw uit. De noemer telt alleen de cellen waar BEIDE ankers een treffer geven, zodat het verschil de interpolatie meet en niet de null-behandeling."
+	{
+		parameter<String> Casus_str := replace_value(expand(., '%env:RSO_CASUS%'), 'env:RSO_CASUS', 'BAU');
+
+		container YR := ='/VariantData/'+Casus_str+'/Suitability/Y2040/Landbouw/factoren/YieldReduction';
+
+		attribute<float32> IsLb (AdminDomain) := float32(/Classifications/Actor/LU_ModelType/IsLandbouw[/BaseData/StartState/Landgebruik/LU_Basisjaar]);
+
+		container Def  := for_each_nedv(/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam, 'IsLb * float32(IsDefined(YR/WWL_Anker_Onder/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+') && IsDefined(YR/WWL_Anker_Boven/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+'))', AdminDomain, float32);
+		container N    := for_each_nedv(/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam, 'sum(Def/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+')', void, float32);
+		container Voor := for_each_nedv(/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam, 'sum(Def/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+' * MakeDefined(YR/WWL_Anker_Boven/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+', 0f)) / N/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam, void, float32);
+		container Na   := for_each_nedv(/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam, 'sum(Def/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+' * MakeDefined(YR/WWL_dyn/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam+', 0f)) / N/'+/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam, void, float32);
+
+		container Regel := for_each_nedv(/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam, quote(/SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam) + " + '=' + string(Voor/" + /SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam + ") + ' > ' + string(Na/" + /SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam + ")", void, string);
+
+		parameter<String> Tabel := = quote('opbrengstderving op basisjaar-landbouwgrond, zichtjaar 2040, zonder interpolatie > met interpolatie, casus ') + " + Casus_str + ' || ' + " + AsList("Regel/" + /SourceData/Landbouw/Yield_Reduction/WWL_relatie_database/WWL_Gewassen/GeneriekeNaam, " + ' | ' + ")
+		, StorageName = "=/Diagnose/PerIssue/Diagnose263/Uit + 'meting263_interpolatie_' + Casus_str + '.txt'"
 		, StorageType = "str";
 	}
 }
