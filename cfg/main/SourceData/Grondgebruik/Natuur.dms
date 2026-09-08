@@ -5,23 +5,84 @@ container Natuur
 
 				Water is een eigenschap van het beheertype (INL_Beheertype/IsWater), behalve bij rivieren: daar loopt die keuze over de categorie van het ecotoop, omdat het beheertype N01.03 Rivier- en moeraslandschap zowel terrestrische als waterecotopen verzamelt. Zie #621."
 	{
-		container Landelijk_BAU 
+		container Landelijk_BAU
+		: Descr = "De MNP-planpotentieelkaart van de WUR: huidige natuur plus de volledige realisatie van alle geplande maatregelen, per beheertype. De levering van BAU en BAU2, de achtervang van NbSMax, en de tweede beheertypenkaart van het basisjaar naast het NBP (#776).
+
+					De bron ligt op 2,5 meter en het model rekent op 25 meter, dus honderd broncellen per modelcel. Die samenvatting gebeurt in twee stappen die elk hun eigen vraag beantwoorden: Modus_25m kiest WELK beheertype de cel krijgt, Dekking_25m beslist OF de cel natuur is. Tot #795 deed modus() beide tegelijk, en dat ging mis omdat modus() nulls negeert: een cel waarvan een van de honderd broncellen gevuld was werd volledig natuur. De kaart won daar 212.188 ha mee, ruim vijftien procent, en kreeg het spikkelbeeld dat in Friesland het duidelijkst was, want daar liggen de akkerranden en de graslandpercelen van het agrarisch natuurbeheer als smalle stroken in de bron. De drempel staat als MinimumDekking in ModelParameters/Natuur/MNP_Kaart; daar staan ook de gemeten arealen.
+
+					De kaart op 25 meter is sinds #795 een ontkoppeld bestand met een fingerprint, in LocalDataProjDir en niet meer naast de bron op de share. Twee redenen: de uitkomst hangt nu van een modelparameter af, en de tif draagt rijnummers van INL_Beheertype, dus een rij erbij in die classificatie maakte het oude bestand stil verkeerd. De fingerprint vangt allebei."
 		{
+			parameter<UInt32> MinimumDekking := /ModelParameters/Natuur/MNP_Kaart/MinimumDekking;
+
 			attribute<uint8> NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel0 (rdc_2_5m)
 			:	StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/BAU/NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel_20250925_110353.tif"
 			,	Source          = "WUR"
 			, 	Descr           = "Dit bestand dient als de ruimtelijke mal voor de natuurvlakken binnen de visie NL2120. Het representeert de geografische afbakening van waar natuur aanwezig is of gepland is binnen de vigerende beleidskaders."
 			, 	LazyCalculated  = "true";
-		
+
 			attribute<INL_Beheertype>  NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel (rdc_2_5m) := rlookup(NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel0, INL_Beheertype/MNP_BeheertypenKaart_val);
-			attribute<INL_Beheertype>  Write_NL2120_MNP_BAU_INL_beheertypen_25m (rdc_25m) := modus(NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel, rdc_2_5m/rdc_25m_rel)
-			,	StorageName     = "%RSo_DataDir%/Beleid/Overigen/Natuur/BAU/NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel_20250925_110353_25m.tif"
-			, 	StorageType     = "gdalwrite.grid"
-			;
-			attribute<INL_Beheertype>  INL_Beheertype_rel_AD (AdminDomain)
-			:	StorageName     = "=PropValue(Write_NL2120_MNP_BAU_INL_beheertypen_25m, 'StorageName')"
-			, 	StorageType     = "gdal.grid"
-			, 	StorageReadOnly = "true";
+
+			attribute<UInt32> Dekking_25m (rdc_25m) := sum(uint32(IsDefined(NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel)), rdc_2_5m/rdc_25m_rel)
+			, Descr = "Hoeveel van de honderd broncellen binnen deze modelcel een beheertype dragen. Nul waar de bron zwijgt, want een som over een lege groep is nul en geen null.";
+
+			attribute<INL_Beheertype> Modus_25m (rdc_25m) := modus(NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel, rdc_2_5m/rdc_25m_rel)
+			, Descr = "Welk beheertype de meeste broncellen binnen deze modelcel dragen. Nulls tellen daarbij niet mee, dus dit is de meerderheid BINNEN het natuurdeel van de cel. Dat is precies wat je van een typekeuze wilt; de vraag of de cel uberhaupt natuur is beantwoordt Dekking_25m.";
+
+			attribute<INL_Beheertype> Calc_INL_beheertypen_25m (rdc_25m) := Dekking_25m >= MinimumDekking ? Modus_25m : null_b[INL_Beheertype]
+			, Descr = "De kaart op 25 meter: het meerderheidstype, maar alleen op cellen die genoeg gevuld zijn. Dit is het rekenwerk dat de ontkoppelde tif hieronder eenmalig vastlegt; het kost ongeveer drie minuten, want de bron telt ruim veertien miljard cellen.";
+
+			parameter<String> FileName_INL_beheertypen_25m := '%LocalDataProjDir%/BaseData/Grondgebruik/MNP/mnp_bau_INL_Beheertype_25m_dekking' + string(MinimumDekking) + '_' + /ModelParameters/StudyArea + '.tif'
+			, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft. De drempel staat in de naam, zodat twee instellingen naast elkaar kunnen blijven staan.";
+
+			parameter<String> Fingerprint_INL_beheertypen_25m :=
+				  'bron='             + PropValue(NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel0, 'StorageName')
+				+ ';minimum_dekking=' + string(MinimumDekking)
+				+ ';mnp_val='         + AsList(MakeDefined(string(INL_Beheertype/MNP_BeheertypenKaart_val), 'null'), ',')
+				+ ';beheertypen='     + AsList(INL_Beheertype/code, ',')
+				+ ';study_area='      + /ModelParameters/StudyArea
+			, Descr = "Wat de tif bepaalt: het bronbestand, de dekkingsdrempel, de koppelkolom van de rasterwaarden naar de beheertypen, de nummering van INL_Beheertype (de tif draagt rijnummers) en het studiegebied. Een rij erbij in die classificatie maakt de tif dus ongeldig in plaats van stil verkeerd.";
+
+			container Decoupling_INL_beheertypen_25m := /Templates/DecoupledFile_T(FileName_INL_beheertypen_25m, Fingerprint_INL_beheertypen_25m);
+
+			attribute<INL_Beheertype> Make_INL_beheertypen_25m (rdc_25m) := Calc_INL_beheertypen_25m, StorageName = "=FileName_INL_beheertypen_25m", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_INL_beheertypen_25m/Write_Fingerprint"
+			, Descr = "Schrijft de kaart eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+			attribute<INL_Beheertype> Read_INL_beheertypen_25m (rdc_25m) : StorageName = "=FileName_INL_beheertypen_25m", StorageType = "gdal.grid", StorageReadOnly = "true";
+			attribute<INL_Beheertype> INL_beheertypen_25m      (rdc_25m) := = Decoupling_INL_beheertypen_25m/MayReuse ? 'Read_INL_beheertypen_25m' : 'Make_INL_beheertypen_25m'
+			, Descr = "De kaart zoals het model haar gebruikt, ontkoppeld. Vraag Decoupling_INL_beheertypen_25m/Explanation op als je wilt weten waarom de tif wel of niet opnieuw wordt gemaakt.";
+
+			attribute<INL_Beheertype>  INL_Beheertype_rel_AD (AdminDomain) := INL_beheertypen_25m[AdminDomain/rdc_25m_rel]
+			, Descr = "Dezelfde kaart op het administratiedomein. Staat AdminDomain op 25 meter, dan is dat een een-op-een-koppeling; op 100 meter pakt hij de 25-metercel waar de grovere cel op valt, net als de storage-read die hier tot #795 stond.";
+
+			container Controle
+			: Descr = "Wat de dekkingsdrempel met het areaal doet, over de hele kaart en dus zonder het studiegebiedmasker. Twee tabellen, met opzet gescheiden naar wat ze kosten. Vraag Tabel op voor de goedkope kant: die leest alleen de ontkoppelde kaart en kost seconden, en hij toetst meteen of de leeskant naar het administratiedomein werkt. Vraag Tabel_Bron op voor de vergelijking met de bron zelf; die leest ruim veertien miljard cellen op 2,5 meter en kost enkele minuten."
+			{
+				parameter<Float64> Kaart_ha   := sum(IsDefined(INL_beheertypen_25m)   ? 0.0625d : 0d), Descr = "Het areaal met een beheertype in de kaart zoals het model haar gebruikt. Gemeten 8 september 2026 bij drempel 50: 1.402.011 ha.";
+				parameter<Float64> KaartAD_ha := sum(IsDefined(INL_Beheertype_rel_AD) ? float64(AdminDomain/NrHaPerCell / 1[Ha]) : 0d), Descr = "Hetzelfde op het administratiedomein, dus na de stap die de lezers van deze container zetten. Zolang AdminDomain op 25 meter staat hoort dit exact gelijk te zijn aan Kaart_ha; wijkt het af, dan doet de domeinkoppeling iets anders dan bedoeld.";
+
+				parameter<String> Tabel :=
+					  'grootheid;waarde'
+					+ '\nminimum_dekking;' + string(MinimumDekking)
+					+ '\nkaart_ha_25m;'    + string(Kaart_ha)
+					+ '\nkaart_ha_ad;'     + string(KaartAD_ha)
+				, StorageName = "='%LocalDataProjDir%/Diagnose/795_mnp_kaart.txt'", StorageType = "str";
+
+				container Bron
+				: Descr = "De vergelijking met de bron op 2,5 meter: wat de drempel wegneemt en of wat overblijft nog op het bronareaal uitkomt."
+				{
+					parameter<Float64> Bron_ha          := sum(float64(IsDefined(NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel))) * 0.000625d, Descr = "Het areaal met een beheertype in de bron zelf. Gemeten 8 september 2026: 1.400.397 ha.";
+					parameter<Float64> ZonderDrempel_ha := sum(Dekking_25m > 0 ? 0.0625d : 0d), Descr = "Wat de kaart op 25 meter zou worden zonder drempel, dus zoals hij tot #795 was. Gemeten: 1.612.584 ha, ruim vijftien procent te veel.";
+					parameter<Float64> MetDrempel_ha    := sum(Dekking_25m >= MinimumDekking ? 0.0625d : 0d), Descr = "En met de drempel die nu geldt. Gemeten bij 50: 1.402.011 ha.";
+
+					parameter<String> Tabel_Bron :=
+						  'grootheid;waarde'
+						+ '\nminimum_dekking;'   + string(MinimumDekking)
+						+ '\nbron_ha_op_2_5m;'   + string(Bron_ha)
+						+ '\nzonder_drempel_ha;' + string(ZonderDrempel_ha)
+						+ '\nmet_drempel_ha;'    + string(MetDrempel_ha)
+						+ '\nafwijking_ha;'      + string(MetDrempel_ha - Bron_ha)
+					, StorageName = "='%LocalDataProjDir%/Diagnose/795_mnp_dekking.txt'", StorageType = "str";
+				}
+			}
 		}
 
 		unit<uint32> Rivieren_BAU_mmd
