@@ -83,6 +83,9 @@ container Verwervingskosten
 	container Niet_Woningen
 	: Descr = "De verwervingskosten van het bestaande niet-woonvastgoed per cel: het niet-woon vloeroppervlak maal een verwervingsprijs per vierkante meter. Anders dan bij woningen is er voor niet-woningen geen hedonisch prijsmodel; de prijs komt uit de WOZ-brondata, met een landelijk kental als terugval. Zie #674 voor waar dit vandaan komt."
 	{
+		parameter<meter2>  OppMaxPerCel := (AdminDomain/NrMeter2PerCell[Float32] * ModelParameters/Wonen/Verwervingskosten/NietWoningen_MaxBouwlagenPerCel)[meter2]
+		, Descr = "Het maximale niet-woonvloeroppervlak per cel: het celoppervlak maal het aantal bouwlagen uit ModelParameters/Wonen/Verwervingskosten/NietWoningen_MaxBouwlagenPerCel. Uit het celoppervlak en niet als vast getal, want op een grid van 100 meter hoort de grens zestien keer hoger te liggen. Begrenst opp_per_grid en Samenstelling/Voor1994 hieronder; de onderbouwing en de gemeten omvang staan bij die parameter.";
+
 		parameter<Eur_m2>  kental                            := ModelParameters/Wonen/Verwervingskosten/NietWoningen, Descr = "Het landelijke kental voor de verwervingsprijs per vierkante meter niet-woonvloeroppervlak, op het prijspeil van Model_StartYear.";
 
 		attribute<Eur_m2>  WOZ_Woningen_per_m2 (AdminDomain) := SourceData/Vastgoed/WOZ/Y2017/Gegeven_BBG, Descr = "De WOZ-waarde per vierkante meter vloeroppervlak van WONINGEN, uit de CBS-brondata met peildatum 1 januari 2016, per buurt teruggevallen op wijk en gemeente. De bodemgebruiksklasse van de cel kiest welke reeks geldt, maar die klasse zegt waar een woning staat en niet wat voor object het is: de brondata telt landelijk 7,84 miljoen objecten, gelijk aan de woningvoorraad, en de reeks voor bedrijfsterreinen beweegt mee met de woningprijs ter plaatse. Vandaar de omrekening hieronder. Twee scheefheden in de bron die hier niet zijn rechtgezet: de prijs is per buurt mean plus sd, een bovenschatting waarvan ik de onderbouwing niet heb teruggevonden, en van de vier klassen krijgt woongebied geen groeifactor terwijl de andere drie via Groeifactor_CommercieelVastgoed naar 2023 zijn gebracht, met indices voor commercieel vastgoed. Het jaartal 2017 staat hard in het pad: er is maar een WOZ-jaar in de brondata.";
@@ -118,10 +121,13 @@ container Verwervingskosten
 																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/logies[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
 																			+ sum(pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/cel[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
 			, Descr = "Alle utiliteitsklassen samen. Wijkt af van opp_per_grid: die telt verblijfsobjecten in panden zonder woonfunctie, deze telt utiliteits-vbo's ook in gemengde panden. Alleen de verhouding tussen Hal en Utiliteit wordt gebruikt, dus dat verschil valt weg.";
-			attribute<meter2>  Voor1994  (AdminDomain) := sum((pand_startjaar/Bouwjaar_trunc < ModelParameters/Wonen/Sloopkosten/AsbestBouwjaarGrens
+			attribute<meter2>  Voor1994_bron (AdminDomain) := sum((pand_startjaar/Bouwjaar_trunc < ModelParameters/Wonen/Sloopkosten/AsbestBouwjaarGrens
 																? pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel_uniek/niet_woon
 																: 0[meter2])[pand_startjaar/ToedelingsMatrix/Pand_rel] * pand_startjaar/ToedelingsMatrix/ToedelingPand, pand_startjaar/ToedelingsMatrix/AdminDomain_rel)
 			, Descr = "Het niet-woon vloeroppervlak in de cel dat in een pand van voor het asbestverbod staat. Voedt de asbesttoeslag in de sloopkosten (#701). Landelijk is 53,1 procent van het niet-woonvloeroppervlak van voor 1994; 4,7 miljoen m2 heeft geen bouwjaar en telt hier niet mee, wat de toeslag eerder te laag dan te hoog maakt.";
+
+			attribute<meter2>  Voor1994 (AdminDomain) := Voor1994_bron > ../OppMaxPerCel ? ../OppMaxPerCel : Voor1994_bron
+			, Descr = "Voor1994_bron, begrensd op de fysieke bovengrens per cel. Deze term voedt de asbesttoeslag in de sloopkosten rechtstreeks en niet via een verhouding, dus hij hoort dezelfde grens te dragen als opp_per_grid; Hal en Utiliteit hierboven blijven ongegrensd omdat daarvan alleen de verhouding wordt gebruikt en die van een gelijke opblazing niet verandert. De vorm is een toets en geen min_elem, zodat een ontbrekende waarde ontbrekend blijft: null > x is FALSE en de else-tak geeft de null terug.";
 
 			attribute<Float32> Fractie_Hal (AdminDomain) := Utiliteit > 0[meter2]
 													? Hal / Utiliteit
@@ -136,7 +142,15 @@ container Verwervingskosten
 
 		attribute<Eur_m2>  prijs_per_m2        (AdminDomain) := MakeDefined(WOZ_per_m2, kental), Descr = "De verwervingsprijs per vierkante meter. Het kental is de terugval voor de circa 34.000 cellen met niet-woonvastgoed waar de brondata geen WOZ-waarde geeft, 2,4 procent van de cellen met vastgoed.";
 
-		attribute<meter2>  opp_per_grid        (AdminDomain) := pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel/niet_woon_AdminDomain, Descr = "Het niet-woon vloeroppervlak per cel, via de toedelingsmatrix die een pand over zijn cellen verdeelt, en met elk verblijfsobject precies een keer geteld. Ditzelfde oppervlak gaat in Sloopkosten/Totaal_niet_woningen, zodat hetzelfde gebouw voor verwerven en voor slopen op dezelfde maat staat. Tot #674 liep deze kant via pand/Oppervlaktes/vbo_opp_niet_woon: dat telt een verblijfsobject bij elk gerelateerd pand mee en tilt bovendien elk pand met enig niet-woonoppervlak op naar zijn volle footprint, waardoor een winkel op de begane grond het hele pand tot niet-woon maakte. Landelijk gaf die route 441 miljoen m2 tegen 180 miljoen m2 hier.";
+		attribute<meter2>  opp_per_grid_bron   (AdminDomain) := pand_startjaar/Oppervlaktes/VBOopp_perGebruiksdoel/niet_woon_AdminDomain, Descr = "Het niet-woon vloeroppervlak per cel, via de toedelingsmatrix die een pand over zijn cellen verdeelt, en met elk verblijfsobject precies een keer geteld. Ditzelfde oppervlak gaat in Sloopkosten/Totaal_niet_woningen, zodat hetzelfde gebouw voor verwerven en voor slopen op dezelfde maat staat. Tot #674 liep deze kant via pand/Oppervlaktes/vbo_opp_niet_woon: dat telt een verblijfsobject bij elk gerelateerd pand mee en tilt bovendien elk pand met enig niet-woonoppervlak op naar zijn volle footprint, waardoor een winkel op de begane grond het hele pand tot niet-woon maakte. Landelijk gaf die route 441 miljoen m2 tegen 180 miljoen m2 hier.";
+
+		attribute<Bool>    IsAfgekapt          (AdminDomain) := opp_per_grid_bron > OppMaxPerCel
+		, Descr = "Cellen waar de bron boven de fysieke bovengrens uitkomt en dus wordt begrensd. Staat er als eigen item zodat de omvang van de ingreep te tellen is zonder de bron opnieuw te hoeven bouwen: som deze vlag voor het aantal cellen. Een ontbrekende waarde geeft FALSE, want null > x is FALSE.";
+
+		attribute<meter2>  opp_per_grid        (AdminDomain) := opp_per_grid_bron > OppMaxPerCel ? OppMaxPerCel : opp_per_grid_bron
+		, Descr = "Het niet-woonvloeroppervlak per cel zoals de kostenkant het gebruikt: de bron hierboven, begrensd op OppMaxPerCel. Alle lezers zitten op dit item, dus zowel de verwervingskosten hieronder als Sloopkosten/Calc_Totaal_niet_woningen en de drie tellingen in Diagnose krijgen de begrensde waarde.
+
+				Een toets en geen min_elem, zodat een ontbrekende waarde ontbrekend blijft. Met min_elem zou een cel zonder brondata de grenswaarde kunnen krijgen, en dat zou van een leeg veld een wolkenkrabber maken.";
 
 		attribute<Eur>     Per_AdminDomain     (AdminDomain) := MakeDefined(opp_per_grid, 0[meter2]) * prijs_per_m2, Descr = "De verwervingskosten van het niet-woonvastgoed per cel. Een cel zonder niet-woonvastgoed komt op nul uit en niet op undefined: undefined zou via het exploitatiesaldo de hele cel uit de allocatie halen.";
 
@@ -156,6 +170,7 @@ container Verwervingskosten
 			+ ';woz_ratio_other='        + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_WOZVerhouding_Overig)
 			+ ';hall_fraction_default='  + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_FractieHal_Default)
 			+ ';unit_price_2017='        + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_2017)
+			+ ';max_storeys_per_cell=' + string(ModelParameters/Wonen/Verwervingskosten/NietWoningen_MaxBouwlagenPerCel)
 			+ ';unit_price_start_year='  + string(kental)
 			+ ';start_year='             + string(ModelParameters/Model_StartYear)
 			+ ';bag_recent_year='        + string(ModelParameters/BAG_RecentYear)
