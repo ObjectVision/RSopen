@@ -1,0 +1,58 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// TIJDELIJK meetharnas bij #803. Hoort weg zodra een volle reeks heeft laten zien dat de stand klopt.
+//
+// WAT DIT MEET. Per zichtjaar twee getallen uit dezelfde standmap, allebei rechtstreeks uit de tif en zonder
+// enige herberekening:
+//
+//   stand_ha  de landbouwstandkaarten Aantal_Ha_<klasse> bij elkaar opgeteld
+//   label_ha  het aantal hectare waar SubSector_rel een landbouwsubsector aanwijst
+//
+// Die twee horen gelijk op te lopen, en stand_ha hoort nooit onder label_ha te liggen: label en hoeveelheid komen
+// uit dezelfde allocatiestap, en exogeen opgelegde landbouw krijgt wel hectares maar geen label. Datzelfde is de
+// invariant LandbouwStandKlopt in Templates/Allocatie/Zichtjaar_T, die de run laat omvallen zodra hij breekt.
+// Dit harnas is de tegenhanger daarvan voor een afgeronde reeks: hij leest de tifs en toont de hele reeks naast
+// elkaar, zodat een afkalving over de zichtjaren zichtbaar wordt in plaats van alleen een harde breuk.
+//
+// WAT ER STOND. In de productierun van 9 september 2026 liep stand_ha terug van 1.869.372 ha in Y2040 naar
+// 0,25 ha in Y2120, terwijl label_ha per zichtjaar juist met precies die bedragen opliep tot 1.910.708 ha. Dat
+// was #803: de beschikbaarheidspoort van de landbouwallocatie liet een cel maar een keer toe, zodat elk volgend
+// zichtjaar niets meer te alloceren had. Gerepareerd in IterSubsector_T_Landbouw; deze reeks hoort daarna vlak
+// te liggen op het landbouwareaal dat na de andere sectoren overblijft.
+//
+// LEES DIT VOOR JE HEM DRAAIT. Dit harnas leest de standtifs van een ANDERE werkkopie wanneer je
+// LocalDataProjDir op die kopie zet. Dat is bewust: de meting hoort op de productiedata en niet op een herdraai.
+// Het schrijft zelf alleen zijn eigen tekstbestand, en dat staat met een absoluut pad in de testkopie zodat er
+// niets in de gemeten map verandert.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose803_Verval
+: using = "Units;Geography;Classifications/Actor"
+, Descr = "Loopt de landbouwstand per zichtjaar gelijk op met het landbouwlabel, of kalft hij af?"
+{
+	unit<UInt8>       Klasse  := /Classifications/Actor/LandbouwKlasses/Actief;
+	unit<UInt8>       Jaar    := /Classifications/Time/Zichtjaar;
+	parameter<String> Variant := 'BAU';
+
+	attribute<String> Pad (Jaar) := '/Allocatie/WLO_hoog_' + Variant + '/Zichtjaren/' + Jaar/name + '/Impl/ReadStand_UNCHECKED/'
+	, Descr = "De ongecontroleerde leeskant, met opzet. ReadStand ernaast toetst de legenda tegen de lopende configuratie, en die toets faalt zodra dit harnas met een andere sectorlijst draait dan de run die de stand heeft geschreven.";
+
+	parameter<String> KlassenSom := AsList('sum(MakeDefined(@P@Landbouw/' + Klasse/name + ', 0[Ha]))', ' + ');
+
+	attribute<String> StandExpr (Jaar) := replace(KlassenSom, '@P@', Pad);
+	attribute<String> LabelExpr (Jaar) := 'sum(MakeDefined(Sector/xSubsector/IsLandbouw[' + Pad + 'Subsector_rel], FALSE) ? AdminDomain/NrHaPerCell : 0[Ha])';
+
+	parameter<String> Tabel := =
+		  quote('landbouwverval ' + Variant + '\njaar;stand_ha;label_ha\n')
+		+ ' + ' + AsList(quote(Jaar/name + ';') + ' + string(' + StandExpr + ') + ' + quote(';') + ' + string(' + LabelExpr + ') + ' + quote('\n'), ' + ')
+	, StorageName = "C:/LocalData/RSopen_NL2120_test/Diagnose/803_verval.txt"
+	, StorageType = "str";
+}
