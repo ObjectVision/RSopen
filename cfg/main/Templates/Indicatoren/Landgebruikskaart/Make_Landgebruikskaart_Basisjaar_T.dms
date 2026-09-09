@@ -67,13 +67,13 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 	attribute<LU_ModelType>      Allocatie                     (AdminDomain) := ThisYear/impl/StandVar/Subsector/LU_ModelType_rel[Stand/SubSector_rel];
 	attribute<Typen>             Dominant_BebouwdeOmgeving     (AdminDomain) := IsLU_Wonen || IsLU_NoData ? null_b[Typen] : ArgMax_ifdefined(Wonen_Filtered, Werken_Filtered, Verblijfrecreatie_Filtered)[Typen];
 	
-	container Group_Wonen_Start                  := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Wonen','Wonen_Totaal', /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector, ModelParameters/Advanced/MinimumGroupSize, LU_Basisjaar, 'StartState');
-	container Group_Werken_Start                 := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Werken','Werken_Totaal', /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector, ModelParameters/Advanced/MinimumGroupSize, LU_Basisjaar, 'StartState');
-	container Group_Verblijfsrecreatie_Start     := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Verblijfsrecreatie','Verblijfsrecreatie_Totaal', /ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector, ModelParameters/Advanced/MinimumGroupSize, LU_Basisjaar, 'StartState');
+	container Group_Wonen_Start                  := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Wonen', ModelParameters/Advanced/MinimumGroupSize, 'StartState');
+	container Group_Werken_Start                 := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Werken', ModelParameters/Advanced/MinimumGroupSize, 'StartState');
+	container Group_Verblijfsrecreatie_Start     := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Verblijfsrecreatie', ModelParameters/Advanced/MinimumGroupSize, 'StartState');
 	
-	container Group_Wonen_Zichtjaar              := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Wonen','Wonen_Totaal', /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector, ModelParameters/Advanced/MinimumGroupSize, gg_prev, 'Zichtjaar');
-	container Group_Werken_Zichtjaar             := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Werken','Werken_Totaal', /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector, ModelParameters/Advanced/MinimumGroupSize, gg_prev, 'Zichtjaar');
-	container Group_Verblijfsrecreatie_Zichtjaar := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Verblijfsrecreatie','Verblijfsrecreatie_Totaal', /ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector, ModelParameters/Advanced/MinimumGroupSize, gg_prev, 'Zichtjaar');
+	container Group_Wonen_Zichtjaar              := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Wonen', ModelParameters/Advanced/MinimumGroupSize, 'Zichtjaar');
+	container Group_Werken_Zichtjaar             := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Werken', ModelParameters/Advanced/MinimumGroupSize, 'Zichtjaar');
+	container Group_Verblijfsrecreatie_Zichtjaar := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Verblijfsrecreatie', ModelParameters/Advanced/MinimumGroupSize, 'Zichtjaar');
 	
 	unit<UInt8> Typen : NrOfRows = 3
 	{
@@ -98,17 +98,37 @@ Template Make_Landgebruikskaart_T : using = "Classifications/Actor;Classificatio
 	// uit, dan is de LUT null en levert de vergelijking null, vandaar de MakeDefined.
 	attribute<bool> SubResult_Waterberging (AdminDomain) := MakeDefined(Allocatie == Waterberging_LUT, FALSE);
 	
+	unit<UInt8> Voorrang : NrOfRows = 10
+	, Descr = "De uitkomsten van de voorrangsregel hieronder, als eigen lijst en niet als klasse van een kaart (#803).
+
+				De regel zelf is classificatievrij: hij zegt WIE voorrang heeft op deze cel, niet welk nummer die krijgt. Het vertalen naar een klasse gebeurt daarna, en dat is de enige stap die van een klassenindeling afhangt. Zo kan dezelfde beslissing twee kaarten voeden zonder dat de logica wordt gedupliceerd, en dat is de voorwaarde om de kaart op LU_ModelType te kunnen uitfaseren."
+	{
+		attribute<String> name : ['GeenData','Oplegging','Water','Waterberging','Behoud','Wonen','Werken','Verblijfsrecreatie','Allocatie','Rest'];
+		attribute<String> Label := name;
+		container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+	}
+
+	attribute<Voorrang> Voorrang_rel (AdminDomain) := switch(
+		 case(IsLU_NoData, Voorrang/V/GeenData)
+		,case(lowercase(Zichtjaar_name) != lowercase('Basisjaar') && IsDefined(ExogeenOpleggen), Voorrang/V/Oplegging)
+		,case(IsLU_Water, Voorrang/V/Water)
+		,case(SubResult_Waterberging, Voorrang/V/Waterberging)
+		,case(IsLU_exogenous || IsLU_Wonen || IsLU_Verblijfsrecreatie, Voorrang/V/Behoud)
+		,case(SubResult_Wonen, Voorrang/V/Wonen)
+		,case(SubResult_Werken, Voorrang/V/Werken)
+		,case(SubResult_verblijfsrecreatie, Voorrang/V/Verblijfsrecreatie)
+		,case(IsDefined(Allocatie), Voorrang/V/Allocatie)
+		, Voorrang/V/Rest
+	)
+	, Descr = "Wie heeft voorrang op deze cel? Dezelfde volgorde en dezelfde voorwaarden als de kaart altijd al had; alleen de uitkomst is nu een naam in plaats van een klasse. Zie de Descr van Result hieronder voor waarom die volgorde nauw luistert.";
+
 	attribute<LU_ModelType> Result (AdminDomain) := switch(
-		 case(IsLU_NoData, gg_prev)
-		,case(lowercase(Zichtjaar_name) != lowercase('Basisjaar') && IsDefined(ExogeenOpleggen), ExogeenOpleggen)
-		,case(IsLU_Water, gg_prev)
-		,case(SubResult_Waterberging, Waterberging_LUT)
-		,case(IsLU_exogenous || IsLU_Wonen || IsLU_Verblijfsrecreatie, gg_prev)
-		,case(SubResult_Wonen, Wonen_LUT)
-		,case(SubResult_Werken, Werken_LUT)
-		,case(SubResult_verblijfsrecreatie, Verblijfsrecreatie_LUT)
-		,case(IsDefined(Allocatie), Allocatie)
-		// ,case(IsLU_Landbouw && IsDefined(Allocatie), Allocatie)
+		 case(Voorrang_rel == Voorrang/V/Oplegging,          ExogeenOpleggen)
+		,case(Voorrang_rel == Voorrang/V/Waterberging,       Waterberging_LUT)
+		,case(Voorrang_rel == Voorrang/V/Wonen,              Wonen_LUT)
+		,case(Voorrang_rel == Voorrang/V/Werken,             Werken_LUT)
+		,case(Voorrang_rel == Voorrang/V/Verblijfsrecreatie, Verblijfsrecreatie_LUT)
+		,case(Voorrang_rel == Voorrang/V/Allocatie,          Allocatie)
 		, gg_prev
 	)
 	, Descr = "De landgebruikskaart van dit zichtjaar. De volgorde van de cases is de voorrangsregel, en die luistert nauw.
