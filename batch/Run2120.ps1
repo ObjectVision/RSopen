@@ -220,7 +220,7 @@ function Test-LeenAanname([string]$CfgPad, [string]$Lener, [string]$Uitlener) {
     $vk = Join-Path (Split-Path $CfgPad -Parent) 'main\VariantParameters\VariantK.dms'
     $tekst = Get-Content $vk -Raw
     $toegestaan = @('name','StandVanVariant','LeentStand','Label',
-                    'Waterbeheeroptie','WinterdroogleggingK_ref','ZomerdroogleggingK_ref',
+                    'WinterdroogleggingK_ref','ZomerdroogleggingK_ref',
                     'InfiltratieMaatregelK_ref','WaterbergingClaimBron')
     $namen = @([regex]::Matches([regex]::Match($tekst,"attribute<[^>]+>\s+name\s*:\s*\[(.*?)\]",'Singleline').Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
     $iL = $namen.IndexOf($Lener); $iU = $namen.IndexOf($Uitlener)

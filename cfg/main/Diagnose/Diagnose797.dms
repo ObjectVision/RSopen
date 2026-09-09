@@ -1,0 +1,71 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// TIJDELIJK meetharnas bij de productierun van 9 september 2026. Hoort weg zodra de getallen in het issue staan.
+//
+// HET VERSCHIJNSEL. De landbouwallocatie draait en SubSector_rel toont de juiste gewassen, maar de standkaarten
+// Aantal_Ha_<klasse> zijn alle elf leeg. De claimrealisatietabel geeft daardoor voor elke provincie en elke klasse
+// een stand van nul tegenover een claim van samen 1.989.946 ha.
+//
+// WAAR HET ZIT. Dezelfde Allocatie/per_SectorxSubsector voedt twee dingen. Subsector_rel in Iter_Landbouw_T neemt
+// hem rechtstreeks over en is goed. De hoeveelheid loopt via Update_Expr_DiscrAlloc in Allocatie_T en vergelijkt
+// per_SectorxSubsector met Sector/xSubsector/V/Landbouw_<klasse>; die vergelijking levert overal onwaar.
+//
+// WAT DIT HARNAS MEET. Per klasse het basisjaarareaal, wat de zeef toelaat, en wat de vergelijking tegen V
+// oplevert. En als losse getallen: op hoeveel hectare Alloc_Result en per_SectorxSubsector uberhaupt gevuld zijn.
+// Staan die in de miljoenen terwijl elke klassekolom nul is, dan ligt het aan de vergelijking en niet aan de
+// allocatie.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose797
+: using = "Units;Geography;Classifications/Actor"
+, Descr = "Waarom staan de landbouwstandkaarten op nul terwijl SubSector_rel klopt?"
+{
+	unit<UInt8>       Klasse  := /Classifications/Actor/LandbouwKlasses/Actief;
+	parameter<String> Variant := 'BAU';
+	parameter<String> Jaar    := 'Y2120';
+
+	container Iter := ='/Allocatie/WLO_hoog_' + Variant + '/Zichtjaren/' + Jaar + '/Sequences/Seq_0/SectorAllocRegios/Provincie_Landbouw/Iters_Landbouw/Iter_0';
+
+	container Basisjaar
+	{
+		attribute<Ha> PerKlasse (Klasse) := ='union_data(Klasse, '+AsList('sum(MakeDefined(/BaseData/StartState/StateBasisjaar/State/Landbouw/'+Klasse/name+', 0[Ha]))', ',')+')';
+		parameter<Ha> Totaal          := sum(PerKlasse);
+	}
+
+	container Zeef
+	{
+		attribute<Ha> PerKlasse (Klasse) := ='union_data(Klasse, '+AsList('sum(/VariantData/'+Variant+'/PotentieleState/'+Jaar+'/Per_SectorxSubsectoren/Landbouw/'+Klasse/name+'/IsBeschikbaar_zichtjaar ? AdminDomain/NrHaPerCell : 0[Ha])', ',')+')';
+		parameter<Ha> Totaal          := sum(PerKlasse);
+	}
+
+	container Gealloceerd
+	: Descr = "De vergelijking uit Update_Expr_DiscrAlloc, letterlijk nagebouwd. Dit is wat er in de standkaart terechtkomt."
+	{
+		attribute<Ha> PerKlasse (Klasse) := ='union_data(Klasse, '+AsList('sum(Iter/Allocatie/per_SectorxSubsector == Sector/xSubsector/V/Landbouw_'+Klasse/name+' ? CompactedAdminDomain/NrHaPerCell : 0[Ha])', ',')+')';
+		parameter<Ha> Totaal          := sum(PerKlasse);
+	}
+
+	parameter<Ha> PerSectorxSubsector_Gevuld := sum(IsDefined(Iter/Allocatie/per_SectorxSubsector) ? CompactedAdminDomain/NrHaPerCell : 0[Ha])
+	, Descr = "Op hoeveel hectare wijst de allocatie uberhaupt een subsector aan? Dit is de kanarie: staat dit in de miljoenen terwijl Gealloceerd/Totaal nul is, dan klopt de vergelijking tegen V niet en niet de allocatie.";
+
+	parameter<Ha> AllocResult_Gevuld := sum(IsDefined(Iter/Allocatie/Alloc_Result) ? CompactedAdminDomain/NrHaPerCell : 0[Ha])
+	, Descr = "Idem een stap eerder, bij het rauwe resultaat van discrete_alloc, voor de rlookup naar een subsector.";
+
+	parameter<String> Uitdraai :=
+		  'landbouwdiagnose ' + Variant + ' ' + Jaar + '\n'
+		+ 'klasse;basisjaar_ha;zeef_ha;gealloceerd_ha\n'
+		+ AsList(Klasse/name + ';' + string(Basisjaar/PerKlasse) + ';' + string(Zeef/PerKlasse) + ';' + string(Gealloceerd/PerKlasse), '\n')
+		+ '\ntotaal;' + string(Basisjaar/Totaal) + ';' + string(Zeef/Totaal) + ';' + string(Gealloceerd/Totaal)
+		+ '\n\nAlloc_Result gevuld op ha;' + string(AllocResult_Gevuld)
+		+ '\nper_SectorxSubsector gevuld op ha;' + string(PerSectorxSubsector_Gevuld) + '\n'
+	, StorageName = "='%LocalDataProjDir%/Diagnose/797_landbouw_' + Variant + '_' + Jaar + '.txt'"
+	, StorageType = "str";
+}
