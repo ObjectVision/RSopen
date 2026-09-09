@@ -16,12 +16,12 @@ REM
 REM ================================================================================
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms19.1.0
-REM set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
-set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
+set geodmsversion=GeoDms20.3.0.c
+set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
+REM set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
-set LocalDataProjDir=C:\LocalData\RSopen
+set LocalDataProjDir=C:\prj\LocalData
 
 set MT_FLAGS=/S1 /S2 /S3
 
@@ -84,7 +84,7 @@ REM call ..\batch\RunVariantData.cmd
 
 :runScenarios
 
-set RSL_SCENARIO_NAME=WLO_Hoog
+set RSL_SCENARIO_NAME=WLO_hoog
 call ..\batch\RunScenarios.cmd
 
 REM set RSL_SCENARIO_NAME=WLO_Laag

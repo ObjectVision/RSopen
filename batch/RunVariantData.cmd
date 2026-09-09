@@ -17,6 +17,11 @@ REM ============================================================================
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteVariantData/per_Variant/%RSL_VARIANT_NAME%/Generate_Run1
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
+REM Genereert de Opbrengsten_perOP tif-bestanden onder VariantData\Vastgoed. Zonder deze stap
+REM ontbreken die ontkoppelde bestanden en faalt de allocatie met een TIFFOpen-fout.
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteVariantData/per_Variant/%RSL_VARIANT_NAME%/Generate_Run2
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+
 exit /B
 
 
