@@ -370,6 +370,26 @@ Zo ging het bij `#741`. In de piekbuiberging-indicator telde `Wonen/Totaal` zeve
 
 Zo vang je hem: splits een samengestelde som uit naar zijn termen en leg de som van de delen naast het geheel. Wijken die af, dan telt de som iets anders dan je leest. Een grep op `Resultaat/ +` of algemener op een slash gevolgd door spatie-plus kost niets en vindt het patroon rechtstreeks.
 
+### Dezelfde deling, maar dan in een property die tekst bouwt
+
+Een property als `ExplicitSuppliers` of `StorageName` met een `=` ervoor is een expressie die een STRING oplevert. Het pad hoort dus binnen aanhalingstekens te staan en de parameters ertussenuit geplakt te worden:
+
+```
+, ExplicitSuppliers = "= 'VariantParameters/VariantK/X[VariantParameters/VariantK/V/'+Variant_name+']'"
+```
+
+Vergeet je het openingsaanhalingsteken direct na de `=`, dan staat er geen tekstopbouw meer maar rekenwerk, en `VariantK/V` gedeeld door de string `+Variant_name+` geeft:
+
+```
+div Error: Cannot find operator for these arguments:
+arg1 of type TreeItem
+arg2 of type DataItem<string>
+```
+
+Deze variant faalt luid en niet stil, dus hij is minder venijnig dan de som hierboven. Wat hem duur maakt is WAAR hij faalt: een `ExplicitSuppliers` hangt aan een schrijfstap, en die draai je zelden als je aan de leeskant werkt. Op 2026-09-09 stond hij in `WriteVariantData/per_Variant_T/Impl/Veenbouwstenen` en viel `Generate_Run2` daardoor voor elke variant om, na drie seconden en zonder een enkele opbrengstentif. De wijziging die hem veroorzaakte was getoetst met twaalf leesitems over vier varianten, allemaal exit 0.
+
+Twee regels die dit afvangen. Bouw een variantvlag in zo'n property niet op uit `V/`+naam maar lees hem langs `[Variant_rel]`, in een gewone parameter naast de property; dan staat er geen pad meer in de tekstexpressie. En draai na een wijziging aan een variantvlag altijd `CommitChecks/MaakVariantData1` en `MaakVariantData2`: dat kost een paar minuten en raakt de schrijfkant, die geen enkel leesitem aanraakt.
+
 ## De pijl volgt een alias-unit tot de onderliggende unit
 
 `a -> b` zoekt `b` op in de waarde-eenheid van `a`. Is die eenheid een alias, zoals `unit<UInt32> UrbanContourK := Classifications/Modellering/UrbanContourK { attribute<String> RefSrc := ... }`, dan is de waarde-eenheid die GeoDMS vasthoudt de onderliggende classificatie en niet de alias. Een subitem dat alleen op de alias staat, zoals die `RefSrc`, is via de pijl dus onvindbaar: `Unknown identifier 'RefSrc'`. `PropValue(attr, 'ValuesUnit')` laat het zien, die geeft het pad van de onderliggende unit terug. Indexeren via de alias zelf werkt wel: `Impl/UrbanContourK/RefSrc[waarden]`.
