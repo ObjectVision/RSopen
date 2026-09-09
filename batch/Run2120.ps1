@@ -32,7 +32,10 @@ param(
     [switch]   $SkipBasedata,
     [switch]   $SkipVariantData,
     [string]   $StartBij   = '',
-    [switch]   $HerbouwBasedata
+    [switch]   $HerbouwBasedata,
+    # Bevestigt dat deze reeks bewust alleen landbouw alloceert en de stedelijke sectoren uit de
+    # bestaande standtifs overneemt. Moet samenvallen met ModelParameters/OntkoppelStedelijkeKlasses.
+    [switch]   $AlleenLandbouw
 )
 
 $ErrorActionPreference = 'Stop'
@@ -143,10 +146,40 @@ function Test-Dictionaries {
     Write-Regel "controle  : alle 0Dictionary.dms staan absoluut"
 }
 
+function Test-StedelijkeKlassen {
+    # ModelParameters/OntkoppelStedelijkeKlasses is een debugschakelaar zonder omgevingsvariabele: hij
+    # staat in de configuratie en Run2120 zet hem niet. Op TRUE slaat elke niet-landbouwregel in
+    # SectorAllocRegio zijn allocatie over en geeft hij zijn ingangsstand door, en leest de landbouw
+    # de stand van datzelfde zichtjaar van schijf. Dat is de bedoelde route voor een landbouwronde
+    # bovenop bestaande standtifs, maar in een volle reeks levert het stedelijke standen op die niet
+    # zijn gealloceerd. Niets in het log zegt dat: de NoAlloc-tak is gratis en geeft geen foutregel.
+    # Vandaar deze toets, die de schakelaar en de bedoeling van de aanroeper naast elkaar legt.
+    $mp = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms'
+    if (-not (Test-Path $mp)) { throw "ModelParameters.dms niet gevonden naast $Cfg" }
+    $m = [regex]::Match((Get-Content $mp -Raw), 'OntkoppelStedelijkeKlasses\s*:=\s*(TRUE|FALSE)')
+    if (-not $m.Success) { throw "OntkoppelStedelijkeKlasses niet gevonden in $mp" }
+    $ontkoppeld = ($m.Groups[1].Value -eq 'TRUE')
+
+    if ($ontkoppeld -and -not $AlleenLandbouw) {
+        Write-Regel "GESTOPT: OntkoppelStedelijkeKlasses staat op TRUE, dus alleen Landbouw alloceert."
+        Write-Regel "Zet hem op FALSE in $mp voor een volle reeks, of geef -AlleenLandbouw mee als dat de bedoeling is."
+        throw 'OntkoppelStedelijkeKlasses staat op TRUE zonder -AlleenLandbouw'
+    }
+    if (-not $ontkoppeld -and $AlleenLandbouw) {
+        Write-Regel "GESTOPT: -AlleenLandbouw gegeven, maar OntkoppelStedelijkeKlasses staat op FALSE."
+        Write-Regel "Zo alloceert de reeks alsnog alle sectoren. Zet de schakelaar op TRUE in $mp."
+        throw '-AlleenLandbouw zonder OntkoppelStedelijkeKlasses op TRUE'
+    }
+    $wat = if ($ontkoppeld) { 'alleen Landbouw, stedelijke stand uit de bestaande tifs' } else { 'alle sectoren uit SectorAllocRegio' }
+    Write-Regel "controle  : OntkoppelStedelijkeKlasses is $($m.Groups[1].Value), dus $wat"
+}
+
 Write-Regel "build     : $(Split-Path (Split-Path $Exe -Parent) -Leaf)"
 Write-Regel "config    : $Cfg"
 Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
+
+Test-StedelijkeKlassen
 
 if ($Zichtjaren.Count -eq 0) { $Zichtjaren = Get-Zichtjaren }
 Write-Regel "zichtjaren: $($Zichtjaren -join ', ') (uit de configuratie)"
