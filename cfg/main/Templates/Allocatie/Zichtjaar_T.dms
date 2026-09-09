@@ -494,16 +494,35 @@ Template Zichtjaar_T
 			for_each_neidvn(
 				 StandVar/path
 				, 'ReadStand_UNCHECKED/'+StandVar/path
-				, StandVar/IsLandbouw || (NOT(/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'OP_rel' || StandVar/name == 'SubSector_rel' || StandVar/name == 'Landgebruik_Type' ? ' && LegendaKlopt' : '')
+				, StandVar/IsLandbouw || (NOT(/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'OP_rel' || StandVar/name == 'SubSector_rel' || StandVar/name == 'Landgebruik_Type' ? ' && LegendaKlopt' : '') + (StandVar/name == 'SubSector_rel' && /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector ? ' && LandbouwStandKlopt' : '')
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
-			), StorageReadOnly = "True"
+			), StorageReadOnly = "True", Descr = "De gecontroleerde leeskant. Elke standkaart moet minstens een gevulde en niet-nulle cel dragen, en de twee positionele kolommen moeten daarnaast een kloppende legenda naast zich hebben (#721).
+
+					De landbouwstandkaarten blijven van die toets per kaart vrijgesteld, en dat is een keuze en geen vergeetpost. Een gewas mag in een zichtjaar legitiem op nul uitkomen: gemeten op 9 september 2026 in Y2050 van BAU staan rietteelt en intensief grasland op nul terwijl de negen andere klassen samen 1,93 miljoen ha dragen. Een toets per kaart laat de run daar omvallen op een geldige uitkomst.
+
+					De landbouwkant wordt daarom als geheel getoetst, met LandbouwStandKlopt hieronder, en die toets hangt aan SubSector_rel. Dat is de plek waar hij hoort. #803 was juist het geval waarin de labelkaart vol stond en de standkaarten leeg waren, en een toets die naar een van beide kanten apart kijkt ziet dat niet. Dezelfde toets staat aan de schrijfkant, zie WriteStand."
 		{
 			parameter<String> LegendaGelezen: StorageName = "=ExistingFile('%projDir%/cfg/no_fingerprint.txt', LegendaFileName)", StorageType = "str", StorageReadOnly = "True"
 			, Descr = "De legenda zoals die naast de ingelezen OP_rel-tif staat. Ontbreekt het zijbestand, dan valt dit terug op cfg/no_fingerprint.txt en klopt de vergelijking nooit; een stand van voor #721 faalt dus hard in plaats van stil verkeerd te wijzen.";
 			parameter<Bool>   LegendaKlopt := LegendaGelezen == LegendaVerwacht
 			, Descr = "Wijzen de nummers in de ingelezen stand naar dezelfde sets als de lopende configuratie? Getoetst via de IntegrityCheck op OP_rel en SubSector_rel hierboven.";
+
+			parameter<Float32> LandbouwStand_ha := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector
+				? 'add('+AsList('sum(MakeDefined(ReadStand_UNCHECKED/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'[float32], 0f))', ',')+')'
+				: '0f'
+			, Descr = "De landbouwstandkaarten van deze stand bij elkaar opgeteld, dimensieloos in hectare gerekend.";
+
+			parameter<Float32> LandbouwLabel_ha := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector
+				? 'sum(MakeDefined(/Classifications/Actor/Sector/xSubsector/IsLandbouw[ReadStand_UNCHECKED/SubSector_rel], FALSE) ? AdminDomain/NrHaPerCell[float32] : 0f)'
+				: '0f'
+			, Descr = "Het areaal dat SubSector_rel in diezelfde stand als landbouw aanwijst.";
+
+			parameter<Bool> LandbouwStandKlopt := LandbouwStand_ha >= 0.99f * LandbouwLabel_ha
+			, Descr = "Draagt elke cel met een landbouwlabel ook hectares in de standkaarten? Dat is de invariant die #803 brak. Label en hoeveelheid komen uit dezelfde allocatiestap, dus de som van de standkaarten hoort minstens gelijk te zijn aan het gelabelde areaal. Groter mag: exogeen opgelegde landbouw, de natte teelt en het vernatte grasland van de veenlevering, krijgt wel hectares maar geen label, want de allocator heeft die cellen niet gekozen.
+
+						De ondergrens staat op 99 procent en niet op precies gelijk, omdat beide sommen over tientallen miljoenen cellen in float32 worden opgeteld en daarbij een paar promille uit elkaar kunnen lopen. Het gat dat deze toets hoort te vangen is van een andere orde: in de productierun van 9 september 2026 stond in Y2120 0,25 ha stand tegenover 1.910.708 ha label.";
 
 			container wonen
 			{
@@ -714,17 +733,32 @@ Template Zichtjaar_T
 			for_each_neidvnat(
 				StandVar/path
 				, 'CalcStand/'+StandVar/path
-				, StandVar/IsLandbouw || (NOT(/Modelparameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
+				, StandVar/IsLandbouw || (NOT(/Modelparameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'SubSector_rel' && /Modelparameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector ? ' && LandbouwStandKlopt' : '')
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
 				, replace(AllocatieFileName, '@STANDPATH@', StandVar/path)
 				, 'gdalwrite.grid'
-			), Descr = "Write the calculated stand file back to a tif file, but only if the stand file is not completely empty or undefined."
+			), Descr = "Write the calculated stand file back to a tif file, but only if the stand file is not completely empty or undefined.
+
+					De landbouwstandkaarten worden niet per kaart getoetst maar als geheel, met LandbouwStandKlopt hieronder, gehangen aan SubSector_rel. Zie de Descr van ReadStand voor waarom dat zo moet: een enkel gewas mag legitiem op nul uitkomen, en #803 was juist het geval waarin het label vol stond en de stand leeg was. Tot 9 september 2026 stond hier alleen een vrijstelling en schreef de allocatie elf lege kaarten weg zonder dat de run omviel."
 		{
 			parameter<String> Legenda := LegendaVerwacht
 			, StorageName = "=LegendaFileName", StorageType = "str"
 			, Descr = "Schrijft de legenda van de positionele standkolommen naast de OP_rel-tif, zie LegendaVerwacht. Hoort bij elke WriteStand-aanroep mee te gaan; de leeskant weigert een stand zonder kloppend zijbestand.";
+
+			parameter<Float32> LandbouwStand_ha := = /Modelparameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector
+				? 'add('+AsList('sum(MakeDefined(CalcStand/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'[float32], 0f))', ',')+')'
+				: '0f'
+			, Descr = "De landbouwstandkaarten die dit zichtjaar wegschrijft, bij elkaar opgeteld en dimensieloos in hectare gerekend.";
+
+			parameter<Float32> LandbouwLabel_ha := = /Modelparameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector
+				? 'sum(MakeDefined(/Classifications/Actor/Sector/xSubsector/IsLandbouw[CalcStand/SubSector_rel], FALSE) ? AdminDomain/NrHaPerCell[float32] : 0f)'
+				: '0f'
+			, Descr = "Het areaal dat SubSector_rel in diezelfde stand als landbouw aanwijst.";
+
+			parameter<Bool> LandbouwStandKlopt := LandbouwStand_ha >= 0.99f * LandbouwLabel_ha
+			, Descr = "Dezelfde invariant als aan de leeskant, maar dan op wat deze run wegschrijft; zie ReadStand/LandbouwStandKlopt voor de onderbouwing en voor de reden dat de ondergrens op 99 procent staat.";
 
 			container wonen
 			{

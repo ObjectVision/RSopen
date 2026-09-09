@@ -1,0 +1,87 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// TIJDELIJK meetharnas bij #803. Hoort weg zodra de getallen in het issue staan.
+//
+// WAT DIT MEET. Per zichtjaar de beschikbaarheidspoort van de landbouwallocatie, in twee smaken naast elkaar:
+//
+//   zeef_oud_ha    de poort zoals hij tot 9 september 2026 was, met && IsNull(StateVoorAllocatie/SubSector_rel)
+//   zeef_nieuw_ha  de poort zoals hij nu in IterSubsector_T_Landbouw staat, die een landbouwlabel doorlaat
+//
+// De oude poort is de nieuwe met de IsNull-term erbij, dus de nabouw is exact en niet benaderend: er staat
+// letterlijk het echte item maal de weggehaalde term. Wijkt zeef_oud af van zeef_nieuw, dan is dat precies het
+// areaal dat de allocatie door #803 liet liggen.
+//
+// Daarnaast per zichtjaar wat eruit komt: het gealloceerde areaal, de som van de elf landbouwstandkaarten na
+// allocatie, en het landbouwareaal dat SubSector_rel voor en na dit zichtjaar aanwijst. In het eerste zichtjaar
+// horen zeef_oud en zeef_nieuw gelijk te zijn, want dan draagt de ingangsstand nog geen enkel label.
+//
+// AANROEP. Het zichtjaar komt uit de omgevingsvariabele Diag803Jaar, met aanhalingstekens eromheen omdat de
+// parameter een meta-expressie is; zonder die aanhalingstekens leest GeoDMS het jaar als itemnaam. Zonder de
+// variabele valt hij terug op het eerste zichtjaar, en dat is het goedkoopste geval.
+//
+//   $env:Diag803Jaar = "'Y2050'"
+//
+// Vraag het jaar dat je wilt meten rechtstreeks op; de padafhankelijkheid trekt de eerdere zichtjaren mee.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose803
+: using = "Units;Geography;Classifications/Actor"
+, Descr = "Laat de beschikbaarheidspoort van de landbouwallocatie een cel die al landbouw is opnieuw toe?"
+{
+	unit<UInt8>       Klasse  := /Classifications/Actor/LandbouwKlasses/Actief;
+	parameter<String> Variant := 'BAU';
+	parameter<String> Jaar    := =replace_value(expand(., '%env:Diag803Jaar%'), 'env:Diag803Jaar', quote(first(/Classifications/Time/Zichtjaar/name)));
+
+	container Iter := ='/Allocatie/WLO_hoog_' + Variant + '/Zichtjaren/' + Jaar + '/Sequences/Seq_0/SectorAllocRegios/Provincie_Landbouw/Iters_Landbouw/Iter_0';
+
+	container Kolommen
+	{
+		attribute<Ha> Zeef_nieuw_ha (Klasse) := ='union_data(Klasse, '+AsList('sum(Iter/Subsectoren/'+Klasse/name+'/CompactedAdminDomain/Beschikbaar ? CompactedAdminDomain/NrHaPerCell : 0[Ha])', ',')+')'
+		, Descr = "Wat de poort nu doorlaat, rechtstreeks uit het echte item.";
+
+		attribute<Ha> Zeef_oud_ha (Klasse) := ='union_data(Klasse, '+AsList('sum(Iter/Subsectoren/'+Klasse/name+'/CompactedAdminDomain/Beschikbaar && IsNull(Iter/StateVoorAllocatie/SubSector_rel) ? CompactedAdminDomain/NrHaPerCell : 0[Ha])', ',')+')'
+		, Descr = "Wat de poort met de oude IsNull-term zou doorlaten. Zelfde item, met de term die #803 heeft weggehaald er weer bij.";
+
+		attribute<Ha> Gealloceerd_ha (Klasse) := ='union_data(Klasse, '+AsList('sum(Iter/Allocatie/per_SectorxSubsector == Sector/xSubsector/V/Landbouw_'+Klasse/name+' ? CompactedAdminDomain/NrHaPerCell : 0[Ha])', ',')+')';
+
+		attribute<Ha> Stand_ha (Klasse) := ='union_data(Klasse, '+AsList('sum(MakeDefined(Iter/StateNaAllocatie/Landbouw/'+Klasse/name+', 0[Ha]))', ',')+')'
+		, Descr = "De standkaart van deze klasse na allocatie, de kaart die naar de tif gaat.";
+	}
+
+	container Scalars
+	{
+		parameter<Ha> Label_in_ha := sum(MakeDefined(Sector/xSubsector/IsLandbouw[Iter/StateVoorAllocatie/SubSector_rel], FALSE) ? CompactedAdminDomain/NrHaPerCell : 0[Ha])
+		, Descr = "Het areaal dat bij binnenkomst van dit zichtjaar al een landbouwlabel draagt. Dit is het areaal dat de oude poort wegzeefde.";
+
+		parameter<Ha> Label_uit_ha := sum(MakeDefined(Sector/xSubsector/IsLandbouw[Iter/StateNaAllocatie/SubSector_rel], FALSE) ? CompactedAdminDomain/NrHaPerCell : 0[Ha])
+		, Descr = "Idem na afloop. Onder #803 liep dit getal per zichtjaar op tot het basisjaarareaal en zakte de stand juist weg; ze horen gelijk te zijn.";
+
+		parameter<Ha> MagLandbouwWorden_ha := sum(Iter/Allocatie_Prep/MagLandbouwWorden ? CompactedAdminDomain/NrHaPerCell : 0[Ha])
+		, Descr = "Het basisjaarlandbouwareaal, de bovengrens van alles hierboven.";
+
+		parameter<Ha> AllocResult_ha := sum(IsDefined(Iter/Allocatie/Alloc_Result) ? CompactedAdminDomain/NrHaPerCell : 0[Ha]);
+	}
+
+	parameter<String> Uitdraai :=
+		  'landbouwpoort ' + Variant + ' ' + Jaar + '\n'
+		+ 'klasse;zeef_oud_ha;zeef_nieuw_ha;gealloceerd_ha;stand_ha\n'
+		+ AsList(Klasse/name
+			+ ';' + string(Kolommen/Zeef_oud_ha)
+			+ ';' + string(Kolommen/Zeef_nieuw_ha)
+			+ ';' + string(Kolommen/Gealloceerd_ha)
+			+ ';' + string(Kolommen/Stand_ha), '\n')
+		+ '\n\nlabel bij binnenkomst ha;' + string(Scalars/Label_in_ha)
+		+ '\nlabel na afloop ha;'         + string(Scalars/Label_uit_ha)
+		+ '\nbasisjaarlandbouw ha;'       + string(Scalars/MagLandbouwWorden_ha)
+		+ '\nalloc_result gevuld ha;'     + string(Scalars/AllocResult_ha) + '\n'
+	, StorageName = "='%LocalDataProjDir%/Diagnose/803_poort_' + Variant + '_' + Jaar + '.txt'"
+	, StorageType = "str";
+}
