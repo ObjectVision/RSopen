@@ -78,7 +78,6 @@ if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
 # er als <bestandsnaam>_meta.txt naast komt te liggen. Een naam die hier ontbreekt wordt onderaan de
 # LEESMIJ gemeld, zodat een nieuwe indicator niet ongemerkt zonder beschrijving de deur uit gaat.
 $Beschrijving = [ordered]@{
-    'Landgebruikskaart'                                                                              = @('klasse', 'LU_NL2120', 'Het landgebruik per cel in dit zichtjaar, de hoofdkaart van de doorrekening')
     'Landgebruikskaart_bij_tov_PrevYear'                                                             = @('klasse', 'LU_NL2120', 'Welke klasse er in een cel is bijgekomen sinds het vorige zichtjaar')
     'Landgebruikskaart_af_tov_PrevYear'                                                              = @('klasse', 'LU_NL2120', 'Welke klasse er in een cel is verdwenen sinds het vorige zichtjaar')
     'LandgebruikskaartHoofdklasse'                                                                   = @('klasse', 'LU_Hoofdklasse', 'Dezelfde kaart in de leesbare indeling van 43 klassen: wonen en werken naar verhardingsgraad, natuur naar beheerhoofdtype, landbouw naar hoofdgroep')
