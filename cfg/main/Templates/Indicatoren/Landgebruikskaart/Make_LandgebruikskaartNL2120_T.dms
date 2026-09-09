@@ -20,18 +20,17 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 			de aggregatiekolom, met natuur op natuurtype, landbouw op hoofdgroep, en stedelijk groen, infrastructuur en
 			overig als eigen groepen.
 
-			Bewust afgeleid van Landgebruikskaart/Result_SA en niet ernaast opnieuw opgebouwd, om dezelfde reden als bij
+			Deze kaart bouwt zichzelf op uit de stand, de verharding en de voorrangsregel die hieronder staat (#803). Tot 9 september 2026 leidde zij haar sectoren af uit de kaart op LU_ModelType, om te voorkomen dat de dominantielogica op twee plekken zou staan; die logica staat nu hier en die kaart bestaat niet meer. Wat er toen stond:
 			Make_LandgebruikskaartNL2120_T: alle dominantielogica, de exogene oplegging en de groepsfilters staan zo op
 			een plek en de kaarten kunnen niet uit elkaar lopen. De landgebruikskaart beslist dus welke cel een sector
 			is; wat eronder ligt komt uit de stand.
 
-			De twee bronnen hoeven het niet eens te zijn over wat landbouw en wat natuur is; Toets_KaartTegenStand
+			Kaart en stand zijn nu een en dezelfde bron, dus de toets die telde hoe vaak zij het oneens waren
 			onderaan telt hoe vaak ze verschillen. Dat is dezelfde soort meting als Toets_AllocatieZonderEigenCase in de
 			gewone landgebruikskaart, en om dezelfde reden: een verschil hoort een gemeten getal te zijn en geen aanname."
 {
 	//
 	parameter<String> Zichtjaar_name;
-	container         SrcLandgebruikskaart;
 	container         SrcStand;
 	container         SrcVerharding;
 	//
@@ -39,12 +38,6 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 	parameter<Bool>   IsStartJaar         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
 	parameter<String> Prev_Zichtjaar_name := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevName_triv);
 
-	unit<UInt8> Voorrang := SrcLandgebruikskaart/Voorrang;
-
-	attribute<LU_ModelType> LU (AdminDomain) := SrcLandgebruikskaart/Result
-	, Descr = "De klasse die de oude landgebruikskaart aan deze cel geeft. TIJDELIJK, en alleen nog voor Toets_KaartTegenStand onderaan: die telt hoe vaak de kaart en de stand het oneens zijn over landbouw en natuur, en daarvoor zijn per definitie twee bronnen nodig. Verdwijnt samen met die kaart (#803).";
-	attribute<Voorrang> Voorrang_rel (AdminDomain) := SrcLandgebruikskaart/Voorrang_rel
-	, Descr = "De voorrangsregel van de landgebruikskaart, als beslissing en niet als klasse (#803). Dit is de enige plek waar deze kaart nog naar de kaart op LU_ModelType wijst, en die verwijzing verdwijnt zodra de regel zelf hierheen verhuist; de logica staat dan nog steeds op een plek.";
 
 	attribute<LandgebruikType> Type       (AdminDomain) := SrcStand/Landgebruik_Type
 	, Descr = "Het landgebruikstype uit de stand van dit jaar, de standvariabele van #751. Draagt de exogene oplegging al mee, dus een cel die deze variant natuur maakt heeft hier haar beheertype.";
@@ -53,6 +46,88 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 	, Descr = "De verharde fractie van de cel in dit jaar, de basis van de onderverdeling van wonen en werken.";
 
 	// -- de sectorkant --
+
+	// -- de voorrangsregel, verhuisd uit de kaart op LU_ModelType (#803) --
+
+	attribute<Bool> IsLU_exogenous (AdminDomain) := /BaseData/StartState/Bodemstatistiek/IsExogeen
+	, Descr = "Grondgebruik dat de voorrangsregel met rust laat: infrastructuur en begraafplaatsen.";
+
+	attribute<Bool> IsLU_NoData (AdminDomain) := =IsStartJaar
+		? '!/Geography/rdc_meter/IsStudyArea_AdminDomain'
+		: 'IsNull(' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Result)';
+	attribute<Bool> IsLU_Water (AdminDomain) := =IsStartJaar
+		? 'MakeDefined(LandgebruikType/IsWater[Type], FALSE)'
+		: 'MakeDefined(LU_NL2120/IsWater[' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Result], FALSE)';
+	attribute<Bool> IsLU_Wonen (AdminDomain) := MakeDefined(Sector_behoud == S_Wonen, FALSE);
+	attribute<Bool> IsLU_Werken (AdminDomain) := MakeDefined(Sector_behoud == S_Werken, FALSE);
+	attribute<Bool> IsLU_Verblijfsrecreatie (AdminDomain) := MakeDefined(Sector_behoud == S_Verblijfsrecreatie, FALSE);
+
+	attribute<Bool> IsWonen_StartState (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? 'SrcStand/Aantal_Woningen_Totaal >= ModelParameters/Advanced/MinimumWoningAmount * AdminDomain/NrHaPerCell / 1[ha]' : 'const(FALSE, AdminDomain)';
+	attribute<Bool> IsWerken_StartState (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector ? 'SrcStand/PandFootprint_Werken >= ModelParameters/Advanced/MinimumPandFootprint * AdminDomain/NrHaPerCell / 1[ha]' : 'const(FALSE, AdminDomain)';
+	attribute<Bool> IsVerblijfsrecreatie_StartState (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector ? 'SrcStand/Objecten_Verblijfsrecreatie >= ModelParameters/Advanced/MinimumVerblijfsobjectAmount * AdminDomain/NrHaPerCell / 1[ha]' : 'const(FALSE, AdminDomain)';
+
+	attribute<Bool> IsWonen_Zichtjaar (AdminDomain) := MakeDefined(Sector_uit_stand == S_Wonen, FALSE);
+	attribute<Bool> IsWerken_Zichtjaar (AdminDomain) := MakeDefined(Sector_uit_stand == S_Werken, FALSE);
+	attribute<Bool> IsVerblijfsrecreatie_Zichtjaar (AdminDomain) := MakeDefined(Sector_uit_stand == S_Verblijfsrecreatie, FALSE)
+	, Descr = "Wat de allocatie dit zichtjaar heeft neergezet, per sector. Kwam vroeger uit een lijst vergelijkingen per subsector; de sector uit de stand zegt hetzelfde in een regel.";
+
+	container Group_Wonen_Start := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Wonen', ModelParameters/Advanced/MinimumGroupSize, 'StartState');
+	container Group_Wonen_Zichtjaar := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Wonen', ModelParameters/Advanced/MinimumGroupSize, 'Zichtjaar');
+	container Group_Werken_Start := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Werken', ModelParameters/Advanced/MinimumGroupSize, 'StartState');
+	container Group_Werken_Zichtjaar := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Werken', ModelParameters/Advanced/MinimumGroupSize, 'Zichtjaar');
+	container Group_Verblijfsrecreatie_Start := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Verblijfsrecreatie', ModelParameters/Advanced/MinimumGroupSize, 'StartState');
+	container Group_Verblijfsrecreatie_Zichtjaar := Templates/Indicatoren/Landgebruikskaart/GetNieuwGrouped_T('Verblijfsrecreatie', ModelParameters/Advanced/MinimumGroupSize, 'Zichtjaar');
+
+	attribute<meter2> Wonen_Filtered (AdminDomain) := =IsStartJaar ? 'Group_Wonen_Start/IsNieuwGrouped ? SrcStand/PandFootprint_Wonen : null_f[meter2]' : 'Group_Wonen_Zichtjaar/IsNieuwGrouped ? SrcStand/PandFootprint_Wonen : null_f[meter2]';
+	attribute<meter2> Werken_Filtered (AdminDomain) := =IsStartJaar ? 'Group_Werken_Start/IsNieuwGrouped ? SrcStand/PandFootprint_Werken : null_f[meter2]' : 'Group_Werken_Zichtjaar/IsNieuwGrouped ? SrcStand/PandFootprint_Werken : null_f[meter2]';
+	attribute<meter2> Verblijfrecreatie_Filtered (AdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector
+		? (IsStartJaar
+			? 'Group_Verblijfsrecreatie_Start/IsNieuwGrouped ? SrcStand/PandFootprint_Werken : null_f[meter2]'
+			: 'Group_Verblijfsrecreatie_Zichtjaar/IsNieuwGrouped ? AdminDomain/NrMeter2PerCell : null_f[meter2]')
+		: 'const(null_f, AdminDomain, meter2)';
+
+	unit<UInt8> Typen : NrOfRows = 3
+	{
+		attribute<String> name : ['Wonen', 'Werken', 'Verblijfsrecreatie'];
+		attribute<String> Label := name;
+		container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+	}
+
+	attribute<Typen> Dominant_BebouwdeOmgeving (AdminDomain) := IsLU_Wonen || IsLU_NoData ? null_b[Typen] : ArgMax_ifdefined(Wonen_Filtered, Werken_Filtered, Verblijfrecreatie_Filtered)[Typen]
+	, Descr = "Welke bebouwde functie de cel domineert: die met de grootste gefilterde voetafdruk. De groepsfilters gooien clusters onder de minimumomvang eruit, zodat een losse cel geen woongebied maakt.";
+
+	attribute<Bool> SubResult_Wonen              (AdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector              ? 'Dominant_BebouwdeOmgeving == Typen/V/Wonen'              : 'const(FALSE, AdminDomain)';
+	attribute<Bool> SubResult_Werken             (AdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector             ? 'Dominant_BebouwdeOmgeving == Typen/V/Werken'             : 'const(FALSE, AdminDomain)';
+	attribute<Bool> SubResult_Verblijfsrecreatie (AdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector ? 'Dominant_BebouwdeOmgeving == Typen/V/Verblijfsrecreatie' : 'const(FALSE, AdminDomain)';
+	attribute<Bool> SubResult_Waterberging       (AdminDomain) := MakeDefined(Sector_uit_stand == S_Waterberging, FALSE);
+
+	attribute<Bool> HeeftOplegging (AdminDomain) := IsDefined(ThisVariantData/ExogeenOpleggen/Beheertype_Kaart) || IsDefined(ThisVariantData/ExogeenOpleggen/LandbouwType_rel)
+	, Descr = "Legt de variant hier iets op? De twee stromen rechtstreeks, zoals de landbouwallocatie ze sinds #803 ook leest, in plaats van de samengevoegde as die eerst naar een kaartklasse vertaalde.";
+
+	unit<UInt8> Voorrang : NrOfRows = 10
+	{
+		attribute<String> name : ['GeenData','Oplegging','Water','Waterberging','Behoud','Wonen','Werken','Verblijfsrecreatie','Allocatie','Rest'];
+		attribute<String> Label := name;
+		container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+	}
+
+	attribute<Voorrang> Voorrang_rel (AdminDomain) := switch(
+		 case(IsLU_NoData, Voorrang/V/GeenData)
+		,case(!IsStartJaar && HeeftOplegging, Voorrang/V/Oplegging)
+		,case(IsLU_Water, Voorrang/V/Water)
+		,case(SubResult_Waterberging, Voorrang/V/Waterberging)
+		,case(IsLU_exogenous || IsLU_Wonen || IsLU_Verblijfsrecreatie, Voorrang/V/Behoud)
+		,case(SubResult_Wonen, Voorrang/V/Wonen)
+		,case(SubResult_Werken, Voorrang/V/Werken)
+		,case(SubResult_Verblijfsrecreatie, Voorrang/V/Verblijfsrecreatie)
+		,case(IsDefined(Sector_uit_stand), Voorrang/V/Allocatie)
+		, Voorrang/V/Rest
+	)
+	, Descr = "Wie heeft voorrang op deze cel? Dezelfde negen voorwaarden in dezelfde volgorde als de kaart op LU_ModelType ze had, nu uitgedrukt op de stand en op deze kaart zelf (#803).
+
+				De volgorde luistert nauw. Geen data gaat voor. Dan de oplegging, want daar schrijft het model een ander landgebruik voor. Dan water, dat blijft water. Dan waterberging uit de allocatie. Dan wat blijven moet: infrastructuur en begraafplaatsen, en wonen en verblijfsrecreatie die er al lagen. Dan de dominantie tussen de bebouwde functies. Dan de rest van de allocatie. En anders houdt de cel wat zij had.
+
+				Drie vragen die vroeger aan de vorige kaart werden gesteld, of het water was en of er wonen of verblijfsrecreatie lag, gaan nu naar deze kaart van het vorige zichtjaar. In het basisjaar naar het type en naar de bebouwing die LGN aanwijst.";
 
 	parameter<Actor/Sector/wo_Landbouw> S_Wonen              := rlookup(lowercase('Wonen'),              lowercase(Actor/Sector/wo_Landbouw/name));
 	parameter<Actor/Sector/wo_Landbouw> S_Werken             := rlookup(lowercase('Werken'),             lowercase(Actor/Sector/wo_Landbouw/name));
@@ -108,6 +183,30 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 			: MakeDefined(LU_NL2120/Hoofdklasse_rel[Result], LU_Hoofdklasse/V/Overig)
 	, Descr = "Dezelfde kaart, gelezen door de aggregatiekolom van LU_NL2120. Een cel waarvoor de stand geen type heeft valt hier op Overig terug en niet op leeg: op de kaart hoort geen gat te vallen waar wel iets ligt, en Deltares heeft die restbak expliciet gevraagd. Hoeveel dat er zijn staat in Areaal_ZonderType.";
 
+	attribute<LU_Hoofdklasse_ZonderVerharding> Result_Hoofdklasse_ZonderVerharding (AdminDomain) := switch(
+		 case(Voorrang_rel == Voorrang/V/GeenData, null_b[LU_Hoofdklasse_ZonderVerharding])
+		,case(IsDefined(Sector_rel), invert(LU_Hoofdklasse_ZonderVerharding/Sector_rel)[Sector_rel])
+		, MakeDefined(ZonderVerharding_rel[Hoofdklasse_van_Type[Type]], LU_Hoofdklasse_ZonderVerharding/V/Overig)
+	)
+	, Descr = "Dezelfde kaart als Result_Hoofdklasse, maar zonder de verhardingsbanden binnen wonen en werken, en daarmee zonder de verharding als leverancier. Dit is de kaart die Templates/Indicatoren/Verharding leest.
+
+				De reden staat bij Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding: de verhardingsindicator mag geen klasse lezen die zelf uit de verharding volgt, anders draait de keten rond (#803). Daarom leest deze tak de sector rechtstreeks uit Sector_rel en het type rechtstreeks uit Type, en niet uit Result.";
+
+	attribute<CBSKlasse> gg_CBS (AdminDomain) := /BaseData/StartState/Bodemstatistiek/gg_CBS
+	, Descr = "De CBS-bodemstatistiekklasse van het basisjaar, de bron onder de groenindeling hieronder. Stond in de kaart op LU_ModelType onder dezelfde naam en is met #803 meeverhuisd.";
+
+	attribute<CBSKlasse/Aggr/Groen> GroenInBasisjaar (AdminDomain) := invert(/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/org_rel)[CBSKlasse/Aggr_rel[gg_CBS]];
+	attribute<CBSKlasse/Aggr/Groen> GroenInZichtjaar (AdminDomain) := (GroenInBasisjaar[uint8] / uint8(!MakeDefined(/Classifications/Actor/Sector/xSubsector/LegtCelVast[Stand/Subsector_rel], FALSE)))[CBSKlasse/Aggr/Groen]
+	, Descr = "Het groen van het basisjaar, weggevallen op de cellen die de allocatie heeft bebouwd. De toets loopt sinds #803 langs LegtCelVast: landbouw legt de cel niet vast en houdt haar groen, terwijl dat groen met een kale IsDefined op het hele landbouwareaal zou verdwijnen zodra landbouw meealloceert.";
+	
+	parameter<String> Result_prev_str := 'Write_Result_SA != ' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Write_Result_SA';
+
+	// Wat er dit zichtjaar bij komt en af gaat ten opzichte van het vorige: de klasse van dit jaar,
+	// respectievelijk die van vorig jaar, op de cellen waar de kaart is veranderd. Verhuisd uit de kaart
+	// op LU_ModelType (#803). Zonder Descr, want achter een meta-expressie past hier geen eigenschap meer.
+	attribute<LU_NL2120> Result_bij_tov_PrevYear (AdminDomain) := =IsStartJaar ? 'const(null_b, AdminDomain, LU_NL2120)' : Result_prev_str + ' ? Write_Result_SA : null_b';
+	attribute<LU_NL2120> Result_af_tov_PrevYear (AdminDomain) := =IsStartJaar ? 'const(null_b, AdminDomain, LU_NL2120)' : Result_prev_str + ' ? ' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Write_Result_SA : null_b';
+
 	// -- wegschrijven --
 
 	parameter<string> StorageStr_Detail      := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/LandgebruikNL2120/'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
@@ -132,13 +231,4 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 	parameter<Ha> Areaal_Natuur := sum(MakeDefined(LU_NL2120/IsNatuur[Result], FALSE) ? AdminDomain/NrHaPerCell : 0[Ha])
 	, Descr = "Controlegetal: alle natuur in dit jaar volgens de gewone landgebruikskaart. Stond eerder in de NL2120-kaart van #633 en is met #783 meeverhuisd, want Diagnose leest hem als controlewaarde.";
 
-	parameter<Ha> Toets_KaartTegenStand_Landbouw := sum(
-		IsDefined(LU) && IsNull(Sector_rel) && IsDefined(Type) && LU_ModelType/IsLandbouw[LU] != LandgebruikType/IsLandbouw[Type]
-			? AdminDomain/NrHaPerCell : 0[Ha])
-	, Descr = "Hoeveel hectare de kaart en de stand het oneens zijn over landbouw, buiten de sectoren om. Niet per se een fout: de kaart heeft een voorrangsregel die de stand niet kent, en de allocatie kan een cel van klasse laten wisselen zonder dat het type meebeweegt. Wel een getal om te kennen voordat iemand de grondbalans als sluitend presenteert.";
-
-	parameter<Ha> Toets_KaartTegenStand_Natuur := sum(
-		IsDefined(LU) && IsNull(Sector_rel) && IsDefined(Type) && LU_ModelType/IsNatuur[LU] != LandgebruikType/IsNatuur[Type]
-			? AdminDomain/NrHaPerCell : 0[Ha])
-	, Descr = "Idem voor natuur. Let op dat LandgebruikType/IsNatuur het water uitsluit en LU_ModelType/IsNatuur ook, dus de twee vlaggen zijn vergelijkbaar.";
 }
