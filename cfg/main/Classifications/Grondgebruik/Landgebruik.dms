@@ -87,6 +87,16 @@ unit<UInt8> LandbouwType : NrOfRows = 15
 	attribute<String>             LU_ModelType     := Elements/Text[value(uint32(id(.)) * nrAttr + 2, Elements)];
 	attribute<Actor/LU_ModelType> LU_ModelType_rel := ='union_data(., '+asItemList(LU_ModelType != '' ? 'Actor/LU_ModelType/V/'+LU_ModelType : 'null_b')+')'
 	, Descr = "Terugval naar de landgebruikskaart. Leeg voor Glastuinbouw, want die kent LU_ModelType niet; die cellen vallen in de kaart op Overig, zoals ze bij LGN-klasse 8 altijd al deden.";
+	attribute</Classifications/Actor/LandbouwKlasses> LandbouwK_rel := rlookup(lowercase(replace(LU_ModelType, 'Landbouw_', '')), lowercase(/Classifications/Actor/LandbouwKlasses/name))
+	, IntegrityCheck = "all(IsDefined(this) == IsDefined(Actor/LU_ModelType/LandbouwK_rel[LU_ModelType_rel]) && (!IsDefined(this) || this == Actor/LU_ModelType/LandbouwK_rel[LU_ModelType_rel]))"
+	, Descr = "Welke landbouwklasse van de allocatie hoort bij dit landbouwtype? Leeg waar er geen is: bos op landbouwgrond staat in de kolom hiernaast op natuur, en glastuinbouw kent het model niet als klasse.
+
+				Leest de tekstkolom en niet de opzoeking, zodat een lezer die alleen het gewas wil weten niet langs Actor/LU_ModelType hoeft (#803). De IntegrityCheck eist dat deze kolom hetzelfde zegt als die route, inclusief waar allebei leeg horen te zijn, en hoort weg samen met LU_ModelType. Let op de vorm: twee lege waarden vergelijken geeft FALSE en geen null, dus een MakeDefined om de vergelijking heen vuurt daar nooit en de toets faalt op rijen die juist goed zijn. Vandaar de expliciete IsDefined-tak.";
+	attribute<LandgebruikType>    LandgebruikType_rel := invert(LandgebruikType/LandbouwType_rel)
+	, IntegrityCheck = "all(!IsDefined(LU_ModelType_rel) || MakeDefined(/Classifications/Grondgebruik/LandgebruikType/LU_ModelType_rel[this] == LU_ModelType_rel, FALSE))"
+	, Descr = "De eigen rij van deze klasse in LandgebruikType, de opvolger van LU_ModelType (#803). LandgebruikType is een union over de drie delen INL_Beheertype, LandbouwType en LGNKlasse, en de kolom per deel draagt de eigen identiteit van de rij, dus invert() geeft de weg terug.
+
+						De IntegrityCheck eist dat de nieuwe rij dezelfde landgebruikskaartklasse oplevert als de oude opzoeking, zolang die er is. Hij hoort weg samen met LU_ModelType zelf.";
 	attribute<UInt16>             LGN_code         := uint16(Elements/Text[value(uint32(id(.)) * nrAttr + 3, Elements)]);
 	attribute<LGNKlasse>          LGNKlasse_rel    := rlookup(LGN_code, LGNKlasse/code), IntegrityCheck = "all(IsDefined(LGNKlasse_rel))";
 	attribute<UInt8>              CC_code          := uint8(Elements/Text[value(uint32(id(.)) * nrAttr + 4, Elements)]);
@@ -143,9 +153,11 @@ unit<UInt8> LandgebruikType := union_unit_uint8(INL_Beheertype, LandbouwType, LG
 	, Descr = "Het landbouwtype, ook voor de LGN-rijen die er een hebben. Voor de vraag welk soort landbouw het is; LandbouwType_rel is voor de vraag uit welk deel de rij komt.";
 	attribute<LGNKlasse>          LGNKlasse_proxy    := union_data(., INL_Beheertype/LGNKlasse_rel, LandbouwType/LGNKlasse_rel, id(LGNKlasse));
 
-	attribute<Bool>               IsWater           := union_data(., INL_Beheertype/IsWater, const(FALSE, LandbouwType), LGNKlasse/LU_ModelType_rel == Actor/LU_ModelType/V/Water_Totaal);
-	attribute<Bool>               IsNatuur          := union_data(., !INL_Beheertype/IsWater, const(FALSE, LandbouwType), LGNKlasse/LU_ModelType_rel == Actor/LU_ModelType/V/Natuur_Totaal)
-	, Descr = "Natuur en water op de kolom LU_ModelType van de LGN-tabel, niet op de hedonische vlaggen: riet, moerasbos en natuurlijk beheerd agrarisch grasland zijn hier landbouw, zoals het model ze kent.";
+	attribute<Bool>               IsWater           := union_data(., INL_Beheertype/IsWater, const(FALSE, LandbouwType), LGNKlasse/IsWater);
+	attribute<Bool>               IsNatuur          := union_data(., !INL_Beheertype/IsWater, const(FALSE, LandbouwType), LGNKlasse/IsNatuur)
+	, Descr = "Natuur en water op de kolom LU_ModelType van de LGN-tabel, niet op de hedonische vlaggen: riet, moerasbos en natuurlijk beheerd agrarisch grasland zijn hier landbouw, zoals het model ze kent.
+
+				De twee lezen sinds 9 september 2026 de vlaggen LGNKlasse/IsNatuur en IsWater in plaats van de opzoeking LGNKlasse/LU_ModelType_rel tegen Actor/LU_ModelType. Zelfde antwoord, bewaakt met een IntegrityCheck op die vlaggen, en zonder dat de opvolger van LU_ModelType nog van LU_ModelType afhangt.";
 	attribute<Bool>               IsLandbouw        := union_data(., const(FALSE, INL_Beheertype), const(TRUE, LandbouwType), IsDefined(LGNKlasse/LandbouwType_rel));
 	attribute<Bool>               IsBebouwd         := union_data(., const(FALSE, INL_Beheertype), const(FALSE, LandbouwType), LGNKlasse/isBebouwd);
 
