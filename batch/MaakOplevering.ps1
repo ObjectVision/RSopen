@@ -78,11 +78,11 @@ if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
 # er als <bestandsnaam>_meta.txt naast komt te liggen. Een naam die hier ontbreekt wordt onderaan de
 # LEESMIJ gemeld, zodat een nieuwe indicator niet ongemerkt zonder beschrijving de deur uit gaat.
 $Beschrijving = [ordered]@{
-    'Landgebruikskaart'                                                                              = @('klasse', 'LU_ModelType', 'Het landgebruik per cel in dit zichtjaar, de hoofdkaart van de doorrekening')
-    'Landgebruikskaart_Basisjaar'                                                                    = @('klasse', 'LU_ModelType', 'Dezelfde kaart voor het basisjaar, als referentie voor alle veranderingen')
-    'Landgebruikskaart_bij_tov_PrevYear'                                                             = @('klasse', 'LU_ModelType', 'Welke klasse er in een cel is bijgekomen sinds het vorige zichtjaar')
-    'Landgebruikskaart_af_tov_PrevYear'                                                              = @('klasse', 'LU_ModelType', 'Welke klasse er in een cel is verdwenen sinds het vorige zichtjaar')
-    'LandgebruikskaartNL2120'                                                                        = @('klasse', 'LU_NL2120', 'Hetzelfde landgebruik in de indeling van 92 klassen, met natuur uitgesplitst naar beheertype')
+    'Landgebruikskaart'                                                                              = @('klasse', 'LU_NL2120', 'Het landgebruik per cel in dit zichtjaar, de hoofdkaart van de doorrekening')
+    'Landgebruikskaart_bij_tov_PrevYear'                                                             = @('klasse', 'LU_NL2120', 'Welke klasse er in een cel is bijgekomen sinds het vorige zichtjaar')
+    'Landgebruikskaart_af_tov_PrevYear'                                                              = @('klasse', 'LU_NL2120', 'Welke klasse er in een cel is verdwenen sinds het vorige zichtjaar')
+    'LandgebruikskaartHoofdklasse'                                                                   = @('klasse', 'LU_Hoofdklasse', 'Dezelfde kaart in de leesbare indeling van 43 klassen: wonen en werken naar verhardingsgraad, natuur naar beheerhoofdtype, landbouw naar hoofdgroep')
+    'LandgebruikskaartNL2120'                                                                        = @('klasse', 'LU_NL2120', 'Hetzelfde landgebruik in de indeling van 165 klassen, met natuur uitgesplitst naar beheertype')
     'BT_Exogeen'                                                                                     = @('klasse', 'INL_Beheertype', 'Het natuurbeheertype dat de landschapsteams hier opleggen, leeg waar niets is opgelegd')
     'Verstedelijking'                                                                                = @('0 of 1', '', 'Cellen die sinds het basisjaar stedelijk zijn geworden')
     'VerstedelijkingInABCD'                                                                          = @('klasse', 'ABCD_subK', 'Dezelfde verstedelijking, ingedeeld naar de ABCD-zone waarin zij landt')
@@ -172,8 +172,9 @@ $Beschrijving = [ordered]@{
     'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW'                                    = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
     'NationaleIndicatoren'                                                                           = @('tabel', '', 'Alle indicatoren op een regel, voor het gekozen schaalniveau')
     'Indicatoren_Landschap'                                                                          = @('tabel, ha en euro', '', 'Dezelfde indicatoren per landschap: Kust, Rivieren, Veen, Zand en Overig')
-    'Landgebruik_Areaal'                                                                             = @('tabel, ha', 'LU_ModelType', 'Areaal per landgebruiksklasse in basisjaar en zichtjaar, met het verschil')
-    'LandgebruikNL2120_Areaal'                                                                       = @('tabel, ha', 'LU_NL2120', 'Areaal per klasse in de indeling van 92 klassen')
+    'Landgebruik_Areaal'                                                                             = @('tabel, ha', 'LU_Hoofdklasse', 'Areaal per landgebruiksklasse in basisjaar en zichtjaar, met het verschil')
+    'LandgebruikNL2120_Areaal'                                                                       = @('tabel, ha', 'LU_NL2120', 'Areaal per klasse in de indeling van 165 klassen')
+    'LandgebruikHoofdklasse_Areaal'                                                                  = @('tabel, ha', 'LU_Hoofdklasse', 'Areaal per hoofdklasse, landelijk en per landschap')
     'BT_Exogeen_Areaal'                                                                              = @('tabel, ha', 'INL_Beheertype', 'Hoeveel hectare de landschapsteams per natuurbeheertype opleggen')
     'Bouwwijze_Areaal'                                                                               = @('tabel, ha', 'BouwwijzeK', 'Hoeveel hectare nieuwbouw er per bouwwijze staat')
     'ClaimRealisatie_NL'                                                                             = @('tabel, verhouding', '', 'Gerealiseerde stand gedeeld door de claim, landelijk')
@@ -351,11 +352,12 @@ foreach ($casus in $varianten.Keys) {
     Get-ChildItem "$src\LandgebruikNL2120" -Filter '*.tif' -ErrorAction SilentlyContinue |
         ForEach-Object { $n.zichtjaar += Kopieer $_ $jaar 'LandgebruikskaartNL2120_' }
 
-    # de gewone landgebruikskaart: basisjaar apart, zichtjaar apart, de rest in de reeks
-    Get-ChildItem "$src\Landgebruik" -Filter '*.tif' -ErrorAction SilentlyContinue | ForEach-Object {
-        if     ($_.Name -match 'Basisjaar')  { $n.basisjaar += Kopieer $_ $basis 'Landgebruikskaart_' }
-        elseif ($_.Name -match "^$Zichtjaar"){ $n.zichtjaar += Kopieer $_ $jaar  'Landgebruikskaart_' }
-        else                                 { $n.tijdreeks += Kopieer $_ $reeks 'Landgebruikskaart_' }
+    # de kaart in hoofdklassen: basisjaar apart, zichtjaar apart, de rest in de reeks. Stond tot #803
+    # onder Landgebruik en was toen de kaart op LU_ModelType; die map wordt niet meer geschreven.
+    Get-ChildItem "$src\LandgebruikHoofdklasse" -Filter '*.tif' -ErrorAction SilentlyContinue | ForEach-Object {
+        if     ($_.Name -match 'Basisjaar')  { $n.basisjaar += Kopieer $_ $basis 'LandgebruikskaartHoofdklasse_' }
+        elseif ($_.Name -match "^$Zichtjaar"){ $n.zichtjaar += Kopieer $_ $jaar  'LandgebruikskaartHoofdklasse_' }
+        else                                 { $n.tijdreeks += Kopieer $_ $reeks 'LandgebruikskaartHoofdklasse_' }
     }
 
     # de losse kaarten in de wortel, gesorteerd op het jaartal in de naam
