@@ -95,6 +95,24 @@ Dit is de manier om werk te delen dat verschillende casussen gemeen hebben, zoal
 
 Kies dit boven een verzamelitem met `ExplicitSuppliers` in de configuratie wanneer de items naar gedeelde paden schrijven of wanneer niet alle casussen uit de lijst mee moeten: het verzamelitem trekt alles gelijktijdig en over de hele lijst, de commandoregel precies wat je opgeeft en na elkaar.
 
+### De export per bestand of per domein
+
+`RunIndicatoren.ps1` vraagt `Zichtjaren/Export/Generate_Indicatoren` en dat is de hele set, ruim tachtig bestanden per casus en zeventig minuten per variant. Wil je minder, dan hoef je daar niet omheen te bouwen: `Zichtjaren/Export/generates` heeft een parameter per uitvoerbestand en `generates/Themas` een parameter per domein (Grondgebruik, Wonen, Werken, Water, Natuur, Landbouw, Koolstof, Sloop, Tabellen).
+
+```powershell
+$g = '/Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/generates/'
+$items = @(($g+'NieuweNatuur'), ($g+'BT_Exogeen'), ($g+'Themas/Koolstof'))
+& $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg @items
+```
+
+Zet daar wel dezelfde omgevingsvariabelen omheen als het batchscript: `ExportZichtjaar`, `IndicatorRegio`, `StandAllocatieOntkoppeld`, `VariantDataOntkoppeld`, `AlleenEindjaar`, en haal `LocalDataProjDir` weg.
+
+Gemeten op 2026-09-09: vier natuuritems en het thema Koolstof voor twee varianten samen 16,6 minuten, tegen zeventig minuten per variant voor de volle export.
+
+### Zet haakjes om elk element van de itemlijst
+
+In PowerShell bindt de komma sterker dan de plus. `@($g+'a', $g+'b')` wordt daardoor niet een lijst van twee paden maar een enkele string, want de komma maakt eerst `@('a', $g)` en de plus plakt dat aan `$g` vast. GeoDmsRun krijgt dan alle paden als een argument, zoekt een item met spaties in de naam, en eindigt met exit 2 op een melding die naar de configuratie wijst in plaats van naar de aanroep. Schrijf dus `@(($g+'a'), ($g+'b'))`.
+
 ## Trap 2: klopt het (seconden tot minuten)
 
 Een assertie is een `IntegrityCheck` op het onderliggende item, met de exitcode als testuitslag:
