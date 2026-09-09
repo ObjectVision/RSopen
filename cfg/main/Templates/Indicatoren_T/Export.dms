@@ -158,6 +158,9 @@ container Export : using = "Classifications/Actor;SourceData"
 		// De tabellen die over alle domeinen tegelijk gaan: de indicatorentabel landsdekkend en per regio, en de claimrealisatie per allocatieniveau.
 		parameter<string> Indicatoren_PerIndeling                                   := 'Ready', ExplicitSuppliers = "=Exportpad+'Tabellen/PerIndeling/Tabel'";
 		parameter<string> Indicatoren_PerNederland                                  := 'Ready', ExplicitSuppliers = "=Exportpad+'Tabellen/PerNederland/Tabel'";
+		parameter<string> ClaimRealisatie_Landbouw                                  := 'Ready'
+		, ExplicitSuppliers = "=Exportpad+'Tabellen/ClaimRealisatie_Landbouw/Tabel'"
+		, Descr = "De claimrealisatie van de landbouw, per provincie en per gewasklasse. Zie Tabellen/ClaimRealisatie_Landbouw voor waarom dit niet in ClaimRealisatie past.";
 		parameter<string> ClaimRealisatie_Veen                                      := 'Ready'
 		, ExplicitSuppliers = "=Exportpad+'Tabellen/ClaimRealisatie_Veen/Tabel;'+Exportpad+'Tabellen/ClaimRealisatie_Veen/Tabel_NL'"
 		, Descr = "De claimrealisatie van de waterbergingsopgave, per deelgebied en landelijk (#797). Zie Tabellen/ClaimRealisatie_Veen voor waarom dit niet in ClaimRealisatie hieronder past.";
@@ -178,7 +181,7 @@ container Export : using = "Classifications/Actor;SourceData"
 			parameter<string> Landbouw     := 'Ready', ExplicitSuppliers = "NettoOpbrengst_Landbouw;NPV_Landbouw;VerstedelijkingOpVruchtbareLandbouwgronden;NieuweNatuurOpVruchtbareLandbouwgronden;WaterbergingVeenOpVruchtbareLandbouwgronden;VerdwenenLandbouw;VerdwenenVruchtbareLandbouw";
 			parameter<string> Koolstof     := 'Ready', ExplicitSuppliers = "CO2Stock_Zichtjaar;CO2Flow_Zichtjaar;CO2Flow_TovBasisjaar;CO2Ongedekt_Cumulatief;SOMERS_CO2_Minimum;SOMERS_CO2_Mediaan;SOMERS_CO2_Maximum;Methaan";
 			parameter<string> Sloop        := 'Ready', ExplicitSuppliers = "Sloop_NieuweNatuur_Woningen;Sloop_NieuweNatuur_Banen;Sloop_NieuweNatuur_Uitkoopkosten;Sloop_NieuweNatuur_Sloopkosten;Sloop_NieuweNatuur_Uitkoopkosten_NCW;Sloop_NieuweNatuur_Sloopkosten_NCW;Sloop_WaterbergingVeen_Woningen;Sloop_WaterbergingVeen_Banen;Sloop_WaterbergingVeen_Uitkoopkosten;Sloop_WaterbergingVeen_Sloopkosten;Sloop_WaterbergingVeen_Uitkoopkosten_NCW;Sloop_WaterbergingVeen_Sloopkosten_NCW;Sloop_OverigeBouwstenen_Woningen;Sloop_OverigeBouwstenen_Banen;Sloop_OverigeBouwstenen_Uitkoopkosten;Sloop_OverigeBouwstenen_Sloopkosten;Sloop_OverigeBouwstenen_Uitkoopkosten_NCW;Sloop_OverigeBouwstenen_Sloopkosten_NCW";
-			parameter<string> Tabellen     := 'Ready', ExplicitSuppliers = "Indicatoren_PerIndeling;Indicatoren_PerNederland;ClaimRealisatie;ClaimRealisatie_Veen";
+			parameter<string> Tabellen     := 'Ready', ExplicitSuppliers = "Indicatoren_PerIndeling;Indicatoren_PerNederland;ClaimRealisatie;ClaimRealisatie_Veen;ClaimRealisatie_Landbouw";
 		}
 
 		parameter<string> Alles_lijst :=
@@ -274,6 +277,7 @@ container Export : using = "Classifications/Actor;SourceData"
 				+ ';Indicatoren_PerNederland'
 				+ ';ClaimRealisatie'
 				+ ';ClaimRealisatie_Veen'
+				+ ';ClaimRealisatie_Landbouw'
 		, Descr = "De namen hierboven als een enkele string, zodat Generate_Alles hem alleen nog hoeft te noemen. Staat apart omdat een string-parameter in seconden op te vragen is: wie wil weten wat deze export schrijft vraagt dit item op, en hoeft daar geen bestand voor te laten rekenen.";
 
 		parameter<string> Generate_Alles := 'Ready', ExplicitSuppliers = "=Alles_lijst"
@@ -1060,6 +1064,57 @@ container Export : using = "Classifications/Actor;SourceData"
 			}
 		}
 
+
+		container ClaimRealisatie_Landbouw
+		: Descr = "De claimrealisatie van de landbouw, per provincie en per gewasklasse. Sinds de sector Landbouw meedraait is dit de zwaarste sector van de allocatie, en tot deze tabel bestond werd nergens zichtbaar of haar claims gehaald werden.
+
+					WAAROM DIT EEN EIGEN CONTAINER IS. De claimrealisatie van wonen en werken loopt via ClaimRealisatie/Claim_realisatie, en daar komt landbouw niet in voor. Dat is geen omissie in die container maar een vlag een niveau hoger: Classifications/Actor/LandbouwK draagt HasClaims op FALSE terwijl HasAlloc op TRUE staat. Landbouw valt daardoor buiten StandVar/Claims_sub en dus buiten Impl/Claims, Impl/MinClaims en Impl/MaxClaims. De tak IsLandbouw die in die containers wel staat vuurt om diezelfde reden nooit.
+
+					Die vlag omzetten zou Claims_sub in het hele model verbreden en veel meer raken dan deze tabel. Daarom leest deze container de landbouwclaims rechtstreeks bij hun eigen bron, Impl/Claims/AllocRegios/Provincie/Landbouw, en de gerealiseerde hectares uit de standtelling per allocatieregio. Beide paden zijn op 9 september 2026 geverifieerd.
+
+					WAAROM TWEE VERHOUDINGEN. Landbouw krijgt geen enkel doel maar een band: een ondergrens en een bovengrens per klasse per regio, zie ModelParameters/Landbouw/claims_conservatief. De allocator mag daar tussenin uitkomen, en dat is dan goed. Een waarde boven 1 tegen de minclaim en onder 1 tegen de maxclaim betekent dus dat de klasse netjes binnen haar band zit. Alleen onder 1 tegen de minclaim, of boven 1 tegen de maxclaim, is een overschrijding.
+
+					WAAROM LANG EN NIET BREED. Elf klassen maal vijf kolommen is 55 kolommen op een regel per provincie, en dat leest niemand. Deze tabel zet een regel per provincie per klasse neer, dus ongeveer 132 regels, met vijf kolommen. Dat is een controle-uitdraai en geen indicatorentabel die naast een andere run gelegd moet worden, dus de leesbaarheid weegt hier zwaarder dan de vorm van de buren."
+		{
+			unit<uint8> Klasse := /Classifications/Actor/LandbouwKlasses/Actief
+			, Descr = "De klassen die als subsector meedoen, dus zonder de exotische gewassen zolang ExotenActief uit staat. Volgt daarmee vanzelf wat er werkelijk gealloceerd wordt.";
+
+			container Bron      := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/ClaimRealisatie/Per_AllocRegio/Provincie';
+			container Claimbron := ='ThisCasus/Zichtjaren/'+ExportZichtjaar+'/Impl/Claims/AllocRegios/Provincie/Landbouw';
+
+			container Waarden
+			: Descr = "De kolommen, berekend buiten de schrijvende unit. Dat is geen opsmuk: met de kolommen rechtstreeks op de tabel start de CSV-schrijver tijdens het berekenen van de eerste kolom, en GeoDMS weigert dan een geneste ValidationAndCommit met de melding 'check for recursive dependencies'. Die melding wijst naar een kringverwijzing die er niet is. Rekenen en schrijven gescheiden houden lost het op."
+			{
+				unit<uint32> Domein := ='union_unit('+AsList(const('Bron/ClaimRegio', Klasse), ',')+')'
+				, Descr = "Een blok per klasse, en binnen een blok een regel per provincie. Expliciet een unie en geen combine, want bij een unie ligt de volgorde van de blokken vast en hoeft de lezer niet te weten welke as het snelst loopt.";
+
+				attribute<String>  Regio_name  (Domein) := ='union_data(Domein, '+AsList(const('Bron/ClaimRegio/name', Klasse), ',')+')';
+				attribute<String>  Klasse_name (Domein) := ='union_data(Domein, '+AsList('const('+quote(Klasse/name)+', Bron/ClaimRegio)', ',')+')';
+				attribute<Ha>      Stand_ha    (Domein) := ='union_data(Domein, '+AsList('Bron/Impl/Stand_PerAllocRegio/Aantal_Ha_'+Klasse/name, ',')+')'
+				, Descr = "Het gerealiseerde areaal van deze klasse in deze provincie, uit de standtelling per allocatieregio.";
+				attribute<Ha>      MinClaim_ha (Domein) := ='union_data(Domein, '+AsList('Claimbron/MinClaims/'+Klasse/name, ',')+')';
+				attribute<Ha>      MaxClaim_ha (Domein) := ='union_data(Domein, '+AsList('Claimbron/MaxClaims/'+Klasse/name, ',')+')';
+
+				// Leeg laten waar de grens nul is, zoals bij de wonen- en werkenkolommen: een nul leest als een meting
+				// en nodigt niet uit om de claimkolom ernaast te bekijken.
+				attribute<float32> Realisatie_tov_MinClaim (Domein) := MinClaim_ha > 0[Ha] ? Stand_ha / MinClaim_ha : null_f;
+				attribute<float32> Realisatie_tov_MaxClaim (Domein) := MaxClaim_ha > 0[Ha] ? Stand_ha / MaxClaim_ha : null_f;
+			}
+
+			unit<uint32> Tabel := Waarden/Domein
+			, StorageName = "=replace(AllocatieFileName,'Allocatie', 'Indicatoren', '@STANDPATH@', 'ClaimRealisatie_Landbouw', '.tif', '.csv')"
+			, StorageType = "gdalwrite.vect"
+			, Descr = "De uitdraai zelf: een dunne schil om Waarden, zodat de schrijver niets meer hoeft te berekenen."
+			{
+				attribute<String>  Regio_name              := Waarden/Regio_name;
+				attribute<String>  Klasse_name             := Waarden/Klasse_name;
+				attribute<Ha>      Stand_ha                := Waarden/Stand_ha;
+				attribute<Ha>      MinClaim_ha             := Waarden/MinClaim_ha;
+				attribute<Ha>      MaxClaim_ha             := Waarden/MaxClaim_ha;
+				attribute<float32> Realisatie_tov_MinClaim := Waarden/Realisatie_tov_MinClaim;
+				attribute<float32> Realisatie_tov_MaxClaim := Waarden/Realisatie_tov_MaxClaim;
+			}
+		}
 		container ClaimRealisatie_Veen
 		: Descr = "De claimrealisatie van de waterbergingsopgave in het veen, gevraagd in #797. Staat los van ClaimRealisatie_PerNiveau hierboven, want dat kent alleen de indelingen waarop wonen wordt gealloceerd. De wonen- en werkenclaim bestaat niet op de waterbergingsregio's, en een for_each over alle Uq_AllocRegios liep daar destijds op vast met een GDAL-fout op een niet bestaande Wonen.csv. Deze container leest daarom alleen de waterbergingskolom en raakt die andere niet aan.
 
