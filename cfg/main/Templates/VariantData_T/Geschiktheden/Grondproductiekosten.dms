@@ -14,7 +14,19 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container Grondproductiekosten : using = "/Geography"
-, Descr = "Schatting van de grondproductiekosten voor verschillende bouwtypen op basis van een set van modelvarianten."
+, Descr = "Schatting van de grondproductiekosten voor verschillende bouwtypen op basis van een set van modelvarianten. Drie regressies van Fakton uit december 2019, aangeleverd als csv met alleen coefficienten, standaardfouten, t-waarden en p-waarden, zonder documentatie en zonder de onderliggende data. Wat hieronder staat is wat daar door narekenen alsnog van te weten is; het is bij elkaar gezocht in september 2026 en hoort bij elke lezing van deze post gekend te zijn.
+
+			WAT DE DATASET IS. Uit correspondentie tussen PBL en Fakton van september 2018 over het koppelen van ruimtelijke informatie aan grondexploitaties: de dataset bestaat uit openbare exploitatieplannen van ruimtelijkeplannen.nl en uit vertrouwelijke exploitaties uit de eigen database van het bureau. Die tweedeling is de dummy BronFakton, en welke van de twee het model aanhoudt staat in C/Onzekerheid2. De plangebieden zijn met de hand aan polygonen gekoppeld, uit bestemmingsplancontouren of ingetekend van plankaarten.
+
+			HOE GROOT DE STEEKPROEF IS. Niet gedocumenteerd, maar af te leiden uit de gepubliceerde paren van t-waarde en p-waarde: bij OLS hoort daar een aantal vrijheidsgraden bij. Per variabele is dat te onnauwkeurig omdat de p-waarden op drie decimalen zijn afgerond, maar de df die met alle p-waarden van een regressie tegelijk verenigbaar is geeft voor BouwWoonrijp 212 tot 369 waarnemingen en voor PlanProces 218 tot 414. Bovenwijks geeft geen consistente uitkomst, wat erop wijst dat die component op een subset draait; niet elke exploitatie voert bovenwijkse voorzieningen apart op.
+
+			WAT DE COMPONENTVERDELING WAARD IS. Weinig. Met de invulling van voor september 2026 kwam PlanProces binnen de kern op 803 duizend euro per hectare uit tegen 391 duizend voor het hele bouw- en woonrijp maken. Een planproces dat twee keer zo duur is als de aanleg zelf is geen geloofwaardige verdeling. Lees deze drie componenten dus als een totaal met een opsplitsing die de schatting zelf niet draagt, en niet als drie afzonderlijk bruikbare posten. Wie een deelpost nodig heeft, zoals de reguliere verharding in Classifications/WaterretentieK/MeerkostenTovRegulier, moet die met een redenering afleiden en niet uit deze uitsplitsing halen.
+
+			WAAR DE MODELINVULLING BUITEN DE DATA TREEDT. Twee kanten, allebei begrensd met een parameter in ModelParameters/Wonen. Aan de onderkant de omvang van het plangebied: de dataset bestaat uit exploitatieplannen en gebiedsontwikkelingen en die zijn niet zo klein als de gridcel of het kleinste allocatiecluster, zie Grondproductie_OmvangPlangebied. Aan de bovenkant de kaveldichtheid: de coefficient van 0,024 in een semi-log model betekent dat elke 29 kavels per hectare de kosten verdubbelen, en de bronkaart loopt tot 217, zie Grondproductie_MaxKaveldichtheid.
+
+			HET NIVEAU. Het EIB meet in 79 Woningbouwimpuls-projecten 35.000 euro per woning voor grondproductie, toerekenbare maatregelen en plankosten samen, dus voor wat deze drie componenten dekken. Het model spant afhankelijk van kaveldichtheid, reistijd en plangebiedomvang een band van ruwweg 16.000 tot 63.000 euro per woning. Het is dus niet systematisch te hoog of te laag, maar wel zeer gevoelig voor de locatievariabelen. Zie de Descr bij ModelParameters/Wonen/Exploitatieposten voor de plek van deze post tussen de andere.
+
+			DE PRIJSPEILAANNAME. Results vermenigvuldigt met PrijsIndex_Bouwkosten_2017_naar_<Model_StartYear>, dus met 1,29 naar 2023, in de veronderstelling dat de schatting op prijspeil 2017 staat. De bronbestanden heten SchattingDec19. Staat de schatting op prijspeil 2019, dan is die factor ongeveer 8 procent te ruim."
 {
 	parameter<Float32> Significatie_threshold := /ModelParameters/Werken/Grondproductie_significatie_threshold, Descr = "Drempelwaarde voor de p-waarde waaronder een coëfficiënt als significant wordt beschouwd.";
 	
@@ -41,13 +53,17 @@ container Grondproductiekosten : using = "/Geography"
 						bodemeffect in de grondproductiekosten. Zodra de kengetallen per inrichtingsalternatief uit #505
 						meedoen hoort deze term eruit, anders wordt de bodem twee keer beprijsd.";
 			attribute<Float32> AfstandLocatus       (AdminDomain) := (/SourceData/Vastgoed/AfstandLocatus_src = 0f ? 1f : /SourceData/Vastgoed/AfstandLocatus_src < 0f ? 50000f : /SourceData/Vastgoed/AfstandLocatus_src)[AdminDomain/rdc_100m_rel], Descr = "Afstand in meters tot de dichtstbijzijnde Locatus winkel (minimaal 1m, maximaal 50km)";
-			attribute<Float32> Kaveldichtheid       (AdminDomain) := /SourceData/Diversen/Per_AdminDomain/Kaveldichtheid[float32], Descr = "Aantal kavels per hectare in de buurt (1km) van de cel";
-			attribute<Float32> OmvangPlangebied     (AdminDomain) :=
-				(/SourceData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain
-					? /ModelParameters/Advanced/Minimum_alloc_group_size_Binnenstedelijk_Wonen
-					: /ModelParameters/Advanced/Minimum_alloc_group_size_Buitenstedelijk_Wonen
-				) / 1[ha], Descr = "Omvang van het plangebied in hectare, als invulling van de regressievariabele OmvangPlangebied. Gevuld met de minimale clusteromvang uit het geclusterd alloceren (#508), dus 0,4 ha binnen woonkern en 2 ha erbuiten: dat is het kleinste samenhangende gebied dat het model daadwerkelijk ontwikkelt. Stond eerder op NrHaPerCell, oftewel 0,0625 ha voor een cel van 25 bij 25 meter, wat geen plangebied is maar een gridcel. Let op dat dit een ondergrens is, dus voor de componenten met schaalvoordelen (PlanProces, coefficient -0,252) een bovengrens aan de kosten per hectare oplevert. Zie #505.";
-			attribute<min>     Reistijd5kInw        (AdminDomain) := convert(/SourceData/Diversen/Per_AdminDomain/Reistijd5kInw, min), Descr = "Reistijd in minuten naar 5.000 inwoners. De bron staat in seconden en werd ook als seconden aan de regressie gevoerd, terwijl de coefficient van -0,052 alleen als per minuut te lezen is. Met seconden liep de exponent naar -55 en viel de hele PlanProces-component weg: mediaan 22 eurocent per hectare binnen BBG. Zie #505.";
+			attribute<Float32> Kaveldichtheid       (AdminDomain) := min_elem(/SourceData/Diversen/Per_AdminDomain/Kaveldichtheid[float32], /ModelParameters/Wonen/Grondproductie_MaxKaveldichtheid)
+			, Descr = "Aantal kavels per hectare in de buurt (1km) van de cel, afgetopt op Grondproductie_MaxKaveldichtheid. De waarde en de onderbouwing van dat plafond staan bij die parameter; hier alleen waarom er een plafond hoort te staan.
+
+						De variabele draagt in BouwWoonrijp en PlanProces coefficient 0,024 in een semi-log model, dus elke 29 kavels per hectare verdubbelt de kosten. De bronkaart is een uint8 die tot 217 loopt, en zonder plafond geeft dat tussen de laagste en de hoogste cel een factor 183. BouwWoonrijp kwam daardoor binnen bebouwd gebied op maximaal 44,2 miljoen euro per hectare uit, tegen een mediaan van 364 duizend. Dat is geen uitkomst van de schatting maar een extrapolatie ver buiten het bereik waarop zij is gemaakt, en zij treft juist de dichtste stedelijke cellen, dus precies waar het model zou moeten kunnen verdichten.";
+			attribute<Float32> OmvangPlangebied     (AdminDomain) := const(/ModelParameters/Wonen/Grondproductie_OmvangPlangebied / 1[ha], AdminDomain)
+			, Descr = "Omvang van het plangebied in hectare, als invulling van de regressievariabele OmvangPlangebied. Leest een eigen parameter, ModelParameters/Wonen/Grondproductie_OmvangPlangebied, waar de waarde en de onderbouwing staan.
+
+						Tot dan stond hier de minimale clusteromvang uit het geclusterd alloceren (#508), dus 0,4 ha binnen woonkern en 2 ha erbuiten, en daarvoor NrHaPerCell, wat geen plangebied is maar een gridcel (#505). De clusterparameters sturen ook de allocatie zelf, via Templates/Allocatie/Iter_T/Iter_Allocatie.dms, dus die koppeling liet de grondproductiekosten stil meebewegen met een instelling over de vorm van een cluster.";
+			attribute<min>     Reistijd5kInw        (AdminDomain) := convert(/SourceData/Diversen/Per_AdminDomain/Reistijd5kInw, min), Descr = "Reistijd in minuten naar 5.000 inwoners. De bron staat in seconden en werd ook als seconden aan de regressie gevoerd, terwijl de coefficient van -0,052 alleen als per minuut te lezen is. Met seconden liep de exponent naar -55 en viel de hele PlanProces-component weg: mediaan 22 eurocent per hectare binnen BBG. Zie #505.
+
+						De bronkaart Reistijd5kInw.tif is float32 zonder NODATA-tag en draagt NaN op 61,5 procent van de cellen, dus op zee en buitenland. Binnen Nederland is hij gevuld en klopt PlanProces met een narekening uit de brondata. Waar hij dat niet is werkt de null door de hele regressieterm heen, want in een semi-log som maakt een enkele null de exponent en daarmee de kosten null. Dat is voor de allocatie onschadelijk omdat daar toch niet gebouwd wordt, maar het maakt wel dat een statistiek over het hele domein iets anders meet dan een statistiek binnen bebouwd gebied; zie de waarschuwing bij Results/Statistics.";
 		}
 	}
 	
@@ -87,7 +103,12 @@ container Grondproductiekosten : using = "/Geography"
 			, 'Classified/'+C/Combi/name+'/Target_9K/ClassBreaks'
 		), Descr = "Schatting is dat kosten 2017 waren, dus opslag naar dat jaar."
 	{
-		container Statistics := for_each_ne(C/Combi/name, 'T/Statistics('+quote(C/Combi/GrondproductieModelVarianten_name)+','+string(C/Combi/second_rel)+'[C/Onzekerheid])'), Descr = "Berekening van de statistieken (mean, p10, p90) van de geschatte kosten per combinatie van bouwtype en onzekerheidsscenario.";
+		container Statistics := for_each_ne(C/Combi/name, 'T/Statistics('+quote(C/Combi/GrondproductieModelVarianten_name)+','+string(C/Combi/second_rel)+'[C/Onzekerheid])')
+		, Descr = "Statistieken van de geschatte kosten per component en scenario, per extent.
+
+					GEBRUIK ALLEEN BinnenUrbanContour. Die is nagerekend en klopt: PlanProces geeft daar een mediaan van 251 duizend euro per hectare en BouwWoonrijp 364 duizend, en dat komt overeen met een narekening per cel uit de brontifs. De extents Totaal en BuitenUrbanContour geven onbruikbare uitkomsten. Beide maskeren met Src gedeeld door float32(IsExtent), dus door nul waar de cel niet meetelt, en de percentielen die daaruit komen zijn niet de percentielen van de bedoelde cellen: PlanProces geeft daar 36.903.900 euro per hectare als mediaan, en dat is exact de maximumwaarde van de hele kaart, terwijl een narekening op diezelfde cellen 234.678 geeft.
+
+					Dat is ook de verklaring voor het gemiddelde van 22,7 miljoen euro per hectare dat een kale @statistics op Results/PlanProces oplevert. Dat is geen kostenwaarde. Wie de post wil beoordelen neemt de mediaan binnen bebouwd gebied.";
 		
 		container Totaal :=
 			for_each_ind(
