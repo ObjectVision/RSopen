@@ -117,6 +117,24 @@ Template Veen_T
 	attribute<float32> Landbouw_Aandeel_100m    (rdc_100m) := mean(float32(Basisjaar/IsLandbouw), AdminDomain/rdc_100m_rel)
 	, Descr = "Het aandeel landbouwgrond in de 100m-cel, tussen 0 en 1. De derde van deze drie, en de enige die niet ook als aanhakingsterm over een schijf wordt uitgesmeerd: hij zegt wat de cel zelf is en niet wat er in de buurt ligt. Bouwsteen 9a leest hem als herkomstvoorkeur, zie BouwsteenType/VoorrangPad (#660).";
 
+	// ---- het geleende BAU-plan ----
+
+	container MNP := /SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU, Descr = "De MNP-planpotentieelkaart van de WUR: huidige natuur plus de volledige realisatie van het vigerende natuurbeleid. In het veen wordt zij niet opgelegd, alleen als locatievoorkeur geleend; zie Plandeel_Natuur.";
+
+	attribute<bool> MNP_IsWater (AdminDomain) := MakeDefined(INL_Beheertype/IsWater[MNP/INL_Beheertype_rel_AD], FALSE);
+
+	attribute<bool> Plandeel_Natuur (AdminDomain) := IsDefined(MNP/INL_Beheertype_rel_AD) && !MNP_IsWater && !Basisjaar/IsNatuur && !Basisjaar/IsWater
+	, Descr = "Waar de MNP-kaart terrestrische natuur voorziet die er in het basisjaar nog niet is: het planpotentieel, dus de kaart min de huidige toestand. Landelijk 391.241 ha (#776), binnen het veengebied niet apart gemeten.
+
+				De aftrek van de bestaande natuur is wezenlijk. Zonder haar zou deze term grotendeels hetzelfde zeggen als Natuur_Aandeel_100m, dat via Voorrang_Gewicht al meeweegt, en dan versterkt hij alleen die term in plaats van er informatie aan toe te voegen. Bestaand open water gaat er ook af: een terrestrisch plantype op een cel die nu water is, is een reservaatvlak dat over een plas heen is getekend, dezelfde eenzijdige categorietoets die Natuur_T/Landelijk/Type op de opleggingskant toepast.";
+
+	attribute<bool> Plandeel_Water (AdminDomain) := IsDefined(MNP/INL_Beheertype_rel_AD) && MNP_IsWater && !Basisjaar/IsWater
+	, Descr = "De waterkant van hetzelfde plan: waar de MNP-kaart open water voorziet dat er nog niet is. Alleen bouwsteen 9a leest dit, want dat is de bouwsteen die nieuw open water maakt; zie BouwsteenType/PlanPad.";
+
+	attribute<float32> Plan_Natuur_Aandeel_100m (rdc_100m) := mean(float32(Plandeel_Natuur), AdminDomain/rdc_100m_rel);
+	attribute<float32> Plan_Water_Aandeel_100m  (rdc_100m) := mean(float32(Plandeel_Water),  AdminDomain/rdc_100m_rel)
+	, Descr = "De twee plandelen als aandeel in de 100m-cel, tussen 0 en 1, op dezelfde resolutie als de andere geschiktheidstermen. Anders dan de aanhakingstermen worden ze niet over een schijf uitgesmeerd: ze zeggen wat het plan op de cel zelf voorziet, net als Landbouw_Aandeel_100m.";
+
 	attribute<float32> Aanhaken_Natuur_100m (rdc_100m) :=
 		='potential(Natuur_Aandeel_100m, /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/Flat2)
 			/ /Geography/Distmatrices_100m/pot' + Cluster_Straal + '/oppervlakte'
@@ -194,6 +212,18 @@ Template Veen_T
 					9a draagt in plaats daarvan de voorkeur voor landbouwgrond, naast zijn dieptemaat en zijn aanhaking bij bestaand water. 9b draagt geen voorkeur, want zijn zeef pint hem al op bestaand open water; zie ZeefPad.
 
 					De vorm is met opzet een voorkeur en geen zeef. Deltares schrijft eerst en niet enkel, en een zeef zou de opgave laten mislukken zodra er in een peilgebied minder bestaande natuur ligt dan de natuurbouwstenen vragen. Nu landt het overschot gewoon op de volgende cellen in de rangorde. Het gewicht staat in ModelParameters/Natuur/Trekking/Veen/Voorrang_Gewicht; op nul is dit de geschiktheid van voor 7 september 2026.";
+
+		attribute<string> PlanPad (.) :=
+			  IsNieuwWater    ? 'Plan_Gewicht * Plan_Water_Aandeel_100m'
+			: IsBestaandWater ? '0f'
+			:                   'Plan_Gewicht * BouwsteenType/Natuurdeel[value(' + string(id(.)) + ', BouwsteenType)] * Plan_Natuur_Aandeel_100m'
+		, Descr = "Dezelfde vorm als VoorrangPad hierboven, maar dan op het BAU-planpotentieel in plaats van op de bestaande toestand: hoe zwaar telt het mee dat de MNP-kaart op deze cel natuur voorziet die er nog niet is.
+
+					Wens van 10 september 2026. In het veen wordt geen BAU-natuur opgelegd, want de bouwstenen dekken het hele veengebied en beschrijven daar de eindtoestand; de locatiekeuze binnen een peilvak mag wel van BAU geleend worden. De opgave per peilvak blijft ongemoeid, dus dit verschuift alleen welke cellen welke bouwsteen krijgen.
+
+					Drie keuzes die dit anders maken dan een kale optelling van de MNP-kaart. Het is het plandeel en niet de hele kaart, want de bestaande natuur in die kaart wordt door VoorrangPad al gewogen; zie Plandeel_Natuur. Het draagt een eigen gewicht en niet dat van de herkomstvoorkeur, want een plan is zwakker bewijs dan een bestaande toestand. En het weegt net als VoorrangPad mee met het natuurdeel van de bouwsteen, zodat bouwsteen 6 er meer aan heeft dan 3a en de vier bouwstenen zonder natuurdeel er niets aan hebben.
+
+					9a leest de waterkant van hetzelfde plan, want dat is de bouwsteen die nieuw open water maakt. 9b leest niets, net als bij VoorrangPad: zijn zeef pint hem al op bestaand open water.";
 	}
 
 	parameter<string> Cluster_Straal_Bouwsteen := /ModelParameters/Natuur/Trekking/Veen/Cluster_Straal_Bouwsteen
@@ -205,7 +235,10 @@ Template Veen_T
 	parameter<float32> Voorrang_Gewicht := /ModelParameters/Natuur/Trekking/Veen/Voorrang_Gewicht
 	, Descr = "Hoe zwaar de herkomstvoorkeur meeweegt: natuur op bestaande natuur, en het nieuwe open water van 9a op landbouwgrond (#660). Staat hier om dezelfde reden lokaal als Diepte_Gewicht. Zie BouwsteenType/VoorrangPad voor de vorm per bouwsteen.";
 
-	parameter<float32> Noemer := 1f + Diepte_Gewicht + Voorrang_Gewicht + Ruis_Amplitude
+	parameter<float32> Plan_Gewicht := /ModelParameters/Natuur/Trekking/Veen/Plan_Gewicht
+	, Descr = "Hoe zwaar het geleende BAU-planpotentieel meeweegt. Staat hier om dezelfde reden lokaal als Diepte_Gewicht en Voorrang_Gewicht. Zie BouwsteenType/PlanPad voor de vorm per bouwsteen en Plandeel_Natuur voor wat er precies geleend wordt. Op nul, de stand bij invoering, verandert er niets aan de uitkomst: de term valt uit de teller en uit Noemer.";
+
+	parameter<float32> Noemer := 1f + Diepte_Gewicht + Voorrang_Gewicht + Plan_Gewicht + Ruis_Amplitude
 	, Descr = "Waar de geschiktheid van elke bouwsteen door gedeeld wordt om tussen 0 en 1 te blijven, zoals NatuurAlloc_T verlangt: de som van alle gewichten die in de teller kunnen voorkomen, dus de aanhaking met gewicht een, de diepte, de herkomstvoorkeur en de ruis.
 
 				Een noemer voor alle bouwstenen samen, en niet per bouwsteen zijn eigen. Tot 7 september 2026 deelde elke bouwsteen door de som van alleen de termen die hij zelf droeg, en dat is een schaalverschil tussen bouwstenen: discrete_alloc_sp maximaliseert de som van de geschiktheid, dus een bouwsteen met een grotere spreiding krijgt zijn voorkeur eerder ingewilligd dan een met een kleinere. Met een noemer per bouwsteen zou een bouwsteen die de herkomstvoorkeur draagt daardoor overal een lagere bieding uitbrengen dan een die hem niet draagt, en dat is het omgekeerde van wat #660 vraagt. Nu telt elke term overal even zwaar, en zegt het verschil tussen twee bouwstenen op dezelfde cel alleen iets over de termen die ze werkelijk dragen.
@@ -233,11 +266,11 @@ Template Veen_T
 	container Geschiktheid_Bouwsteen :=
 		for_each_nedv(
 			BouwsteenType/name
-			, BouwsteenType/ZeefPad + ' ? ((' + BouwsteenType/AanhakenPad + ' + ' + BouwsteenType/DiepteTermPad + ' + ' + BouwsteenType/VoorrangPad + ' + Ruis_Amplitude * Ruis_Bouwsteen/' + BouwsteenType/name + ') / Noemer)[AdminDomain/rdc_100m_rel] : null_f'
+			, BouwsteenType/ZeefPad + ' ? ((' + BouwsteenType/AanhakenPad + ' + ' + BouwsteenType/DiepteTermPad + ' + ' + BouwsteenType/VoorrangPad + ' + ' + BouwsteenType/PlanPad + ' + Ruis_Amplitude * Ruis_Bouwsteen/' + BouwsteenType/name + ') / Noemer)[AdminDomain/rdc_100m_rel] : null_f'
 			, AdminDomain
 			, float32
 		)
-	, Descr = "Geschiktheid per bouwsteen: aanhaking plus diepte plus herkomstvoorkeur plus ruis, gedeeld door Noemer, en null buiten de zeef.
+	, Descr = "Geschiktheid per bouwsteen: aanhaking plus diepte plus herkomstvoorkeur plus het geleende BAU-plan plus ruis, gedeeld door Noemer, en null buiten de zeef.
 
 				De aanhakingsterm is voor alle terrestrische bouwstenen gelijk en valt dus weg in de keuze tussen bouwstenen; hij bepaalt alleen welke cellen het eerst aan de beurt zijn. Wat een cel wordt volgt uit de twee termen die per bouwsteen verschillen. De herkomstvoorkeur gaat voor: op bestaande natuur biedt een bouwsteen naar rato van haar natuurdeel, op landbouwgrond biedt 9a extra (#660). Waar die voorkeur niets zegt, en dat is het grootste deel van het veengebied, beslist de ruis, en die is per bouwsteen glad zodat de bouwstenen als vlekken naast elkaar komen te liggen in plaats van als spikkels door elkaar.
 
