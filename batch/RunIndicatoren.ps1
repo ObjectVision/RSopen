@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Draait de indicatorenexport voor een of meer zichtjaren en varianten.
 
@@ -51,7 +51,6 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Forc
 
 $env:StandAllocatieOntkoppeld = 'TRUE'
 $env:VariantDataOntkoppeld    = 'TRUE'
-$env:AlleenEindjaar           = 'FALSE'
 $env:IndicatorRegio           = $IndicatorRegio
 Remove-Item Env:\LocalDataProjDir -ErrorAction SilentlyContinue
 
