@@ -326,9 +326,70 @@ Template Zichtjaar_T
 	}
 	
 	container Grondexploitatie
+	: Descr = "Het exploitatiesaldo van de gealloceerde nieuwbouw (#799, vraag vanuit Deltares in #672): per cel als kaart, en in de indicatorentabel opgeteld per regio en voor Nederland.
+
+				Per cel het saldo van het ontwikkelpakket dat daar is gealloceerd, dezelfde grootheid als ExploitatieSaldo in Templates/Suitabilities/Suitability_Wonen_perOP_T: de netto-opbrengst van een volle cel van dat pakket, min de bouwsom met de opslagen voor bijkomende kosten en winst en risico, min grondproductie, bodemdaling en piekbuiberging, min de verwerving en de sloop van wat er in het basisjaar stond. Elke post wordt hier een keer doorgerekend met het gealloceerde pakket in plaats van 53 keer per pakket, zoals KostenWoningbouw dat voor de bouwsom en de bodemdaling al doet, en uit dezelfde bronnen als de geschiktheid. De geschiktheid maskeert elke post met de beschikbaarheid van de cel in het zichtjaar; op een cel die gealloceerd is was die beschikbaarheid een, dus dat masker valt hier weg zonder dat het getal verandert.
+
+				Twee keuzes die #799 open laat zijn hier zo genomen. Geteld wordt over de cellen waar het model zelf heeft gebouwd, en niet over alle kandidaten die door de zeef komen. En per cel telt het saldo van het gealloceerde pakket, niet het beste saldo over alle pakketten die op die cel mochten. De onrendabele top en het overschot, de tweede en derde grootheid uit #799, staan hier niet; dat is dit saldo gesplitst op teken, en die splitsing is op de kaart te maken zodra Deltares de twee keuzes heeft bevestigd.
+
+				De voet is die van KostenWoningbouw min de BAG-nieuwbouw van #550. Die cellen dragen een gematchte OP_rel, maar het model heeft er geen exploitatie op gedaan: de woningen zijn uit de BAG overgenomen, bovenop wat er in het basisjaar al stond, zonder verwerving of sloop. Op de eerste meting (11 september 2026) waren dat 16.000 van de 1,27 miljoen cellen, in elke variant dezelfde, met een mediaan van vier basisjaarwoningen per cel en samen 45 miljard aan verwervingskosten die nooit zijn betaald. Met die cellen erin was het saldo geen uitspraak meer over wat het model doet.
+
+				De verwerving en de sloop hangen in de geschiktheid uitsluitend aan de BAG van het basisjaar en niet aan de stand van het zichtjaar. Dat is hier dus ook zo, en dat is geen benadering maar dezelfde keuze als in de allocatie. Het saldo valt bij oplevering; de kaart van een zichtjaar draagt alle nieuwbouw sinds het basisjaar tegen de prijzen en kentallen van het basisjaar. Een netto contante waarde per periode, zoals Woningwaarde die heeft, is er nog niet."
 	{
-		// grid en tabel (landschap en NL) met exploitatiesaldo toevoegen
-		// grid en tabel (landschap en NL) met de opgetelde negatieve saldi toevoegen (= onrendabele top)
+		unit<UInt8> OP := ='ThisVariantClassifications/Vastgoed/OP';
+
+		attribute<Bool> IsNieuwbouw  (AdminDomain) := KostenWoningbouw/Nieuwbouw_Ha > 0[Ha] && WaardeNabijheidGroen/Bron_Zichtjaar/IsOPCel, Descr = "De cellen waarover het saldo wordt geboekt: netto woningen erbij sinds het basisjaar, met een pakket dat het model zelf heeft ingericht. IsOPCel is dezelfde toets als bij de groenwaardering en de piekbuiberging: een gealloceerd pakket dat geen BAG-nieuwbouw is.";
+		attribute<Ha>   Nieuwbouw_Ha (AdminDomain) := IsNieuwbouw ? AdminDomain/NrHaPerCell : 0[Ha], Descr = "De hectares waarover het saldo is geboekt, elk voor de volle cel. De noemer van de kolom per hectare in de indicatorentabel; kleiner dan KostenWoningbouw/Nieuwbouw_Ha met precies de BAG-nieuwbouw.";
+
+		container Posten
+		: Descr = "De posten van het saldo, in dezelfde volgorde als in de geschiktheid en elk voor de volle cel van het gealloceerde pakket. Alle bedragen zijn nul buiten IsNieuwbouw."
+		{
+			parameter<String> Opbrengstenbron := /ModelParameters/VariantDataOntkoppeld
+				? 'ThisVariantData/Suitability/src/Wonen/Impl/ReadOpbrengsten_perOP_UNCHECKED'
+				: 'ThisVariantData/Suitability/src/Wonen/Impl/CalcOpbrengsten_perOP'
+			, Descr = "Waar de opbrengst per pakket vandaan komt. Ontkoppeld de tifs zonder de IntegrityCheck van Opbrengsten_perOP_src: die toets leest elk van de 53 bestanden in zijn geheel en houdt ze vast zolang de som hieronder loopt, en dat was op 11 september 2026 dertig gigabyte per proces. De allocatie heeft dezelfde bestanden al met toets gelezen, dus hier voegt hij niets toe.";
+
+			attribute<Eur> Marktwaarde (AdminDomain) := = 'float32(IsNieuwbouw) * MakeDefined(add(' + asItemList('float32(Stand/OP_rel == ' + string(id(OP)) + '[OP]) * MakeDefined(' + Opbrengstenbron + '/' + OP/name + ', 0[Eur])') + '), 0[Eur])'
+			, Descr = "De marktwaarde van een volle cel van het gealloceerde pakket, uit dezelfde Opbrengsten_perOP als de geschiktheid, dus met de pakketweging in de prijs. Niet uit Woningwaarde/Nieuwbouw: die telt de prijs zonder weging en naar rato van het aantal woningen, en dat is de vastgoedwaarde en niet de opbrengstterm van de exploitatie.";
+			attribute<Eur> Opbrengsten (AdminDomain) := Marktwaarde * /ModelParameters/Wonen/Exploitatieposten/OpbrengstFactor, Descr = "Netto van btw, zie Suitability_Wonen_perOP_T/Opbrengsten.";
+
+			attribute<Eur> Bouwsom          (AdminDomain) := KostenWoningbouw/Bouwkosten, Descr = "De bouwsom van de volle cel van het gealloceerde pakket, zoals KostenWoningbouw die al uitrekent met dezelfde opslagen als de geschiktheid.";
+			attribute<Eur> BijkomendeKosten (AdminDomain) := Bouwsom * /ModelParameters/Wonen/Exploitatieposten/BijkomendeKostenOpslag;
+			attribute<Eur> WinstEnRisico    (AdminDomain) := (Bouwsom + BijkomendeKosten) * /ModelParameters/Wonen/Exploitatieposten/WinstEnRisicoFractie;
+			attribute<Eur> Grondproductie   (AdminDomain) := KostenWoningbouw/Regulier, Descr = "Bouw- en woonrijp maken, bovenwijks en planproces, per hectare uit dezelfde Fakton-variant als de geschiktheid.";
+			attribute<Eur> Bodemdaling      (AdminDomain) := KostenWoningbouw/MeerkostenBodemdaling, Descr = "Nul in een variant met BodemdalingkostenInSaldo op FALSE, net als de post in de geschiktheid.";
+
+			container Piekbui := ='ThisVariantData/Suitability/src/Wonen/Piekbuibergingkosten';
+			attribute<Eur> Piekbuiberging (AdminDomain) :=
+				MakeDefined(
+					  (Piekbui/PerBuurt/ExclDoorlatendGroen[Stand/OP_rel] + Piekbui/PerBuurt/DoorlatendGroen[Stand/OP_rel] * float32(/BaseData/Omgeving/NbSOPToepassingsgebied/Hoog_NL))
+					* float32(IsNieuwbouw) * AdminDomain/NrHaPerCell[float32]
+					, 0[Eur]
+				) * float32(/ModelParameters/Piekbuiberging/KostenInExploitatiesaldo)
+			, Descr = "De aanlegkosten van de bergingsmaatregelen van het gealloceerde pakket (#798), dezelfde formule als Piekbuibergingkosten/perOP maar met het gealloceerde pakket in plaats van per pakket. Nul als KostenInExploitatiesaldo op FALSE staat, want dan zat de post ook niet in het saldo dat de allocatie heeft gezien.";
+
+			attribute<Eur> Verwerving_Woningen0    (AdminDomain) := MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal, 0[Eur]), Descr = "De verwervingswaarde van de woningen die er in het basisjaar stonden, voor de funderingsafwaardering.";
+			attribute<Eur> Funderingsafwaardering  (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, Funderingsschade/Src/Waardevermindering), 0[Eur]), Descr = "Uit de indicator Funderingsschade, die dezelfde formule als de geschiktheid draagt: nul in een variant waarin de schade wordt hersteld.";
+			attribute<Eur> Verwerving_Woningen     (AdminDomain) := max_elem(Verwerving_Woningen0 - Funderingsafwaardering, 0[Eur]);
+			attribute<Eur> Verwerving_NietWoningen (AdminDomain) := MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Niet_Woningen/Totaal, 0[Eur]);
+			attribute<Eur> Verwerving_Grond        (AdminDomain) := = /ModelParameters/Wonen/Grondwaarde/GrondwaardeInSaldo
+				? 'Verwerving_Woningen0 > 0[Eur] ? 0[Eur] : MakeDefined(/ModelParameters/Wonen/Grondwaarde/PerKlasse[/BaseData/StartState/Bodemstatistiek/gg_CBS] * AdminDomain/NrHaPerCell, 0[Eur])'
+				: 'const(0[Eur], AdminDomain)'
+			, Descr = "De grond zelf (#787), alleen waar geen woning staat, want de grond onder een woning zit al in de WOZ.";
+			attribute<Eur> Verwerving (AdminDomain) := float32(IsNieuwbouw) * (Verwerving_Woningen + Verwerving_NietWoningen + Verwerving_Grond), Descr = "Dezelfde drie delen als Verwervingskosten/Totaal in de geschiktheid.";
+			attribute<Eur> Sloop      (AdminDomain) := float32(IsNieuwbouw) * (MakeDefined(/BaseData/Suitabilities/Wonen/Sloopkosten/Totaal, 0[Eur]) + MakeDefined(/BaseData/Suitabilities/Wonen/Sloopkosten/Totaal_niet_woningen, 0[Eur])), Descr = "Woningen en niet-woningen, zoals Sloopkosten/Totaal in de geschiktheid.";
+		}
+
+		attribute<Eur> Saldo (AdminDomain) :=
+			IsNieuwbouw
+				? Posten/Opbrengsten - Posten/Bouwsom - Posten/BijkomendeKosten - Posten/WinstEnRisico - Posten/Grondproductie - Posten/Bodemdaling - Posten/Piekbuiberging - Posten/Verwerving - Posten/Sloop
+				: null_f[Eur]
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Grondexploitatie_Saldo_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr = "Het exploitatiesaldo van het gealloceerde pakket, in euro per cel voor de volle cel. Negatief is een tekort dat elders gedekt moet worden, positief een overschot. Leeg buiten de cellen met nieuwbouw, zodat de kaart de nul van een gebouwde cel kan onderscheiden van een cel waar niets is gebeurd.";
+
+		parameter<Eur> Saldo_Per_NL        := sum(Saldo), Descr = "Landelijk totaal, nominaal.";
+		parameter<Ha>  Nieuwbouw_Ha_Per_NL := sum(Nieuwbouw_Ha), Descr = "Controlegetal: over hoeveel hectare het saldo is geboekt. Het verschil met KostenWoningbouw/Nieuwbouw_Ha_Per_NL is de BAG-nieuwbouw.";
 	}
 	
 	container SterfteAfnameDoorGroenToename: using = "Classifications/Grondgebruik;Classifications/Actor"

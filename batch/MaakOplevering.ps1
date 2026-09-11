@@ -68,6 +68,7 @@ $varianten = [ordered]@{
     'WLO_hoog_BAU'            = 'BAU1'
     'WLO_hoog_BAU2'           = 'BAU2'
     'WLO_hoog_NbSGenuanceerd' = 'NbSGenuanceerd'
+    'WLO_hoog_NbSGenuanceerder' = 'NbSGenuanceerder'
     'WLO_hoog_NbSMax'         = 'NbSMax'
 }
 if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
@@ -113,6 +114,7 @@ $Beschrijving = [ordered]@{
     'KostenWoningbouw_BeheerEnOnderhoud_Eur'                                                         = @('euro', '', 'Beheer en onderhoud van de nieuwbouw over de periode')
     'Woningwaarde_Nieuwbouw_Eur'                                                                     = @('euro', '', 'Marktwaarde van de woningen die hier zijn bijgebouwd')
     'Woningwaarde_Nieuwbouw_NCW_Eur'                                                                 = @('euro', '', 'Diezelfde waarde als netto contante waarde')
+    'Grondexploitatie_Saldo_Eur'                                                                     = @('euro', '', 'Exploitatiesaldo van het ontwikkelpakket dat hier is gebouwd: opbrengst min bouw, grond, verwerving en sloop; negatief is een tekort')
     'GesloopteWoningen_NieuweNatuur'                                                                 = @('woningen', '', 'Woningen die wijken voor nieuwe natuur')
     'GesloopteWoningen_WaterbergingVeen'                                                             = @('woningen', '', 'Woningen die wijken voor seizoensberging in het veen')
     'GesloopteWoningen_OverigeBouwstenen'                                                            = @('woningen', '', 'Woningen die wijken voor de overige ruimtelijke bouwstenen')
@@ -192,8 +194,10 @@ $LegendaBron = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren\Legendas'
 $Issue = $Issue.TrimStart('#')
 
 function Schoon([string]$Naam) {
-    # Haalt de modelstaart uit de naam: _Nederland_SS-11 of _Nederland vlak voor de extensie.
-    $kaal = ($Naam -replace '_Nederland_SS-11(?=\.)', '') -replace '_Nederland(?=\.)', ''
+    # Haalt de modelstaart uit de naam: _Nederland_SS-<n> of _Nederland vlak voor de extensie. Het
+    # getal is het aantal actieve subsectoren en verschuift zodra een sector aan of uit gaat (SS-11
+    # tot begin september 2026, SS-22 sinds landbouw meedraait), dus het staat hier niet vast.
+    $kaal = ($Naam -replace '_Nederland_SS-\d+(?=\.)', '') -replace '_Nederland(?=\.)', ''
     # De landelijke claimtabel heet ClaimRealisatie_Nederland_Nederland_SS-11 en verliest daardoor
     # twee keer een Nederland: eerst het studiegebied, dan het schaalniveau. Wat overblijft leest
     # als de hoofdtabel terwijl het het landelijke totaal is. Geef dat niveau terug.
