@@ -4,7 +4,8 @@
 ================================================================================================
 
  WAT DIT SCRIPT DOET
-   1. Schrijft de ontkoppelde basisdata weg (WriteBasedata, vier stappen).
+   1. Schrijft de ontkoppelde basisdata weg (WriteBasedata: een stap voor de allocatie, een voor de
+      indicatoren).
    2. Schrijft per variant de variantdata weg (opbrengsten per ontwikkelpakket, opbrengstderving).
    3. Alloceert per variant elk zichtjaar in een eigen GeoDmsRun-proces, dat de stand van het
       vorige zichtjaar uit de tifs leest. Daardoor blijft het geheugen per proces beperkt en is
@@ -125,7 +126,7 @@ function Invoke-Stap {
     # volgende zichtjaar hangt van de stand af en niet van de diagnose-uitdraai. De stap wordt wel
     # als mislukt in status.tsv gezet en op het scherm gemeld, zodat er achteraf geen stilte staat
     # waar een meting hoorde te staan.
-    param([string]$Stap, [string]$Item, [switch]$NietFataal)
+    param([string]$Stap, [string[]]$Item, [switch]$NietFataal)
 
     if ($script:Overgeslagen) {
         if ($Stap -eq $StartBij) { $script:Overgeslagen = $false }
@@ -138,12 +139,14 @@ function Invoke-Stap {
 
     Write-Regel "start     : $Stap"
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    & $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg $Item 2>&1 | Out-Null
+    # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af, in deze volgorde; dat is de
+    # manier om stappen die elkaars bestanden lezen in een proces te houden.
+    & $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg @Item 2>&1 | Out-Null
     $code = $LASTEXITCODE
     $sw.Stop()
     $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
 
-    "{0}`t{1}`t{2}`t{3}`t{4}" -f (Get-Date -Format 's'), $Stap, $Item, $code, $sec |
+    "{0}`t{1}`t{2}`t{3}`t{4}" -f (Get-Date -Format 's'), $Stap, ($Item -join ' '), $code, $sec |
         Add-Content $status -Encoding UTF8
 
     # Exit 0 is niet genoeg. Een ontbrekend bronbestand komt als GDAL-fout in het log terwijl de exitcode
@@ -352,15 +355,15 @@ function Test-ReeksNogNietBegonnen {
 
 if (-not $SkipBasedata) {
     Test-ReeksNogNietBegonnen 'basedata opnieuw wegschrijven'
-    # Vier stappen, in deze volgorde. Run3 (stand basisjaar, proxies, sloopkosten, werken-geschiktheid,
-    # normen, kernels) is nodig voor de allocatie en stond tot 11 september 2026 niet in dit script;
-    # de allocatie viel dan na een uur om op 'Unknown identifier meergezins_VrijeSector_Proxy'.
-    # Run4 (BGT-capaciteiten) is alleen voor de indicatoren, maar hoort bij een verse LocalData en
-    # kost ruim een uur; wie hem overslaat krijgt hem bij RunIndicatoren.ps1 alsnog voorgeschoteld.
-    Invoke-Stap 'basedata-run1' '/WriteBasedata/Generate_Run1'
-    Invoke-Stap 'basedata-run2' '/WriteBasedata/Generate_Run2'
-    Invoke-Stap 'basedata-run3' '/WriteBasedata/Generate_Run3'
-    Invoke-Stap 'basedata-run4' '/WriteBasedata/Generate_Run4_IndicatorenData'
+    # Twee stappen. De eerste maakt alles wat de allocatie leest: Run1 (pandtypering), Run2 (BBG,
+    # verwerving, BRT, IBIS, groenfracties, NBP, MNP) en Run3 (stand basisjaar, proxies, sloopkosten,
+    # werken-geschiktheid, normen, kernels), in een proces en in deze volgorde, want Run3 leest de
+    # tifs van Run2 terug. Run3 stond tot 11 september 2026 niet in dit script; de allocatie viel
+    # dan na een uur om op 'Unknown identifier meergezins_VrijeSector_Proxy'. Samen ruim een half uur.
+    # De tweede stap, Run4 (BGT-capaciteiten), is alleen voor de indicatoren en kost ruim een uur;
+    # hij hoort bij een verse LocalData, en RunIndicatoren.ps1 weigert zonder deze bestanden.
+    Invoke-Stap 'basedata-allocatie'   @('/WriteBasedata/Generate_Run1', '/WriteBasedata/Generate_Run2', '/WriteBasedata/Generate_Run3')
+    Invoke-Stap 'basedata-indicatoren' '/WriteBasedata/Generate_Run4_IndicatorenData'
     Test-Dictionaries
 } else {
     Test-Invoer 'basedata'
