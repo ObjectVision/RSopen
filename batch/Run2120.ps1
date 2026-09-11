@@ -1,18 +1,82 @@
-﻿<#
-.SYNOPSIS
-    Productierun RSopen NL2120 tot en met zichtjaar 2120, varianten BAU en BAU2.
+<#
+================================================================================================
+ Run2120.ps1: de productierun van RSopen NL2120, van de basisdata tot en met zichtjaar 2120
+================================================================================================
 
-.DESCRIPTION
-    Draait met StandAllocatieOntkoppeld=TRUE, dus elk zichtjaar krijgt een eigen
-    GeoDmsRun-proces en leest de stand van het vorige jaar terug uit de tif. Daarmee
-    blijft het geheugengebruik per proces beperkt en is de run herstartbaar.
+ WAT DIT SCRIPT DOET
+   1. Schrijft de ontkoppelde basisdata weg (WriteBasedata, vier stappen).
+   2. Schrijft per variant de variantdata weg (opbrengsten per ontwikkelpakket, opbrengstderving).
+   3. Alloceert per variant elk zichtjaar in een eigen GeoDmsRun-proces, dat de stand van het
+      vorige zichtjaar uit de tifs leest. Daardoor blijft het geheugen per proces beperkt en is
+      een afgebroken reeks te hervatten bij het zichtjaar waar hij bleef steken.
+   De indicatoren zijn een aparte stap: batch\RunIndicatoren.ps1.
 
-    Zet bewust GEEN LocalDataProjDir: dan leidt GeoDMS die af uit LocalDataDir plus de
-    configuratienaam, oftewel C:\LocalData\RSopen_NL2120_productie. RunAll.cmd zet die
-    variabele wel, op C:\LocalData\RSopen, en dat is voor deze werkkopie het verkeerde pad.
+ HOE START JE HET (vanuit een PowerShell-venster in de map batch)
+   Volledige reeks, alles opnieuw, twee varianten:
+       .\Run2120.ps1 -Varianten BAU,NbSGenuanceerd
+   Basisdata en variantdata staan er al, alleen alloceren:
+       .\Run2120.ps1 -Varianten BAU -SkipBasedata -SkipVariantData
+   Hervatten na een fout, bij een stap uit status.tsv (de naam staat in de kolom stap):
+       .\Run2120.ps1 -Varianten BAU -SkipBasedata -SkipVariantData -StartBij allocatie-BAU-Y2070
+   Landbouwronde over bestaande standen (BAU2 na BAU, met de stedelijke stand overgenomen):
+       .\Run2120.ps1 -Varianten BAU2 -SkipBasedata -AlleenLandbouw
+   Het script stopt bij de eerste stap die misgaat en zegt welke. Elke stap heeft een eigen log
+   in de logmap en een regel in status.tsv.
 
-    Elke stap schrijft een eigen log en een regel in status.tsv. Bij de eerste stap die
-    niet met exit 0 eindigt stopt het script.
+ INSTELLINGEN, IN DRIE SOORTEN
+
+   A. Parameters van dit script. Geef ze mee op de commandoregel; wat je niet meegeeft krijgt
+      de standaardwaarde uit het blok param() hieronder.
+      -Exe            GeoDmsRun.exe van de geinstalleerde GeoDMS. Niet de build uit Visual Studio:
+                      die wordt opnieuw gecompileerd terwijl een reeks loopt.
+      -Cfg            De configuratie, cfg\main.dms van de werkkopie waarmee je rekent.
+      -LocalData      Waar de uitvoer staat. Standaard C:\LocalData\<naam van de werkkopie>; het script
+                      zet de omgevingsvariabele LocalDataProjDir bewust NIET, GeoDMS leidt dit pad
+                      zelf af uit de registersleutel LocalDataDir plus de mapnaam boven cfg.
+      -Scenario       Het WLO-scenario, standaard WLO_hoog. Casusnamen worden <scenario>_<variant>.
+      -Varianten      Welke varianten, als lijst: -Varianten BAU,BAU2,NbSGenuanceerd. De namen
+                      staan in cfg\main\VariantParameters\VariantK.dms, kolom name.
+      -Zichtjaren     Leeg laten: het script leest ze uit de configuratie (Model_FirstZichtjaar tot
+                      Model_FinalYear). Alleen vullen om een deel te draaien, bijvoorbeeld Y2040,Y2050.
+      -SkipBasedata   Basisdata niet opnieuw wegschrijven. Het script controleert dan wel of de
+                      bestanden er staan en zegt welke stap ze maakt als er iets ontbreekt.
+      -SkipVariantData  Idem voor de variantdata.
+      -StartBij       Naam van de stap waar de reeks verdergaat; alles ervoor wordt overgeslagen.
+      -HerbouwBasedata  Bevestigt dat je de basisdata opnieuw maakt terwijl er al standen staan.
+                      Zonder deze schakelaar weigert het script dat, omdat vroege en late zichtjaren
+                      dan met verschillende invoer zouden rekenen.
+      -AlleenLandbouw Bevestigt dat alleen de landbouw alloceert. Hoort samen met de schakelaar
+                      OntkoppelStedelijkeKlasses op TRUE (zie B); het script toetst dat.
+      -DiagnoseNaZichtjaar  Na welke zichtjaren het diagnoseharnas meedraait (ongeveer acht
+                      minuten per zichtjaar per variant). Leeg is nooit.
+
+   B. Schakelaars in de configuratie die dit script NIET zet maar waar de run wel van afhangt.
+      Loop ze na voordat je start; ze staan in cfg\main\ModelParameters.dms tenzij anders vermeld.
+      OntkoppelStedelijkeKlasses   FALSE voor een volle reeks. TRUE laat alleen de landbouw
+                                   alloceren en neemt wonen en werken uit bestaande standtifs.
+      ExotenActief                 (ModelParameters\Landbouw.dms) Of de exotische gewassen meedoen.
+      AlleenEindjaar               Alleen voor debuggen; in een productierun FALSE.
+      SectorAllocRegio             De tabel met sectoren die alloceren. Een sector aan- of
+                                   uitzetten verandert het SS-nummer in alle bestandsnamen, en
+                                   daarmee zijn bestaande standen onbruikbaar.
+      VariantK/StandVanVariant     (VariantParameters\VariantK.dms) Een variant die hier een andere
+                                   naam draagt, leent die stand en alloceert niet.
+      Model_FirstZichtjaar, Model_FinalYear   De reeks zichtjaren.
+      ConfigSettings.dms           Machine-eigen paden (bronnen, LocalData). Staat niet in git;
+                                   elke machine heeft zijn eigen exemplaar.
+
+   C. Omgevingsvariabelen die dit script zelf zet, zodat de run niet afhangt van wat er in een
+      venster toevallig staat: StandAllocatieOntkoppeld=TRUE en VariantDataOntkoppeld=TRUE.
+      LocalDataProjDir wordt juist gewist, zie -LocalData.
+
+ ALS HET MISGAAT
+   Kijk in status.tsv (kolom exit) en in het log van de stap; regels met [E] zijn de fouten.
+   Exit 2 is een fout in de configuratie (parse), exit 1 een rekenfout of een ontbrekend bestand.
+   Een stap kan met exit 0 eindigen en toch een [E]-regel hebben; het script telt die ook.
+   Ontbreekt er basisdata, dan zegt het script welke WriteBasedata-stap die maakt.
+   Draai nooit twee GeoDmsRun-processen tegelijk op dezelfde LocalData: ze botsen op bestanden
+   die ze allebei openen, en het log zegt dan "being used by another process" of blijft stil.
+================================================================================================
 #>
 [CmdletBinding()]
 param(
@@ -22,19 +86,12 @@ param(
     [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\run2120',
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
-    # Leeg laten: dan haalt het script de zichtjaren uit de configuratie zelf, zodat de lijst hier nooit
-    # uit de pas kan lopen met Model_FirstZichtjaar en Model_FinalYear.
     [string[]] $Zichtjaren = @(),
-    # Na welke zichtjaren draait het diagnoseharnas mee, zodat de run zijn eigen bewijs achterlaat.
-    # Leeg is geen enkele, en dan is er achteraf niets te beoordelen zonder opnieuw te rekenen.
-    # Kost ongeveer acht minuten per zichtjaar per variant.
     [string[]] $DiagnoseNaZichtjaar = @(),
     [switch]   $SkipBasedata,
     [switch]   $SkipVariantData,
     [string]   $StartBij   = '',
     [switch]   $HerbouwBasedata,
-    # Bevestigt dat deze reeks bewust alleen landbouw alloceert en de stedelijke sectoren uit de
-    # bestaande standtifs overneemt. Moet samenvallen met ModelParameters/OntkoppelStedelijkeKlasses.
     [switch]   $AlleenLandbouw
 )
 
@@ -47,7 +104,7 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Forc
 # Batchinstellingen. Deze overrulen de defaults in ModelParameters.dms.
 $env:StandAllocatieOntkoppeld = 'TRUE'
 $env:VariantDataOntkoppeld    = 'TRUE'
-# Nadrukkelijk niet zetten, zie de toelichting hierboven.
+# Nadrukkelijk niet zetten, zie -LocalData in de toelichting bovenaan.
 Remove-Item Env:\LocalDataProjDir -ErrorAction SilentlyContinue
 
 $status = Join-Path $LogDir 'status.tsv'
@@ -145,6 +202,67 @@ function Test-Dictionaries {
     Write-Regel "controle  : alle 0Dictionary.dms staan absoluut"
 }
 
+function Get-VariantKolom([string]$CfgPad, [string]$Kolom) {
+    # Leest een kolom uit VariantK.dms als tabel variant -> waarde. Bewust een parse van de
+    # configuratie en geen GeoDmsRun: dit moet klaar zijn voordat de eerste stap begint, en het
+    # kost zo milliseconden in plaats van een minuut.
+    $vk = Join-Path (Split-Path $CfgPad -Parent) 'main\VariantParameters\VariantK.dms'
+    if (-not (Test-Path $vk)) { throw "VariantK.dms niet gevonden naast $CfgPad" }
+    $tekst = Get-Content $vk -Raw
+    $kolommen = @{}
+    foreach ($naam in @('name', $Kolom)) {
+        $m = [regex]::Match($tekst, "attribute<[^>]+>\s+$naam\s*:\s*\[(.*?)\]", 'Singleline')
+        if (-not $m.Success) { throw "kolom $naam niet gevonden in VariantK.dms" }
+        $kolommen[$naam] = @([regex]::Matches($m.Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
+    }
+    $t = @{}
+    for ($i = 0; $i -lt $kolommen['name'].Count; $i++) { $t[$kolommen['name'][$i]] = $kolommen[$Kolom][$i] }
+    return $t
+}
+
+function Test-Invoer {
+    # De toets uit ObjectVision/RSopen#816: zeg VOORAF welke ontkoppelde bestanden ontbreken en welke stap
+    # ze maakt, in plaats van na een uur rekenen om te vallen op 'Unknown identifier' of 'cannot open
+    # dataset'. Op 2026-09-10 kostte dat twee valse starts: de proxies van WriteBasedata/Generate_Run3
+    # ontbraken (103 s), en daarna de opbrengstderving (2357 s). De lijst is een ondergrens: een
+    # representatief bestand per stap, geen volledige inventaris.
+    param([string]$Fase)   # 'allocatie' of 'variantdata'
+
+    $eisen = @()
+    $eisen += ,@('BaseData\Vastgoed\VolledigeTabel_*\WP5\*.mmd',        'WP5-pandtypering',            '/WriteBasedata/Generate_Run1')
+    $eisen += ,@('BaseData\Grondgebruik\BBG\BBG*_25m_Modus_*.tif',      'BBG-vergridding',             '/WriteBasedata/Generate_Run2')
+    $eisen += ,@('BaseData\Vastgoed\Verwervingskosten_Woningen_*.tif',  'verwervingskosten',           '/WriteBasedata/Generate_Run2')
+    $eisen += ,@('BaseData\Grondgebruik\NBP\*.tif',                     'beheertypenkaart basisjaar',  '/WriteBasedata/Generate_Run2')
+    $eisen += ,@('BaseData\Grondgebruik\MNP\*.tif',                     'MNP-planpotentieel',          '/WriteBasedata/Generate_Run2')
+    if ($Fase -eq 'allocatie') {
+        $eisen += ,@('BaseData\StandBasisjaar\Wonen\*.tif',             'stand basisjaar',             '/WriteBasedata/Generate_Run3')
+        $eisen += ,@('BaseData\Vastgoed\WP2xVSSH_Proxy\*',              'woningsubsector-proxies',     '/WriteBasedata/Generate_Run3')
+        $eisen += ,@('BaseData\Vastgoed\Sloopkosten_Woningen_*.tif',    'sloopkosten',                 '/WriteBasedata/Generate_Run3')
+        $eisen += ,@('BaseData\Suitabilities\Werken_raw_*.tif',         'werken-geschiktheid',         '/WriteBasedata/Generate_Run3')
+        $eisen += ,@('BaseData\Suitabilities\Waterberging\Depth_Norm_*.tif', 'waterbergingsnormen',    '/WriteBasedata/Generate_Run3')
+        $hydro  = Get-VariantKolom $Cfg 'Hydrologie_Levering'
+        $opbr   = Get-VariantKolom $Cfg 'OpbrengstenVariant_Wonen'
+        foreach ($v in $Varianten) {
+            if (-not $opbr.ContainsKey($v)) { throw "Variant $v staat niet in VariantK.dms (kolom name); bekende varianten: $($opbr.Keys -join ', ')" }
+            $eisen += ,@("BaseData\Landbouw\WWL_Opbrengstderving\$($hydro[$v])_*.tif", "opbrengstderving van levering $($hydro[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
+            $eisen += ,@("VariantData\Vastgoed\Opbrengsten_perOP\$($opbr[$v])\*.tif", "opbrengsten per pakket, set $($opbr[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run1")
+            $eisen += ,@("VariantData\Grondgebruik\BGT\EvidentBenut_*_$v.tif",         "evident benut (variant $v)",                     "/WriteVariantData/per_Variant/$v/Generate_Run1")
+        }
+    }
+
+    $mis = @()
+    foreach ($e in $eisen) {
+        $pad = Join-Path $LocalData $e[0]
+        if (-not (Get-ChildItem $pad -ErrorAction SilentlyContinue | Select-Object -First 1)) { $mis += $e }
+    }
+    if ($mis.Count -gt 0) {
+        Write-Regel "GESTOPT: ontkoppelde invoer ontbreekt in $LocalData. Maak hem eerst met GeoDmsRun op het genoemde item:"
+        foreach ($m in $mis) { Write-Host ("   {0,-55} {1,-45} {2}" -f $m[0], $m[1], $m[2]) }
+        throw "Invoer voor fase $Fase ontbreekt"
+    }
+    Write-Regel "controle  : ontkoppelde invoer voor fase $Fase aanwezig ($($eisen.Count) toetsen)"
+}
+
 function Test-StedelijkeKlassen {
     # ModelParameters/OntkoppelStedelijkeKlasses is een debugschakelaar zonder omgevingsvariabele: hij
     # staat in de configuratie en Run2120 zet hem niet. Op TRUE slaat elke niet-landbouwregel in
@@ -173,11 +291,31 @@ function Test-StedelijkeKlassen {
     Write-Regel "controle  : OntkoppelStedelijkeKlasses is $($m.Groups[1].Value), dus $wat"
 }
 
+function Show-Schakelaars {
+    # De schakelaars uit blok B van de toelichting, zoals ze nu in de configuratie staan. Geen toets,
+    # alleen tonen: wie de run start ziet dan meteen waarmee hij rekent, en het staat in het scherm-
+    # log van de aanroep.
+    $mpDir = Join-Path (Split-Path $Cfg -Parent) 'main'
+    $bron = @{
+        'AlleenEindjaar'       = 'ModelParameters.dms'
+        'Model_FirstZichtjaar' = 'ModelParameters.dms'
+        'Model_FinalYear'      = 'ModelParameters.dms'
+        'ExotenActief'         = 'ModelParameters\Landbouw.dms'
+    }
+    foreach ($naam in @('Model_FirstZichtjaar','Model_FinalYear','AlleenEindjaar','ExotenActief')) {
+        $tekst = Get-Content (Join-Path $mpDir $bron[$naam]) -Raw
+        $m = [regex]::Match($tekst, "$naam\s*:=\s*=?\s*([^,;\r\n]+)")
+        $w = if ($m.Success) { $m.Groups[1].Value.Trim() } else { '(niet gevonden)' }
+        Write-Regel ("schakelaar: {0,-22} {1}   ({2})" -f $naam, $w, $bron[$naam])
+    }
+}
+
 Write-Regel "build     : $(Split-Path (Split-Path $Exe -Parent) -Leaf)"
 Write-Regel "config    : $Cfg"
 Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
 
+Show-Schakelaars
 Test-StedelijkeKlassen
 
 if ($Zichtjaren.Count -eq 0) { $Zichtjaren = Get-Zichtjaren }
@@ -214,9 +352,18 @@ function Test-ReeksNogNietBegonnen {
 
 if (-not $SkipBasedata) {
     Test-ReeksNogNietBegonnen 'basedata opnieuw wegschrijven'
+    # Vier stappen, in deze volgorde. Run3 (stand basisjaar, proxies, sloopkosten, werken-geschiktheid,
+    # normen, kernels) is nodig voor de allocatie en stond tot 11 september 2026 niet in dit script;
+    # de allocatie viel dan na een uur om op 'Unknown identifier meergezins_VrijeSector_Proxy'.
+    # Run4 (BGT-capaciteiten) is alleen voor de indicatoren, maar hoort bij een verse LocalData en
+    # kost ruim een uur; wie hem overslaat krijgt hem bij RunIndicatoren.ps1 alsnog voorgeschoteld.
     Invoke-Stap 'basedata-run1' '/WriteBasedata/Generate_Run1'
     Invoke-Stap 'basedata-run2' '/WriteBasedata/Generate_Run2'
+    Invoke-Stap 'basedata-run3' '/WriteBasedata/Generate_Run3'
+    Invoke-Stap 'basedata-run4' '/WriteBasedata/Generate_Run4_IndicatorenData'
     Test-Dictionaries
+} else {
+    Test-Invoer 'basedata'
 }
 
 if (-not $SkipVariantData) {
@@ -227,23 +374,8 @@ if (-not $SkipVariantData) {
     }
 }
 
-function Get-StandLeen([string]$CfgPad) {
-    # Leest de kolom StandVanVariant uit VariantK.dms en geeft een tabel variant -> uitlenende variant.
-    # Bewust een parse van de configuratie en geen GeoDmsRun: dit moet klaar zijn voordat de eerste
-    # stap begint, en het kost zo milliseconden in plaats van een minuut.
-    $vk = Join-Path (Split-Path $CfgPad -Parent) 'main\VariantParameters\VariantK.dms'
-    if (-not (Test-Path $vk)) { throw "VariantK.dms niet gevonden naast $CfgPad" }
-    $tekst = Get-Content $vk -Raw
-    $kolommen = @{}
-    foreach ($naam in @('name','StandVanVariant')) {
-        $m = [regex]::Match($tekst, "attribute<[^>]+>\s+$naam\s*:\s*\[(.*?)\]", 'Singleline')
-        if (-not $m.Success) { throw "kolom $naam niet gevonden in VariantK.dms" }
-        $kolommen[$naam] = @([regex]::Matches($m.Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
-    }
-    $t = @{}
-    for ($i = 0; $i -lt $kolommen['name'].Count; $i++) { $t[$kolommen['name'][$i]] = $kolommen['StandVanVariant'][$i] }
-    return $t
-}
+# Alles wat de allocatie leest hoort er nu te staan, hoe de fases hierboven ook zijn gelopen.
+Test-Invoer 'allocatie'
 
 function Test-LeenAanname([string]$CfgPad, [string]$Lener, [string]$Uitlener) {
     # De aanname onder het lenen is dat de twee varianten op alles wat de allocatie raakt gelijk zijn.
@@ -287,7 +419,7 @@ function Test-LeenAanname([string]$CfgPad, [string]$Lener, [string]$Uitlener) {
 }
 
 
-$leen = Get-StandLeen $Cfg
+$leen = Get-VariantKolom $Cfg 'StandVanVariant'
 
 foreach ($v in $Varianten) {
     $uitlener = $leen[$v]
@@ -323,3 +455,4 @@ foreach ($v in $Varianten) {
 
 $totaal.Stop()
 Write-Regel "ALLES KLAAR in $([math]::Round($totaal.Elapsed.TotalHours,2)) uur"
+Write-Regel "volgende  : batch\RunIndicatoren.ps1 -Varianten $($Varianten -join ',') -IndicatorRegio Landschap"
