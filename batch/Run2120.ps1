@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Productierun RSopen NL2120 tot en met zichtjaar 2120, varianten BAU en BAU2.
 
@@ -47,7 +47,6 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Forc
 # Batchinstellingen. Deze overrulen de defaults in ModelParameters.dms.
 $env:StandAllocatieOntkoppeld = 'TRUE'
 $env:VariantDataOntkoppeld    = 'TRUE'
-$env:AlleenEindjaar           = 'FALSE'
 # Nadrukkelijk niet zetten, zie de toelichting hierboven.
 Remove-Item Env:\LocalDataProjDir -ErrorAction SilentlyContinue
 

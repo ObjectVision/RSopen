@@ -241,6 +241,48 @@ Zo ging het bij #723, dat de dieptetoets van de zeef omdraaide naar een voldoett
 
 Draai je een vergelijking om, stel dan expliciet vast wat er op een null hoort te gebeuren, en schrijf dat als `MakeDefined` of als een aparte `IsNull`-tak op. Twee dingen om te weten bij het beoordelen hoe ver zo'n fout reikt. Een toets die op een null voor elke variant faalt is onafhankelijk van de maskers en de drempels eromheen, dus latere wijzigingen daaraan veranderen de uitkomst niet en de fout reikt terug tot de commit die de vergelijking omdraaide. En de nullen zitten zelden waar je ze zoekt: hier kwamen ze niet uit de brondata maar uit een plausibiliteitsklem die onzinwaarden op null zet.
 
+### Op een Bool doet MakeDefined niets
+
+Bool kent in GeoDMS geen nullwaarde. Een opzoeking met een lege index geeft FALSE, een vergelijking met een null-operand geeft FALSE, en `IsNull` op de uitkomst geeft nergens TRUE. `MakeDefined(..., FALSE)` om een booleaanse expressie is dus altijd een no-op.
+
+Gemeten op 2026-09-10, GeoDms20.17.0.m, met vier rijen waarvan een met een lege relatie en een met een lege waarde: `rel -> vlag` geeft TRUE, FALSE, TRUE, FALSE, `IsNull` daarop overal FALSE, en `MakeDefined(x, FALSE)` is element voor element gelijk aan `x`. Hetzelfde voor `(rel -> waarde) == 1b`.
+
+Dat heeft twee gevolgen die niet dezelfde zwaarte hebben.
+
+Met FALSE als terugval is het alleen wollig, en erger dan wollig op een manier die telt: de vorm suggereert dat het null-geval is bekeken en afgehandeld, terwijl het antwoord uit de taal komt en niet uit die aanroep. Wie hem later leest denkt dat er een keuze staat waar er geen staat. Laat hem dus weg en schrijf de kale expressie.
+
+Met TRUE als terugval is het een fout. De bedoeling is dan expliciet dat een lege index TRUE oplevert, en de uitkomst is FALSE, dus precies het omgekeerde van wat er staat. Zo stond het in de landbouwallocatie: `MakeDefined(IsLandbouw[SubSector_rel], TRUE)` zette de poort overal dicht, Y2040 alloceerde nul hectare, en de lege-kaarttoets op `WriteStand/SubSector_rel` gaf exit 1. Dat viel meteen om, maar dezelfde vorm op een indicator of een classificatiekolom valt niet om; die geeft stil het omgekeerde antwoord.
+
+Wil je werkelijk een andere terugval dan FALSE, dan moet de toets op de index staan en niet op de uitkomst:
+
+```
+attribute<Bool> Poort := IsNull(SubSector_rel) || IsLandbouw[SubSector_rel];   // goed
+attribute<Bool> Poort := MakeDefined(IsLandbouw[SubSector_rel], TRUE);         // fout, geeft FALSE
+```
+
+Zoek bij een wijziging aan zo'n kolom dus eerst op `MakeDefined([^;]*, *TRUE)` in het bestand dat je aanraakt.
+
+### De maximumwaarde van een unsigned type is de null zelf
+
+GeoDMS gebruikt de bovenste waarde van een unsigned integertype als nullwaarde. `255b` is dus de null van `uint8`, en `MakeDefined(x, 255b)` op een `uint8` vervangt null door null: opnieuw een no-op. Gemeten op 2026-09-10, GeoDms20.17.0.m, op drie waarden 1, 7 en null: `MakeDefined(x, 255b)` laat de null staan en `MakeDefined(x, 254b)` maakt er 254 van.
+
+Dat bijt zodra je 255 als sentinel kiest om twee kaarten te vergelijken, want daar komt de FALSE van hierboven bovenop:
+
+```
+attribute<bool> Anders (Domein) := MakeDefined(A, 255b) != MakeDefined(B, 255b);   // ziet niets
+```
+
+Elke cel waar de ene kant een klasse heeft en de andere leeg is, vergelijkt als gelijk: de sentinel vult niets, en `null != 1b` geeft FALSE. Zo'n vergelijking meldt nul verschillen op twee kaarten die wel verschillen, en dat is de gevaarlijkste uitslag die een toets kan geven. Op 2026-09-10 gaf hij op de BNSN-unie nul verschillen terwijl de telling per klasse er vier aanwees.
+
+Vergelijk twee klassenkaarten daarom op de nullen apart, of kies een sentinel die geen null is:
+
+```
+attribute<bool> Anders (Domein) :=
+	IsNull(A) != IsNull(B) || (IsDefined(A) && IsDefined(B) && A != B);
+```
+
+De zelftoets die dit ving is die uit rs-draaien, trap 2: zet naast een handmatig nagebouwde toets altijd een onafhankelijke telling van hetzelfde verschil, en vertrouw geen van de twee tot ze op elkaar uitkomen.
+
 ## `float32(x)` houdt de metriek vast, `x[float32]` strijkt hem weg
 
 De twee schrijfwijzen zien er inwisselbaar uit en zijn dat niet. `float32(x)` verandert alleen het waardetype en laat de eenheid staan, `x[float32]` gooit de eenheid weg. Een verhouding die je met `float32()` bouwt draagt dus de eenheden van teller en noemer mee, ook als de declaratie iets anders zegt: de metriek volgt uit de expressie en niet uit het opgegeven waardetype.

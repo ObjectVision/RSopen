@@ -68,6 +68,7 @@ $varianten = [ordered]@{
     'WLO_hoog_BAU'            = 'BAU1'
     'WLO_hoog_BAU2'           = 'BAU2'
     'WLO_hoog_NbSGenuanceerd' = 'NbSGenuanceerd'
+    'WLO_hoog_NbSGenuanceerder' = 'NbSGenuanceerder'
     'WLO_hoog_NbSMax'         = 'NbSMax'
 }
 if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
@@ -82,6 +83,8 @@ $Beschrijving = [ordered]@{
     'Landgebruikskaart_af_tov_PrevYear'                                                              = @('klasse', 'LU_NL2120', 'Welke klasse er in een cel is verdwenen sinds het vorige zichtjaar')
     'LandgebruikskaartHoofdklasse'                                                                   = @('klasse', 'LU_Hoofdklasse', 'Dezelfde kaart in de leesbare indeling van 43 klassen: wonen en werken naar verhardingsgraad, natuur naar beheerhoofdtype, landbouw naar hoofdgroep')
     'LandgebruikskaartNL2120'                                                                        = @('klasse', 'LU_NL2120', 'Hetzelfde landgebruik in de indeling van 165 klassen, met natuur uitgesplitst naar beheertype')
+    'LandgebruikskaartNL2120_Basisjaar'                                                              = @('klasse', 'LU_NL2120', 'De landgebruikskaart van het basisjaar in dezelfde indeling van 165 klassen')
+    'LandgebruikskaartHoofdklasse_Basisjaar'                                                         = @('klasse', 'LU_Hoofdklasse', 'De landgebruikskaart van het basisjaar in de leesbare indeling van 43 klassen')
     'BT_Exogeen'                                                                                     = @('klasse', 'INL_Beheertype', 'Het natuurbeheertype dat de landschapsteams hier opleggen, leeg waar niets is opgelegd')
     'Verstedelijking'                                                                                = @('0 of 1', '', 'Cellen die sinds het basisjaar stedelijk zijn geworden')
     'VerstedelijkingInABCD'                                                                          = @('klasse', 'ABCD_subK', 'Dezelfde verstedelijking, ingedeeld naar de ABCD-zone waarin zij landt')
@@ -113,6 +116,7 @@ $Beschrijving = [ordered]@{
     'KostenWoningbouw_BeheerEnOnderhoud_Eur'                                                         = @('euro', '', 'Beheer en onderhoud van de nieuwbouw over de periode')
     'Woningwaarde_Nieuwbouw_Eur'                                                                     = @('euro', '', 'Marktwaarde van de woningen die hier zijn bijgebouwd')
     'Woningwaarde_Nieuwbouw_NCW_Eur'                                                                 = @('euro', '', 'Diezelfde waarde als netto contante waarde')
+    'Grondexploitatie_Saldo_Eur'                                                                     = @('euro', '', 'Exploitatiesaldo van het ontwikkelpakket dat hier is gebouwd: opbrengst min bouw, grond, verwerving en sloop; negatief is een tekort')
     'GesloopteWoningen_NieuweNatuur'                                                                 = @('woningen', '', 'Woningen die wijken voor nieuwe natuur')
     'GesloopteWoningen_WaterbergingVeen'                                                             = @('woningen', '', 'Woningen die wijken voor seizoensberging in het veen')
     'GesloopteWoningen_OverigeBouwstenen'                                                            = @('woningen', '', 'Woningen die wijken voor de overige ruimtelijke bouwstenen')
@@ -136,6 +140,9 @@ $Beschrijving = [ordered]@{
     'CarbonStorageSequestration_seq_ThisPeriod_tonCO2'                                               = @('ton CO2', '', 'Vastlegging in deze periode, opgebouwd na een verandering van landgebruik')
     'CarbonStorageSequestration_ongedekt_Cumulatief_tonCO2'                                          = @('ton CO2', '', 'Veenoxidatie die buiten het koolstofsaldo valt omdat de voorraad daar al leeg is')
     'SOMERS_CO2_Emissies_kg_Mediaan_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Veenoxidatie sinds het startjaar volgens SOMERS, middenschatting')
+    'Methaan_tonCO2eq_Cumulatief_sindsStartyear'                                                     = @('ton CO2-equivalent', '', 'Methaanuitstoot uit het veen sinds het basisjaar, opgeteld, omgerekend naar CO2-equivalenten; staat naast de CO2-kaarten en zit daar niet in (#758)')
+    'NettoOpbrengst_Landbouw'                                                                        = @('euro per jaar', '', 'Netto landbouwsaldo van dit zichtjaar per cel, over de landbouwklassen van de landgebruikskaart, zonder transitiekosten (#794)')
+    'NPV_Landbouw'                                                                                   = @('euro', '', 'Contante waarde van datzelfde landbouwsaldo per cel, met de omschakelkosten van de landbouwtransitie erin; negatief waar die kosten het saldo overtreffen')
     'SOMERS_CO2_Emissies_kg_Minimum_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Dezelfde oxidatie, ondergrens van de bandbreedte')
     'SOMERS_CO2_Emissies_kg_Maximum_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Dezelfde oxidatie, bovengrens van de bandbreedte')
     'Piekbuiberging_Gedekt_m3_per500m'                                                               = @('m3', '', 'Hoeveel regenwater van een piekbui in dit blok van 500 meter wordt geborgen')
@@ -159,6 +166,7 @@ $Beschrijving = [ordered]@{
     'Bereikbaarheid_Groen_BBG_Veen_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'      = @('m2', '', 'Dezelfde maat, alleen voor het landschap Veen')
     'Bereikbaarheid_Groen_BBG_Zand_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'      = @('m2', '', 'Dezelfde maat, alleen voor het landschap Zand')
     'Bereikbaarheid_Groen_BBG_Overig_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'    = @('m2', '', 'Dezelfde maat, voor het gebied buiten de vier landschappen')
+    'Bereikbaarheid_Groen_BBG_Nederland_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2' = @('m2', '', 'Dezelfde maat, gemeten op de landelijke indeling die de landschapstabellen als landsdekkende regel dragen')
     'Mortaliteit_NDVI_500m'                                                                          = @('index 0 tot 1', '', 'Hoeveel groen er binnen 500 meter staat, gemeten als NDVI')
     'Mortaliteit_NDVI_VeranderingOpLocatie'                                                          = @('index', '', 'Verandering van dat groen sinds het basisjaar')
     'Mortaliteit_SterfteAfname_PerPeriode'                                                           = @('sterfgevallen', '', 'Vermeden sterfgevallen in deze periode dankzij meer groen')
@@ -180,6 +188,9 @@ $Beschrijving = [ordered]@{
     'ClaimRealisatie_Provincie'                                                                      = @('tabel, verhouding', '', 'Dezelfde verhouding per provincie')
     'ClaimRealisatie_COROP'                                                                          = @('tabel, verhouding', '', 'Dezelfde verhouding per COROP-gebied')
     'ClaimRealisatie_NVM'                                                                            = @('tabel, verhouding', '', 'Dezelfde verhouding per NVM-woningmarktgebied')
+    'ClaimRealisatie_Landbouw'                                                                       = @('tabel, verhouding', '', 'Gerealiseerde stand gedeeld door de claim voor de landbouw, per provincie en per gewasklasse')
+    'ClaimRealisatie_WaterbergingVeen'                                                               = @('tabel, verhouding', '', 'Gerealiseerde seizoensberging in het veen gedeeld door de opgave, per deelgebied')
+    'ClaimRealisatie_WaterbergingVeen_NL'                                                            = @('tabel, verhouding', '', 'Dezelfde verhouding landelijk')
     'Bereikbaarheid_Banen'                                                                           = @('geopackage, banen', '', 'Bereikbare banen per gebied, met de geometrie erbij')
     'Verharding_Basisjaar_fractie'                                                                 = @('aandeel 0 tot 1', '', 'De verharding in het basisjaar, als fractie van de cel, voor alle varianten gelijk')
     'Veenbouwstenen_NbSGenuanceerd'                                                                = @('klasse', '', 'De veenbouwstenen zoals team Veen ze heeft aangeleverd, invoer en geen modeluitkomst')
@@ -192,8 +203,10 @@ $LegendaBron = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren\Legendas'
 $Issue = $Issue.TrimStart('#')
 
 function Schoon([string]$Naam) {
-    # Haalt de modelstaart uit de naam: _Nederland_SS-11 of _Nederland vlak voor de extensie.
-    $kaal = ($Naam -replace '_Nederland_SS-11(?=\.)', '') -replace '_Nederland(?=\.)', ''
+    # Haalt de modelstaart uit de naam: _Nederland_SS-<n> of _Nederland vlak voor de extensie. Het
+    # getal is het aantal actieve subsectoren en verschuift zodra een sector aan of uit gaat (SS-11
+    # tot begin september 2026, SS-22 sinds landbouw meedraait), dus het staat hier niet vast.
+    $kaal = ($Naam -replace '_Nederland_SS-\d+(?=\.)', '') -replace '_Nederland(?=\.)', ''
     # De landelijke claimtabel heet ClaimRealisatie_Nederland_Nederland_SS-11 en verliest daardoor
     # twee keer een Nederland: eerst het studiegebied, dan het schaalniveau. Wat overblijft leest
     # als de hoofdtabel terwijl het het landelijke totaal is. Geef dat niveau terug.
