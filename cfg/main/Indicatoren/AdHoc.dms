@@ -1,0 +1,98 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Ad hoc items voor het resultatenrapport aan het kernteam NL2120 (versie 0.1, september 2026).
+//
+// Afspraak: elk getal in dat rapport is herleidbaar naar een concreet item in deze configuratie. Wat niet als kolom of
+// kaart in de export bestaat maar wel in het rapport staat, krijgt hier zijn rekenregel. Per container staat in de Descr
+// waar het item structureel zou horen als het blijft.
+//
+// De items lezen de exporttabellen van de casus (Export/Tabellen/PerNederland en PerIndeling) en de arealentabel
+// LandgebruikNL2120_Areaal, zodat ze op dezelfde definities rusten als de levering. Ze schrijven niets weg.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container AdHoc
+{
+	container Rapport_v01
+	: Descr = "Samengestelde grootheden voor het resultatenrapport v0.1 aan het kernteam NL2120, per casus onder PerCasus. Zie de Descr per container voor de plek waar het item structureel thuishoort."
+	{
+		container NatuurNatDroog
+		: Descr = "Voorstel voor team natuur: een tweedeling van de natuurbeheertypen in nat en droog, om de arealen per landschap uit te splitsen.
+					Nat zijn de hoofdgroepen N01 behalve N01.04, en N02, N03, N04, N05, N06, N09, N10, N13 en N14: water, moeras, veen, vochtige heide,
+					nat en vochtig schraalland, weidevogelgrasland en vochtig bos. Droog zijn N01.04, N07, N08, N11, N12, N15, N16 en N17.
+					N00 (nog om te vormen) telt niet mee. Structureel hoort dit als attribuut IsNat op Classifications/Grondgebruik/INL_Beheertype,
+					met een subtotaal nat en droog in Export/Grondgebruik/LandgebruikNL2120_Areaal."
+		{
+			unit<uint8> BT := /Classifications/Grondgebruik/INL_Beheertype;
+
+			attribute<String> Hoofdgroep (BT) := substr(BT/code, 0, 3);
+			attribute<Bool>   IsNat      (BT) :=
+				   (Hoofdgroep == 'N01' && BT/code != 'N01.04')
+				|| Hoofdgroep == 'N02' || Hoofdgroep == 'N03' || Hoofdgroep == 'N04' || Hoofdgroep == 'N05' || Hoofdgroep == 'N06'
+				|| Hoofdgroep == 'N09' || Hoofdgroep == 'N10' || Hoofdgroep == 'N13' || Hoofdgroep == 'N14';
+			attribute<Bool>   IsDroog    (BT) :=
+				   BT/code == 'N01.04'
+				|| Hoofdgroep == 'N07' || Hoofdgroep == 'N08' || Hoofdgroep == 'N11' || Hoofdgroep == 'N12'
+				|| Hoofdgroep == 'N15' || Hoofdgroep == 'N16' || Hoofdgroep == 'N17';
+
+			// Koppeling van de 165 klassen van de landgebruikskaart aan het beheertype, op het label; null buiten de natuur.
+			unit<uint8> LU := /Classifications/Grondgebruik/LU_NL2120;
+			attribute<BT>   BT_rel     (LU) := rlookup(LU/Label, BT/Label);
+			attribute<Bool> LU_IsNat   (LU) := MakeDefined(IsNat[BT_rel],   FALSE);
+			attribute<Bool> LU_IsDroog (LU) := MakeDefined(IsDroog[BT_rel], FALSE);
+		}
+
+		container PerCasus :=
+			for_each_ne(
+				Classifications/Modellering/AllCases/Label
+				, 'Rapport_v01_T(' + quote(Classifications/Modellering/AllCases/Label) + ')'
+			);
+
+		template Rapport_v01_T
+		{
+			parameter<String> CasusName;
+
+			unit<uint32> Tabel_NL    := ='/Indicatoren/' + CasusName + '/Zichtjaren/Export/Tabellen/PerNederland/Tabel';
+			unit<uint32> Tabel_Regio := ='/Indicatoren/' + CasusName + '/Zichtjaren/Export/Tabellen/PerIndeling/Tabel';
+			unit<uint8>  Areaal      := ='/Indicatoren/' + CasusName + '/Zichtjaren/Export/Grondgebruik/LandgebruikNL2120_Areaal';
+
+			container CO2eq
+			: Descr = "Netto broeikasgasemissie sinds het basisjaar in megaton CO2-equivalent, emissie positief. Samengesteld uit twee kolommen
+						van de indicatorentabel die tegengestelde tekens en verschillende eenheden dragen: CO2Flow_TovBasisjaar (ton, negatief is
+						verlies van voorraad, dus emissie) en Methaan_Cumulatief (megaton CO2-equivalent, positief is emissie). Lachgas zit er niet in.
+						Netto is de indicator; Ondergrens telt de ongedekte veenoxidatie mee als verlies, wat de cfg bij CO2Flow_TovBasisjaar_InclOngedekt
+						uitdrukkelijk een ondergrens en niet de indicator noemt (#733). Structureel horen dit twee kolommen in
+						Templates/Indicatoren_T/Export.dms, RegionaleIndicatoren_T, naast Methaan_Cumulatief."
+			{
+				attribute<mton> Netto_NL             (Tabel_NL)    := (-Tabel_NL/CO2Flow_TovBasisjaar)[mton]              + Tabel_NL/Methaan_Cumulatief;
+				attribute<mton> Ondergrens_NL        (Tabel_NL)    := (-Tabel_NL/CO2Flow_TovBasisjaar_InclOngedekt)[mton] + Tabel_NL/Methaan_Cumulatief;
+				attribute<mton> Netto_Regio          (Tabel_Regio) := (-Tabel_Regio/CO2Flow_TovBasisjaar)[mton]              + Tabel_Regio/Methaan_Cumulatief;
+				attribute<mton> Ondergrens_Regio     (Tabel_Regio) := (-Tabel_Regio/CO2Flow_TovBasisjaar_InclOngedekt)[mton] + Tabel_Regio/Methaan_Cumulatief;
+				attribute<mton> Methaan_Aandeel_NL   (Tabel_NL)    := Tabel_NL/Methaan_Cumulatief / Netto_NL
+				, Descr = "Aandeel van methaan in de netto emissie; boven 1 als de CO2-kant per saldo vastlegt.";
+			}
+
+			container NatuurArealen
+			: Descr = "Areaal natte en droge natuur in het zichtjaar, landelijk en per landschapsgebied, uit de arealentabel van de 165 klassen
+						met de tweedeling uit NatuurNatDroog. De landschapskolommen overlappen elkaar en tellen niet op tot Nederland (#760).
+						Structureel: twee subtotaalregels in Export/Grondgebruik/LandgebruikNL2120_Areaal."
+			{
+				attribute<Bool> IsNat   (Areaal) := NatuurNatDroog/LU_IsNat;
+				attribute<Bool> IsDroog (Areaal) := NatuurNatDroog/LU_IsDroog;
+
+				parameter<Ha> Nat_Nederland        := sum(IsNat   ? Areaal/Nederland      : 0[Ha]);
+				parameter<Ha> Droog_Nederland      := sum(IsDroog ? Areaal/Nederland      : 0[Ha]);
+				parameter<Ha> Nat_Kust             := sum(IsNat   ? Areaal/Kust           : 0[Ha]);
+				parameter<Ha> Droog_Kust           := sum(IsDroog ? Areaal/Kust           : 0[Ha]);
+				parameter<Ha> Nat_Rivieren         := sum(IsNat   ? Areaal/Rivieren       : 0[Ha]);
+				parameter<Ha> Droog_Rivieren       := sum(IsDroog ? Areaal/Rivieren       : 0[Ha]);
+				parameter<Ha> Nat_Veen             := sum(IsNat   ? Areaal/Veen           : 0[Ha]);
+				parameter<Ha> Droog_Veen           := sum(IsDroog ? Areaal/Veen           : 0[Ha]);
+				parameter<Ha> Nat_Zand             := sum(IsNat   ? Areaal/Zand           : 0[Ha]);
+				parameter<Ha> Droog_Zand           := sum(IsDroog ? Areaal/Zand           : 0[Ha]);
+				parameter<Ha> Nat_Geen_landschap   := sum(IsNat   ? Areaal/Geen_landschap : 0[Ha]);
+				parameter<Ha> Droog_Geen_landschap := sum(IsDroog ? Areaal/Geen_landschap : 0[Ha]);
+			}
+		}
+	}
+}
