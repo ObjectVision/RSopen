@@ -39,6 +39,14 @@ Een wijziging in een SqlString kan de volgorde stil veranderen: een window funct
 
 En let op de plaats in de regel. Heeft het item een expressie, dan komen de eigenschappen NA die expressie, achter een komma. `attribute<X> Y (D) : ExplicitSuppliers = "Z" := expr` geeft "item terminator ';' expected after item definition"; `attribute<X> Y (D) := expr, ExplicitSuppliers = "Z";` is goed. Verwar dit niet met een item zonder expressie, zoals een attribuut dat zijn waarde uit een storage haalt: `attribute<X> Y (D) : StorageName = "...", StorageReadOnly = "True";` is de normale vorm en daar staat de dubbele punt wel meteen achter het domein.
 
+## Een unit als ExplicitSupplier werkt de hele boom eronder bij, aliassen inbegrepen
+
+De andere kant van dezelfde eigenschap. Wijs je een UNIT of container aan als expliciete leverancier, dan bezoekt GeoDMS niet alleen dat item maar de hele zichtbare subboom (`TreeItem::VisitSuppliers` roept `VisitConstVisibleSubTree` aan, rtc/dll/src/tic/TreeItem.cpp), en die loop volgt de refItem-keten: bij `unit X := Y` en `container A := B` gaat ook alles onder Y en B mee. Elk item daarin met een StorageName wordt geschreven, elke IntegrityCheck geevalueerd, ook diagnostische uitdraaien die niemand aanroept.
+
+Zo kwam op 2026-09-11 (#823) de tabel `Tabellen/PerIndeling/Tabel` op de landschapsindeling bij `AfleidingPandType/Write_WP5` terecht: `Tabel := Regio`, `Regio := LandschapsRegio`, daaronder `container BronRiv := Rivieren_NbSGenuanceerd`, daaronder `Sloopgebied/Pand := BAG/PerJaar/Y2023/pand`, en daar staat de schrijver van de WP5-mmd die het proces al leest. Per run 34 minuten wachten op een schrijfhandle, of een hang. De losse kolom `Tabel/Regio_name` opvragen schreef dezelfde csv zonder dit alles, want de storage zit op de unit maar de subboomwandeling niet.
+
+**Regel:** een expliciete leverancier is een data-item (een kolom van de tabel, de kaart zelf), nooit de unit of container, tenzij je bewust alles eronder wilt bijwerken. Aliascontainers naar zware bronnen (`container BronRiv := ...`) maken het bereik van zo'n wandeling onvoorspelbaar; wie een unit toch als leverancier gebruikt moet de boom eronder kennen tot achter elke alias.
+
 ## Een StorageName die niemand opvraagt schrijft niets
 
 GeoDmsRun rekent alleen door wat wordt opgevraagd en naar een storage gaat. Een item met een `StorageName` dat in geen enkele `Generate`-lijst voorkomt bestaat dus wel in de boom, maar het bestand ontstaat nooit. Er komt geen waarschuwing, want er is niets mis: niemand heeft erom gevraagd.
