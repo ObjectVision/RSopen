@@ -1,6 +1,6 @@
 ---
 name: geodms-valkuilen
-description: Stille fouten in GeoDMS-configuratie die geen foutmelding geven maar wel een verkeerd antwoord; naamafscherming en de kale name, poly2grid-volgorde bij geneste polygonen, PropValue op StorageName, ExplicitSuppliers op een container, null-semantiek, off-grid rasters en een geschiktheid die een spikkelkaart oplevert. Lees dit voordat je DMS-code in RSopen schrijft of wijzigt.
+description: Stille fouten in GeoDMS-configuratie die geen foutmelding geven maar wel een verkeerd antwoord; naamafscherming en de kale name, poly2grid-volgorde bij geneste polygonen, PropValue op StorageName, ExplicitSuppliers op een container, null-semantiek en Classify, een negatie na een lege opzoeking, BANDS telt vanaf 1, externe grids op hun eigen gridunit, teller en noemer op hetzelfde masker, een te korte handmatige lijst, en een geschiktheid die een spikkelkaart oplevert. Lees dit voordat je DMS-code in RSopen schrijft of wijzigt.
 ---
 
 # Stille fouten in GeoDMS-configuratie
@@ -23,6 +23,8 @@ Op templateniveau valt dat niet op zolang de eigen-naam-eigenschap toevallig gel
 
 Dit ging in augustus 2026 op zes plekken mis. Twee harde fouten waarbij de allocatie na 98 s omviel, en een stille: `IsSubsectorZelfVervuilendWerk` stond altijd op FALSE, zodat de omgekeerde milieuzonering nooit heeft gewerkt en nijverheid en logistiek wel door hun eigen buffer werden geweerd.
 
+In dezelfde commits zocht `SubsectorKeuzePrioriteit` in `IterSubsector_T` AllocDomain-attributen op met `CompactedAllocDomain_rel` (uint64 tegen ipoint) in plaats van `AllocDomain_rel`, gerepareerd in e4d120e4. Een `_rel` moet naar het domein van het opgezochte attribuut wijzen, niet naar de compacte variant ervan.
+
 ## poly2grid bij geneste polygonen
 
 `poly2grid` kent per cel een polygoon toe en laat bij overlap de polygoon winnen die als laatste aan de beurt is. Bij een bron met geneste polygonen bepaalt de leesvolgorde dus de uitkomst, zonder waarschuwing.
@@ -32,6 +34,12 @@ Meet bij elke vectorbron die op het raster komt eerst of `sum(opp per polygoon)`
 Een wijziging in een SqlString kan de volgorde stil veranderen: een window function partitioneert op geom en sorteert daarmee de output. Zo verdween bij #613 stilzwijgend 1.500 van de 12.233 ha, met exitcode 0. Neem bij zo'n wijziging altijd een areaal-assertie op.
 
 `poly2allgrids(polygonen, grid)` is het alternatief: dat geeft een kruistabel met `polygon_rel` en `grid_rel`, waarmee de tie-break expliciet in de config staat. Alleen de moeite waard bij veel echte gedeeltelijke overlap; bij overwegend nesting is `order by ST_Area(geom) desc` goedkoper en even sluitend.
+
+### Een vlag opzoeken na poly2grid mist de cellen waar een ander record won
+
+Dezelfde tie-break bijt nog een keer zodra je een vlag pas NA de vergridding opzoekt. `poly2grid` kent per cel precies een record toe; `IsPR10_6[per_domain]` telt dan alleen de cellen waar toevallig een record met die vlag heeft gewonnen, en een cel die ook door een record zonder de vlag wordt overlapt valt stil uit de selectie. Een negatie na de vergridding, `NOT(IsWind[per_domain])`, heeft hetzelfde probleem. In het restrictieproject lekte zo 64,5 van 11.576 ha risicocontour weg, zonder melding en met een plausibel ogend areaal.
+
+Selecteer daarom eerst de records op de vlag en vergrid daarna de selectie, en zet een negatie ook voor de vergridding. Leg naast elke vergridde laag een restpost, het areaal van de geselecteerde bron dat niet in het raster terugkomt. Die hoort nul te zijn, en een restpost die niet nul is wijst precies op deze volgordefout.
 
 ## ExplicitSuppliers op een container
 
@@ -128,6 +136,14 @@ Op 31 augustus 2026 ging dat twee keer bijna mis. `grondbalans_bestemmingen` gaf
 
 Controleer daarom bij elke aflezing de mtime tegen het tijdstip van je eigen run, ook als de rest van de map er vers uitziet.
 
+## Een handmatige lijst die korter is dan het domein wordt stil aangevuld
+
+Een unit met `nrofrows` en attributen als uitgeschreven lijst, zoals de tabel `Checks` in `Diagnose.dms`, moet met de hand in de pas blijven, en dat faalt op twee manieren waarvan er maar een luid is. Een lijst die LANGER is dan het domein valt om met exit 1 en `DoArrayAssignment: Index N out of range`. Een lijst die KORTER is geeft exit 0: GeoDMS vult de rest stil aan met nulls, de stap meldt succes en de uitdraai ziet er normaal uit.
+
+Zet daarom op elke handmatige lijst `IntegrityCheck = "all(IsDefined(this))"`; dezelfde te korte lijst geeft dan exit 1 met `Only N values were provided, but domain has M values`. Zet de check inline op de data en niet op een aparte parameter, want een check op de parameter die zelf de check is geeft `Invalid Recursion in UpdateMetaInfo`. Alle handmatige lijsten in `Diagnose.dms` dragen die check. Meet zo'n kanarie twee kanten op, met en zonder de bewaking: een kanarie die alleen met de bewaking is gemeten bewijst niet dat de bewaking het verschil maakt, want de engine zelf kan ook omvallen. En tel zo'n lijst op het unitblok via accolade-telling en niet met een vast regelvenster, dat loopt door in de volgende unit.
+
+De grotere les: een meetharnas dat niemand aanroept is even blind als een harnas dat niets meet. Een te lange lijst gaf twee dagen exit 1 op `/Diagnose/GenerateAll` zonder dat iemand het opvroeg. Hang de diagnose daarom achter een run aan, zoals `-DiagnoseNaZichtjaar` in `batch/Run2120.ps1` doet, in plaats van hem los te draaien wanneer het uitkomt.
+
 ## Eenheidsliteralen werken niet overal
 
 `0[Eur]`, `0[Woning]`, `0[meter2]` en `0[Eur_m2]` lossen alleen op waar de eenheidscontainer in scope is, via een `using` op het bestand of via de plek in de boom. In `Diagnose.dms` is dat niet zo: die container heeft geen `using` en hangt niet onder de eenheden. Een meetexpressie die daar een eenheidsliteraal gebruikt faalt met `Unknown identifier 'Eur'`, en dat blijkt pas als je het item opvraagt, niet bij het parsen.
@@ -206,6 +222,12 @@ Toegepast bij #735 in `Zeef_Basisjaar_T/Src/BouwjaarPand`. Zonder de guard zou d
 
 Een tweede reden om zo'n omzetting met een zelftoets te doen. Een gewogen gemiddelde hoort nooit boven het maximum van dezelfde waarden te liggen, maar in float32 kan het net wel: bij bouwjaren rond 2000 kwam `sum(b*w)/sum(w)` tot 0,0004 boven `max(b)` uit. Op een strikte kleiner-dan aan precies de drempelgrens draait dat de uitkomst om, in dit geval voor 893 cellen. Meet zo'n verschil dus met een drempel eromheen, niet met een kale ongelijkheid, anders leest de afrondingsruis als een fout in je nieuwe definitie.
 
+## Teller en noemer op een verschillend masker
+
+Een fractie uit een schijfsom heeft vaak een teller uit de modelkaart en een noemer uit een statische dekking. Reikt de modelkaart verder dan die dekking, dan is de teller daar groter dan nul terwijl de noemer op zijn ondergrens tegen deling door nul staat, en de breuk schiet zonder melding boven 1 uit. LGN dekt niet de hele modelkaart: in de grensstrook gaf 67,5 m2 water buiten de dekking op een cel een waterfractie van 1080, en 43 procent van het 100m-grid en 46 procent van het 25m-grid heeft geen gedekte cel binnen de schijfstraal, dus daar slaat een fractie van een cel meteen door.
+
+Maskeer de teller met hetzelfde masker als waaruit de noemer is opgebouwd, zodat beide over dezelfde cellen sommeren. In RSopen is dat `IsGedekt` uit `SourceData/Grondgebruik/LGN.dms`; `Templates/Suitabilities/Groenfracties_T.dms` is het voorbeeld (#702), en de NDVI-schijven en de BBG-buurtaandelen deden het al zo. De noemer laten meegroeien met wat het model buiten de dekking legt is het alternatief, maar dat zet basisjaar en zichtjaar op verschillende noemers. Elke nieuwe schijfvariabele met een statische noemer heeft dezelfde maskering nodig, en een `IntegrityCheck = "all(this <= 1.001f)"` op de fractie vangt het. Zoek de oorzaak van zo'n uitschieter niet bij de grootste ingreep: de verdenking lag eerst bij de kustingrepen, maar LGN dekt de zoute wateren gewoon en het zat in enkele hectaren in de grensstrook.
+
 ## Een numerieke cast op tekst kapt af zonder te klagen
 
 `uint8('3.1')` geeft 3 en `uint8('2=licht')` geeft 2. De cast leest de voorloopcijfers en stopt bij het eerste teken dat er niet in past, zonder foutmelding en zonder null. Alleen tekst die met een niet-cijfer begint, zoals `X` of leeg, geeft null. `float64` op dezelfde tekst leest wel door: `float64('3.1')` is 3,1 en `float64('2=licht')` is 2.
@@ -241,6 +263,12 @@ Denk hierbij aan de plekken waar de configuratie zelf bewust een null neerzet, z
 
 Beide helften bewijs je in seconden met een losse .dms in de scratchpad; zie de skill rs-draaien, trap 2.
 
+### Classify laat een waarde onder de laagste klassegrens op null vallen
+
+`Classify(x, ClassBreaks)` geeft null voor elke waarde onder de laagste klassegrens, en een klassegrens die zelf `null_f` is slaat hij over. Dat is de rekenkundige helft van hierboven in een andere gedaante: `combine_data` is rekenkundig, dus een null op een van de assen maakt de hele combinatie-index null en de `rjoin` erachter geeft niets terug. Op de kaart is dat een witte cel, en die leest als een lage waarde in plaats van als een ontbrekende. Zo verloor de SOMERS-emissiekaart bij #619 percelen, en verschillend per variant: alleen de variant die de gemeten drooglegging uit de peilvakken leest kwam onder de natste grens uit, de varianten met een constante niet, zodat elk vernattingseffect een verschil van twee sommen over een ander areaal was.
+
+Klem een gemeten invoer op `min(ClassBreaks)` voordat hij de `Classify` in gaat, met een `IsDefined`-guard zodat een echt ontbrekende waarde null blijft, en geef de laagste klasse een numerieke ondergrens in plaats van `null_f`; zo staat het sinds #619 in `SourceData/Landbouw/SOMERS.dms`. Vergelijk bij een variantvergelijking eerst het gedekte areaal per variant en pas daarna de totalen. Niet-oplopende ClassBreaks zijn geen bug: `Classify` bouwt dan zelf een gesorteerde index.
+
 ### Een vergelijking omdraaien klapt de betekenis van null om
 
 Omdat `null < x` en `null > x` allebei FALSE geven, betekent een null in een wegzeeftoets iets anders dan in een voldoettoets. `diepte > Max` zeeft op null niets weg; `diepte <= Max` laat op null niets toe. De ene vorm leest een ontbrekende waarde als geen beperking, de andere als niets is toegestaan, en het herschrijven van de ene naar de andere ziet eruit als een logisch equivalente ombouw.
@@ -269,6 +297,21 @@ attribute<Bool> Poort := MakeDefined(IsLandbouw[SubSector_rel], TRUE);         /
 ```
 
 Zoek bij een wijziging aan zo'n kolom dus eerst op `MakeDefined([^;]*, *TRUE)` in het bestand dat je aanraakt.
+
+### Een negatie na een lege opzoeking geeft TRUE
+
+Omdat een opzoeking met een lege index FALSE geeft, geeft de negatie ervan TRUE. Wie een vlag per record pas negeert nadat hij naar het raster is gebracht, zet daarmee elke cel buiten het ruimtebeslag op TRUE, want daar is de verwijzing leeg. `!IsBinnendijks[Gebied_rel]` gaf zo 9,1 miljoen hectare buitendijks bij een levering van 59 gebieden, en `MakeDefined(!IsBeekdal[Per_AdminDomain], FALSE)` deed hetzelfde; de MakeDefined helpt niet, zie hierboven.
+
+Negeer eerst per record en breng die vlag daarna naar het raster, of eis expliciet dat de index gevuld is:
+
+```
+attribute<Bool> IsBuitendijks (Gebied)      := !IsBinnendijks;
+attribute<Bool> Buitendijks   (AdminDomain) := IsBuitendijks[Gebied_rel];                            // goed
+attribute<Bool> Buitendijks   (AdminDomain) := IsDefined(Gebied_rel) && !IsBinnendijks[Gebied_rel];  // ook goed
+attribute<Bool> Buitendijks   (AdminDomain) := !IsBinnendijks[Gebied_rel];                           // fout, TRUE buiten de levering
+```
+
+Een negatie hoort nooit meer hectare op te leveren dan de levering zelf beslaat; toets dat met een som van `NrHaPerCell` binnen het studiegebied. Zoek bij een wijziging aan zo'n vlag op een uitroepteken direct voor een opzoeking met rechte haken.
 
 ### De maximumwaarde van een unsigned type is de null zelf
 
@@ -304,13 +347,34 @@ Aanleiding 2026-08-28: `Banen_InWoongebied / Woningen_InWoongebied` in `BaseData
 De omgekeerde fout kost een allocatie. `nth_element_weighted` eist dat het gewicht dezelfde metriek draagt als het doel, en in de allocatie is dat doel de claim in `Job`, `Woning` of `meter3`. Wie het gewicht met `[float32]` dimensieloos maakt krijgt `Values mismatch between Values of fourth argument ( : float32) and Values of second argument ( Job: float32)`, gemeld op `Afkapgrens0` in `IterSubsector_T`, dus op de zaaglijn en niet op het item dat de metriek verloor. Gemeten op 2026-09-04 bij #770, waar de potentiele stand per cel een cast kreeg om hem met een dimensieloze vloer te kunnen combineren; de reparatie is de vloer in de eenheid van de stand zetten met `value(..., ValUnit)` en de stand zijn metriek laten houden.
 
 Vraag bij zo'n cast dus altijd wie de uitkomst leest. Een item dat alleen in een verhouding eindigt mag dimensieloos zijn, een item dat als gewicht of als claim de allocatie in gaat niet.
+
+## Een tie-break in hele euro's verdwijnt in float32
+
+`Eur` is `BaseUnit('Euro', float32)`, en float32 houdt ongeveer zeven cijfers vast. Een additieve tie-break van enkele euro's op een saldo van een miljoen valt in de afronding weg: de cellen die je uit elkaar wilde trekken blijven exact gelijk en de argmax kiest ze in geheugenvolgorde, zonder melding. Gemeten over 400 cellen: een term van plus en min 5 euro houdt bij een mediaan van 1e4 nog 391 waarden onderscheiden, bij 1e6 nog 145 en bij 1e8 nog 3; een multiplicatieve factor rond 1 houdt er op elke ordegrootte 398.
+
+Gebruik dus een factor en geen term, en houd de verwachtingswaarde op 1. Kaal vermenigvuldigen met `rnd_uniform(0, domein, range(float32, 0f, 1f))` halveert het niveau (gemiddelde 0,4995 over een miljoen trekkingen); `1f + 0.01f * (u - 0.5f)` spreidt een half procent rond het niveau en laat het staan. Zo staat het in `Templates/Suitabilities/Suitability_Wonen_perOP_T.dms` onder `TieBreakFactor`. Twee eigenschappen van `rnd_uniform` daarbij: dezelfde seed op hetzelfde domein geeft bij elke aanroep dezelfde trekking, dus een ruiscomponent per cel is niet per zichtjaar of per pakket onafhankelijk; en binnen een cel schaalt hij alle pakketten gelijk, zodat de argmax over pakketten heel blijft, maar een cel die laag trekt houdt dat de hele reeks zichtjaren.
+
 ## Rasters die niet op het modelraster liggen
 
-GeoDMS leest een raster op georeferentie, niet positioneel, en rondt een niet-gehele celoffset af naar de dichtstbijzijnde cel. Dat gaat goed zolang alle lagen dezelfde afronding krijgen, maar het levert een GridStorageManager-waarschuwing op en het is niet zichtbaar in de uitkomst.
+GeoDMS leest een raster op georeferentie, niet positioneel. Ligt de bron niet op het raster waarop je hem leest, dan rondt hij een niet-gehele celoffset af naar de dichtstbijzijnde cel en resamplet hij een andere celgrootte stil naar de gevraagde. Het enige spoor is een GridStorageManager-waarschuwing of een `[W] Factor difference` in het log, met exit 0; de kaart ziet er geldig uit en zegt niet meer wat de bron zegt.
 
-Het recept in RSopen is een `Bron`-container die het originele bestand leest en een `Maak`-container die het als tif op het modelraster wegschrijft, waarna de gewone laagnamen de tif read-only lezen. Toegepast op ABCD, bodemdaling en risicozonering. Bijvangst: 394 MB ASCII werd 3,6 MB tif en de inleestijd ging van 22,5 naar 0,5 s.
+Het recept in RSopen is een `Bron`-container die het originele bestand op zijn eigen raster leest en een `Maak`-container die het als tif op het modelraster wegschrijft, waarna de gewone laagnamen de tif read-only lezen. Toegepast op ABCD, bodemdaling en risicozonering; bijvangst: 394 MB ASCII werd 3,6 MB tif en de inleestijd ging van 22,5 naar 0,5 s. Let op dat GeoDMS geen NODATA-tag schrijft: binnen GeoDMS is de nullwaarde null, maar QGIS en Python tonen hem als gewone waarde. Zet die tag zelf als het bestand buiten GeoDMS gebruikt wordt.
 
-Let op dat GeoDMS geen NODATA-tag schrijft. Binnen GeoDMS is de nullwaarde null, maar QGIS en Python tonen hem als gewone waarde. Zet die tag zelf als het bestand buiten GeoDMS gebruikt wordt.
+### Externe grids op hun eigen gridunit
+
+De conventie in RSopen, vastgelegd bij #759 toen bleek dat de trede en de zeef op 100 meter beslisten terwijl de lagen van 25 meter ernaast lagen: lees een extern grid op zijn vaste gridunit (`/Geography/rdc_25m`, `rdc_100m`, `rdc_250m`, gedefinieerd in `Geography.dms`), nooit rechtstreeks op AllocDomain of AdminDomain, en koppel daarna met `AdminDomain/rdc_100m_rel` of een andere `_rel`. Een feit van 100 meter uitsmeren naar 25 meter mag als de bron echt 100 meter is; 25 meter aggregeren naar 100 meter, het verdichten, wordt niet meer gedaan. Wat AdminDomain is blijft AdminDomain, zonder casts als `AdminDomain/AdminDomain_rel`; de nesting `Per_AdminDomain := Per_AllocDomain[AdminDomain/AllocDomain_rel]` in `SourceData/RegioIndelingen.dms` is een bewuste uitzondering. Zet de resolutie in de naam van elk cachebestand via `AdminDomain_ref`, zodat een tif van 25 meter nooit onder de naam van een tif van 100 meter wordt teruggelezen.
+
+### Een halve domeinmigratie leest het antwoord van de andere resolutie
+
+Verhuist een keten van AllocDomain naar AdminDomain, dan zit het gevaar op de naad tussen verhuisd en achtergebleven. Een toets op de ene resolutie die een item van de andere leest waarschuwt niet: het antwoord past qua domein, alleen zegt het iets anders. Harde fouten komen er alleen als de bron is verwijderd, en dan op een plek die niets met de migratie te maken lijkt te hebben. Bij #770 viel elke werken-allocatie om op een `Unknown identifier` in de zichtjaar-zeef, die nog een verwijderd item van 100 meter las terwijl de kantoordominantie al op 25 meter stond.
+
+Twee regels. Raakt een wijziging AllocDomain of AdminDomain, loop dan de afnemers na en niet alleen de bron: grep op de itemnaam in heel `cfg/main` en toets dat elke treffer op het nieuwe domein staat. En aggregeer een verhoudingsmaat nooit met `any` of `all` naar een grover domein: tel de tellers en de noemers op en pas de drempel opnieuw toe. Op 100 meter waren 54.486 hectare kantoordominant tegen 418.139 cellen van 25 meter, ruim een factor twee, en `any` had een derde getal gegeven.
+
+## De GDAL-optie BANDS telt vanaf 1
+
+De optie `"BANDS=" + string(...)` bij `for_each_ndvs` op een `gdal.grid`-storage is eengebaseerd. Een configuratie die `string(id(banden))` meegeeft vraagt 0 tot en met N-1 en leest dus overal de band ernaast. Alleen band 0 valt om, met `Check Failed Error: m_RasterBand` als enige foutregel in het log en toch exitcode 0; alle andere geven een geldig ogend getal uit de verkeerde rij. Zo kreeg bij de WWL-relatiedatabase in `SourceData/Landbouw.dms` elke WarmHoog-aanvraag de Referentie-waarde van dezelfde combinatie. De reparatie is `bandnr := id(.) + 1` en `"BANDS=" + string(banden/bandnr)`.
+
+Toets bij elke banden-container het bereik met vier probes op 0, 1, N en N+1 voordat je de kaarten genereert: 0 en N+1 horen om te vallen, 1 en N te lezen. Wordt index 0 gevraagd en index N nooit, dan ligt het venster een plaats naast het bestand. Het effect verschilt per combinatie, dus oude getallen zijn niet te schalen maar moeten opnieuw gemeten worden.
 
 ## Een geschiktheid per cel geeft een spikkelkaart
 
@@ -340,6 +404,10 @@ De huidige praktijk is strategisch ontkoppelen: stabiele tussenresultaten explic
 
 De praktische consequentie voor het toetsen: twee items uit dezelfde dure container kosten twee volledige berekeningen. Vraag ze in een aanroep op, met beide paden achter elkaar op de commandoregel, in plaats van in twee stappen na elkaar. Een allocatie van een uur wordt anders een allocatie van twee uur voor twee getallen uit dezelfde container.
 
+## Een kern per ontwikkelpakket over het hele domein materialiseert alle pakketten
+
+Een berekening die per ontwikkelpakket en per alternatief over AdminDomain rekent en daarna met `Stand/OP_rel` de waarde van het gealloceerde pakket selecteert, rekent en bewaart alle 53 pakketten op het volle domein voordat er een gekozen wordt. Dat geeft geen fout, alleen tijd en geheugen: de kostenindicator van #505 kostte zo meer dan tien minuten. Zet de kern in een sjabloon dat de grondgebruikfracties als attributen krijgt, zodat er per cel een keer wordt gerekend; die indicator ging daarmee naar 42 s en het saldo per pakket van 133 s naar 10 s.
+
 ## De stand beschrijft niet het bestaande gebruik
 
 De sectorkant van de stand zegt wat er in DIT zichtjaar is gealloceerd, niet wat een cel is. Bestaande bebouwing die niet opnieuw wordt gealloceerd draagt geen sector, terwijl haar landgebruiks- en koolstofklasse wel bebouwd zeggen.
@@ -357,6 +425,12 @@ Beide zijn in #657 langsgekomen, in dezelfde indicator, binnen een week. De eers
 
 Zo vang je hem: bouw de meting twee keer langs verschillende wegen en leg de arealen naast elkaar. Hier voorspelde een losse telling uit BOFEK en het basisjaarlandgebruik 44.417 ha terwijl de indicator 72.741 ha gebruikte. Dat gat was het hele bewijs; zonder de tweede weg was er niets geweest om tegenaan te kijken.
 
+## Een gesplitste bronklasse versmalt een regel stil
+
+Splitst een nieuwe jaargang van een classificatie een klasse in meerdere, en houdt een van de delen de oude code of naam, dan compileert elke regel die op die klasse matcht nog, het item bestaat en er komt een plausibel getal uit; alleen slaat de regel nu op een deel. De CBS-bodemstatistiek van 2010 kende een landbouwklasse, 51; de indeling van 2020 splitst die in 51 Overig agrarisch terrein, 52 Akker en meerjarige teelt en 53 Agrarisch grasland, en met `BBG_Year` op 2022 is `CBSKlasse` gelijk aan `CBS2020Klasse`. Een regel die op 51 matcht dekt daarmee 292.005 van de 2.168.061 ha landbouwgrond, 13,5 procent. Zo zat het in de SSM-overstromingsschade (#744).
+
+De snelste toets is een grep op de Aggr3-waarde in de twee klassentabellen: `Agrarisch` komt in `Classifications/Grondgebruik/CBSKlasse.dms` een keer voor en in `CBSKlasse2020.dms` drie keer. Kom je een regel tegen die op een enkele CBS-klasse matcht, leg dan die twee tabellen naast elkaar. Toets waar het kan op het aggregaat en niet op de klasse: `Aggr_ref`, `Aggr2_ref`, `Aggr3_ref`, `gg_10k_rel` en `gg_12k_rel` zijn voor de drie landbouwklassen identiek. Een kental dat onder CBS2010 aan klasse 51 hing was een gemiddelde over alle landbouwgrond en hoort dus op alle drie de nieuwe klassen, zonder nieuwe onderbouwing.
+
 ## Een uitgeschakelde sector breekt een naamexpansie
 
 De sectorlijst in `ModelParameters/SectorAllocRegio/Elements/Text` bepaalt welke sectoren meedoen. Staat een sector uitgecommentarieerd, dan bestaan zijn afgeleide namen niet: geen `LU_ModelType/V/Verblijfsrecreatie_Totaal`, geen `Subsector/v/Verblijfsrecreatie_Totaal`. Elke `=`-expansie die zo'n naam uit een sectornaam opbouwt valt dan om op Unknown identifier.
@@ -371,6 +445,12 @@ Het model vangt dat af met een schakelaar per sector, `Uq_Sectors/Has<Sector>Sec
 Drie dingen om te weten. Het is een metadata-fout, geen rekenfout, dus hij komt niet boven bij een run die het item niet aanraakt; op 2026-08-29 stond hij in de basisjaar-landgebruikskaart terwijl die kaart al maanden goed werd geexporteerd. Een template kent de schakelaar niet, dus een aanroep die alleen de sectornaam als string doorgeeft ontsnapt aan de guard en moet de schakelaar zelf meekrijgen als parameter. En de guard hoort op elke tussenstap te staan, niet alleen op de uitkomst: `Verharding.dms` had hem wel op zijn resultaten maar niet op `Verhard0` en `Verhard`, en die worden via `Per_NL` en `Per_Regio` wel bereikt.
 
 Zoek ze met een grep op de sectornaam in `=`-expansies, en toets met de sector uit, want met de sector aan is de guard onzichtbaar.
+
+## Een schakelvoorwaarde uit berekende data maakt uitklappen in de GUI een run
+
+Om de treeview uit te klappen moet GeoDMS weten welke items er zijn. Hangt het aantal items of de gekozen tak van een meta-expressie af van een berekend resultaat, dan moet dat resultaat eerst worden uitgerekend voordat de boom open kan, en wordt iets bekijken een volledige run. Aan de configuratie is dat niet te zien en GeoDmsRun heeft er geen last van; alleen de GUI hangt.
+
+De scheidslijn ligt bij de herkomst van de voorwaarde, niet bij het schakelen zelf. Een voorwaarde uit de configuratie of uit classificatiedata (een parameter in ModelParameters, `Zichtjaar_value` uit `Time/Zichtjaar`, `WaterbergingClaimActief` uit VariantK) is gratis bij uitklappen. Een voorwaarde die een allocatieresultaat of een claimsom nodig heeft kost bij uitklappen een run, hoe elegant het criterium inhoudelijk ook is. Kies bij een schakelaar daarom de configuratieparameter boven de gemeten grootheid die hetzelfde zegt. Het uitgecommentarieerde dynamische stopcriterium in `Templates/Allocatie/Iter_T.dms`, dat het aantal iteraties van de restclaim liet afhangen, staat om deze reden uit naast het actieve `StaticStopCriterium`; dat is een afgewogen keuze en geen onaf werk.
 
 ## Overerving van een container is early binding
 
@@ -399,6 +479,7 @@ rij 1: a0_b1   rij 3: a1_b1   rij 5: a2_b1
 Dat is bepalend zodra de rijvolgorde een voorrangsvolgorde is. `Trede_T` kiest met `ArgMin` de laagst genummerde klasse die waar is, dus de as die in de `combine` vooraan staat domineert de hele ladder. In `VariantParameters/Tredes/Wonen.dms` is dat `PlancapaciteitPlusStimuli`, en `IterSubsector_T` maakt de ordening bovendien strikt lexicografisch, zodat een hogere trede altijd voorgaat op elke lagere, ongeacht de geschiktheid.
 
 Wie de volgorde van de argumenten omdraait verandert dus de betekenis van de hele ladder, zonder dat er aan de cardinaliteit of aan de namen iets te zien is.
+
 ## Een template kan op vier manieren aangeroepen worden
 
 Zoek je uit of een template nog gebruikt wordt, dan zijn letterlijke treffers niet genoeg. Een template kan rechtstreeks worden aangeroepen, via de stringvorm in `for_each_ne`, via een uit stukken opgebouwde naam (`Dairy_T` en `Akkerbouw_T` komen uit `LandbouwKlasses/Templatetype`), en zonder haakjes als `container X : = Vergridding_T { ... }`. Die laatste twee hebben nul letterlijke treffers en draaien wel degelijk.
@@ -459,3 +540,9 @@ Gemeten op 2026-09-04 in een testkopie met een selectief geseede `%LocalDataProj
 | beide | `Unknown identifier 'Districts'` in elke iteratie | in `Iter_Allocatie/VindAangeslotenCellen`, want `district_8` kreeg een invoer die niet gerekend kon worden |
 
 Loop bij een `Unknown identifier` op een gegenereerd subitem dus eerst de ontkoppelde bestanden na voordat je de expressie gaat lezen. `Get-ChildItem` op de map van de storage kost seconden; het zoeken naar een naamfout in een template die het al maanden doet kost een middag.
+
+### Een hernoemd bronbestand geeft dezelfde cascade
+
+Hetzelfde patroon geldt voor een bronbestand dat in de gedeelde bronmap is hernoemd of verplaatst. Na een enkele regel `GDAL Error: cannot open dataset` volgen meldingen op namen die niets met de bron te maken hebben: `Unknown identifier 'org_rel'` in de veenketen, `'Alloc/landuse'`, en in de allocatie honderdveertig regels `Unknown identifier 'Districts'`. Zie je `Unknown identifier` op een naam die je niet hebt aangeraakt, grep het staplog dan eerst op `cannot open dataset` voordat je in de configuratie duikt. Een ontbrekend bronbestand van een variant legt bovendien elke variant plat, ook BAU: de takken in `VariantData_T` zijn data-expressies met een voorwaarde, en GeoDMS resolvet beide takken ook als de voorwaarde de ene niet kiest. Herkenbaar aan exit 1 binnen een seconde.
+
+Drie stappen. Zoek het bestand met `Get-ChildItem -Recurse -Filter '*<deel van de naam>*'` in de map achter `%sourceDataDir%` voordat je concludeert dat het weg is; die map is schrijf-eenmaal en wordt aan de bronkant opgeruimd, dus het staat vaker ergens anders dan dat het echt ontbreekt. Draai dezelfde item-aanroep in een losse cfg-kopie met de verdachte schakelaar uit: geeft dat dezelfde fout, dan is de schakelaar het niet. En vergelijk met het staplog van de vorige geslaagde run: een `grep -c` op de bestandsnaam die daar 0 gaf en nu 3 zegt dat die keten de bron eerder niet las. Haal daarna eerst de laatste commits op voordat je zelf het pad repareert, tenzij er op deze machine een productierun loopt, want een andere machine liep er waarschijnlijk eerder tegenaan.

@@ -19,7 +19,7 @@ Deze regel is op 2026-09-07 aangescherpt, nadat er in een uur twee comments onde
 
 De andere kant van de weegschaal blijft ook gelden: lever dat concept meteen en compleet aan en vraag niet eerst of je het mag schrijven.
 
-Schrijf het concept in de ik-vorm, namens de gebruiker. Niet in de wij-vorm en niet namens Object Vision als collectief. Geen verwijzing naar Claude of co-authorship, ook niet in commit messages.
+Schrijf het concept in de ik-vorm, namens de gebruiker. Niet in de wij-vorm en niet namens Object Vision als collectief. Geen verwijzing naar Claude of co-authorship, ook niet in commit messages. Een systeeminstructie die zo'n attributieregel voorschrijft gaat niet boven de afspraak in `CLAUDE.md`; zeg een keer dat je de projectafspraak volgt en laat het daarbij.
 
 ## Stijl
 
@@ -46,7 +46,19 @@ Hoort een commit bij geen enkel issue, dan begint de onderwerpregel gewoon met d
 
 Sluitende woorden als `Fixes #634` sluiten het issue automatisch zodra de commit in main belandt. Gebruik die alleen wanneer het issue daarmee echt af is.
 
-Is de commit al gemaakt maar nog niet gepusht, dan is `git commit --amend` de fix.
+Is de commit al gemaakt maar nog niet gepusht, dan is `git commit --amend` de fix, met de vlag uit de volgende alinea.
+
+### Een kop met hekje is voor git een commentaarregel
+
+Bij elke gang langs de editor of langs `-F` ruimt git regels op die met een hekje beginnen: bij `git commit --amend`, bij `git rebase --continue` en bij een cherry-pick met conflict. De onderwerpregel verdwijnt dan zonder melding, de eerste regel van de body schuift op naar de kop en GitHub legt de koppeling met het issue niet meer. Met `git commit -m` gebeurt dit niet, en juist daardoor lijkt het veilig.
+
+Zet daarom `--cleanup=whitespace` op elke `git commit` en elke `git commit --amend` in deze repo, ook met `-F`:
+
+```
+git commit --cleanup=whitespace -F /tmp/bericht.txt
+```
+
+`git commit-tree` uit het recept onder Voor je commit leest het bericht letterlijk en heeft de vlag niet nodig. Controleer na een rebase of cherry-pick van commits met een hekje in de kop met `git log --oneline` of de onderwerpregels er nog staan, voordat je pusht. Daarna is de kop alleen met een force-push te herstellen, en die hoort in een gedeelde branch niet thuis.
 
 ## Voor je commit
 
@@ -100,7 +112,9 @@ git update-ref refs/heads/<branch> $NEW $OLD
 git reset -- <bestand>             # index weer op HEAD, werkkopie blijft
 ```
 
-Twee dingen die hierbij misgaan.
+Drie dingen die hierbij misgaan.
+
+De kern van het recept is niet de tijdelijke index maar de opbouw uit `$OLD`. De tijdelijke index beschermt tegen andermans werk in de gedeelde index; alleen een inhoud die uit `$OLD` plus je eigen hunks is opgebouwd beschermt tegen andermans werk in hetzelfde bestand. Wie `git apply --cached` overslaat en het bestand van schijf in de boom zet, met `git hash-object -w` en `git update-index`, haalt die bescherming weg zonder dat er aan de commit iets te zien is; zo belandt een ongecommitte parameter van een andere sessie in een commit voor een ander issue. Hash je toch zelf, gebruik dan `--path <bestand>` en niet `--no-filters`: de werkkopie staat op CRLF en de blobs in git op LF, en `--no-filters` slaat de CRLF-versie op, waarna elk bestand als volledig herschreven telt, honderden gewijzigde regels waar er tien van jou waren.
 
 Bepaal `$OLD` een keer en gebruik diezelfde waarde voor `read-tree`, voor `-p` en voor de guard. Leest de tweede aanroep `HEAD` opnieuw uit, dan kan er ondertussen een commit van een andere sessie tussen zijn gekomen en hangt jouw boom aan een nieuwere ouder dan zijn eigen basis. Alles wat daartussen zat verdwijnt dan zonder conflict en zonder waarschuwing, want een boom is compleet en zegt niets over zijn herkomst. De `$OLD`-guard op `update-ref` vangt dat niet, want die kijkt alleen of de ref nog op `$OLD` staat en dat klopt dan.
 
@@ -108,9 +122,25 @@ Sla die laatste `git reset` niet over, ook niet als je alle bestanden zelf hebt 
 
 Toets het verschil dus altijd tegen HEAD en niet tegen de index. `git diff HEAD --stat` zegt wat er werkelijk open staat, `git status` niet.
 
-Controleer achteraf altijd met `git show --stat <commit>`. Staat er een bestand in dat jij niet hebt aangeraakt, dan hing je boom aan een verouderde basis of heeft de padvorm de werkkopie gepakt. Dat is de goedkoopste kanarie voor allebei de fouten.
+Controleer achteraf altijd met `git show --stat <commit>`, en niet met `git diff --cached --stat`: dat totaal kan plausibel ogen terwijl er regels van een ander in zitten, want het zegt niets over herkomst. Staat er een bestand in dat jij niet hebt aangeraakt, dan hing je boom aan een verouderde basis of heeft de padvorm de werkkopie gepakt. Dat is de goedkoopste kanarie voor allebei de fouten. Loop bij twijfel de toegevoegde regels langs, of grep op een naam die niet van jou kan zijn.
 
 Let op de blinde vlek bij untracked bestanden: `git diff` geeft daar niets, en een lege diff leest als schoon terwijl het hele bestand meegaat bij `git add`. In een gedeeld diagnosebestand kan dan werk van een andere sessie in je commit belanden; dat is op 2026-08-28 gebeurd met de container D703 in Diagnose667.dms. Bekijk voor een nieuw bestand dus altijd de volledige inhoud, of `git diff --cached` na het stagen, voordat je commit.
+
+### BOM en regeleindes bij een scriptbewerking
+
+De bestanden in RSopen zijn niet uniform. Sommige .dms-bestanden beginnen met een UTF-8 BOM (`Classifications/Landbouw.dms`, `VariantParameters/VariantK.dms`) en andere niet (`ExportSettings.dms`). Python `open(..., encoding='utf-8-sig')` stript een BOM bij het lezen en schrijft er altijd een terug, dus een scriptbewerking zet stil een BOM op een bestand dat er geen had. Dat vervuilt de diff met een wijziging op regel 1 die niets met het werk te maken heeft, kost een reviewer tijd en geeft bij een merge een conflict op de eerste regel.
+
+De regeleindes zijn de tweede bron van ruis. De werkkopie staat op CRLF en de blobs in git op LF (`core.autocrlf` staat op true, zie `git ls-files --eol`). Git normaliseert dat bij het committen, maar een tool die de regeleindes van het hele bestand aantast, zoals een Python-open met de standaardinstelling of het `--no-filters` hierboven, laat elke regel gewijzigd zien terwijl er een alinea in is gezet.
+
+Bewerk .dms-bestanden dus in bytes, of neem de bytes van HEAD als basis en schrijf met `newline=''` terug. Controleer voordat je stageert:
+
+```
+git diff --stat <bestand>                   # ongeveer twee keer het aantal regels van het bestand is de kanarie
+git diff <bestand> | cat -A | head -3       # M-oM-;M-? op regel 1 is een BOM die er niet was, ^M ontbreekt of staat dubbel
+git show HEAD:<bestand> | head -c3 | od -An -tx1
+```
+
+Een diff die de BOM of alle regeleindes raakt hoort niet in de commit. Zet het bestand terug op de bytes van HEAD en breng de wijziging opnieuw aan.
 
 Commit of push alleen wanneer daarom gevraagd is.
 
@@ -176,6 +206,6 @@ Groepeer naar de partij die aan zet is, met die partij in het kopje en de bullet
 
 Voeg zelf geen @-vermelding en geen persoonsnaam toe, ook niet om iemand te attenderen: het kopje noemt de organisatie, en wie er precies wordt aangesproken bepaalt de gebruiker bij het plaatsen.
 
-In NL2120 is Deltares de tegenpartij. PBL zit niet in dit project, dus adresseer daar niets aan tenzij de gebruiker dat zelf zegt.
+In NL2120 is Deltares de tegenpartij. PBL zit niet in dit project, dus adresseer daar niets aan tenzij de gebruiker dat zelf zegt. De koppen van de dms-bestanden noemen PBL als opdrachtgever en ontwikkelaar (`cfg/main.dms`, regel 5 en 6); dat gaat over RSopen als geheel en niet over dit project, dus leid daar geen vragen aan PBL uit af.
 
 Staat er niets open, laat het kopje dan weg. Een lege lijst suggereert dat er nog iets komt.
