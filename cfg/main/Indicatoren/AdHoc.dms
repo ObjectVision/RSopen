@@ -42,6 +42,39 @@ container AdHoc
 			attribute<Bool> LU_IsDroog (LU) := MakeDefined(IsDroog[BT_rel], FALSE);
 		}
 
+		container ArealenBasisjaar
+		: Descr = "Areaal per hoofdklasse in het basisjaar, landelijk en per landschapsgebied van #760, met dezelfde begrenzingen
+					(Landschapsgebieden/Impl) en dezelfde rekenregel als Export/Grondgebruik/LandgebruikHoofdklasse_Areaal voor de zichtjaren.
+
+					Gevraagd voor het resultatenrapport: de arealentabellen per landschap missen de basisjaarkolom, want de export slaat
+					het basisjaar over (Zichtjaren kent het basisjaar niet als exportjaar) en Export.dms telt het basisjaar alleen landelijk
+					(Basisjaar_Areaal_perHoofdklasse). Dit item leest de geleverde basisjaarkaart, de export van
+					Basisjaar/LandgebruikskaartNL2120/Write_Result_Hoofdklasse_SA, en niet dat item zelf: zo hoeft de opgeleverde LocalData
+					niet opnieuw te rekenen of te schrijven, en de kolom rust op precies de kaart die het rapport toont. Het basisjaar is
+					variantonafhankelijk, dus een variantmap volstaat. De landschapskolommen overlappen elkaar en tellen niet op tot Nederland.
+					Structureel: een basisjaarregel in LandgebruikHoofdklasse_Areaal, of het basisjaar als exportjaar toelaten."
+		{
+			parameter<String> Levering := 'Productierun_20260910', Descr = "De opleveringsmap onder LocalDataDir.";
+			parameter<String> Variant  := 'BAU1',                  Descr = "Uit welke variantmap de basisjaarkaart komt; de vier zijn gelijk.";
+
+			attribute<Classifications/Grondgebruik/LU_Hoofdklasse> Kaart (/Geography/AdminDomain)
+			: StorageName     = "='%LocalDataDir%/' + Levering + '/Oplevering/' + Variant + '/kaarten_basisjaar/LandgebruikskaartHoofdklasse_Basisjaar.tif'"
+			, StorageType     = "gdal.grid"
+			, StorageReadOnly = "True";
+
+			unit<uint8> Klassen := /Classifications/Grondgebruik/LU_Hoofdklasse
+			, StorageName = "='%LocalDataProjDir%/Rapport_v01/ArealenBasisjaar_perHoofdklasse.csv'", StorageType = "gdalwrite.vect"
+			{
+				attribute<String>   Klasse         := /Classifications/Grondgebruik/LU_Hoofdklasse/Label;
+				attribute<Units/Ha> Nederland      := pcount(Kaart)[float32] * /Geography/rdc_25m/NrHaPerCell;
+				attribute<Units/Ha> Kust           := pcount(/SourceData/Landschap/Landschapsgebieden/Impl/IsKust     ? Kaart : null_b)[float32] * /Geography/rdc_25m/NrHaPerCell;
+				attribute<Units/Ha> Rivieren       := pcount(/SourceData/Landschap/Landschapsgebieden/Impl/IsRivieren ? Kaart : null_b)[float32] * /Geography/rdc_25m/NrHaPerCell;
+				attribute<Units/Ha> Veen           := pcount(/SourceData/Landschap/Landschapsgebieden/Impl/IsVeen     ? Kaart : null_b)[float32] * /Geography/rdc_25m/NrHaPerCell;
+				attribute<Units/Ha> Zand           := pcount(/SourceData/Landschap/Landschapsgebieden/Impl/IsZand     ? Kaart : null_b)[float32] * /Geography/rdc_25m/NrHaPerCell;
+				attribute<Units/Ha> Geen_landschap := pcount(!(/SourceData/Landschap/Landschapsgebieden/Impl/IsKust || /SourceData/Landschap/Landschapsgebieden/Impl/IsRivieren || /SourceData/Landschap/Landschapsgebieden/Impl/IsVeen || /SourceData/Landschap/Landschapsgebieden/Impl/IsZand) ? Kaart : null_b)[float32] * /Geography/rdc_25m/NrHaPerCell;
+			}
+		}
+
 		container PerCasus :=
 			for_each_ne(
 				Classifications/Modellering/AllCases/Label
@@ -56,6 +89,69 @@ container AdHoc
 			unit<uint32> Tabel_Regio := ='/Indicatoren/' + CasusName + '/Zichtjaren/Export/Tabellen/PerIndeling/Tabel';
 			unit<uint8>  Areaal      := ='/Indicatoren/' + CasusName + '/Zichtjaren/Export/Grondgebruik/LandgebruikNL2120_Areaal';
 
+			container OphoogkostenWerklocaties
+			: Descr = "Wat de bodemdaling aan ophoging kost op de cellen waar de allocatie een werksubsector heeft neergezet.
+
+						Gevraagd vanuit het kernteam bij het resultatenrapport: de wonen-kant kent een post MeerkostenBodemdaling en de
+						werken-kant niet, terwijl beide op dezelfde ondergrond staan. KostenWerklocaties rekent alleen wat er bovenop de
+						bodemdalingsophoging komt om boven het water uit te komen; de ophoging die de bodemdaling zelf al vraagt wordt voor
+						werken nergens beprijsd. Alle onderdelen daarvan liggen er wel: de ophoogdikte uit bijlage E, het tarief per meter
+						met dezelfde opslag van 19 procent, en het oppervlak van de werklocaties. Dit item zet die drie bij elkaar.
+
+						Wat dit niet is: een tegenhanger van KostenWoningbouw/MeerkostenBodemdaling in volle omvang. Die post draagt naast
+						de ophoging ook de overige inrichtingselementen uit bijlage E, dus verharding, riolering, groen en heipalen, en
+						daarvoor is een verdeling over inrichtingselementen nodig die de bron voor bedrijventerreinen niet geeft. Hier
+						staat alleen het zandpakket, want dat is het enige kengetal dat niet van de inrichting van een woonbuurt afhangt.
+						De meerkosten van de bouwwijze kennen aan de werken-kant geen tegenhanger, en aan de wonen-kant staan zij in deze
+						run op nul zolang BouwwijzeK/Kostenopslag op 1,0 staat.
+
+						Structureel hoort dit als kolom in RegionaleIndicatoren_T naast KostenWerklocaties_MeerkostenOverstroming, en de
+						rekenregel hoort in Templates/Indicatoren/KostenWerklocaties.dms naast MeerkostenOverstroming."
+			{
+				parameter<String> Jaar := ='/Indicatoren/' + CasusName + '/Zichtjaren/Export/ExportZichtjaar'
+				, Descr = "Het zichtjaar waarop de export staat, uit dezelfde casus, zodat dit item met de omgevingsvariabele ExportZichtjaar meebeweegt.";
+
+				container Bron := ='/Indicatoren/' + CasusName + '/Zichtjaren/' + Jaar + '/KostenWerklocaties';
+
+				attribute<Units/Eur_m2> Tarief_Bodemdaling (/Geography/AdminDomain) :=
+					Bron/Src/Kengetallen/Ophogen_permeter * (Bron/Ophoging_ZonderMaatregel / 1[Units/meter]) * Bron/Src/Kengetallen/Opslag
+				, Descr = "Het tarief per m2 terrein voor de ophoging die de bodemdaling vraagt, met dezelfde opslag als bij de overstromingsmaatregel.";
+
+				attribute<Units/Eur> Ophoogkosten (/Geography/AdminDomain) := MakeDefined(Tarief_Bodemdaling * Bron/Werklocatie_m2, 0[Units/Eur])
+				, Descr = "De rekening per cel, nominaal in het zichtjaar, nul buiten de werklocaties.";
+
+				parameter<Units/Eur> Ophoogkosten_Per_NL := sum(Ophoogkosten), Descr = "Landelijk totaal, de kolom die het rapport vraagt.";
+			}
+
+			container GrondexploitatiePosten
+			: Descr = "De negen posten van het exploitatiesaldo van de woningbouw, landelijk opgeteld over de cellen waarover het saldo is geboekt.
+
+						Gevraagd vanuit het kernteam bij het resultatenrapport: de grondexploitatie compleet tonen, van de opbrengsten via de
+						kosten naar het saldo. De levering draagt het saldo als kolom en drie van de posten (bouwsom, grondproductie en
+						bodemdaling, via KostenWoningbouw); de andere zes zitten wel in het saldo maar zijn niet apart geleverd. Dit item
+						telt elke post uit Grondexploitatie/Posten op, dus met precies de definities waarmee het saldo is gerekend, zodat de
+						negen regels in het rapport optellen tot Grondexploitatie_Saldo. Let op dat Opbrengsten hier de opbrengstterm van
+						het saldo is, de marktwaarde met pakketweging en na aftrek van btw, en dus niet Woningwaarde_Nieuwbouw.
+
+						Structureel horen dit negen kolommen in RegionaleIndicatoren_T naast Grondexploitatie_Saldo, met dezelfde
+						Voor- en Sluit-constructie als de andere kolommen, zodat ze ook per regio uitkomen."
+			{
+				parameter<String> Jaar := ='/Indicatoren/' + CasusName + '/Zichtjaren/Export/ExportZichtjaar';
+				container Bron := ='/Indicatoren/' + CasusName + '/Zichtjaren/' + Jaar + '/Grondexploitatie';
+
+				parameter<Units/Eur> Opbrengsten_Per_NL      := sum(Bron/Posten/Opbrengsten),      Descr = "Netto van btw, met de pakketweging in de prijs.";
+				parameter<Units/Eur> Bouwsom_Per_NL          := sum(Bron/Posten/Bouwsom),          Descr = "Gelijk aan KostenWoningbouw_Bouwkosten; staat hier als controle.";
+				parameter<Units/Eur> BijkomendeKosten_Per_NL := sum(Bron/Posten/BijkomendeKosten);
+				parameter<Units/Eur> WinstEnRisico_Per_NL    := sum(Bron/Posten/WinstEnRisico);
+				parameter<Units/Eur> Grondproductie_Per_NL   := sum(Bron/Posten/Grondproductie),   Descr = "Gelijk aan KostenWoningbouw_Regulier; staat hier als controle.";
+				parameter<Units/Eur> Bodemdaling_Per_NL      := sum(Bron/Posten/Bodemdaling),      Descr = "Gelijk aan KostenWoningbouw_MeerkostenBodemdaling; staat hier als controle.";
+				parameter<Units/Eur> Piekbuiberging_Per_NL   := sum(Bron/Posten/Piekbuiberging),   Descr = "Alleen van het gealloceerde pakket, en nul als de post niet in het saldo zat.";
+				parameter<Units/Eur> Verwerving_Per_NL       := sum(Bron/Posten/Verwerving),       Descr = "Woningen na funderingsafwaardering, niet-woningen en grond.";
+				parameter<Units/Eur> Sloop_Per_NL            := sum(Bron/Posten/Sloop),            Descr = "De sloop van wat er op de bebouwde cel stond; niet de sloop voor de bouwstenen.";
+				parameter<Units/Eur> Saldo_Per_NL            := Bron/Saldo_Per_NL,                 Descr = "Het saldo zelf, ter controle: opbrengsten min de acht kostenposten.";
+				parameter<Units/Ha>  Nieuwbouw_Ha_Per_NL     := Bron/Nieuwbouw_Ha_Per_NL,          Descr = "De hectares waarover het saldo is geboekt, zonder de BAG-nieuwbouw.";
+			}
+
 			container CO2eq
 			: Descr = "Netto broeikasgasemissie sinds het basisjaar in megaton CO2-equivalent, emissie positief. Samengesteld uit twee kolommen
 						van de indicatorentabel die tegengestelde tekens en verschillende eenheden dragen: CO2Flow_TovBasisjaar (ton, negatief is
@@ -64,11 +160,11 @@ container AdHoc
 						uitdrukkelijk een ondergrens en niet de indicator noemt (#733). Structureel horen dit twee kolommen in
 						Templates/Indicatoren_T/Export.dms, RegionaleIndicatoren_T, naast Methaan_Cumulatief."
 			{
-				attribute<mton> Netto_NL             (Tabel_NL)    := (-Tabel_NL/CO2Flow_TovBasisjaar)[mton]              + Tabel_NL/Methaan_Cumulatief;
-				attribute<mton> Ondergrens_NL        (Tabel_NL)    := (-Tabel_NL/CO2Flow_TovBasisjaar_InclOngedekt)[mton] + Tabel_NL/Methaan_Cumulatief;
-				attribute<mton> Netto_Regio          (Tabel_Regio) := (-Tabel_Regio/CO2Flow_TovBasisjaar)[mton]              + Tabel_Regio/Methaan_Cumulatief;
-				attribute<mton> Ondergrens_Regio     (Tabel_Regio) := (-Tabel_Regio/CO2Flow_TovBasisjaar_InclOngedekt)[mton] + Tabel_Regio/Methaan_Cumulatief;
-				attribute<mton> Methaan_Aandeel_NL   (Tabel_NL)    := Tabel_NL/Methaan_Cumulatief / Netto_NL
+				attribute<Units/mton> Netto_NL             (Tabel_NL)    := (-Tabel_NL/CO2Flow_TovBasisjaar)[Units/mton]              + Tabel_NL/Methaan_Cumulatief;
+				attribute<Units/mton> Ondergrens_NL        (Tabel_NL)    := (-Tabel_NL/CO2Flow_TovBasisjaar_InclOngedekt)[Units/mton] + Tabel_NL/Methaan_Cumulatief;
+				attribute<Units/mton> Netto_Regio          (Tabel_Regio) := (-Tabel_Regio/CO2Flow_TovBasisjaar)[Units/mton]              + Tabel_Regio/Methaan_Cumulatief;
+				attribute<Units/mton> Ondergrens_Regio     (Tabel_Regio) := (-Tabel_Regio/CO2Flow_TovBasisjaar_InclOngedekt)[Units/mton] + Tabel_Regio/Methaan_Cumulatief;
+				attribute<Float32> Methaan_Aandeel_NL      (Tabel_NL)    := Tabel_NL/Methaan_Cumulatief / Netto_NL
 				, Descr = "Aandeel van methaan in de netto emissie; boven 1 als de CO2-kant per saldo vastlegt.";
 			}
 
@@ -80,18 +176,18 @@ container AdHoc
 				attribute<Bool> IsNat   (Areaal) := NatuurNatDroog/LU_IsNat;
 				attribute<Bool> IsDroog (Areaal) := NatuurNatDroog/LU_IsDroog;
 
-				parameter<Ha> Nat_Nederland        := sum(IsNat   ? Areaal/Nederland      : 0[Ha]);
-				parameter<Ha> Droog_Nederland      := sum(IsDroog ? Areaal/Nederland      : 0[Ha]);
-				parameter<Ha> Nat_Kust             := sum(IsNat   ? Areaal/Kust           : 0[Ha]);
-				parameter<Ha> Droog_Kust           := sum(IsDroog ? Areaal/Kust           : 0[Ha]);
-				parameter<Ha> Nat_Rivieren         := sum(IsNat   ? Areaal/Rivieren       : 0[Ha]);
-				parameter<Ha> Droog_Rivieren       := sum(IsDroog ? Areaal/Rivieren       : 0[Ha]);
-				parameter<Ha> Nat_Veen             := sum(IsNat   ? Areaal/Veen           : 0[Ha]);
-				parameter<Ha> Droog_Veen           := sum(IsDroog ? Areaal/Veen           : 0[Ha]);
-				parameter<Ha> Nat_Zand             := sum(IsNat   ? Areaal/Zand           : 0[Ha]);
-				parameter<Ha> Droog_Zand           := sum(IsDroog ? Areaal/Zand           : 0[Ha]);
-				parameter<Ha> Nat_Geen_landschap   := sum(IsNat   ? Areaal/Geen_landschap : 0[Ha]);
-				parameter<Ha> Droog_Geen_landschap := sum(IsDroog ? Areaal/Geen_landschap : 0[Ha]);
+				parameter<Units/Ha> Nat_Nederland        := sum(IsNat   ? Areaal/Nederland      : 0[Units/Ha]);
+				parameter<Units/Ha> Droog_Nederland      := sum(IsDroog ? Areaal/Nederland      : 0[Units/Ha]);
+				parameter<Units/Ha> Nat_Kust             := sum(IsNat   ? Areaal/Kust           : 0[Units/Ha]);
+				parameter<Units/Ha> Droog_Kust           := sum(IsDroog ? Areaal/Kust           : 0[Units/Ha]);
+				parameter<Units/Ha> Nat_Rivieren         := sum(IsNat   ? Areaal/Rivieren       : 0[Units/Ha]);
+				parameter<Units/Ha> Droog_Rivieren       := sum(IsDroog ? Areaal/Rivieren       : 0[Units/Ha]);
+				parameter<Units/Ha> Nat_Veen             := sum(IsNat   ? Areaal/Veen           : 0[Units/Ha]);
+				parameter<Units/Ha> Droog_Veen           := sum(IsDroog ? Areaal/Veen           : 0[Units/Ha]);
+				parameter<Units/Ha> Nat_Zand             := sum(IsNat   ? Areaal/Zand           : 0[Units/Ha]);
+				parameter<Units/Ha> Droog_Zand           := sum(IsDroog ? Areaal/Zand           : 0[Units/Ha]);
+				parameter<Units/Ha> Nat_Geen_landschap   := sum(IsNat   ? Areaal/Geen_landschap : 0[Units/Ha]);
+				parameter<Units/Ha> Droog_Geen_landschap := sum(IsDroog ? Areaal/Geen_landschap : 0[Units/Ha]);
 			}
 		}
 	}
