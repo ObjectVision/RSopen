@@ -75,6 +75,185 @@ container AdHoc
 			}
 		}
 
+		container SterfteUitgesteld
+		: Descr = "De sterfte-indicator (#484) herrekend tot grootheden die als aantallen mensen en levensjaren te lezen zijn, landelijk en
+					per landschapsgebied van #760, uit de kaarten die de export per zichtjaar wegschrijft.
+
+					Wat de indicator zelf levert. SterfteAfnameDoorGroenToename rekent per periode tussen twee zichtjaren hoeveel sterfgevallen
+					er in die periode minder vallen door meer groen rond woningen: sterftekans maal groentoename maal effect maal bewoners maal
+					jaren. AfnameCumulatief telt die perioden op vanaf het basisjaar. Per periode is dat een goed getal: zoveel sterfgevallen
+					minder in die jaren. Opgeteld over een eeuw is het geen aantal mensen meer. Een vermeden sterfgeval is een uitgesteld
+					sterfgeval: wie dit jaar niet overlijdt, overlijdt later, gemiddeld ruim negen jaar later. Wie in 2045 is uitgesteld, is in
+					2120 allang overleden en telt in de cumulatieve som toch mee. Die som telt dezelfde mensen daardoor meermaals en groeit met
+					de lengte van de horizon, niet met het aantal mensen dat het betreft.
+
+					Wat dit item doet. Het leest de kaarten AfnamePerPeriode per zichtjaar en zet ze om in drie grootheden die wel als aantal te
+					lezen zijn.
+					1. PerJaar_2120: sterfgevallen per jaar minder in 2120, de laatste periode gedeeld door haar lengte. Te lezen als: in 2120
+					   overlijden er zoveel mensen minder dan zonder de groenverandering.
+					2. InLeven_2120: mensen die in 2120 in leven zijn en zonder het extra groen al overleden zouden zijn. Elk uitgesteld
+					   sterfgeval uit een eerdere periode weegt mee met de kans dat die persoon 2120 haalt, uit de CBS-overlevingstafel, met
+					   de leeftijd van overlijden verdeeld als de tafeloverledenen.
+					3. Levensjaren_2023_2120: gewonnen levensjaren binnen de horizon, de som van de extra jaren die de uitgestelde
+					   sterfgevallen tot 2120 leven. Levensjaren_Totaal telt ook de jaren na 2120 mee, met LevensjarenPerUitgesteldSterfgeval
+					   per uitgesteld sterfgeval. Levensjaren zijn de grootheid die over een periode wel optelt: elk gewonnen jaar telt een keer.
+					Daarnaast blijven de uitgestelde sterfgevallen per periode en hun som staan (Uitgesteld_<zichtjaar>, Uitgesteld_Totaal), met
+					als controle de som van de kaart AfnameCumulatief van 2120, die daaraan gelijk hoort te zijn. Een negatieve afname, extra
+					sterfte door minder groen, krijgt dezelfde gewichten: vervroegd in plaats van uitgesteld.
+
+					De gewichten per zichtjaar staan in Data/CBS_Overlevingstafel/uitstelgewichten_2024.csv en zijn afgeleid met het script
+					uitstelgewichten.py daarnaast uit de periode-overlevingstafel 2024 van het CBS (StatLine 37360ned, totaal mannen en
+					vrouwen); de afleiding en de aannames staan in dat script. De landschapskolommen overlappen elkaar en tellen niet op tot
+					Nederland.
+
+					Structureel hoort dit in SterfteAfnameDoorGroenToename zelf, als vervanging van AfnameCumulatief: de gewichten per periode
+					zijn daar direct beschikbaar en de export kan de drie grootheden per regio meenemen."
+		{
+			parameter<String> Levering := 'Productierun_20260910', Descr = "De opleveringsmap onder LocalDataDir; de kaarten per zichtjaar staan in Indicatoren/<casus>.";
+
+			unit<uint8> Zichtjaar
+			: StorageName     = "%ProjDir%/Data/CBS_Overlevingstafel/uitstelgewichten_2024.csv"
+			, StorageType     = "gdal.vect"
+			, StorageReadOnly = "True"
+			, Descr           = "De negen zichtjaren met per periode de lengte in jaren en de twee uitstelgewichten, zie uitstelgewichten.py."
+			{
+				attribute<String> Naam;
+				attribute<String> Van;
+				attribute<String> Tot;
+				attribute<String> Jaren;
+				attribute<String> w_InLeven2120;
+				attribute<String> w_Levensjaren2120;
+
+				attribute<String>  name          := Naam;
+				attribute<Float32> Periode       := Jaren[Float32],             Descr = "Lengte van de periode tot dit zichtjaar in jaren.";
+				attribute<Float32> w_InLeven     := w_InLeven2120[Float32],     Descr = "Deel van de in deze periode uitgestelde sterfgevallen dat in 2120 nog leeft.";
+				attribute<Float32> w_Levensjaren := w_Levensjaren2120[Float32], Descr = "Extra levensjaren tot 2120 per in deze periode uitgesteld sterfgeval.";
+			}
+			parameter<Float32> LevensjarenPerUitgesteldSterfgeval := 9.16f, Descr = "Verwachte extra levensjaren per uitgesteld sterfgeval zonder horizon, de som van S(k) uit uitstelgewichten.py op de tafel van 2024.";
+
+			unit<uint8> Casus : NrOfRows = 3, Descr = "De drie varianten van het rapport, met de casusmap onder Indicatoren."
+			{
+				attribute<String> name : ['BAU1', 'BAU2', 'NbSGenuanceerder'];
+				attribute<String> Map  : ['WLO_hoog_BAU', 'WLO_hoog_BAU2', 'WLO_hoog_NbSGenuanceerder'];
+			}
+			unit<uint8> Regio : NrOfRows = 5, Descr = "Landelijk en de vier landschapsgebieden van #760 (Landschapsgebieden/Impl)."
+			{
+				attribute<String> name : ['Nederland', 'Kust', 'Rivieren', 'Veen', 'Zand'];
+			}
+
+			container PerCasus := for_each_ne(Casus/name, 'Casus_T(' + quote(Casus/Map) + ')');
+
+			template Casus_T
+			{
+				parameter<String> Map;
+
+				container PerZichtjaar := for_each_ne(Zichtjaar/name, 'Zichtjaar_T(' + quote(Zichtjaar/name) + ')');
+
+				template Zichtjaar_T
+				{
+					parameter<String> ZJ;
+
+					attribute<Float32> Kaart (/Geography/AdminDomain)
+					: StorageName     = "='%LocalDataDir%/' + Levering + '/Indicatoren/' + Map + '/Mortaliteit_SterfteAfname_PerPeriode_' + ZJ + '_Nederland.tif'"
+					, StorageType     = "gdal.grid"
+					, StorageReadOnly = "True"
+					, Descr           = "Uitgestelde sterfgevallen in de periode tot dit zichtjaar, per cel, zoals de export ze schreef.";
+					attribute<Float32> Waarde (/Geography/AdminDomain) := MakeDefined(Kaart, 0f);
+
+					parameter<Float32> Periode       := Zichtjaar/Periode[rlookup(ZJ, Zichtjaar/name)];
+					parameter<Float32> w_InLeven     := Zichtjaar/w_InLeven[rlookup(ZJ, Zichtjaar/name)];
+					parameter<Float32> w_Levensjaren := Zichtjaar/w_Levensjaren[rlookup(ZJ, Zichtjaar/name)];
+
+					parameter<Float32> Nederland := sum(Waarde);
+					parameter<Float32> Kust      := sum(/SourceData/Landschap/Landschapsgebieden/Impl/IsKust     ? Waarde : 0f);
+					parameter<Float32> Rivieren  := sum(/SourceData/Landschap/Landschapsgebieden/Impl/IsRivieren ? Waarde : 0f);
+					parameter<Float32> Veen      := sum(/SourceData/Landschap/Landschapsgebieden/Impl/IsVeen     ? Waarde : 0f);
+					parameter<Float32> Zand      := sum(/SourceData/Landschap/Landschapsgebieden/Impl/IsZand     ? Waarde : 0f);
+				}
+
+				container Controle
+				: Descr = "De kaart AfnameCumulatief van 2120; de som per regio hoort gelijk te zijn aan Uitgesteld_Totaal."
+				{
+					attribute<Float32> Kaart (/Geography/AdminDomain)
+					: StorageName     = "='%LocalDataDir%/' + Levering + '/Indicatoren/' + Map + '/Mortaliteit_SterfteAfname_Cumulatief_Y2120_Nederland.tif'"
+					, StorageType     = "gdal.grid"
+					, StorageReadOnly = "True";
+					attribute<Float32> Waarde (/Geography/AdminDomain) := MakeDefined(Kaart, 0f);
+
+					parameter<Float32> Nederland := sum(Waarde);
+					parameter<Float32> Kust      := sum(/SourceData/Landschap/Landschapsgebieden/Impl/IsKust     ? Waarde : 0f);
+					parameter<Float32> Rivieren  := sum(/SourceData/Landschap/Landschapsgebieden/Impl/IsRivieren ? Waarde : 0f);
+					parameter<Float32> Veen      := sum(/SourceData/Landschap/Landschapsgebieden/Impl/IsVeen     ? Waarde : 0f);
+					parameter<Float32> Zand      := sum(/SourceData/Landschap/Landschapsgebieden/Impl/IsZand     ? Waarde : 0f);
+				}
+
+				container PerRegio := for_each_ne(Regio/name, 'Regio_T(' + quote(Regio/name) + ')');
+
+				template Regio_T
+				{
+					parameter<String> RegioNaam;
+
+					parameter<Float32> Uitgesteld_Totaal        := = 'add(' + AsList('PerZichtjaar/' + Zichtjaar/name + '/' + RegioNaam, ',') + ')';
+					parameter<Float32> InLeven_2120             := = 'add(' + AsList('PerZichtjaar/' + Zichtjaar/name + '/' + RegioNaam + ' * PerZichtjaar/' + Zichtjaar/name + '/w_InLeven', ',') + ')';
+					parameter<Float32> Levensjaren_2023_2120    := = 'add(' + AsList('PerZichtjaar/' + Zichtjaar/name + '/' + RegioNaam + ' * PerZichtjaar/' + Zichtjaar/name + '/w_Levensjaren', ',') + ')';
+					parameter<Float32> PerJaar_2120             := = 'PerZichtjaar/Y2120/' + RegioNaam + ' / PerZichtjaar/Y2120/Periode';
+					parameter<Float32> Controle_Cumulatief_2120 := = 'Controle/' + RegioNaam;
+				}
+
+				unit<uint8> Tabel := Regio
+				, Descr = "De vijf regio's van deze casus als tabel, zonder meta-expressies, zodat Rijen ze zo kan stapelen."
+				{
+					attribute<Float32> Uitgesteld_Y2040 := union_data(., PerZichtjaar/Y2040/Nederland, PerZichtjaar/Y2040/Kust, PerZichtjaar/Y2040/Rivieren, PerZichtjaar/Y2040/Veen, PerZichtjaar/Y2040/Zand);
+					attribute<Float32> Uitgesteld_Y2050 := union_data(., PerZichtjaar/Y2050/Nederland, PerZichtjaar/Y2050/Kust, PerZichtjaar/Y2050/Rivieren, PerZichtjaar/Y2050/Veen, PerZichtjaar/Y2050/Zand);
+					attribute<Float32> Uitgesteld_Y2060 := union_data(., PerZichtjaar/Y2060/Nederland, PerZichtjaar/Y2060/Kust, PerZichtjaar/Y2060/Rivieren, PerZichtjaar/Y2060/Veen, PerZichtjaar/Y2060/Zand);
+					attribute<Float32> Uitgesteld_Y2070 := union_data(., PerZichtjaar/Y2070/Nederland, PerZichtjaar/Y2070/Kust, PerZichtjaar/Y2070/Rivieren, PerZichtjaar/Y2070/Veen, PerZichtjaar/Y2070/Zand);
+					attribute<Float32> Uitgesteld_Y2080 := union_data(., PerZichtjaar/Y2080/Nederland, PerZichtjaar/Y2080/Kust, PerZichtjaar/Y2080/Rivieren, PerZichtjaar/Y2080/Veen, PerZichtjaar/Y2080/Zand);
+					attribute<Float32> Uitgesteld_Y2090 := union_data(., PerZichtjaar/Y2090/Nederland, PerZichtjaar/Y2090/Kust, PerZichtjaar/Y2090/Rivieren, PerZichtjaar/Y2090/Veen, PerZichtjaar/Y2090/Zand);
+					attribute<Float32> Uitgesteld_Y2100 := union_data(., PerZichtjaar/Y2100/Nederland, PerZichtjaar/Y2100/Kust, PerZichtjaar/Y2100/Rivieren, PerZichtjaar/Y2100/Veen, PerZichtjaar/Y2100/Zand);
+					attribute<Float32> Uitgesteld_Y2110 := union_data(., PerZichtjaar/Y2110/Nederland, PerZichtjaar/Y2110/Kust, PerZichtjaar/Y2110/Rivieren, PerZichtjaar/Y2110/Veen, PerZichtjaar/Y2110/Zand);
+					attribute<Float32> Uitgesteld_Y2120 := union_data(., PerZichtjaar/Y2120/Nederland, PerZichtjaar/Y2120/Kust, PerZichtjaar/Y2120/Rivieren, PerZichtjaar/Y2120/Veen, PerZichtjaar/Y2120/Zand);
+					attribute<Float32> Uitgesteld_Totaal        := union_data(., PerRegio/Nederland/Uitgesteld_Totaal, PerRegio/Kust/Uitgesteld_Totaal, PerRegio/Rivieren/Uitgesteld_Totaal, PerRegio/Veen/Uitgesteld_Totaal, PerRegio/Zand/Uitgesteld_Totaal);
+					attribute<Float32> Controle_Cumulatief_2120 := union_data(., PerRegio/Nederland/Controle_Cumulatief_2120, PerRegio/Kust/Controle_Cumulatief_2120, PerRegio/Rivieren/Controle_Cumulatief_2120, PerRegio/Veen/Controle_Cumulatief_2120, PerRegio/Zand/Controle_Cumulatief_2120);
+					attribute<Float32> PerJaar_2120             := union_data(., PerRegio/Nederland/PerJaar_2120, PerRegio/Kust/PerJaar_2120, PerRegio/Rivieren/PerJaar_2120, PerRegio/Veen/PerJaar_2120, PerRegio/Zand/PerJaar_2120);
+					attribute<Float32> InLeven_2120             := union_data(., PerRegio/Nederland/InLeven_2120, PerRegio/Kust/InLeven_2120, PerRegio/Rivieren/InLeven_2120, PerRegio/Veen/InLeven_2120, PerRegio/Zand/InLeven_2120);
+					attribute<Float32> Levensjaren_2023_2120    := union_data(., PerRegio/Nederland/Levensjaren_2023_2120, PerRegio/Kust/Levensjaren_2023_2120, PerRegio/Rivieren/Levensjaren_2023_2120, PerRegio/Veen/Levensjaren_2023_2120, PerRegio/Zand/Levensjaren_2023_2120);
+					attribute<Float32> Levensjaren_Totaal       := Uitgesteld_Totaal * LevensjarenPerUitgesteldSterfgeval;
+				}
+			}
+
+			unit<uint32> RijenBron := combine(Casus, Regio)
+			, Descr = "De regels, los van de weggeschreven unit: een kolom van een unit met StorageName mag niet op een zusterkolom steunen (Cannot start ValidationAndCommit while doing ValidationAndCommit)."
+			{
+				attribute<String> CasusNaam := Casus/name[first_rel];
+				attribute<String> RegioNaam := Regio/name[second_rel];
+			}
+
+			unit<uint32> Rijen := RijenBron
+			, StorageName = "='%LocalDataProjDir%/Rapport_v01/SterfteUitgesteld.csv'"
+			, StorageType = "gdalwrite.vect"
+			, Descr       = "Een regel per variant en gebied, in de volgorde van Casus en Regio: de uitgestelde sterfgevallen per periode en de drie herrekende grootheden."
+			{
+				attribute<String>  Variant := RijenBron/CasusNaam;
+				attribute<String>  Gebied  := RijenBron/RegioNaam;
+
+				attribute<Float32> Uitgesteld_Y2040         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2040, PerCasus/BAU2/Tabel/Uitgesteld_Y2040, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2040);
+				attribute<Float32> Uitgesteld_Y2050         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2050, PerCasus/BAU2/Tabel/Uitgesteld_Y2050, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2050);
+				attribute<Float32> Uitgesteld_Y2060         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2060, PerCasus/BAU2/Tabel/Uitgesteld_Y2060, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2060);
+				attribute<Float32> Uitgesteld_Y2070         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2070, PerCasus/BAU2/Tabel/Uitgesteld_Y2070, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2070);
+				attribute<Float32> Uitgesteld_Y2080         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2080, PerCasus/BAU2/Tabel/Uitgesteld_Y2080, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2080);
+				attribute<Float32> Uitgesteld_Y2090         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2090, PerCasus/BAU2/Tabel/Uitgesteld_Y2090, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2090);
+				attribute<Float32> Uitgesteld_Y2100         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2100, PerCasus/BAU2/Tabel/Uitgesteld_Y2100, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2100);
+				attribute<Float32> Uitgesteld_Y2110         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2110, PerCasus/BAU2/Tabel/Uitgesteld_Y2110, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2110);
+				attribute<Float32> Uitgesteld_Y2120         := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Y2120, PerCasus/BAU2/Tabel/Uitgesteld_Y2120, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Y2120);
+				attribute<Float32> Uitgesteld_Totaal        := union_data(., PerCasus/BAU1/Tabel/Uitgesteld_Totaal, PerCasus/BAU2/Tabel/Uitgesteld_Totaal, PerCasus/NbSGenuanceerder/Tabel/Uitgesteld_Totaal);
+				attribute<Float32> Controle_Cumulatief_2120 := union_data(., PerCasus/BAU1/Tabel/Controle_Cumulatief_2120, PerCasus/BAU2/Tabel/Controle_Cumulatief_2120, PerCasus/NbSGenuanceerder/Tabel/Controle_Cumulatief_2120);
+				attribute<Float32> PerJaar_2120             := union_data(., PerCasus/BAU1/Tabel/PerJaar_2120, PerCasus/BAU2/Tabel/PerJaar_2120, PerCasus/NbSGenuanceerder/Tabel/PerJaar_2120);
+				attribute<Float32> InLeven_2120             := union_data(., PerCasus/BAU1/Tabel/InLeven_2120, PerCasus/BAU2/Tabel/InLeven_2120, PerCasus/NbSGenuanceerder/Tabel/InLeven_2120);
+				attribute<Float32> Levensjaren_2023_2120    := union_data(., PerCasus/BAU1/Tabel/Levensjaren_2023_2120, PerCasus/BAU2/Tabel/Levensjaren_2023_2120, PerCasus/NbSGenuanceerder/Tabel/Levensjaren_2023_2120);
+				attribute<Float32> Levensjaren_Totaal       := union_data(., PerCasus/BAU1/Tabel/Levensjaren_Totaal, PerCasus/BAU2/Tabel/Levensjaren_Totaal, PerCasus/NbSGenuanceerder/Tabel/Levensjaren_Totaal);
+			}
+		}
+
 		container PerCasus :=
 			for_each_ne(
 				Classifications/Modellering/AllCases/Label
