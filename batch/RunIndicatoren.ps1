@@ -12,8 +12,10 @@
    zichtjaar, basisdata, variantdata) en zegt het welke stap ontbrekende invoer maakt.
 
  HOE START JE HET (vanuit een PowerShell-venster in de map batch)
-   De levering: alle varianten, zichtjaar 2120, tabellen per landschap en landsdekkend:
-       .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerd -IndicatorRegio Landschap
+   De levering: alle varianten, zichtjaar 2120, de vier landschapstabellen en landsdekkend:
+       .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerder -IndicatorRegio Landschappen
+   Alleen de vier landschapstabellen, bij een levering die de rest al heeft:
+       .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerder -IndicatorRegio Landschappen -AlleenLandschapstabellen
    Een variant op de landelijke indeling:
        .\RunIndicatoren.ps1 -Varianten BAU
    Meerdere zichtjaren:
@@ -31,9 +33,15 @@
       -Zichtjaren           Standaard Y2120. Meerdere kan: Y2040,Y2120. Het basisjaar kan niet
                             (ExportZichtjaar=Basisjaar valt om; de basisjaarkaarten komen vanzelf mee).
       -IndicatorRegio       Op welke indeling de tabel Indicatoren_<regio>.csv aggregeert: NL,
-                            Provincie, COROP, Gemeente, NVM, Landschap of een van de vier
-                            Landschap_<naam>. De landsdekkende tabel NationaleIndicatoren komt hoe dan
-                            ook mee, dus Landschap levert beide en hoeft niet ook op NL.
+                            Provincie, COROP, Gemeente, NVM, een van de vier Landschap_<naam>, of
+                            Landschappen: de vier aangeleverde, overlappende landschapsgebieden van
+                            #760 na elkaar, een run per gebied, elk Indicatoren_Landschap_<naam>.csv.
+                            De landsdekkende tabel NationaleIndicatoren komt met de eerste run mee.
+                            De partitie van #705 (Landschap) is sinds 13 september 2026 geen optie meer.
+      -AlleenLandschapstabellen  Alleen de regionale tabel per run, zonder grids, landelijke tabel en
+                            claimrealisatie; voor een levering die die al heeft. Bij Landschappen
+                            draagt anders de eerste run de volledige export en de drie volgende alleen
+                            hun tabel, want al het andere hangt niet van de indeling af.
       -Gebundeld            Alle varianten van een zichtjaar in een GeoDmsRun-proces, na elkaar; scheelt
                             het inlezen van wat de casussen delen. Gebruik dit, en draai NOOIT meerdere
                             processen naast elkaar op dezelfde LocalData: ze botsen op bestanden die
@@ -78,10 +86,11 @@ param(
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @('Y2120'),
-    [ValidateSet('NL','Provincie','COROP','Gemeente','NVM','Landschap',
+    [ValidateSet('NL','Provincie','COROP','Gemeente','NVM','Landschappen',
                  'Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand')]
     [string]   $IndicatorRegio = 'NL',
     [switch]   $Gebundeld,
+    [switch]   $AlleenLandschapstabellen,
     [switch]   $GeenToets
 )
 
@@ -185,7 +194,7 @@ Write-Regel "config    : $Cfg"
 Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
 Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"
-Write-Regel "regio     : $IndicatorRegio (de landelijke tabel komt hoe dan ook mee, #705)"
+Write-Regel "regio     : $IndicatorRegio$(if ($IndicatorRegio -eq 'Landschappen') { ', de vier landschapsgebieden van #760 na elkaar' })"
 
 if (-not $GeenToets) { Test-Invoer }
 
@@ -233,18 +242,31 @@ function Invoke-Export([string]$stap, [string[]]$items) {
 $eerste = "/Indicatoren/${Scenario}_$($Varianten[0])/Zichtjaren/Export/Legendas/Schrijf"
 Invoke-Export "legendas" @($eerste)
 
-if ($Gebundeld) {
-    Write-Regel "modus     : gebundeld, per zichtjaar een proces voor $($Varianten.Count) varianten"
-    foreach ($y in $Zichtjaren) {
-        $env:ExportZichtjaar = $y
-        $items = @($Varianten | ForEach-Object { "/Indicatoren/${Scenario}_$_/Zichtjaren/Export/Generate_Indicatoren" })
-        Invoke-Export "indicatoren-gebundeld-$y" $items
-    }
-} else {
-    foreach ($v in $Varianten) {
+# De regio's om te draaien: Landschappen is de vier aangeleverde gebieden van #760 na elkaar, een
+# proces per gebied, want IndicatorRegio geldt per proces voor alle indicatoren tegelijk. De eerste
+# regio draagt de volledige export; elke volgende alleen de regionale tabel, want de grids, de
+# landelijke tabel en de claimrealisatie hangen niet van de indeling af. Met -AlleenLandschapstabellen
+# ook de eerste alleen de tabel.
+$regios = if ($IndicatorRegio -eq 'Landschappen') { @('Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand') } else { @($IndicatorRegio) }
+for ($r = 0; $r -lt $regios.Count; $r++) {
+    $regio = $regios[$r]
+    $env:IndicatorRegio = $regio
+    $alleenTabel = $AlleenLandschapstabellen -or ($r -gt 0)
+    $wat  = if ($alleenTabel) { 'Zichtjaren/Export/generates/Indicatoren_PerIndeling' } else { 'Zichtjaren/Export/Generate_Indicatoren' }
+    $naam = if ($alleenTabel) { "tabel-$regio" } else { "indicatoren-$regio" }
+    if ($Gebundeld) {
+        Write-Regel "modus     : gebundeld, per zichtjaar een proces voor $($Varianten.Count) varianten ($regio)"
         foreach ($y in $Zichtjaren) {
             $env:ExportZichtjaar = $y
-            Invoke-Export "indicatoren-$v-$y" @("/Indicatoren/${Scenario}_$v/Zichtjaren/Export/Generate_Indicatoren")
+            $items = @($Varianten | ForEach-Object { "/Indicatoren/${Scenario}_$_/$wat" })
+            Invoke-Export "$naam-gebundeld-$y" $items
+        }
+    } else {
+        foreach ($v in $Varianten) {
+            foreach ($y in $Zichtjaren) {
+                $env:ExportZichtjaar = $y
+                Invoke-Export "$naam-$v-$y" @("/Indicatoren/${Scenario}_$v/$wat")
+            }
         }
     }
 }

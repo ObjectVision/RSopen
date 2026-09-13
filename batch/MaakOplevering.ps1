@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Stelt uit de ruwe indicatorenuitvoer in LocalData een opleveringsmap samen.
 
@@ -178,7 +178,10 @@ $Beschrijving = [ordered]@{
     'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW'                                    = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
     'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW'                                    = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
     'NationaleIndicatoren'                                                                           = @('tabel', '', 'Alle indicatoren op een regel, voor het gekozen schaalniveau')
-    'Indicatoren_Landschap'                                                                          = @('tabel, ha en euro', '', 'Dezelfde indicatoren per landschap: Kust, Rivieren, Veen, Zand en Overig')
+    'Indicatoren_Landschap_Kust'                                                                     = @('tabel, ha en euro', '', 'Dezelfde indicatoren voor het kustgebied zoals team kust het aanleverde; de vier landschapsgebieden overlappen elkaar en tellen niet op tot Nederland')
+    'Indicatoren_Landschap_Rivieren'                                                                 = @('tabel, ha en euro', '', 'Dezelfde indicatoren voor het rivierengebied zoals team rivieren het aanleverde; overlapt de andere gebieden')
+    'Indicatoren_Landschap_Veen'                                                                     = @('tabel, ha en euro', '', 'Dezelfde indicatoren voor het veengebied zoals team veen het aanleverde; overlapt de andere gebieden')
+    'Indicatoren_Landschap_Zand'                                                                     = @('tabel, ha en euro', '', 'Dezelfde indicatoren voor het zandgebied zoals team zand het aanleverde; overlapt de andere gebieden')
     'Landgebruik_Areaal'                                                                             = @('tabel, ha', 'LU_Hoofdklasse', 'Areaal per landgebruiksklasse in basisjaar en zichtjaar, met het verschil')
     'LandgebruikNL2120_Areaal'                                                                       = @('tabel, ha', 'LU_NL2120', 'Areaal per klasse in de indeling van 165 klassen')
     'LandgebruikHoofdklasse_Areaal'                                                                  = @('tabel, ha', 'LU_Hoofdklasse', 'Areaal per hoofdklasse, landelijk en per landschap')
