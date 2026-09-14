@@ -254,6 +254,179 @@ container AdHoc
 			}
 		}
 
+		container StandBasisjaar
+		: Descr = "De standindicatoren van tabel 6.1, 6.2 en 9.1 van het resultatenrapport voor het basisjaar 2023, landelijk en per landschapsgebied van #760,
+					met dezelfde rekenregels als de export voor de zichtjaren (RegionaleIndicatoren_T in Templates/Indicatoren_T/Export.dms) maar dan op de
+					basisjaarcontainers. Gevraagd omdat de tabellen alleen voor arealen een basisjaarkolom kennen: de export slaat het basisjaar over, want
+					Zichtjaren kent het niet als exportjaar.
+
+					Per kolom de bron en de rekenregel:
+					- Dichtheid_Wonen en Dichtheid_Werken_Banen_ha: Basisjaar/Dichtheid, het gemiddelde van de celdichtheid over de cellen met woningen of
+					  banen in het gebied, zoals Per_Regio daar.
+					- Verharding: Basisjaar/Verharding/Result met lege cellen als nul, het gemiddelde over de cellen van het gebied binnen het studiegebied,
+					  dezelfde noemer als de zichtjaarkaart.
+					- BereikbaarheidGroen_Fractie_Tot300m_Groenaanbod_over_woning: niet te rekenen voor het basisjaar. De basisjaarinstantie van
+					  BereikbaarheidGroenBBG_T verwijst voor de fractietak naar WaardeNabijheidGroen/Fracties/NatuurCel, en die container bestaat
+					  alleen in het zichtjaar; het sjabloon zelf is van buiten de instantie niet aan te roepen (Per_Afstand_T is daar lokaal).
+					  Structureel: WaardeNabijheidGroen/Fracties ook in Basisjaar neerzetten, dan rekent PerRegios/Nationaal daar vanzelf.
+					- Bereikbaarheid_Banen_OV, _Fiets en _Auto: de kolommen Banen_*_StartYear per buurt uit Bereikbaarheid_Banen_Y2120.gpkg, die de export
+					  naast de zichtjaarwaarden wegschrijft; het bewonersgewogen gemiddelde over de buurten van het gebied met de woningen van het basisjaar
+					  als gewicht, zoals PerIndicatorRegio. Een buurt hoort bij het gebied waarin de meeste van haar cellen liggen.
+					- Piekbuiberging_Opgave_m3: Basisjaar/Piekbuiberging/PerGrid/Opgave per blok; een blok telt mee zodra een cel ervan in het gebied ligt, zoals de
+					  zichtjaartabel het doet.
+					  Aanbod, gedekt en dekkingsgraad hebben in het basisjaar geen waarde: de bestaande capaciteit geldt daar als verbruikt.
+					- Overstromingsschade_Hoofdwatersysteem_Binnendijks, _Buitendijks en Regionaalwatersysteem_Binnendijks: Basisjaar/Overstromingsschade/
+					  Resultaat, nominaal, gesommeerd over de cellen van het gebied; contant is in het basisjaar gelijk aan nominaal.
+					Het basisjaar is variantonafhankelijk, dus de casus BAU volstaat. De landschapskolommen overlappen elkaar en tellen niet op tot Nederland.
+					Structureel: het basisjaar als exportjaar toelaten in Zichtjaren, dan komt dit vanzelf uit RegionaleIndicatoren_T."
+		{
+			parameter<String> Levering := 'Productierun_20260910', Descr = "De opleveringsmap onder LocalDataDir, voor de gpkg van de banenbereikbaarheid.";
+			parameter<String> Casus    := 'WLO_hoog_BAU',         Descr = "Uit welke casus het basisjaar komt; het basisjaar is voor alle varianten gelijk.";
+			container B := ='/Indicatoren/' + Casus + '/Basisjaar';
+			unit<UInt32> Buurt := /SourceData/RegioIndelingen/cbs/Y2021/buurt, Descr = "De buurtindeling van de banenbereikbaarheid (Templates/Indicatoren/Bereikbaarheid.dms).";
+
+			container BanenGpkg
+			: StorageName     = "='%LocalDataDir%/' + Levering + '/Indicatoren/' + Casus + '/Bereikbaarheid_Banen_Y2120.gpkg'"
+			, StorageType     = "gdal.vect"
+			, StorageReadOnly = "True"
+			, Descr           = "De uitvoer van Bereikbaarheid_Banen/Result van het laatste zichtjaar, met per buurt naast de zichtjaarwaarde ook de waarde van het basisjaar (StartYear)."
+			{
+				unit<uint32> Output_PerBuurt
+				{
+					attribute<String>  BU_CODE;
+					attribute<Float32> Banen_W_OV_W_StartYear;
+					attribute<Float32> Banen_BB_StartYear;
+					attribute<Float32> Banen_CAR_StartYear;
+				}
+			}
+			container BanenBasisjaar
+			{
+				attribute<Float32> OV       (Buurt) := rjoin(Buurt/statcode, BanenGpkg/Output_PerBuurt/BU_CODE, BanenGpkg/Output_PerBuurt/Banen_W_OV_W_StartYear);
+				attribute<Float32> Fiets    (Buurt) := rjoin(Buurt/statcode, BanenGpkg/Output_PerBuurt/BU_CODE, BanenGpkg/Output_PerBuurt/Banen_BB_StartYear);
+				attribute<Float32> Auto     (Buurt) := rjoin(Buurt/statcode, BanenGpkg/Output_PerBuurt/BU_CODE, BanenGpkg/Output_PerBuurt/Banen_CAR_StartYear);
+				attribute<Float32> Woningen (Buurt) := sum(B/Stand/Aantal_Woningen_Totaal[Float32], Buurt/Per_AdminDomain), Descr = "De woningen van het basisjaar per buurt, het gewicht van de aggregatie.";
+			}
+
+			unit<uint8> Regio : NrOfRows = 5, Descr = "Landelijk en de vier landschapsgebieden van #760 (Landschapsgebieden/Impl)."
+			{
+				attribute<String> name : ['Nederland', 'Kust', 'Rivieren', 'Veen', 'Zand'];
+			}
+			container Masker
+			{
+				attribute<Bool> Nederland (/Geography/AdminDomain) := const(TRUE, /Geography/AdminDomain);
+				attribute<Bool> Kust      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsKust;
+				attribute<Bool> Rivieren  (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsRivieren;
+				attribute<Bool> Veen      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsVeen;
+				attribute<Bool> Zand      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsZand;
+			}
+
+			container PerRegio := for_each_ne(Regio/name, 'Regio_T(' + quote(Regio/name) + ', Masker/' + Regio/name + ')');
+
+			template Regio_T
+			{
+				parameter<String> RegioNaam;
+				attribute<Bool>   IsRegio (/Geography/AdminDomain);
+
+				attribute<Float32> Zeef (/Geography/AdminDomain) := IsRegio && /Geography/AdminDomain/IsCompactedDomain ? 1f : null_f, Descr = "1 binnen het gebied en het studiegebied, null erbuiten; de aggregaties slaan null over. Het studiegebied hoort erbij omdat de zichtjaarkaarten daarbuiten leeg zijn en de teamgebieden tot op zee lopen.";
+
+				parameter<Float32> Dichtheid_Wonen           := mean(B/Dichtheid/Wonen/Per_AdminDomain[Float32] * Zeef);
+				parameter<Float32> Dichtheid_Werken_Banen_ha := mean(B/Dichtheid/Werken/Banen_ha/Per_AdminDomain[Float32] * Zeef);
+				parameter<Float32> Verharding                := mean(MakeDefined(B/Verharding/Result, 0f) * Zeef), Descr = "Lege basisjaarcellen tellen als onverhard, zoals in het zichtjaar: daar krijgt een onveranderde cel Basisjaarverharding, het celgemiddelde van dezelfde kaart, en dat is nul waar de kaart leeg is. Zonder MakeDefined telt het gemiddelde alleen de cellen met verharding en komt landelijk op 0,60 in plaats van rond 0,15.";
+
+				attribute<Bool>    BuurtInRegio (Buurt) := modus(IsRegio, Buurt/Per_AdminDomain), Descr = "De buurt hoort bij het gebied waarin de meeste van haar cellen liggen.";
+				attribute<Float32> BuurtZeef    (Buurt) := BuurtInRegio ? 1f : null_f;
+				parameter<Float32> Bereikbaarheid_Banen_OV    := sum(BanenBasisjaar/OV    * BanenBasisjaar/Woningen * BuurtZeef) / sum(BanenBasisjaar/Woningen * BuurtZeef);
+				parameter<Float32> Bereikbaarheid_Banen_Fiets := sum(BanenBasisjaar/Fiets * BanenBasisjaar/Woningen * BuurtZeef) / sum(BanenBasisjaar/Woningen * BuurtZeef);
+				parameter<Float32> Bereikbaarheid_Banen_Auto  := sum(BanenBasisjaar/Auto  * BanenBasisjaar/Woningen * BuurtZeef) / sum(BanenBasisjaar/Woningen * BuurtZeef);
+
+				attribute<Bool>    BlokInRegio (B/Piekbuiberging/Grid) := = 'any(IsRegio, /Geography/AdminDomain/rdc_' + /ModelParameters/Piekbuiberging/Grid_ref + '_rel)', Descr = "Het blok telt mee zodra een van zijn cellen in het gebied ligt. Dat is wat de zichtjaartabel doet: PerRegio/Regio/Per_Grid neemt de modus van de regio over de cellen van het blok, en buiten het gebied is die regio null en telt niet mee, dus elk blok met een cel in het gebied hoort erbij. Met een meerderheidsregel kwam de kustopgave op 128,7 in plaats van 130,7 mln m3.";
+				parameter<Float32> Piekbuiberging_Opgave_m3 := sum(B/Piekbuiberging/PerGrid/Opgave[Float32] * (BlokInRegio ? 1f : null_f));
+
+				parameter<Float32> Overstromingsschade_Hoofdwatersysteem_Binnendijks     := sum(B/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Binnendijks[Float32]     * Zeef);
+				parameter<Float32> Overstromingsschade_Hoofdwatersysteem_Buitendijks     := sum(B/Overstromingsschade/Resultaat/Result_Hoofdwatersysteem_Buitendijks[Float32]     * Zeef);
+				parameter<Float32> Overstromingsschade_Regionaalwatersysteem_Binnendijks := sum(B/Overstromingsschade/Resultaat/Result_Regionaalwatersysteem_Binnendijks[Float32] * Zeef);
+			}
+
+			unit<uint8> Uitvoer := Regio
+			, StorageName = "='%LocalDataProjDir%/Rapport_v01/StandBasisjaar.csv'"
+			, StorageType = "gdalwrite.vect"
+			, Descr       = "Een regel per gebied, kolomnamen als in de export; geen kolom steunt op een zusterkolom."
+			{
+				attribute<String>  Regio_name := Regio/name;
+				attribute<Float32> Dichtheid_Wonen                                                := union_data(., PerRegio/Nederland/Dichtheid_Wonen, PerRegio/Kust/Dichtheid_Wonen, PerRegio/Rivieren/Dichtheid_Wonen, PerRegio/Veen/Dichtheid_Wonen, PerRegio/Zand/Dichtheid_Wonen);
+				attribute<Float32> Dichtheid_Werken_Banen_ha                                      := union_data(., PerRegio/Nederland/Dichtheid_Werken_Banen_ha, PerRegio/Kust/Dichtheid_Werken_Banen_ha, PerRegio/Rivieren/Dichtheid_Werken_Banen_ha, PerRegio/Veen/Dichtheid_Werken_Banen_ha, PerRegio/Zand/Dichtheid_Werken_Banen_ha);
+				attribute<Float32> Verharding                                                     := union_data(., PerRegio/Nederland/Verharding, PerRegio/Kust/Verharding, PerRegio/Rivieren/Verharding, PerRegio/Veen/Verharding, PerRegio/Zand/Verharding);
+				attribute<Float32> Bereikbaarheid_Banen_OV                                        := union_data(., PerRegio/Nederland/Bereikbaarheid_Banen_OV, PerRegio/Kust/Bereikbaarheid_Banen_OV, PerRegio/Rivieren/Bereikbaarheid_Banen_OV, PerRegio/Veen/Bereikbaarheid_Banen_OV, PerRegio/Zand/Bereikbaarheid_Banen_OV);
+				attribute<Float32> Bereikbaarheid_Banen_Fiets                                     := union_data(., PerRegio/Nederland/Bereikbaarheid_Banen_Fiets, PerRegio/Kust/Bereikbaarheid_Banen_Fiets, PerRegio/Rivieren/Bereikbaarheid_Banen_Fiets, PerRegio/Veen/Bereikbaarheid_Banen_Fiets, PerRegio/Zand/Bereikbaarheid_Banen_Fiets);
+				attribute<Float32> Bereikbaarheid_Banen_Auto                                      := union_data(., PerRegio/Nederland/Bereikbaarheid_Banen_Auto, PerRegio/Kust/Bereikbaarheid_Banen_Auto, PerRegio/Rivieren/Bereikbaarheid_Banen_Auto, PerRegio/Veen/Bereikbaarheid_Banen_Auto, PerRegio/Zand/Bereikbaarheid_Banen_Auto);
+				attribute<Float32> Piekbuiberging_Opgave_m3                                       := union_data(., PerRegio/Nederland/Piekbuiberging_Opgave_m3, PerRegio/Kust/Piekbuiberging_Opgave_m3, PerRegio/Rivieren/Piekbuiberging_Opgave_m3, PerRegio/Veen/Piekbuiberging_Opgave_m3, PerRegio/Zand/Piekbuiberging_Opgave_m3);
+				attribute<Float32> Overstromingsschade_Hoofdwatersysteem_Binnendijks              := union_data(., PerRegio/Nederland/Overstromingsschade_Hoofdwatersysteem_Binnendijks, PerRegio/Kust/Overstromingsschade_Hoofdwatersysteem_Binnendijks, PerRegio/Rivieren/Overstromingsschade_Hoofdwatersysteem_Binnendijks, PerRegio/Veen/Overstromingsschade_Hoofdwatersysteem_Binnendijks, PerRegio/Zand/Overstromingsschade_Hoofdwatersysteem_Binnendijks);
+				attribute<Float32> Overstromingsschade_Hoofdwatersysteem_Buitendijks              := union_data(., PerRegio/Nederland/Overstromingsschade_Hoofdwatersysteem_Buitendijks, PerRegio/Kust/Overstromingsschade_Hoofdwatersysteem_Buitendijks, PerRegio/Rivieren/Overstromingsschade_Hoofdwatersysteem_Buitendijks, PerRegio/Veen/Overstromingsschade_Hoofdwatersysteem_Buitendijks, PerRegio/Zand/Overstromingsschade_Hoofdwatersysteem_Buitendijks);
+				attribute<Float32> Overstromingsschade_Regionaalwatersysteem_Binnendijks          := union_data(., PerRegio/Nederland/Overstromingsschade_Regionaalwatersysteem_Binnendijks, PerRegio/Kust/Overstromingsschade_Regionaalwatersysteem_Binnendijks, PerRegio/Rivieren/Overstromingsschade_Regionaalwatersysteem_Binnendijks, PerRegio/Veen/Overstromingsschade_Regionaalwatersysteem_Binnendijks, PerRegio/Zand/Overstromingsschade_Regionaalwatersysteem_Binnendijks);
+			}
+
+		}
+
+		container Scenario
+		: Descr = "De ruimtevraag van het omgevingsscenario voor het resultatenrapport: woningen (eengezins en meergezins) en banen in de stand van het
+					basisjaar en als claim per zichtjaar, landelijk, plus de basisjaarstand per provincie voor de kaart met de groei tot 2120.
+
+					De claims komen uit dezelfde items die de allocatie leest: VariantData/<variant>/Claims/WLO_hoog/Zichtjaren/<zichtjaar>/AllocRegios, wonen
+					op de NVM-regio's per WP2xVSSH-segment, werken op de COROP-regio's als Totaal over de zes TIGRIS-sectoren, dus met de verankering op de
+					LISA-trend per regio uit ModelParameters/ClaimBasisjaar. De claims zijn in alle varianten gelijk (ClaimVariantName BAU), dus BAU volstaat.
+					Vanaf het zichtjaar van Advanced/FromWhichDoWeKeepTIGRISconstant leest de claimkant het laatste TIGRIS-jaar, dus de reeks loopt na 2060 vlak.
+					De basisjaarstand komt uit Indicatoren/<casus>/Basisjaar/Stand, de provincies uit RegioIndelingen/Provincie/StudyArea. De 2120-stand per
+					provincie staat al in de export (ClaimRealisatie_Provincie), dus die schrijft dit item niet opnieuw."
+		{
+			parameter<String> Variant := 'BAU', Descr = "Uit welke variant de claims en het basisjaar komen; beide zijn variantonafhankelijk.";
+			container Cl := ='/VariantData/' + Variant + '/Claims/WLO_hoog/Zichtjaren';
+			container B  := ='/Indicatoren/WLO_hoog_' + Variant + '/Basisjaar';
+			unit<uint32> Provincie := /SourceData/RegioIndelingen/Provincie/StudyArea;
+
+			container Basisjaar
+			{
+				parameter<Float32> Eengezins  := sum(B/Stand/Aantal_Woningen_eengezins_VrijeSector[Float32] + B/Stand/Aantal_Woningen_eengezins_SocialeHuur[Float32]);
+				parameter<Float32> Meergezins := sum(B/Stand/Aantal_Woningen_meergezins_VrijeSector[Float32] + B/Stand/Aantal_Woningen_meergezins_SocialeHuur[Float32]);
+				parameter<Float32> Banen      := sum(B/Stand/Aantal_Banen_Totaal[Float32]);
+			}
+			unit<uint8> Zichtjaar : NrOfRows = 9 { attribute<String> name : ['Y2040', 'Y2050', 'Y2060', 'Y2070', 'Y2080', 'Y2090', 'Y2100', 'Y2110', 'Y2120']; }
+			container PerZichtjaar := for_each_ne(Zichtjaar/name, 'Zichtjaar_T(' + quote(Zichtjaar/name) + ')');
+			template Zichtjaar_T
+			{
+				parameter<String> ZJ;
+				parameter<Float32> Eengezins  := = 'sum(Cl/' + ZJ + '/AllocRegios/NVM/Wonen/eengezins_VrijeSector[Float32] + Cl/' + ZJ + '/AllocRegios/NVM/Wonen/eengezins_SocialeHuur[Float32])';
+				parameter<Float32> Meergezins := = 'sum(Cl/' + ZJ + '/AllocRegios/NVM/Wonen/meergezins_VrijeSector[Float32] + Cl/' + ZJ + '/AllocRegios/NVM/Wonen/meergezins_SocialeHuur[Float32])';
+				parameter<Float32> Banen      := = 'sum(Cl/' + ZJ + '/AllocRegios/COROP/Werken/Totaal[Float32])';
+			}
+
+			unit<uint8> Reeks : NrOfRows = 10, Descr = "Het basisjaar en de negen zichtjaren."
+			{
+				attribute<String> name : ['Y2023', 'Y2040', 'Y2050', 'Y2060', 'Y2070', 'Y2080', 'Y2090', 'Y2100', 'Y2110', 'Y2120'];
+			}
+			unit<uint8> Uitvoer := Reeks
+			, StorageName = "='%LocalDataProjDir%/Rapport_v01/Scenario_reeks.csv'"
+			, StorageType = "gdalwrite.vect"
+			, Descr       = "Landelijk per jaar: de stand van het basisjaar en daarna de claim per zichtjaar."
+			{
+				attribute<String>  Jaar       := Reeks/name;
+				attribute<Float32> Eengezins  := union_data(., Basisjaar/Eengezins, PerZichtjaar/Y2040/Eengezins, PerZichtjaar/Y2050/Eengezins, PerZichtjaar/Y2060/Eengezins, PerZichtjaar/Y2070/Eengezins, PerZichtjaar/Y2080/Eengezins, PerZichtjaar/Y2090/Eengezins, PerZichtjaar/Y2100/Eengezins, PerZichtjaar/Y2110/Eengezins, PerZichtjaar/Y2120/Eengezins);
+				attribute<Float32> Meergezins := union_data(., Basisjaar/Meergezins, PerZichtjaar/Y2040/Meergezins, PerZichtjaar/Y2050/Meergezins, PerZichtjaar/Y2060/Meergezins, PerZichtjaar/Y2070/Meergezins, PerZichtjaar/Y2080/Meergezins, PerZichtjaar/Y2090/Meergezins, PerZichtjaar/Y2100/Meergezins, PerZichtjaar/Y2110/Meergezins, PerZichtjaar/Y2120/Meergezins);
+				attribute<Float32> Banen      := union_data(., Basisjaar/Banen, PerZichtjaar/Y2040/Banen, PerZichtjaar/Y2050/Banen, PerZichtjaar/Y2060/Banen, PerZichtjaar/Y2070/Banen, PerZichtjaar/Y2080/Banen, PerZichtjaar/Y2090/Banen, PerZichtjaar/Y2100/Banen, PerZichtjaar/Y2110/Banen, PerZichtjaar/Y2120/Banen);
+			}
+
+			unit<uint32> PerProvincie := Provincie
+			, StorageName = "='%LocalDataProjDir%/Rapport_v01/Scenario_provincie.csv'"
+			, StorageType = "gdalwrite.vect"
+			, Descr       = "De stand van het basisjaar per provincie: woningen totaal, eengezins, meergezins en banen."
+			{
+				attribute<String>  Provincie_name := Provincie/name;
+				attribute<Float32> Woningen   := sum(B/Stand/Aantal_Woningen_Totaal[Float32], Provincie/Per_AdminDomain_Fijn);
+				attribute<Float32> Eengezins  := sum(B/Stand/Aantal_Woningen_eengezins_VrijeSector[Float32] + B/Stand/Aantal_Woningen_eengezins_SocialeHuur[Float32], Provincie/Per_AdminDomain_Fijn);
+				attribute<Float32> Meergezins := sum(B/Stand/Aantal_Woningen_meergezins_VrijeSector[Float32] + B/Stand/Aantal_Woningen_meergezins_SocialeHuur[Float32], Provincie/Per_AdminDomain_Fijn);
+				attribute<Float32> Banen      := sum(B/Stand/Aantal_Banen_Totaal[Float32], Provincie/Per_AdminDomain_Fijn);
+			}
+		}
+
 		container PerCasus :=
 			for_each_ne(
 				Classifications/Modellering/AllCases/Label
