@@ -427,6 +427,109 @@ container AdHoc
 			}
 		}
 
+		container PiekbuiT100
+		: Descr = "De piekbuiberging van 2120 met de andere buikaart: 70 mm in 2 uur, herhalingstijd ongeveer 100 jaar (SourceData/Water/WaterdiepteBijHevigeNeerslag_T100),
+					naast de 140 mm van Kans_ref 1000 in de levering. Dezelfde rekenregels als Templates/Indicatoren/Piekbuiberging.dms: de opgave is de waterschijf van
+					de dieptekaart maal het celoppervlak binnen bestaand bebouwd gebied, per blok van Grid_ref gesommeerd; het aanbod van het zichtjaar is dat van de
+					levering (Zichtjaren/Y2120/Piekbuiberging/PerGrid/Aanbod, onafhankelijk van de bui); gedekt is per blok het minimum van opgave en aanbod, en de
+					dekkingsgraad is gedekt gedeeld door opgave. Landelijk en per landschapsgebied van #760, met een blok in het gebied zodra een van zijn cellen
+					erin ligt, zoals de landschapstabellen. Ter controle staan de waarden bij de bui van de levering ernaast (kolommen _ref); die horen gelijk te zijn
+					aan Piekbuiberging_Opgave_m3, _Gedekt_m3 en _Dekkingsgraad in de tabellen. Aanleg- en onderhoudskosten hangen alleen van het aanbod af en
+					veranderen niet. Structureel: beide buien naast elkaar in RegionaleIndicatoren_T, of Kans_ref als exportdimensie."
+		{
+			parameter<String> Kans_alt := '100', Descr = "De andere dieptekaart: 100 (70 mm in 2 uur) tegenover Kans_ref 1000 in de levering.";
+			parameter<String> Grid_ref := /ModelParameters/Piekbuiberging/Grid_ref;
+			unit<IPoint> Grid := = '/Geography/rdc_' + Grid_ref;
+
+			unit<uint8> Casus : NrOfRows = 3
+			{
+				attribute<String> name : ['BAU1', 'BAU2', 'NbSGenuanceerder'];
+				attribute<String> Map  : ['WLO_hoog_BAU', 'WLO_hoog_BAU2', 'WLO_hoog_NbSGenuanceerder'];
+			}
+			unit<uint8> Regio : NrOfRows = 5, Descr = "Landelijk en de vier landschapsgebieden van #760 (Landschapsgebieden/Impl)."
+			{
+				attribute<String> name : ['Nederland', 'Kust', 'Rivieren', 'Veen', 'Zand'];
+			}
+			container Masker
+			{
+				attribute<Bool> Nederland (/Geography/AdminDomain) := const(TRUE, /Geography/AdminDomain);
+				attribute<Bool> Kust      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsKust;
+				attribute<Bool> Rivieren  (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsRivieren;
+				attribute<Bool> Veen      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsVeen;
+				attribute<Bool> Zand      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsZand;
+			}
+
+			attribute<Bool>   BestaandBebouwdGebied (/Geography/AdminDomain) := /BaseData/Omgeving/UrbanContour, Descr = "Dezelfde begrenzing als de opgave van de levering (Basisjaar.dms)."; 
+			attribute<Units/meter>  Diepte_alt (/Geography/AdminDomain) := = '/SourceData/Water/WaterdiepteBijHevigeNeerslag_T' + Kans_alt;
+			attribute<Units/meter3> Opgave_alt_Cel (/Geography/AdminDomain) := Diepte_alt * /Geography/AdminDomain/NrMeter2PerCell * float32(BestaandBebouwdGebied);
+			attribute<Units/meter3> Blok_Opgave_alt (Grid) := = 'sum(Opgave_alt_Cel, /Geography/AdminDomain/rdc_' + Grid_ref + '_rel)';
+
+			container PerCasus := for_each_ne(Casus/name, 'Casus_T(' + quote(Casus/Map) + ')');
+			template Casus_T
+			{
+				parameter<String> Map;
+				container Z := ='/Indicatoren/' + Map + '/Zichtjaren/Y2120/Piekbuiberging/PerGrid';
+				attribute<Units/meter3> Blok_Aanbod       (Grid) := Z/Aanbod;
+				attribute<Units/meter3> Blok_Opgave_ref   (Grid) := Z/Opgave;
+				attribute<Units/meter3> Blok_Gedekt_ref   (Grid) := Z/Gedekt;
+				attribute<Units/meter3> Blok_Gedekt_alt   (Grid) := min_elem(Blok_Opgave_alt, Blok_Aanbod);
+				attribute<Units/meter3> Blok_Ongedekt_alt (Grid) := Blok_Opgave_alt - Blok_Gedekt_alt;
+
+				container PerRegio := for_each_ne(Regio/name, 'Regio_T(' + quote(Regio/name) + ', Masker/' + Regio/name + ')');
+				template Regio_T
+				{
+					parameter<String> RegioNaam;
+					attribute<Bool>   IsRegio (/Geography/AdminDomain);
+					attribute<Float32> BlokZeef (Grid) := = 'any(IsRegio, /Geography/AdminDomain/rdc_' + Grid_ref + '_rel) ? 1f : null_f', Descr = "Het blok telt mee zodra een van zijn cellen in het gebied ligt, zoals de landschapstabellen.";
+					parameter<Float32> Opgave_ref   := sum(Blok_Opgave_ref[Float32]   * BlokZeef);
+					parameter<Float32> Gedekt_ref   := sum(Blok_Gedekt_ref[Float32]   * BlokZeef);
+					parameter<Float32> Aanbod       := sum(Blok_Aanbod[Float32]       * BlokZeef);
+					parameter<Float32> Opgave_alt   := sum(Blok_Opgave_alt[Float32]   * BlokZeef);
+					parameter<Float32> Gedekt_alt   := sum(Blok_Gedekt_alt[Float32]   * BlokZeef);
+					parameter<Float32> Ongedekt_alt := sum(Blok_Ongedekt_alt[Float32] * BlokZeef);
+					parameter<Float32> Dekkingsgraad_ref           := Gedekt_ref / Opgave_ref;
+					parameter<Float32> Dekkingsgraad_alt           := Gedekt_alt / Opgave_alt;
+					parameter<Float32> Dekkingsgraad_alt_Ongeklemd := min_elem(Aanbod, Opgave_alt) / Opgave_alt;
+				}
+
+				unit<uint8> Tabel := Regio, Descr = "De vijf gebieden van deze casus als tabel, zonder meta-expressies, zodat Rijen ze kan stapelen."
+				{
+					attribute<Float32> Opgave_ref                   := union_data(., PerRegio/Nederland/Opgave_ref, PerRegio/Kust/Opgave_ref, PerRegio/Rivieren/Opgave_ref, PerRegio/Veen/Opgave_ref, PerRegio/Zand/Opgave_ref);
+					attribute<Float32> Gedekt_ref                   := union_data(., PerRegio/Nederland/Gedekt_ref, PerRegio/Kust/Gedekt_ref, PerRegio/Rivieren/Gedekt_ref, PerRegio/Veen/Gedekt_ref, PerRegio/Zand/Gedekt_ref);
+					attribute<Float32> Dekkingsgraad_ref            := union_data(., PerRegio/Nederland/Dekkingsgraad_ref, PerRegio/Kust/Dekkingsgraad_ref, PerRegio/Rivieren/Dekkingsgraad_ref, PerRegio/Veen/Dekkingsgraad_ref, PerRegio/Zand/Dekkingsgraad_ref);
+					attribute<Float32> Aanbod                       := union_data(., PerRegio/Nederland/Aanbod, PerRegio/Kust/Aanbod, PerRegio/Rivieren/Aanbod, PerRegio/Veen/Aanbod, PerRegio/Zand/Aanbod);
+					attribute<Float32> Opgave_alt                   := union_data(., PerRegio/Nederland/Opgave_alt, PerRegio/Kust/Opgave_alt, PerRegio/Rivieren/Opgave_alt, PerRegio/Veen/Opgave_alt, PerRegio/Zand/Opgave_alt);
+					attribute<Float32> Gedekt_alt                   := union_data(., PerRegio/Nederland/Gedekt_alt, PerRegio/Kust/Gedekt_alt, PerRegio/Rivieren/Gedekt_alt, PerRegio/Veen/Gedekt_alt, PerRegio/Zand/Gedekt_alt);
+					attribute<Float32> Ongedekt_alt                 := union_data(., PerRegio/Nederland/Ongedekt_alt, PerRegio/Kust/Ongedekt_alt, PerRegio/Rivieren/Ongedekt_alt, PerRegio/Veen/Ongedekt_alt, PerRegio/Zand/Ongedekt_alt);
+					attribute<Float32> Dekkingsgraad_alt            := union_data(., PerRegio/Nederland/Dekkingsgraad_alt, PerRegio/Kust/Dekkingsgraad_alt, PerRegio/Rivieren/Dekkingsgraad_alt, PerRegio/Veen/Dekkingsgraad_alt, PerRegio/Zand/Dekkingsgraad_alt);
+					attribute<Float32> Dekkingsgraad_alt_Ongeklemd  := union_data(., PerRegio/Nederland/Dekkingsgraad_alt_Ongeklemd, PerRegio/Kust/Dekkingsgraad_alt_Ongeklemd, PerRegio/Rivieren/Dekkingsgraad_alt_Ongeklemd, PerRegio/Veen/Dekkingsgraad_alt_Ongeklemd, PerRegio/Zand/Dekkingsgraad_alt_Ongeklemd);
+				}
+			}
+
+			unit<uint32> RijenBron := combine(Casus, Regio)
+			{
+				attribute<String> CasusNaam := Casus/name[first_rel];
+				attribute<String> RegioNaam := Regio/name[second_rel];
+			}
+			unit<uint32> Rijen := RijenBron
+			, StorageName = "='%LocalDataProjDir%/Rapport_v01/PiekbuiT100.csv'"
+			, StorageType = "gdalwrite.vect"
+			, Descr       = "Een regel per variant en gebied: de piekbuiberging van 2120 bij de bui van de levering (_ref) en bij de bui van eens per 100 jaar (_alt), in m3 en als dekkingsgraad."
+			{
+				attribute<String>  Variant := RijenBron/CasusNaam;
+				attribute<String>  Gebied  := RijenBron/RegioNaam;
+				attribute<Float32> Opgave_ref                   := union_data(., PerCasus/BAU1/Tabel/Opgave_ref, PerCasus/BAU2/Tabel/Opgave_ref, PerCasus/NbSGenuanceerder/Tabel/Opgave_ref);
+				attribute<Float32> Gedekt_ref                   := union_data(., PerCasus/BAU1/Tabel/Gedekt_ref, PerCasus/BAU2/Tabel/Gedekt_ref, PerCasus/NbSGenuanceerder/Tabel/Gedekt_ref);
+				attribute<Float32> Dekkingsgraad_ref            := union_data(., PerCasus/BAU1/Tabel/Dekkingsgraad_ref, PerCasus/BAU2/Tabel/Dekkingsgraad_ref, PerCasus/NbSGenuanceerder/Tabel/Dekkingsgraad_ref);
+				attribute<Float32> Aanbod                       := union_data(., PerCasus/BAU1/Tabel/Aanbod, PerCasus/BAU2/Tabel/Aanbod, PerCasus/NbSGenuanceerder/Tabel/Aanbod);
+				attribute<Float32> Opgave_alt                   := union_data(., PerCasus/BAU1/Tabel/Opgave_alt, PerCasus/BAU2/Tabel/Opgave_alt, PerCasus/NbSGenuanceerder/Tabel/Opgave_alt);
+				attribute<Float32> Gedekt_alt                   := union_data(., PerCasus/BAU1/Tabel/Gedekt_alt, PerCasus/BAU2/Tabel/Gedekt_alt, PerCasus/NbSGenuanceerder/Tabel/Gedekt_alt);
+				attribute<Float32> Ongedekt_alt                 := union_data(., PerCasus/BAU1/Tabel/Ongedekt_alt, PerCasus/BAU2/Tabel/Ongedekt_alt, PerCasus/NbSGenuanceerder/Tabel/Ongedekt_alt);
+				attribute<Float32> Dekkingsgraad_alt            := union_data(., PerCasus/BAU1/Tabel/Dekkingsgraad_alt, PerCasus/BAU2/Tabel/Dekkingsgraad_alt, PerCasus/NbSGenuanceerder/Tabel/Dekkingsgraad_alt);
+				attribute<Float32> Dekkingsgraad_alt_Ongeklemd  := union_data(., PerCasus/BAU1/Tabel/Dekkingsgraad_alt_Ongeklemd, PerCasus/BAU2/Tabel/Dekkingsgraad_alt_Ongeklemd, PerCasus/NbSGenuanceerder/Tabel/Dekkingsgraad_alt_Ongeklemd);
+			}
+		}
+
 		container PerCasus :=
 			for_each_ne(
 				Classifications/Modellering/AllCases/Label
