@@ -363,9 +363,14 @@ foreach ($casus in $varianten.Keys) {
     Get-ChildItem "$src\Stand$Zichtjaar" -Filter '*.tif' -ErrorAction SilentlyContinue |
         ForEach-Object { $n.zichtjaar += Kopieer $_ $jaar }
 
-    # de NL2120-landgebruikskaart
-    Get-ChildItem "$src\LandgebruikNL2120" -Filter '*.tif' -ErrorAction SilentlyContinue |
-        ForEach-Object { $n.zichtjaar += Kopieer $_ $jaar 'LandgebruikskaartNL2120_' }
+    # de NL2120-landgebruikskaart: basisjaar apart, zichtjaar apart, de rest in de reeks. Een ontkoppelde
+    # reeks (#824) schrijft die kaart voor elk zichtjaar; daarvoor stonden er alleen het exportzichtjaar
+    # en zijn voorganger.
+    Get-ChildItem "$src\LandgebruikNL2120" -Filter '*.tif' -ErrorAction SilentlyContinue | ForEach-Object {
+        if     ($_.Name -match 'Basisjaar')  { $n.basisjaar += Kopieer $_ $basis 'LandgebruikskaartNL2120_' }
+        elseif ($_.Name -match "^$Zichtjaar"){ $n.zichtjaar += Kopieer $_ $jaar  'LandgebruikskaartNL2120_' }
+        else                                 { $n.tijdreeks += Kopieer $_ $reeks 'LandgebruikskaartNL2120_' }
+    }
 
     # de kaart in hoofdklassen: basisjaar apart, zichtjaar apart, de rest in de reeks. Stond tot #803
     # onder Landgebruik en was toen de kaart op LU_ModelType; die map wordt niet meer geschreven.
