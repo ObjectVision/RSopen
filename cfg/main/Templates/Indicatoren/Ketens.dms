@@ -1,0 +1,247 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De ketens tussen de zichtjaren, ontkoppeld (#824). Een cumulatieve indicator (contante waarden per periode, koolstof,
+// methaan, sterfte, SOMERS) leest iets van het vorige zichtjaar via PrevIndicatoren. Zolang dat de levende container van
+// dat zichtjaar is, trekt een export van 2120 de hele reeks vanaf 2040 mee, en dat maakt elke tabel een run van veertig
+// minuten. Met ModelParameters/IndicatorenOntkoppeld op TRUE leest PrevIndicatoren de container Lees hieronder, die
+// precies de grootheden die de ketens nodig hebben uit tifs haalt die de container Schrijf voor het vorige zichtjaar
+// heeft weggeschreven. Een export rekent dan alleen zijn eigen zichtjaar, en RunIndicatoren.ps1 draait de zichtjaren in
+// volgorde.
+//
+// Geen fingerprint, met opzet: bestaat de tif, dan wordt hij gelezen. Wie een keten wil verversen draait Schrijf opnieuw
+// voor de zichtjaren ervoor. De tifs staan apart onder Indicatoren/<casus>/Ketens, in de eenheid en op het domein van
+// het item zelf, los van de kaarten die de levering vormen; die zijn soms gemaskeerd of in een andere eenheid.
+//
+// De lijst hieronder is de lijst van alle verwijzingen naar PrevIndicatoren in de sjablonen (grep), en hoort daarmee
+// gelijk op te lopen. Komt er een keten bij, dan komt hij hier bij, in Schrijf en in Lees. Een keten die het vorige
+// zichtjaar bij naam aanspreekt in plaats van via PrevIndicatoren (zoals de landgebruikskaart tot #824 deed) blijft
+// onzichtbaar voor deze ontkoppeling en rekent de hele reeks alsnog mee.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+parameter<String> Tijdreeks := 'Ready'
+, ExplicitSuppliers = "Ketens/Schrijf/Alles;Woningwaarde/Nieuwbouw_NCW;KostenWoningbouw/Bouwkosten_NCW;KostenWoningbouw/MeerkostenBodemdaling_NCW;SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnamePerPeriode;SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief;SterfteAfnameDoorGroenToename/Zichtjaar/NDVI/Result;SterfteAfnameDoorGroenToename/Zichtjaar/NDVI/VeranderingOpLocatie;Verharding/Result;SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten;SloopAlsGevolgVanNieuweNatuur/Sloopkosten;SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_NCW;SloopAlsGevolgVanNieuweNatuur/Sloopkosten_NCW;SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten;SloopAlsGevolgVanWaterbergingVeen/Sloopkosten;SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_NCW;SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_NCW;SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten;SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten;SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_NCW;SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_NCW;LandgebruikskaartNL2120/Write_Result_SA;LandgebruikskaartNL2120/Write_Result_Hoofdklasse_SA"
+, Descr = "Wat een tussenliggend zichtjaar in een ontkoppelde reeks schrijft (#824): zijn ketentifs, de twintig kaarten van de tijdreeks in de levering die tot dan als bijproduct van de ketens meekwamen (de NCW-kaarten, de sloop- en uitkoopkosten, de sterfte en de groenindex, de verharding), en de twee landgebruikskaarten van het zichtjaar (LandgebruikNL2120 en LandgebruikHoofdklasse), die tot dan alleen voor het exportzichtjaar en zijn voorganger werden geschreven. Rechtstreeks aanroepbaar per zichtjaar, dus zonder ExportZichtjaar, zodat RunIndicatoren.ps1 de reeks zichtjaar voor zichtjaar kan afwerken, elk in een eigen proces. Elke leverancier is een data-item en geen container (#823).";
+
+container Ketens
+: Descr = "De grootheden die de cumulatieve indicatoren van het volgende zichtjaar nodig hebben, geschreven (Schrijf) en teruggelezen (Lees) als tif per zichtjaar. Zie de kop van Ketens.dms."
+{
+	parameter<String> Pad   := '%LocalDataProjDir%/Indicatoren/' + Casus_name + '/Ketens/';
+	parameter<String> Staart := '_' + Zichtjaar_name + '_' + /ModelParameters/StudyArea + '.tif';
+
+	parameter<String> PrevZichtjaar_name := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevName)
+	, Descr = "De naam van het vorige zichtjaar, voor de bestandsnamen in Lees. In het eerste allocatiezichtjaar is dat het zichtjaar zelf, maar dan leest niemand Lees: PrevIndicatoren wijst daar naar het basisjaar.";
+	parameter<String> PrevStaart := '_' + PrevZichtjaar_name + '_' + /ModelParameters/StudyArea + '.tif';
+
+	unit<UInt8> CarbonClass := /Classifications/Grondgebruik/CarbonClass;
+	unit<UInt8> LU_NL2120   := /Classifications/Grondgebruik/LU_NL2120;
+
+	container Schrijf
+	: Descr = "De waarden van dit zichtjaar, in de eenheid van het item zelf. Alles is een een op een kopie van een bestaand item; hier wordt niets gerekend."
+	{
+		attribute<Ha>  KostenWerklocaties_Werklocatie_Ha            (AdminDomain) := KostenWerklocaties/Werklocatie_Ha,            StorageName = "=Pad+'KostenWerklocaties_Werklocatie_Ha'+Staart",            StorageType = "gdalwrite.grid";
+		attribute<Eur> KostenWerklocaties_MeerkostenOverstroming_NCW (AdminDomain) := KostenWerklocaties/MeerkostenOverstroming_NCW, StorageName = "=Pad+'KostenWerklocaties_MeerkostenOverstroming_NCW'+Staart", StorageType = "gdalwrite.grid";
+
+		attribute<Ha>  KostenWoningbouw_Nieuwbouw_Ha              (AdminDomain) := KostenWoningbouw/Nieuwbouw_Ha,              StorageName = "=Pad+'KostenWoningbouw_Nieuwbouw_Ha'+Staart",              StorageType = "gdalwrite.grid";
+		attribute<Eur> KostenWoningbouw_Regulier_NCW              (AdminDomain) := KostenWoningbouw/Regulier_NCW,              StorageName = "=Pad+'KostenWoningbouw_Regulier_NCW'+Staart",              StorageType = "gdalwrite.grid";
+		attribute<Eur> KostenWoningbouw_MeerkostenBodemdaling_NCW (AdminDomain) := KostenWoningbouw/MeerkostenBodemdaling_NCW, StorageName = "=Pad+'KostenWoningbouw_MeerkostenBodemdaling_NCW'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur> KostenWoningbouw_BeheerEnOnderhoud_NCW     (AdminDomain) := KostenWoningbouw/BeheerEnOnderhoud_NCW,     StorageName = "=Pad+'KostenWoningbouw_BeheerEnOnderhoud_NCW'+Staart",     StorageType = "gdalwrite.grid";
+		attribute<Eur> KostenWoningbouw_Bouwkosten_NCW            (AdminDomain) := KostenWoningbouw/Bouwkosten_NCW,            StorageName = "=Pad+'KostenWoningbouw_Bouwkosten_NCW'+Staart",            StorageType = "gdalwrite.grid";
+
+		attribute<ton> Methaan_Cumulatief_sindsStartyear (AdminDomain) := Methaan/Cumulatief_sindsStartyear, StorageName = "=Pad+'Methaan_Cumulatief_sindsStartyear'+Staart", StorageType = "gdalwrite.grid";
+
+		attribute<Eur> Piekbuiberging_Onderhoud_NCW (AdminDomain) := Piekbuiberging/Kosten/Onderhoud_NCW, StorageName = "=Pad+'Piekbuiberging_Onderhoud_NCW'+Staart", StorageType = "gdalwrite.grid";
+
+		// Een booleaan gaat als 0 of 1 de tif in; Lees maakt er weer een Bool van.
+		attribute<UInt8> Sloop_NieuweNatuur_IsSloopCel          (AdminDomain) := UInt8(SloopAlsGevolgVanNieuweNatuur/IsSloopCel),        StorageName = "=Pad+'Sloop_NieuweNatuur_IsSloopCel'+Staart",          StorageType = "gdalwrite.grid";
+		attribute<Eur>   Sloop_NieuweNatuur_Uitkoopkosten_NCW   (AdminDomain) := SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten_NCW,          StorageName = "=Pad+'Sloop_NieuweNatuur_Uitkoopkosten_NCW'+Staart",   StorageType = "gdalwrite.grid";
+		attribute<Eur>   Sloop_NieuweNatuur_Sloopkosten_NCW     (AdminDomain) := SloopAlsGevolgVanNieuweNatuur/Sloopkosten_NCW,            StorageName = "=Pad+'Sloop_NieuweNatuur_Sloopkosten_NCW'+Staart",     StorageType = "gdalwrite.grid";
+		attribute<UInt8> Sloop_WaterbergingVeen_IsSloopCel        (AdminDomain) := UInt8(SloopAlsGevolgVanWaterbergingVeen/IsSloopCel),      StorageName = "=Pad+'Sloop_WaterbergingVeen_IsSloopCel'+Staart",        StorageType = "gdalwrite.grid";
+		attribute<Eur>   Sloop_WaterbergingVeen_Uitkoopkosten_NCW (AdminDomain) := SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten_NCW,        StorageName = "=Pad+'Sloop_WaterbergingVeen_Uitkoopkosten_NCW'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur>   Sloop_WaterbergingVeen_Sloopkosten_NCW   (AdminDomain) := SloopAlsGevolgVanWaterbergingVeen/Sloopkosten_NCW,          StorageName = "=Pad+'Sloop_WaterbergingVeen_Sloopkosten_NCW'+Staart",   StorageType = "gdalwrite.grid";
+		attribute<UInt8> Sloop_OverigeBouwstenen_IsSloopCel        (AdminDomain) := UInt8(SloopAlsGevolgVanOverigeBouwstenen/IsSloopCel),     StorageName = "=Pad+'Sloop_OverigeBouwstenen_IsSloopCel'+Staart",        StorageType = "gdalwrite.grid";
+		attribute<Eur>   Sloop_OverigeBouwstenen_Uitkoopkosten_NCW (AdminDomain) := SloopAlsGevolgVanOverigeBouwstenen/Uitkoopkosten_NCW,       StorageName = "=Pad+'Sloop_OverigeBouwstenen_Uitkoopkosten_NCW'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur>   Sloop_OverigeBouwstenen_Sloopkosten_NCW   (AdminDomain) := SloopAlsGevolgVanOverigeBouwstenen/Sloopkosten_NCW,         StorageName = "=Pad+'Sloop_OverigeBouwstenen_Sloopkosten_NCW'+Staart",   StorageType = "gdalwrite.grid";
+
+		attribute<kg>  SOMERS_Emissies_Minimum_Cumulatief (AdminDomain) := SOMERS_CO2_Laagveen/Emissies/Minimum/Cumulatief_sindsStartyear, StorageName = "=Pad+'SOMERS_Emissies_Minimum_Cumulatief'+Staart", StorageType = "gdalwrite.grid";
+		attribute<kg>  SOMERS_Emissies_Mediaan_Cumulatief (AdminDomain) := SOMERS_CO2_Laagveen/Emissies/Mediaan/Cumulatief_sindsStartyear, StorageName = "=Pad+'SOMERS_Emissies_Mediaan_Cumulatief'+Staart", StorageType = "gdalwrite.grid";
+		attribute<kg>  SOMERS_Emissies_Maximum_Cumulatief (AdminDomain) := SOMERS_CO2_Laagveen/Emissies/Maximum/Cumulatief_sindsStartyear, StorageName = "=Pad+'SOMERS_Emissies_Maximum_Cumulatief'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur> SOMERS_Kosten_Minimum_Minimum_NCW  (AdminDomain) := SOMERS_CO2_Laagveen/Kosten/EmissiesMinimum/PrijsMinimum/NCW_Cumulatief, StorageName = "=Pad+'SOMERS_Kosten_Minimum_Minimum_NCW'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur> SOMERS_Kosten_Minimum_Maximum_NCW  (AdminDomain) := SOMERS_CO2_Laagveen/Kosten/EmissiesMinimum/PrijsMaximum/NCW_Cumulatief, StorageName = "=Pad+'SOMERS_Kosten_Minimum_Maximum_NCW'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur> SOMERS_Kosten_Mediaan_Minimum_NCW  (AdminDomain) := SOMERS_CO2_Laagveen/Kosten/EmissiesMediaan/PrijsMinimum/NCW_Cumulatief, StorageName = "=Pad+'SOMERS_Kosten_Mediaan_Minimum_NCW'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur> SOMERS_Kosten_Mediaan_Maximum_NCW  (AdminDomain) := SOMERS_CO2_Laagveen/Kosten/EmissiesMediaan/PrijsMaximum/NCW_Cumulatief, StorageName = "=Pad+'SOMERS_Kosten_Mediaan_Maximum_NCW'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur> SOMERS_Kosten_Maximum_Minimum_NCW  (AdminDomain) := SOMERS_CO2_Laagveen/Kosten/EmissiesMaximum/PrijsMinimum/NCW_Cumulatief, StorageName = "=Pad+'SOMERS_Kosten_Maximum_Minimum_NCW'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur> SOMERS_Kosten_Maximum_Maximum_NCW  (AdminDomain) := SOMERS_CO2_Laagveen/Kosten/EmissiesMaximum/PrijsMaximum/NCW_Cumulatief, StorageName = "=Pad+'SOMERS_Kosten_Maximum_Maximum_NCW'+Staart", StorageType = "gdalwrite.grid";
+
+		attribute<Woning> WaardeNabijheidGroen_n_nieuwbouw_cumulatief (AdminDomain) := WaardeNabijheidGroen/Nieuwbouw/n_nieuwbouw_cumulatief, StorageName = "=Pad+'WaardeNabijheidGroen_n_nieuwbouw_cumulatief'+Staart", StorageType = "gdalwrite.grid";
+		attribute<Eur>    Woningwaarde_Nieuwbouw_NCW                   (AdminDomain) := Woningwaarde/Nieuwbouw_NCW,                           StorageName = "=Pad+'Woningwaarde_Nieuwbouw_NCW'+Staart",                   StorageType = "gdalwrite.grid";
+
+		attribute<ton_ha>      Carbon_Stock_Result_ha             (AdminDomain) := CarbonStorageSequestration/Zichtjaar/Carbon/Stock/Result_ha,             StorageName = "=Pad+'Carbon_Stock_Result_ha'+Staart",             StorageType = "gdalwrite.grid";
+		attribute<ton_ha>      Carbon_Stock_Max_ha                (AdminDomain) := CarbonStorageSequestration/Zichtjaar/Carbon/Stock/Max_ha,                StorageName = "=Pad+'Carbon_Stock_Max_ha'+Staart",                StorageType = "gdalwrite.grid";
+		attribute<ton_ha>      Carbon_Stock_Ongedekt_Cumulatief_ha (AdminDomain) := CarbonStorageSequestration/Zichtjaar/Carbon/Stock/Ongedekt_Cumulatief_ha, StorageName = "=Pad+'Carbon_Stock_Ongedekt_Cumulatief_ha'+Staart", StorageType = "gdalwrite.grid";
+		attribute<ton_ha>      Carbon_Veenreserve_Result_ha       (AdminDomain) := CarbonStorageSequestration/Zichtjaar/Carbon/Veenreserve/Result_ha,       StorageName = "=Pad+'Carbon_Veenreserve_Result_ha'+Staart",       StorageType = "gdalwrite.grid";
+		attribute<CarbonClass> Carbon_Grondgebruik_CC              (AdminDomain) := CarbonStorageSequestration/Zichtjaar/Grondgebruik/CC,                    StorageName = "=Pad+'Carbon_Grondgebruik_CC'+Staart",              StorageType = "gdalwrite.grid";
+
+		attribute<Persoon> Sterfte_AfnameCumulatief (AdminDomain) := SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief, StorageName = "=Pad+'Sterfte_AfnameCumulatief'+Staart", StorageType = "gdalwrite.grid";
+		attribute<float32> Sterfte_NDVI_Result      (AdminDomain) := SterfteAfnameDoorGroenToename/Zichtjaar/NDVI/Result,              StorageName = "=Pad+'Sterfte_NDVI_Result'+Staart",      StorageType = "gdalwrite.grid";
+
+		// De landgebruikskaart van het vorige zichtjaar is de enige keten die niet via PrevIndicatoren liep maar via de
+		// naam van het zichtjaar; sinds #824 loopt ook zij via PrevIndicatoren, zie Make_LandgebruikskaartNL2120_T.dms.
+		attribute<LU_NL2120> Landgebruikskaart_Result          (AdminDomain) := LandgebruikskaartNL2120/Result,          StorageName = "=Pad+'Landgebruikskaart_Result'+Staart",          StorageType = "gdalwrite.grid";
+		attribute<LU_NL2120> Landgebruikskaart_Write_Result_SA (AdminDomain) := LandgebruikskaartNL2120/Write_Result_SA, StorageName = "=Pad+'Landgebruikskaart_Write_Result_SA'+Staart", StorageType = "gdalwrite.grid";
+
+		parameter<String> Alles := 'Ready'
+		, ExplicitSuppliers = "KostenWerklocaties_Werklocatie_Ha;KostenWerklocaties_MeerkostenOverstroming_NCW;KostenWoningbouw_Nieuwbouw_Ha;KostenWoningbouw_Regulier_NCW;KostenWoningbouw_MeerkostenBodemdaling_NCW;KostenWoningbouw_BeheerEnOnderhoud_NCW;KostenWoningbouw_Bouwkosten_NCW;Methaan_Cumulatief_sindsStartyear;Piekbuiberging_Onderhoud_NCW;Sloop_NieuweNatuur_IsSloopCel;Sloop_NieuweNatuur_Uitkoopkosten_NCW;Sloop_NieuweNatuur_Sloopkosten_NCW;Sloop_WaterbergingVeen_IsSloopCel;Sloop_WaterbergingVeen_Uitkoopkosten_NCW;Sloop_WaterbergingVeen_Sloopkosten_NCW;Sloop_OverigeBouwstenen_IsSloopCel;Sloop_OverigeBouwstenen_Uitkoopkosten_NCW;Sloop_OverigeBouwstenen_Sloopkosten_NCW;SOMERS_Emissies_Minimum_Cumulatief;SOMERS_Emissies_Mediaan_Cumulatief;SOMERS_Emissies_Maximum_Cumulatief;SOMERS_Kosten_Minimum_Minimum_NCW;SOMERS_Kosten_Minimum_Maximum_NCW;SOMERS_Kosten_Mediaan_Minimum_NCW;SOMERS_Kosten_Mediaan_Maximum_NCW;SOMERS_Kosten_Maximum_Minimum_NCW;SOMERS_Kosten_Maximum_Maximum_NCW;WaardeNabijheidGroen_n_nieuwbouw_cumulatief;Woningwaarde_Nieuwbouw_NCW;Carbon_Stock_Result_ha;Carbon_Stock_Max_ha;Carbon_Stock_Ongedekt_Cumulatief_ha;Carbon_Veenreserve_Result_ha;Carbon_Grondgebruik_CC;Sterfte_AfnameCumulatief;Sterfte_NDVI_Result;Landgebruikskaart_Result;Landgebruikskaart_Write_Result_SA"
+		, Descr = "Schrijft alle ketentifs van dit zichtjaar. Elke leverancier is een data-item en geen container, zie de valkuil bij #823.";
+	}
+
+	container Lees
+	: Descr = "Dezelfde grootheden van het VORIGE zichtjaar, teruggelezen uit de tifs van Schrijf, in precies de containerstructuur waarin de ketens ze via PrevIndicatoren aanspreken. Alleen gebruikt als IndicatorenOntkoppeld aanstaat en dit niet het eerste allocatiezichtjaar is."
+	{
+		container KostenWerklocaties
+		{
+			attribute<Ha>  Werklocatie_Ha            (AdminDomain) : StorageName = "=Ketens/Pad+'KostenWerklocaties_Werklocatie_Ha'+Ketens/PrevStaart",            StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> MeerkostenOverstroming_NCW (AdminDomain) : StorageName = "=Ketens/Pad+'KostenWerklocaties_MeerkostenOverstroming_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container KostenWoningbouw
+		{
+			attribute<Ha>  Nieuwbouw_Ha              (AdminDomain) : StorageName = "=Ketens/Pad+'KostenWoningbouw_Nieuwbouw_Ha'+Ketens/PrevStaart",              StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> Regulier_NCW              (AdminDomain) : StorageName = "=Ketens/Pad+'KostenWoningbouw_Regulier_NCW'+Ketens/PrevStaart",              StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> MeerkostenBodemdaling_NCW (AdminDomain) : StorageName = "=Ketens/Pad+'KostenWoningbouw_MeerkostenBodemdaling_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> BeheerEnOnderhoud_NCW     (AdminDomain) : StorageName = "=Ketens/Pad+'KostenWoningbouw_BeheerEnOnderhoud_NCW'+Ketens/PrevStaart",     StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> Bouwkosten_NCW            (AdminDomain) : StorageName = "=Ketens/Pad+'KostenWoningbouw_Bouwkosten_NCW'+Ketens/PrevStaart",            StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container Methaan
+		{
+			attribute<ton> Cumulatief_sindsStartyear (AdminDomain) : StorageName = "=Ketens/Pad+'Methaan_Cumulatief_sindsStartyear'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container Piekbuiberging
+		{
+			container Kosten
+			{
+				attribute<Eur> Onderhoud_NCW (AdminDomain) : StorageName = "=Ketens/Pad+'Piekbuiberging_Onderhoud_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			}
+		}
+		container SloopAlsGevolgVanNieuweNatuur
+		{
+			attribute<UInt8> IsSloopCel_u8     (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_NieuweNatuur_IsSloopCel'+Ketens/PrevStaart",        StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Bool>  IsSloopCel        (AdminDomain) := IsSloopCel_u8 == 1b;
+			attribute<Eur>   Uitkoopkosten_NCW (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_NieuweNatuur_Uitkoopkosten_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur>   Sloopkosten_NCW   (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_NieuweNatuur_Sloopkosten_NCW'+Ketens/PrevStaart",   StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container SloopAlsGevolgVanWaterbergingVeen
+		{
+			attribute<UInt8> IsSloopCel_u8     (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_WaterbergingVeen_IsSloopCel'+Ketens/PrevStaart",        StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Bool>  IsSloopCel        (AdminDomain) := IsSloopCel_u8 == 1b;
+			attribute<Eur>   Uitkoopkosten_NCW (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_WaterbergingVeen_Uitkoopkosten_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur>   Sloopkosten_NCW   (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_WaterbergingVeen_Sloopkosten_NCW'+Ketens/PrevStaart",   StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container SloopAlsGevolgVanOverigeBouwstenen
+		{
+			attribute<UInt8> IsSloopCel_u8     (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_OverigeBouwstenen_IsSloopCel'+Ketens/PrevStaart",        StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Bool>  IsSloopCel        (AdminDomain) := IsSloopCel_u8 == 1b;
+			attribute<Eur>   Uitkoopkosten_NCW (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_OverigeBouwstenen_Uitkoopkosten_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur>   Sloopkosten_NCW   (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_OverigeBouwstenen_Sloopkosten_NCW'+Ketens/PrevStaart",   StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container SOMERS_CO2_Laagveen
+		{
+			container Emissies
+			{
+				container Minimum { attribute<kg> Cumulatief_sindsStartyear (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Emissies_Minimum_Cumulatief'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+				container Mediaan { attribute<kg> Cumulatief_sindsStartyear (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Emissies_Mediaan_Cumulatief'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+				container Maximum { attribute<kg> Cumulatief_sindsStartyear (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Emissies_Maximum_Cumulatief'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+			}
+			container Kosten
+			{
+				container EmissiesMinimum
+				{
+					container PrijsMinimum { attribute<Eur> NCW_Cumulatief (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Kosten_Minimum_Minimum_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+					container PrijsMaximum { attribute<Eur> NCW_Cumulatief (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Kosten_Minimum_Maximum_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+				}
+				container EmissiesMediaan
+				{
+					container PrijsMinimum { attribute<Eur> NCW_Cumulatief (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Kosten_Mediaan_Minimum_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+					container PrijsMaximum { attribute<Eur> NCW_Cumulatief (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Kosten_Mediaan_Maximum_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+				}
+				container EmissiesMaximum
+				{
+					container PrijsMinimum { attribute<Eur> NCW_Cumulatief (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Kosten_Maximum_Minimum_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+					container PrijsMaximum { attribute<Eur> NCW_Cumulatief (AdminDomain) : StorageName = "=Ketens/Pad+'SOMERS_Kosten_Maximum_Maximum_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE"; }
+				}
+			}
+		}
+		container WaardeNabijheidGroen
+		{
+			container Nieuwbouw
+			{
+				attribute<Woning> n_nieuwbouw_cumulatief (AdminDomain) : StorageName = "=Ketens/Pad+'WaardeNabijheidGroen_n_nieuwbouw_cumulatief'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			}
+		}
+		container Woningwaarde
+		{
+			attribute<Eur> Nieuwbouw_NCW (AdminDomain) : StorageName = "=Ketens/Pad+'Woningwaarde_Nieuwbouw_NCW'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container CarbonStorageSequestration
+		{
+			container Zichtjaar
+			{
+				container Carbon
+				{
+					container Stock
+					{
+						attribute<ton_ha> Result_ha              (AdminDomain) : StorageName = "=Ketens/Pad+'Carbon_Stock_Result_ha'+Ketens/PrevStaart",              StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+						attribute<ton_ha> Max_ha                 (AdminDomain) : StorageName = "=Ketens/Pad+'Carbon_Stock_Max_ha'+Ketens/PrevStaart",                 StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+						attribute<ton_ha> Ongedekt_Cumulatief_ha (AdminDomain) : StorageName = "=Ketens/Pad+'Carbon_Stock_Ongedekt_Cumulatief_ha'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+					}
+					container Veenreserve
+					{
+						attribute<ton_ha> Result_ha (AdminDomain) : StorageName = "=Ketens/Pad+'Carbon_Veenreserve_Result_ha'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+					}
+				}
+				container Grondgebruik
+				{
+					attribute<Ketens/CarbonClass> CC (AdminDomain) : StorageName = "=Ketens/Pad+'Carbon_Grondgebruik_CC'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+				}
+			}
+		}
+		container SterfteAfnameDoorGroenToename
+		{
+			container Zichtjaar
+			{
+				container Sterfte
+				{
+					attribute<Persoon> AfnameCumulatief (AdminDomain) : StorageName = "=Ketens/Pad+'Sterfte_AfnameCumulatief'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+				}
+				container NDVI
+				{
+					attribute<float32> Result (AdminDomain) : StorageName = "=Ketens/Pad+'Sterfte_NDVI_Result'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+				}
+			}
+		}
+		container LandgebruikskaartNL2120
+		{
+			attribute<Ketens/LU_NL2120> Result          (AdminDomain) : StorageName = "=Ketens/Pad+'Landgebruikskaart_Result'+Ketens/PrevStaart",          StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Ketens/LU_NL2120> Write_Result_SA (AdminDomain) : StorageName = "=Ketens/Pad+'Landgebruikskaart_Write_Result_SA'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+
+		// De stand van het vorige zichtjaar leest de allocatie-tifs rechtstreeks, zoals Impl/Stand_with_path dat voor dit
+		// zichtjaar doet; de allocatie schrijft die tifs sowieso. Zonder de legendatoets: die is voor dit zichtjaar al gedaan
+		// op dezelfde configuratie, en de vorige stand is met dezelfde sets geschreven.
+		parameter<string> PrevAllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', StandCasus_name, '@JAAR@', Ketens/PrevZichtjaar_name, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
+		container Stand :=
+			for_each_ndvna(
+				Impl/StandVar/path
+				, AdminDomain
+				, Impl/StandVar
+				, Impl/StandVar/unit_name
+				, replace(PrevAllocatieFileName, '@STANDPATH@', Impl/StandVar/path)
+			), StorageReadOnly = "True";
+	}
+}

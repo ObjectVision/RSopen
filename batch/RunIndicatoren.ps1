@@ -20,6 +20,12 @@
        .\RunIndicatoren.ps1 -Varianten BAU
    Meerdere zichtjaren:
        .\RunIndicatoren.ps1 -Varianten BAU -Zichtjaren Y2040,Y2120
+   Ontkoppeld (#824): de zichtjaren voor het exportzichtjaar elk in een eigen proces, daarna de
+   export van het exportzichtjaar, die dan alleen dat jaar rekent:
+       .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerder -IndicatorRegio Landschappen -Ontkoppeld
+   Alleen het exportzichtjaar opnieuw (bijvoorbeeld een tabel na een reparatie), met de ketens van
+   een eerdere ontkoppelde run:
+       .\RunIndicatoren.ps1 -Varianten BAU -IndicatorRegio Landschappen -Ontkoppeld -AlleenExportZichtjaar
    Daarna de oplevering samenstellen met batch\MaakOplevering.ps1.
 
  INSTELLINGEN
@@ -46,29 +52,38 @@
                             het inlezen van wat de casussen delen. Gebruik dit, en draai NOOIT meerdere
                             processen naast elkaar op dezelfde LocalData: ze botsen op bestanden die
                             ze allebei openen.
+      -Ontkoppeld           De ketens tussen de zichtjaren lopen via tifs (#824). Zonder deze schakelaar
+                            trekt de export van 2120 alle zichtjaren vanaf 2040 in een proces mee, want
+                            de cumulatieve indicatoren (contante waarden, koolstof, methaan, sterfte,
+                            SOMERS) lezen het vorige zichtjaar; elke tabel is dan een run van drie
+                            kwartier. Met de schakelaar draait het script eerst per variant de zichtjaren
+                            voor het exportzichtjaar, elk in een eigen proces: het item Zichtjaren/<jaar>/
+                            Tijdreeks schrijft de ketentifs (Indicatoren/<casus>/Ketens) en de kaarten
+                            van de tijdreeks. De export van het exportzichtjaar leest dan de ketens van
+                            zijn voorganger en rekent alleen zichzelf. Voor elk zichtjaar toetst het
+                            script of de ketentifs van de voorganger er staan, en erna of het zijn eigen
+                            ketentifs heeft geschreven. Geen fingerprint: een bestaande tif wordt gelezen.
+      -AlleenExportZichtjaar  Met -Ontkoppeld: de reeks overslaan en alleen het exportzichtjaar draaien,
+                            op de ketentifs van een eerdere run. Het script eist dat die er staan en
+                            waarschuwt als ze ouder zijn dan de stand van dat zichtjaar, want dan is de
+                            allocatie opnieuw gedaan en hoort de reeks ook opnieuw. -AlleenLandschapstabellen
+                            slaat de reeks ook over.
       -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
 
    B. Omgevingsvariabelen die dit script zelf zet: StandAllocatieOntkoppeld=TRUE (stand uit de tifs),
-      VariantDataOntkoppeld=TRUE, IndicatorRegio en ExportZichtjaar. LocalDataProjDir wordt gewist,
-      GeoDMS leidt het pad af uit LocalDataDir plus de mapnaam boven cfg.
+      VariantDataOntkoppeld=TRUE, IndicatorenOntkoppeld (TRUE met -Ontkoppeld, anders FALSE),
+      IndicatorRegio en ExportZichtjaar. LocalDataProjDir wordt gewist, GeoDMS leidt het pad af uit
+      LocalDataDir plus de mapnaam boven cfg.
 
    C. Wat dit script NIET regelt en je vooraf moet nalopen:
       - De stand moet er staan voor ELK zichtjaar tot en met het exportzichtjaar, want cumulatieve
-        indicatoren (contante waarden, koolstof, sterfte) rekenen alle voorgaande zichtjaren mee.
+        indicatoren (contante waarden, koolstof, sterfte) rekenen alle voorgaande zichtjaren mee,
+        in een proces (zonder -Ontkoppeld) of zichtjaar voor zichtjaar (met).
       - De basisdata van WriteBasedata/Generate_Run3 en Generate_Run4_IndicatorenData en de
         variantdata van WriteVariantData. Run2120.ps1 maakt ze allemaal; de toets hieronder meldt
         wat ontbreekt en welk item het maakt.
       - De legenda's (Export/Legendas/Schrijf) schrijft dit script zelf, ze zijn casusonafhankelijk.
       - De schakelaars in cfg\main\ModelParameters.dms, zie blok B van Run2120.ps1.
-
- BEKEND PROBLEEM
-   Een run op de landschapsindeling rekent na het schrijven van de landschapstabel de WP5-
-   pandtypering opnieuw uit (SourceData/Vastgoed/BAG/.../AfleidingPandType/Write_WP5) en wacht dan
-   een half uur op een schrijfhandle die het proces zelf al open heeft, of blijft daarin hangen met
-   0 CPU en een log dat midden in een regel stopt. De uitvoer tot dat moment staat gewoon op schijf.
-   Blijft het proces hangen, stop het dan en draai de rest (generates/Indicatoren_PerNederland,
-   generates/ClaimRealisatie*) op -IndicatorRegio NL na; die items zijn onafhankelijk van de
-   indeling. Op NL treedt het niet op. Zie het issue over de WP5-herberekening.
 
  ALS HET MISGAAT
    status.tsv (kolom exit) en het log van de stap; regels met [E] zijn de fouten. Exit 2 is een
@@ -91,6 +106,8 @@ param(
     [string]   $IndicatorRegio = 'NL',
     [switch]   $Gebundeld,
     [switch]   $AlleenLandschapstabellen,
+    [switch]   $Ontkoppeld,
+    [switch]   $AlleenExportZichtjaar,
     [switch]   $GeenToets
 )
 
@@ -102,6 +119,7 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Forc
 $env:StandAllocatieOntkoppeld = 'TRUE'
 $env:VariantDataOntkoppeld    = 'TRUE'
 $env:IndicatorRegio           = $IndicatorRegio
+$env:IndicatorenOntkoppeld    = if ($Ontkoppeld) { 'TRUE' } else { 'FALSE' }
 Remove-Item Env:\LocalDataProjDir -ErrorAction SilentlyContinue
 
 $status = Join-Path $LogDir 'status.tsv'
@@ -147,8 +165,6 @@ function Test-Invoer {
     # plaats van na drie kwartier rekenen om te vallen. Een representatief bestand per stap, geen
     # volledige inventaris; wat de configuratie zelf met een fingerprint bewaakt (verwervings- en
     # sloopkosten, BRP, NBP, MNP) maakt zij bij een verouderd bestand zelf opnieuw.
-    $alleJaren = Get-Zichtjaren
-    $leen  = Get-VariantKolom $Cfg 'StandVanVariant'
     $hydro = Get-VariantKolom $Cfg 'Hydrologie_Levering'
     $opbr  = Get-VariantKolom $Cfg 'OpbrengstenVariant_Wonen'
 
@@ -189,13 +205,49 @@ function Test-Invoer {
     Write-Regel "controle  : invoer aanwezig ($($eisen.Count) toetsen)"
 }
 
+function Get-KetenNamen {
+    # De namen van de ketentifs, gelezen uit de schrijfkant in Ketens.dms zodat dit script niet
+    # achterloopt als daar een keten bijkomt: elke StorageName daar is Pad+'<naam>'+Staart.
+    $dms = Join-Path (Split-Path $Cfg -Parent) 'main\Templates\Indicatoren\Ketens.dms'
+    if (-not (Test-Path $dms)) { throw "Ketens.dms niet gevonden naast $Cfg" }
+    $namen = @([regex]::Matches((Get-Content $dms -Raw), "StorageName\s*=\s*`"=Pad\+'([^']+)'\+Staart`"") | ForEach-Object { $_.Groups[1].Value })
+    if ($namen.Count -eq 0) { throw "Geen ketentifs gevonden in $dms" }
+    return $namen
+}
+
+function Assert-Ketens([string]$casus, [string]$jaar, [string]$standVan) {
+    # Staan de ketentifs van dit zichtjaar er, en zijn ze jonger dan de stand van dat zichtjaar? Het
+    # eerste is een eis, het tweede een waarschuwing: een oudere keten betekent dat de allocatie na
+    # de vorige reeks opnieuw is gedaan.
+    $map = Join-Path $LocalData "Indicatoren\$casus\Ketens"
+    $mis = @(); $oud = @()
+    $stand = Get-ChildItem (Join-Path $LocalData "Allocatie\$standVan\Stand$jaar\OP_rel_*.tif") -ErrorAction SilentlyContinue | Select-Object -First 1
+    $namen = Get-KetenNamen
+    foreach ($n in $namen) {
+        $tif = Get-ChildItem (Join-Path $map "${n}_${jaar}_*.tif") -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $tif) { $mis += $n; continue }
+        if ($stand -and $tif.LastWriteTime -lt $stand.LastWriteTime) { $oud += $n }
+    }
+    if ($mis.Count -gt 0) {
+        throw "Ketentifs van $casus $jaar ontbreken in $map ($($mis.Count) van $($namen.Count)): $($mis -join ', '). Maak ze met een run zonder -AlleenExportZichtjaar, of los met /Indicatoren/$casus/Zichtjaren/$jaar/Tijdreeks en IndicatorenOntkoppeld=TRUE."
+    }
+    if ($oud.Count -gt 0) {
+        Write-Regel "LET OP    : $($oud.Count) ketentifs van $casus $jaar zijn ouder dan de stand van $jaar ($($stand.LastWriteTime.ToString('s'))); is de allocatie opnieuw gedaan, draai dan de reeks opnieuw"
+    }
+}
+
 $totaal = [Diagnostics.Stopwatch]::StartNew()
 Write-Regel "config    : $Cfg"
 Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
 Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"
 Write-Regel "regio     : $IndicatorRegio$(if ($IndicatorRegio -eq 'Landschappen') { ', de vier landschapsgebieden van #760 na elkaar' })"
+Write-Regel "ketens    : $(if ($Ontkoppeld) { 'ontkoppeld, via tifs per zichtjaar (#824)' } else { 'in een proces, elke export rekent alle voorgaande zichtjaren mee' })"
 
+$alleJaren = Get-Zichtjaren
+$leen      = Get-VariantKolom $Cfg 'StandVanVariant'
+function Get-StandVan([string]$v) { if ($leen[$v]) { $leen[$v] } else { $v } }
+foreach ($y in $Zichtjaren) { if ($alleJaren.IndexOf($y) -lt 0) { throw "Zichtjaar $y staat niet in de configuratie ($($alleJaren -join ', '))" } }
 if (-not $GeenToets) { Test-Invoer }
 
 function Invoke-Export([string]$stap, [string[]]$items) {
@@ -247,7 +299,52 @@ Invoke-Export "legendas" @($eerste)
 # regio draagt de volledige export; elke volgende alleen de regionale tabel, want de grids, de
 # landelijke tabel en de claimrealisatie hangen niet van de indeling af. Met -AlleenLandschapstabellen
 # ook de eerste alleen de tabel.
-$regios = if ($IndicatorRegio -eq 'Landschappen') { @('Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand') } else { @($IndicatorRegio) }
+# De @( ) eromheen is nodig: een if-statement geeft zijn uitkomst als reeks terug, en een lijst van
+# een element komt daar als kale string uit, zodat $regios[0] de eerste LETTER van de regionaam is.
+$regios = @(if ($IndicatorRegio -eq 'Landschappen') { @('Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand') } else { $IndicatorRegio })
+
+# Ontkoppeld (#824): eerst de reeks zichtjaren voor het laatste exportzichtjaar, elk in een eigen
+# proces, in volgorde. Zichtjaren/<jaar>/Tijdreeks schrijft de ketentifs van dat jaar en de kaarten
+# van de tijdreeks; het volgende zichtjaar leest die ketentifs via Ketens/Lees. Het eerste zichtjaar
+# heeft geen voorganger en leest het basisjaar, net als zonder de schakelaar. Een ontbrekende
+# ketentif geeft GeoDmsRun exit 0 met een gdal-waarschuwing, vandaar de toets voor en na elk jaar.
+if ($Ontkoppeld) {
+    $laatste = ($Zichtjaren | ForEach-Object { $alleJaren.IndexOf($_) } | Measure-Object -Maximum).Maximum
+    $reeks   = @(if ($laatste -gt 0) { $alleJaren[0..($laatste - 1)] } else { @() })
+    if ($reeks.Count -eq 0) {
+        Write-Regel "reeks     : geen, $($alleJaren[$laatste]) is het eerste zichtjaar"
+    } elseif ($AlleenExportZichtjaar -or $AlleenLandschapstabellen) {
+        Write-Regel "reeks     : overgeslagen; de ketentifs van $($reeks[-1]) moeten er staan"
+    } elseif ($Gebundeld) {
+        Write-Regel "reeks     : $($reeks -join ', '), per zichtjaar een proces voor $($Varianten.Count) varianten"
+        for ($i = 0; $i -lt $reeks.Count; $i++) {
+            $j = $reeks[$i]
+            if ($i -gt 0) { foreach ($v in $Varianten) { Assert-Ketens "${Scenario}_$v" $reeks[$i - 1] "${Scenario}_$(Get-StandVan $v)" } }
+            $env:ExportZichtjaar = $j
+            Invoke-Export "reeks-gebundeld-$j" @($Varianten | ForEach-Object { "/Indicatoren/${Scenario}_$_/Zichtjaren/$j/Tijdreeks" })
+            foreach ($v in $Varianten) { Assert-Ketens "${Scenario}_$v" $j "${Scenario}_$(Get-StandVan $v)" }
+        }
+    } else {
+        Write-Regel "reeks     : $($reeks -join ', '), per variant en zichtjaar een proces"
+        foreach ($v in $Varianten) {
+            for ($i = 0; $i -lt $reeks.Count; $i++) {
+                $j = $reeks[$i]
+                if ($i -gt 0) { Assert-Ketens "${Scenario}_$v" $reeks[$i - 1] "${Scenario}_$(Get-StandVan $v)" }
+                $env:ExportZichtjaar = $j
+                Invoke-Export "reeks-$v-$j" @("/Indicatoren/${Scenario}_$v/Zichtjaren/$j/Tijdreeks")
+                Assert-Ketens "${Scenario}_$v" $j "${Scenario}_$(Get-StandVan $v)"
+            }
+        }
+    }
+}
+
+# De export zelf. Ontkoppeld leest het exportzichtjaar de ketentifs van zijn voorganger, dus die
+# worden eerst getoetst; zonder de schakelaar rekent de export de hele reeks in het proces mee.
+function Assert-Voorganger([string]$v, [string]$y) {
+    if (-not $Ontkoppeld) { return }
+    $i = $alleJaren.IndexOf($y)
+    if ($i -gt 0) { Assert-Ketens "${Scenario}_$v" $alleJaren[$i - 1] "${Scenario}_$(Get-StandVan $v)" }
+}
 for ($r = 0; $r -lt $regios.Count; $r++) {
     $regio = $regios[$r]
     $env:IndicatorRegio = $regio
@@ -257,6 +354,7 @@ for ($r = 0; $r -lt $regios.Count; $r++) {
     if ($Gebundeld) {
         Write-Regel "modus     : gebundeld, per zichtjaar een proces voor $($Varianten.Count) varianten ($regio)"
         foreach ($y in $Zichtjaren) {
+            foreach ($v in $Varianten) { Assert-Voorganger $v $y }
             $env:ExportZichtjaar = $y
             $items = @($Varianten | ForEach-Object { "/Indicatoren/${Scenario}_$_/$wat" })
             Invoke-Export "$naam-gebundeld-$y" $items
@@ -264,6 +362,7 @@ for ($r = 0; $r -lt $regios.Count; $r++) {
     } else {
         foreach ($v in $Varianten) {
             foreach ($y in $Zichtjaren) {
+                Assert-Voorganger $v $y
                 $env:ExportZichtjaar = $y
                 Invoke-Export "$naam-$v-$y" @("/Indicatoren/${Scenario}_$v/$wat")
             }
