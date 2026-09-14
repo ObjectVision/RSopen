@@ -530,6 +530,116 @@ container AdHoc
 			}
 		}
 
+		container LandbouwOpKaart
+		: Descr = "De vier landbouwkolommen van de indicatorentabel opnieuw geteld voor 2120, maar dan op de landgebruiksadministratie van de stand (Stand/Landgebruik_Type, #751)
+					in plaats van op het subsectorlabel Stand/Subsector_rel. Reden: de opgelegde natte teelt en het vernatte grasland van de veenbouwstenen verliezen hun
+					subsectorlabel in de landbouwallocatie (Iter_Landbouw_T.dms, StateNaAllocatie1/Subsector_rel merget alleen Allocatie/per_SectorxSubsector en niet
+					ExogeenOpleggen/per_SectorxSubsector), zodat Landbouw_Areaal, Landbouw_NettoOpbrengst en Landbouw_NPV in de export die 207.947 ha niet meetellen terwijl de
+					landgebruikskaart en de arealentabellen ze wel als landbouw tonen. Hier wordt de klasse per cel uit de administratie gelezen (LandgebruikType naar
+					LandbouwType naar LandbouwKlasses) en daarop het saldo en de NPV van dezelfde geschiktheidskaarten gelegd als de export gebruikt
+					(Suitability/Y2120/Landbouw/per_LandbouwKlasse/<klasse>/NetRevenue en /NPV). Ter controle staat het areaal op het label ernaast (Areaal_Label), dat gelijk
+					hoort te zijn aan Landbouw_Areaal in de tabellen. Landelijk en per landschapsgebied van #760. Structureel: het label van de opgelegde landbouw in de stand
+					bewaren, dan komt dit vanzelf uit RegionaleIndicatoren_T."
+		{
+			unit<uint8> Casus : NrOfRows = 3
+			{
+				attribute<String> name    : ['BAU1', 'BAU2', 'NbSGenuanceerder'];
+				attribute<String> Map     : ['WLO_hoog_BAU', 'WLO_hoog_BAU2', 'WLO_hoog_NbSGenuanceerder'];
+				attribute<String> Variant : ['BAU', 'BAU2', 'NbSGenuanceerder'];
+			}
+			unit<uint8> Regio : NrOfRows = 5, Descr = "Landelijk en de vier landschapsgebieden van #760 (Landschapsgebieden/Impl)."
+			{
+				attribute<String> name : ['Nederland', 'Kust', 'Rivieren', 'Veen', 'Zand'];
+			}
+			container Masker
+			{
+				attribute<Bool> Nederland (/Geography/AdminDomain) := const(TRUE, /Geography/AdminDomain);
+				attribute<Bool> Kust      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsKust;
+				attribute<Bool> Rivieren  (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsRivieren;
+				attribute<Bool> Veen      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsVeen;
+				attribute<Bool> Zand      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsZand;
+			}
+
+			container PerCasus := for_each_ne(Casus/name, 'Casus_T(' + quote(Casus/Map) + ', ' + quote(Casus/Variant) + ')');
+			template Casus_T
+			{
+				parameter<String> Map;
+				parameter<String> Variant;
+				container Z := ='/Indicatoren/' + Map + '/Zichtjaren/Y2120';
+				container Suit := ='/VariantData/' + Variant + '/Suitability/Y2120/Landbouw/per_LandbouwKlasse';
+				attribute</Classifications/Grondgebruik/LandgebruikType> Type (/Geography/AdminDomain) := Z/Stand/Landgebruik_Type;
+				attribute</Classifications/Grondgebruik/LandbouwType>   LT   (/Geography/AdminDomain) := /Classifications/Grondgebruik/LandgebruikType/LandbouwType_rel[Type];
+				attribute</Classifications/Actor/LandbouwKlasses> LK (/Geography/AdminDomain) := /Classifications/Grondgebruik/LandbouwType/LandbouwK_rel[LT], Descr = "De landbouwklasse per cel uit de administratie; null waar geen landbouw staat.";
+				attribute</Classifications/Actor/LandbouwKlasses> LKLabel (/Geography/AdminDomain) := /Classifications/Actor/Sector/xSubsector/LandbouwK_rel[Z/Stand/Subsector_rel], Descr = "De klasse van het subsectorlabel, zoals de export hem leest; null waar het label ontbreekt of geen landbouw is.";
+				attribute</Classifications/Actor/LandbouwKlasses> LK2 (/Geography/AdminDomain) := MakeDefined(LKLabel, LK), Descr = "Het label waar het er is, anders de administratie: de gealloceerde landbouw houdt precies de klasse en het saldo van de export, en de labelloze cellen (opgelegde natte teelt, vernat grasland, krimpmarge) krijgen de klasse van hun administratietype.";
+				attribute<Bool> IsLandbouwKaart (/Geography/AdminDomain) := IsDefined(LK) && /Geography/AdminDomain/IsCompactedDomain && (IsNull(Z/Stand/Subsector_rel) || MakeDefined(/Classifications/Actor/Sector/xSubsector/IsLandbouw[Z/Stand/Subsector_rel], FALSE)), Descr = "Landbouw volgens de administratie, behalve waar de stand wonen, werken of een andere sector heeft gezet: die cel houdt haar gewas in de administratie maar is geen landbouw meer, zoals de landgebruikskaart het ook doet. Een cel zonder label met een landbouwtype is de opgelegde natte teelt of het vernatte grasland.";
+				attribute<Bool> IsLandbouwLabel (/Geography/AdminDomain) := MakeDefined(/Classifications/Actor/Sector/xSubsector/IsLandbouw[Z/Stand/Subsector_rel], FALSE) && /Geography/AdminDomain/IsCompactedDomain;
+				attribute<Bool> IsNatteTeelt     (/Geography/AdminDomain) := IsLandbouwKaart && lowercase(/Classifications/Grondgebruik/LandbouwType/name[LT]) == 'riet_paludicultuur';
+				attribute<Bool> IsVernatGrasland (/Geography/AdminDomain) := IsLandbouwKaart && (lowercase(/Classifications/Grondgebruik/LandbouwType/name[LT]) == 'grasland_vernat' || lowercase(/Classifications/Grondgebruik/LandbouwType/name[LT]) == 'grasland_vernat_kruidenrijk');
+
+				container Saldo := for_each_nedv(/Classifications/Actor/LandbouwKlasses/Actief/name, 'LK2 == /Classifications/Actor/LandbouwKlasses/V/' + /Classifications/Actor/LandbouwKlasses/Actief/name + ' ? Suit/' + /Classifications/Actor/LandbouwKlasses/Actief/name + '/NetRevenue * 1[Units/jaar] : 0[Units/Eur_m2]', /Geography/AdminDomain, Units/Eur_m2)
+				, Descr = "Het saldo van een jaar per klasse op de cellen die de administratie aan die klasse toekent, zoals Zichtjaar_NettoOpbrengsten_perLandbouwK in Export.dms maar dan op de kaart."
+				{
+					attribute<Units/Eur_m2> Totaal (/Geography/AdminDomain) := ='add(' + AsItemList(/Classifications/Actor/LandbouwKlasses/Actief/name) + ')';
+				}
+				container NPV := for_each_nedv(/Classifications/Actor/LandbouwKlasses/Actief/name, 'LK2 == /Classifications/Actor/LandbouwKlasses/V/' + /Classifications/Actor/LandbouwKlasses/Actief/name + ' ? Suit/' + /Classifications/Actor/LandbouwKlasses/Actief/name + '/NPV : 0[Units/Eur_m2]', /Geography/AdminDomain, Units/Eur_m2)
+				{
+					attribute<Units/Eur_m2> Totaal (/Geography/AdminDomain) := ='add(' + AsItemList(/Classifications/Actor/LandbouwKlasses/Actief/name) + ')';
+				}
+				attribute<Float32> SaldoCel (/Geography/AdminDomain) := Saldo/Totaal[Float32] * /Geography/AdminDomain/NrMeter2PerCell, Descr = "Euro per cel per jaar.";
+				attribute<Float32> NPVCel   (/Geography/AdminDomain) := NPV/Totaal[Float32]   * /Geography/AdminDomain/NrMeter2PerCell, Descr = "Euro per cel.";
+
+				container PerRegio := for_each_ne(Regio/name, 'Regio_T(' + quote(Regio/name) + ', Masker/' + Regio/name + ')');
+				template Regio_T
+				{
+					parameter<String> RegioNaam;
+					attribute<Bool>   IsRegio (/Geography/AdminDomain);
+					attribute<Float32> Zeef (/Geography/AdminDomain) := IsRegio ? 1f : null_f;
+					parameter<Float32> Areaal_Kaart          := sum((IsLandbouwKaart ? /Geography/AdminDomain/NrHaPerCell[Float32] : 0f) * Zeef);
+					parameter<Float32> Areaal_Label          := sum((IsLandbouwLabel ? /Geography/AdminDomain/NrHaPerCell[Float32] : 0f) * Zeef);
+					parameter<Float32> Areaal_NatteTeelt     := sum((IsNatteTeelt ? /Geography/AdminDomain/NrHaPerCell[Float32] : 0f) * Zeef);
+					parameter<Float32> Areaal_VernatGrasland := sum((IsVernatGrasland ? /Geography/AdminDomain/NrHaPerCell[Float32] : 0f) * Zeef);
+					parameter<Float32> NettoOpbrengst_Kaart  := sum((IsLandbouwKaart ? SaldoCel : 0f) * Zeef);
+					parameter<Float32> NPV_Kaart             := sum((IsLandbouwKaart ? NPVCel : 0f) * Zeef);
+					parameter<Float32> NettoOpbrengst_Kaart_perHa := NettoOpbrengst_Kaart / Areaal_Kaart;
+					parameter<Float32> NPV_Kaart_perHa            := NPV_Kaart / Areaal_Kaart;
+				}
+				unit<uint8> Tabel := Regio
+				{
+					attribute<Float32> Areaal_Kaart                := union_data(., PerRegio/Nederland/Areaal_Kaart, PerRegio/Kust/Areaal_Kaart, PerRegio/Rivieren/Areaal_Kaart, PerRegio/Veen/Areaal_Kaart, PerRegio/Zand/Areaal_Kaart);
+					attribute<Float32> Areaal_Label                := union_data(., PerRegio/Nederland/Areaal_Label, PerRegio/Kust/Areaal_Label, PerRegio/Rivieren/Areaal_Label, PerRegio/Veen/Areaal_Label, PerRegio/Zand/Areaal_Label);
+					attribute<Float32> Areaal_NatteTeelt           := union_data(., PerRegio/Nederland/Areaal_NatteTeelt, PerRegio/Kust/Areaal_NatteTeelt, PerRegio/Rivieren/Areaal_NatteTeelt, PerRegio/Veen/Areaal_NatteTeelt, PerRegio/Zand/Areaal_NatteTeelt);
+					attribute<Float32> Areaal_VernatGrasland       := union_data(., PerRegio/Nederland/Areaal_VernatGrasland, PerRegio/Kust/Areaal_VernatGrasland, PerRegio/Rivieren/Areaal_VernatGrasland, PerRegio/Veen/Areaal_VernatGrasland, PerRegio/Zand/Areaal_VernatGrasland);
+					attribute<Float32> NettoOpbrengst_Kaart        := union_data(., PerRegio/Nederland/NettoOpbrengst_Kaart, PerRegio/Kust/NettoOpbrengst_Kaart, PerRegio/Rivieren/NettoOpbrengst_Kaart, PerRegio/Veen/NettoOpbrengst_Kaart, PerRegio/Zand/NettoOpbrengst_Kaart);
+					attribute<Float32> NPV_Kaart                   := union_data(., PerRegio/Nederland/NPV_Kaart, PerRegio/Kust/NPV_Kaart, PerRegio/Rivieren/NPV_Kaart, PerRegio/Veen/NPV_Kaart, PerRegio/Zand/NPV_Kaart);
+					attribute<Float32> NettoOpbrengst_Kaart_perHa  := union_data(., PerRegio/Nederland/NettoOpbrengst_Kaart_perHa, PerRegio/Kust/NettoOpbrengst_Kaart_perHa, PerRegio/Rivieren/NettoOpbrengst_Kaart_perHa, PerRegio/Veen/NettoOpbrengst_Kaart_perHa, PerRegio/Zand/NettoOpbrengst_Kaart_perHa);
+					attribute<Float32> NPV_Kaart_perHa             := union_data(., PerRegio/Nederland/NPV_Kaart_perHa, PerRegio/Kust/NPV_Kaart_perHa, PerRegio/Rivieren/NPV_Kaart_perHa, PerRegio/Veen/NPV_Kaart_perHa, PerRegio/Zand/NPV_Kaart_perHa);
+				}
+			}
+
+			unit<uint32> RijenBron := combine(Casus, Regio)
+			{
+				attribute<String> CasusNaam := Casus/name[first_rel];
+				attribute<String> RegioNaam := Regio/name[second_rel];
+			}
+			unit<uint32> Rijen := RijenBron
+			, StorageName = "='%LocalDataProjDir%/Rapport_v01/LandbouwOpKaart.csv'"
+			, StorageType = "gdalwrite.vect"
+			, Descr       = "Een regel per variant en gebied: areaal, saldo per jaar en NPV van de landbouw in 2120 op de landgebruiksadministratie, met het areaal op het label ter controle."
+			{
+				attribute<String>  Variant := RijenBron/CasusNaam;
+				attribute<String>  Gebied  := RijenBron/RegioNaam;
+				attribute<Float32> Areaal_Kaart                := union_data(., PerCasus/BAU1/Tabel/Areaal_Kaart, PerCasus/BAU2/Tabel/Areaal_Kaart, PerCasus/NbSGenuanceerder/Tabel/Areaal_Kaart);
+				attribute<Float32> Areaal_Label                := union_data(., PerCasus/BAU1/Tabel/Areaal_Label, PerCasus/BAU2/Tabel/Areaal_Label, PerCasus/NbSGenuanceerder/Tabel/Areaal_Label);
+				attribute<Float32> Areaal_NatteTeelt           := union_data(., PerCasus/BAU1/Tabel/Areaal_NatteTeelt, PerCasus/BAU2/Tabel/Areaal_NatteTeelt, PerCasus/NbSGenuanceerder/Tabel/Areaal_NatteTeelt);
+				attribute<Float32> Areaal_VernatGrasland       := union_data(., PerCasus/BAU1/Tabel/Areaal_VernatGrasland, PerCasus/BAU2/Tabel/Areaal_VernatGrasland, PerCasus/NbSGenuanceerder/Tabel/Areaal_VernatGrasland);
+				attribute<Float32> NettoOpbrengst_Kaart        := union_data(., PerCasus/BAU1/Tabel/NettoOpbrengst_Kaart, PerCasus/BAU2/Tabel/NettoOpbrengst_Kaart, PerCasus/NbSGenuanceerder/Tabel/NettoOpbrengst_Kaart);
+				attribute<Float32> NPV_Kaart                   := union_data(., PerCasus/BAU1/Tabel/NPV_Kaart, PerCasus/BAU2/Tabel/NPV_Kaart, PerCasus/NbSGenuanceerder/Tabel/NPV_Kaart);
+				attribute<Float32> NettoOpbrengst_Kaart_perHa  := union_data(., PerCasus/BAU1/Tabel/NettoOpbrengst_Kaart_perHa, PerCasus/BAU2/Tabel/NettoOpbrengst_Kaart_perHa, PerCasus/NbSGenuanceerder/Tabel/NettoOpbrengst_Kaart_perHa);
+				attribute<Float32> NPV_Kaart_perHa             := union_data(., PerCasus/BAU1/Tabel/NPV_Kaart_perHa, PerCasus/BAU2/Tabel/NPV_Kaart_perHa, PerCasus/NbSGenuanceerder/Tabel/NPV_Kaart_perHa);
+			}
+		}
+
 		container PerCasus :=
 			for_each_ne(
 				Classifications/Modellering/AllCases/Label
