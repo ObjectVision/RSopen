@@ -299,7 +299,9 @@ Invoke-Export "legendas" @($eerste)
 # regio draagt de volledige export; elke volgende alleen de regionale tabel, want de grids, de
 # landelijke tabel en de claimrealisatie hangen niet van de indeling af. Met -AlleenLandschapstabellen
 # ook de eerste alleen de tabel.
-$regios = if ($IndicatorRegio -eq 'Landschappen') { @('Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand') } else { @($IndicatorRegio) }
+# De @( ) eromheen is nodig: een if-statement geeft zijn uitkomst als reeks terug, en een lijst van
+# een element komt daar als kale string uit, zodat $regios[0] de eerste LETTER van de regionaam is.
+$regios = @(if ($IndicatorRegio -eq 'Landschappen') { @('Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand') } else { $IndicatorRegio })
 
 # Ontkoppeld (#824): eerst de reeks zichtjaren voor het laatste exportzichtjaar, elk in een eigen
 # proces, in volgorde. Zichtjaren/<jaar>/Tijdreeks schrijft de ketentifs van dat jaar en de kaarten
@@ -308,7 +310,7 @@ $regios = if ($IndicatorRegio -eq 'Landschappen') { @('Landschap_Kust','Landscha
 # ketentif geeft GeoDmsRun exit 0 met een gdal-waarschuwing, vandaar de toets voor en na elk jaar.
 if ($Ontkoppeld) {
     $laatste = ($Zichtjaren | ForEach-Object { $alleJaren.IndexOf($_) } | Measure-Object -Maximum).Maximum
-    $reeks   = if ($laatste -gt 0) { @($alleJaren[0..($laatste - 1)]) } else { @() }
+    $reeks   = @(if ($laatste -gt 0) { $alleJaren[0..($laatste - 1)] } else { @() })
     if ($reeks.Count -eq 0) {
         Write-Regel "reeks     : geen, $($alleJaren[$laatste]) is het eerste zichtjaar"
     } elseif ($AlleenExportZichtjaar -or $AlleenLandschapstabellen) {
