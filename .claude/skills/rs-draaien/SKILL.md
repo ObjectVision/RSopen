@@ -87,6 +87,19 @@ $items = @(($g+'NieuweNatuur'), ($g+'BT_Exogeen'), ($g+'Themas/Koolstof'))
 
 Zet daar dezelfde omgevingsvariabelen omheen als het batchscript: `ExportZichtjaar`, `IndicatorRegio`, `StandAllocatieOntkoppeld`, `VariantDataOntkoppeld`, en haal `LocalDataProjDir` weg. Gemeten op 2026-09-09: vier natuuritems en het thema Koolstof voor twee varianten samen 16,6 minuten, tegen zeventig minuten per variant voor de volle export.
 
+### De export ontkoppeld per zichtjaar
+
+De cumulatieve indicatoren (contante waarden per periode, koolstof, methaan, sterfte, SOMERS, en de landgebruikskaart) lezen het vorige zichtjaar via `PrevIndicatoren`. Zonder meer rekent een export van 2120 dus alle zichtjaren vanaf 2040 in een proces mee, 44 tot 70 minuten per variant, en een tabel die je opnieuw wilt kost dat nog een keer. Sinds #824 kan het per zichtjaar: `RunIndicatoren.ps1 -Ontkoppeld` draait eerst `Zichtjaren/<jaar>/Tijdreeks` voor elk zichtjaar voor het exportzichtjaar, elk in een eigen proces (8,5 minuten per zichtjaar, piek 133 GB), en dat item schrijft de 38 grootheden die het volgende zichtjaar nodig heeft als tif in `Indicatoren/<casus>/Ketens/`. Met `ModelParameters/IndicatorenOntkoppeld` op TRUE (omgevingsvariabele) leest `PrevIndicatoren` die tifs via `Ketens/Lees`, en de export van het exportzichtjaar rekent dan alleen zichzelf: 17,7 in plaats van 43,8 minuten, piek 129 in plaats van 232 GB. Bewezen bit voor bit op WLO_hoog_BAU, zie #824.
+
+Los aanroepen kan ook, zonder `ExportZichtjaar`:
+
+```powershell
+$env:IndicatorenOntkoppeld = 'TRUE'
+& $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg '/Indicatoren/WLO_hoog_BAU/Zichtjaren/Y2050/Tijdreeks'
+```
+
+Drie dingen om te weten. Een ontbrekende ketentif geeft exit 0 met een gdal-waarschuwing `[W]` en geen `[E]`, dus toets op het bestaan van de bestanden, zoals het script doet met `Assert-Ketens`. Er is met opzet geen fingerprint: een bestaande tif wordt gelezen, en na een nieuwe allocatie hoort de reeks opnieuw. En een keten die het vorige zichtjaar bij naam aanspreekt in plaats van via `PrevIndicatoren` blijft onzichtbaar voor de ontkoppeling; de landgebruikskaart deed dat tot #824, en `grep PrevIndicatoren` over `cfg/main/Templates` is de lijst die `Ketens.dms` moet dekken.
+
 ### Zet haakjes om elk element van de itemlijst
 
 In PowerShell bindt de komma sterker dan de plus. `@($g+'a', $g+'b')` wordt daardoor niet een lijst van twee paden maar een enkele string, want de komma maakt eerst `@('a', $g)` en de plus plakt dat aan `$g` vast. GeoDmsRun krijgt dan alle paden als een argument, zoekt een item met spaties in de naam, en eindigt met exit 2 op een melding die naar de configuratie wijst in plaats van naar de aanroep. Schrijf dus `@(($g+'a'), ($g+'b'))`.
@@ -210,6 +223,10 @@ Een volledig zichtjaar koud herbouwd kost ongeveer 64 minuten: basisdata circa 1
 Twee valkuilen bij het inkorten. `Classifications/Modellering/StandVar_Prep` hangt af van `SectorAllocRegio/Uq_Sectors/HasWerkenSector`, dus zonder werken verdwijnen de banen-standvariabelen en breekt alles wat daarop leunt. En de bestandsnaam van de standtifs bevat `SS-<aantal xSubsectors>`. Dat getal telt de subsectoren van de actieve sectoren: `Classifications/Actor/Sector` wordt opgebouwd uit `SectorAllocRegio/Uq_Sectors/Sectorname`, en `xSubsector` is de union over die sectoren. Commentarieer je een AllocRegio-regel uit terwijl de sector zelf via een andere regel actief blijft, bijvoorbeeld Wonen op COROP terwijl Wonen op NVM blijft staan, dan verandert `Uq_Sectors` niet en blijft de naam gelijk, zodat bestaande tifs vindbaar blijven. Zet je een hele sector aan of uit, dan schuift het getal en zijn de bestaande tifs onbereikbaar, ook voor de indicatorenkant met `StandAllocatieOntkoppeld` op TRUE. Met Landbouw aan, de stand sinds #780, is de naam `SS-26`; zonder Landbouw `SS-11`, want die sector brengt vijftien subsectoren mee. Een sector aan- of uitzetten is dus geen instelling die je vlak voor een levering nog even meeneemt: het is een volledige herberekening van alle varianten en alle zichtjaren.
 
 Voor indicatorcontroles is de allocatie vaak helemaal niet nodig: met `StandAllocatieOntkoppeld` op TRUE leest de indicatorenkant de stand uit de tifs. De batchscripts zetten die omgevingsvariabele; de default in `ModelParameters.dms` is FALSE en geldt alleen voor de GUI en losse aanroepen, dus zet hem zelf bij een losse aanroep.
+
+### Een lijst van een element komt als kale string uit een if
+
+Een tweede PowerShell-valkuil in dezelfde familie. `$regios = if ($x) { @('a','b','c') } else { @($y) }` geeft in de else-tak geen lijst maar de string `$y`, want een if-statement geeft zijn uitkomst als reeks terug en een reeks van een element wordt daarbij het element zelf. `$regios.Count` is dan nog steeds 1, maar `$regios[0]` is de eerste LETTER. Zo draaide `RunIndicatoren.ps1` van 13 tot 14 september 2026 met `-IndicatorRegio NL` op de indeling `N` en viel de export om op een onbekende indeling, terwijl `Landschappen` (vier elementen) gewoon werkte. Zet `@( )` om het hele if-statement: `$regios = @(if ($x) { ... } else { $y })`.
 
 ### Vraag een exportkolom niet via de tabel op
 
