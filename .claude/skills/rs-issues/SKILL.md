@@ -128,19 +128,19 @@ Let op de blinde vlek bij untracked bestanden: `git diff` geeft daar niets, en e
 
 ### BOM en regeleindes bij een scriptbewerking
 
-De bestanden in RSopen zijn niet uniform. Sommige .dms-bestanden beginnen met een UTF-8 BOM (`Classifications/Landbouw.dms`, `VariantParameters/VariantK.dms`) en andere niet (`ExportSettings.dms`). Python `open(..., encoding='utf-8-sig')` stript een BOM bij het lezen en schrijft er altijd een terug, dus een scriptbewerking zet stil een BOM op een bestand dat er geen had. Dat vervuilt de diff met een wijziging op regel 1 die niets met het werk te maken heeft, kost een reviewer tijd en geeft bij een merge een conflict op de eerste regel.
+Sinds #801 zijn de bestanden uniform: elk tekstbestand staat in de werkkopie op CRLF en in git op LF, en `.gitattributes` in de root dwingt dat af, onafhankelijk van `core.autocrlf` op de machine. Geen enkel dms-bestand heeft nog een UTF-8 BOM; 46 bestanden zonder BOM bevatten accenten en laden gewoon, dus GeoDMS heeft hem niet nodig. `.editorconfig` zegt hetzelfde tegen editors.
 
-De regeleindes zijn de tweede bron van ruis. De werkkopie staat op CRLF en de blobs in git op LF (`core.autocrlf` staat op true, zie `git ls-files --eol`). Git normaliseert dat bij het committen, maar een tool die de regeleindes van het hele bestand aantast, zoals een Python-open met de standaardinstelling of het `--no-filters` hierboven, laat elke regel gewijzigd zien terwijl er een alinea in is gezet.
+Wat er voor die opschoning misging, en wat een scriptbewerking nog steeds kan doen: Python `open(..., encoding='utf-8-sig')` stript een BOM bij het lezen en schrijft er altijd een terug, en een open met de standaardinstelling zet CRLF om naar LF. Het eerste geeft een wijziging op regel 1 die niets met het werk te maken heeft; het tweede laat elke regel gewijzigd zien terwijl er een alinea in is gezet. Git normaliseert een LF-bestand bij het committen wel naar dezelfde blob, maar de werkkopie is dan niet meer uniform en Visual Studio meldt inconsistente regeleindes bij de eerstvolgende bewerking.
 
 Bewerk .dms-bestanden dus in bytes, of neem de bytes van HEAD als basis en schrijf met `newline=''` terug. Controleer voordat je stageert:
 
 ```
 git diff --stat <bestand>                   # ongeveer twee keer het aantal regels van het bestand is de kanarie
-git diff <bestand> | cat -A | head -3       # M-oM-;M-? op regel 1 is een BOM die er niet was, ^M ontbreekt of staat dubbel
-git show HEAD:<bestand> | head -c3 | od -An -tx1
+git diff <bestand> | cat -A | head -3       # M-oM-;M-? op regel 1 is een BOM die er niet hoort, ^M ontbreekt of staat dubbel
+git ls-files --eol <bestand>                # hoort i/lf w/crlf te zeggen
 ```
 
-Een diff die de BOM of alle regeleindes raakt hoort niet in de commit. Zet het bestand terug op de bytes van HEAD en breng de wijziging opnieuw aan.
+Een diff die een BOM toevoegt of alle regeleindes raakt hoort niet in de commit. Zet het bestand terug op de bytes van HEAD en breng de wijziging opnieuw aan.
 
 Commit of push alleen wanneer daarom gevraagd is.
 

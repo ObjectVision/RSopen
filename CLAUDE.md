@@ -35,3 +35,7 @@ Begin de onderwerpregel van een commit message met het issuenummer, gevolgd door
 Visual Studio toont in de commitlijst alleen die eerste regel, dus daar moet de verwijzing staan en niet in de body. Hoort een commit bij geen enkel issue, dan begint de onderwerpregel gewoon met de beschrijving. Raakt hij meerdere issues, zet het belangrijkste nummer vooraan en de rest in de body.
 
 Sluitende woorden als "Fixes #634" sluiten het issue automatisch zodra de commit in main belandt. Gebruik die alleen wanneer het issue daarmee echt af is.
+
+## Bestandsvorm
+
+Alle tekstbestanden staan in de werkkopie op CRLF en in git op LF; `.gitattributes` dwingt dat af, onafhankelijk van `core.autocrlf`. Dms-bestanden zijn UTF-8 zonder BOM en springen in met tabs (`.editorconfig`). Bewerk dms-bestanden in bytes of met `newline=''`, zodat een scriptbewerking de regeleindes niet omzet en geen BOM toevoegt. Controleer na een scriptbewerking `git diff --stat`: een diff van ongeveer twee keer het aantal regels van het bestand betekent dat de regeleindes zijn geraakt, en die hoort niet in een commit.
