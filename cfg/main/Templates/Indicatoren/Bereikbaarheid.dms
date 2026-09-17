@@ -101,6 +101,9 @@ container Bereikbaarheid_Banen
 			
 			attribute<Job>    Banen_CAR_StartYear    := MakeDecay/PerTransportType/CAR/Domain/banen_StartYear_decayed_org;
 			attribute<Job>    Banen_CAR              := MakeDecay/PerTransportType/CAR/Domain/banen_decayed_org;
+			
+			attribute<Woning> Woningen               := Read_Indicators/Stand_PerBuurt/Woningen
+			, Descr = "De woningen per buurt in dit zichtjaar, het gewicht van de bewonersgewogen gemiddelden in Output_PerNederland en PerIndicatorRegio. Staat sinds #824 in de gpkg, zodat een tabelrun met ModelParameters/TabellenUitExport aan het gewicht samen met de bereikbaarheid kan teruglezen.";
 		}
 		
 		unit<UInt32> Output_PerProvincie := Provincie/StudyArea
@@ -134,10 +137,43 @@ container Bereikbaarheid_Banen
 		}
 	}
 	
+	// -- de bron van de aggregaties in PerIndicatorRegio: levend, of teruggelezen uit de gpkg (#824) --
+	container Lees
+	: Descr = "De bereikbaarheid en de woningen per buurt van dit zichtjaar, teruggelezen uit de gpkg die Result schrijft, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Gekoppeld op buurtcode, zoals Indicatoren/AdHoc.dms dezelfde gpkg leest."
+	{
+		container Gpkg
+		: StorageName     = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Bereikbaarheid_Banen_'+Zichtjaar_name+'.gpkg'"
+		, StorageType     = "gdal.vect"
+		, StorageReadOnly = "TRUE"
+		{
+			unit<uint32> Output_PerBuurt
+			{
+				attribute<String>  BU_CODE;
+				attribute<Float32> Banen_W_OV_W;
+				attribute<Float32> Banen_BB;
+				attribute<Float32> Banen_CAR;
+				attribute<Float32> Woningen;
+			}
+		}
+		attribute<Job>    Banen_W_OV_W (Buurt) := rjoin(Buurt/statcode, Gpkg/Output_PerBuurt/BU_CODE, Gpkg/Output_PerBuurt/Banen_W_OV_W)[Job];
+		attribute<Job>    Banen_BB (Buurt) := rjoin(Buurt/statcode, Gpkg/Output_PerBuurt/BU_CODE, Gpkg/Output_PerBuurt/Banen_BB)[Job];
+		attribute<Job>    Banen_CAR (Buurt) := rjoin(Buurt/statcode, Gpkg/Output_PerBuurt/BU_CODE, Gpkg/Output_PerBuurt/Banen_CAR)[Job];
+		attribute<Woning> Woningen (Buurt) := rjoin(Buurt/statcode, Gpkg/Output_PerBuurt/BU_CODE, Gpkg/Output_PerBuurt/Woningen)[Woning];
+	}
+	container Live
+	{
+		attribute<Job>    Banen_W_OV_W (Buurt) := Result/Output_PerBuurt/Banen_W_OV_W;
+		attribute<Job>    Banen_BB (Buurt) := Result/Output_PerBuurt/Banen_BB;
+		attribute<Job>    Banen_CAR (Buurt) := Result/Output_PerBuurt/Banen_CAR;
+		attribute<Woning> Woningen (Buurt) := Read_Indicators/Stand_PerBuurt/Woningen;
+	}
+	container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+	, Descr = "Waar PerIndicatorRegio de bereikbaarheid en het gewicht per buurt vandaan haalt: Live (berekend) of Lees (de gpkg van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+	
 	container PerIndicatorRegio
 	: Descr = "De bereikbaarheid van banen geaggregeerd naar de indeling uit ModelParameters/Advanced/IndicatorRegio_ref, en daarnaast het landelijke getal. De achtervoegsels Per_Regio en Per_NL zijn er zodat de indicatorentabellen in Indicatoren_T/Export.dms ze langs NaamAggr kunnen lezen, net als bij SloopTotaal (#797).
 
-				De aggregatie is bewust hetzelfde bewonersgewogen gemiddelde als in Result/Output_PerNederland: een decayed bereikbaarheidsgetal is een gemiddelde per woning en niet op te tellen. Landelijk verwijst dit dan ook naar dat item en rekent het niet opnieuw uit.
+				De aggregatie is bewust hetzelfde bewonersgewogen gemiddelde als in Result/Output_PerNederland: een decayed bereikbaarheidsgetal is een gemiddelde per woning en niet op te tellen. Landelijk staat daarom dezelfde formule als daar, maar over Bron, zodat een tabelrun met ModelParameters/TabellenUitExport aan ook het landelijke getal uit de gpkg haalt (#824).
 
 				Waarom de buurt via een modus bij een regio komt en niet via een punt in een polygoon, zoals Result/Output_PerProvincie doet: de indelingen die hier langs kunnen komen zijn sinds #705 deels raster, en de landschapsindeling heeft geen polygoongrens om een buurt in te leggen. Elke buurt telt daarom mee bij de regio waar de meeste van haar cellen liggen. Een buurt die over een regiogrens ligt gaat dus in zijn geheel naar de grootste helft; op buurtniveau is dat een kleine afwijking en op landschapsniveau verwaarloosbaar."
 	{
@@ -146,13 +182,13 @@ container Bereikbaarheid_Banen
 		attribute<Regio> Regio_rel (Buurt) := modus(Regio/Per_AdminDomain_Fijn, Buurt/Per_AdminDomain)
 		, Descr = "Bij welke regio hoort deze buurt? De modus over de cellen van de buurt, zodat ook een rasterindeling meedoet.";
 
-		attribute<Job> Banen_W_OV_W_Per_Regio (Regio) := sum(Result/Output_PerBuurt/Banen_W_OV_W  * Read_Indicators/Stand_PerBuurt/Woningen, Regio_rel) / sum(Read_Indicators/Stand_PerBuurt/Woningen, Regio_rel);
-		attribute<Job> Banen_BB_Per_Regio     (Regio) := sum(Result/Output_PerBuurt/Banen_BB      * Read_Indicators/Stand_PerBuurt/Woningen, Regio_rel) / sum(Read_Indicators/Stand_PerBuurt/Woningen, Regio_rel);
-		attribute<Job> Banen_CAR_Per_Regio    (Regio) := sum(Result/Output_PerBuurt/Banen_CAR     * Read_Indicators/Stand_PerBuurt/Woningen, Regio_rel) / sum(Read_Indicators/Stand_PerBuurt/Woningen, Regio_rel);
+		attribute<Job> Banen_W_OV_W_Per_Regio (Regio) := sum(Bron/Banen_W_OV_W * Bron/Woningen, Regio_rel) / sum(Bron/Woningen, Regio_rel);
+		attribute<Job> Banen_BB_Per_Regio     (Regio) := sum(Bron/Banen_BB     * Bron/Woningen, Regio_rel) / sum(Bron/Woningen, Regio_rel);
+		attribute<Job> Banen_CAR_Per_Regio    (Regio) := sum(Bron/Banen_CAR    * Bron/Woningen, Regio_rel) / sum(Bron/Woningen, Regio_rel);
 
-		parameter<Job> Banen_W_OV_W_Per_NL    := Result/Output_PerNederland/Banen_W_OV_W;
-		parameter<Job> Banen_BB_Per_NL        := Result/Output_PerNederland/Banen_BB;
-		parameter<Job> Banen_CAR_Per_NL       := Result/Output_PerNederland/Banen_CAR;
+		parameter<Job> Banen_W_OV_W_Per_NL    := sum(Bron/Banen_W_OV_W * Bron/Woningen) / sum(Bron/Woningen);
+		parameter<Job> Banen_BB_Per_NL        := sum(Bron/Banen_BB     * Bron/Woningen) / sum(Bron/Woningen);
+		parameter<Job> Banen_CAR_Per_NL       := sum(Bron/Banen_CAR    * Bron/Woningen) / sum(Bron/Woningen);
 	}
 	
 	#include<Read_Indicators.dms>

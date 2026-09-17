@@ -70,6 +70,8 @@ container KostenWoningbouw
 	,	Descr = "Een enkele doorrekening met de grondgebruikverdeling van het pakket dat in deze cel daadwerkelijk is gealloceerd. Dat is 53 keer goedkoper dan alle pakketten doorrekenen en achteraf selecteren, en geeft per definitie hetzelfde antwoord.";
 
 	attribute<Ha> Nieuwbouw_Ha (AdminDomain) := MakeDefined(WaardeNabijheidGroen/Nieuwbouw/n_nieuwbouw_cumulatief, 0[Woning]) > 0[Woning] ? AdminDomain/NrHaPerCell : 0[Ha]
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Nieuwbouw_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'"
+	,	StorageType = "gdalwrite.grid"
 	,	Descr = "Het oppervlak waarover de kosten worden geboekt: de cellen waar sinds het basisjaar netto woningen zijn bijgekomen, elk voor hun volle celoppervlak. Dat is grover dan naar rato van het aantal woningen, maar de kengetallen van bijlage E zijn per m2 terrein en niet per woning, dus een cel waar wordt gebouwd draagt de inrichtingskosten van die cel.";
 
 	unit<UInt32> BW := /Classifications/Modellering/BouwwijzeK;
@@ -85,7 +87,7 @@ container KostenWoningbouw
 
 				Let op de variantschakelaar. De veeneis werkt alleen door waar BouwwijzeVeenGeldtVoorOPs aanstaat, dus in NbSMax en NbSGenuanceerd en niet in BAU en BAU2. In die laatste twee toont deze kaart de bouwwijze die het pakket zelf toelaat, zonder de eis uit het landschapstype.";
 
-	attribute<Ha> Nieuwbouw_Ha_perBouwwijze (BW) := pcount(Bouwwijze)[float32] * AdminDomain/NrHaPerCell
+	attribute<Ha> Nieuwbouw_Ha_perBouwwijze (BW) := pcount(Bron/Bouwwijze)[float32] * AdminDomain/NrHaPerCell
 	,	Descr = "De tabelkant van de kaart hierboven: hoeveel hectare nieuwbouw er per bouwwijze staat. Gaat als Bouwwijze_Areaal mee in de export (#763).";
 
 	attribute<Float32> Kostenopslag_Bouwwijze (AdminDomain) := = /ModelParameters/Wonen/BouwwijzeOpslagInBouwkosten
@@ -180,7 +182,9 @@ container KostenWoningbouw
 
 	attribute<Eur> Regulier_NCW (AdminDomain) := = IsFirstAllocYear
 		? 'MakeDefined(Regulier_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor'
-		: 'MakeDefined(Regulier_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor + PrevIndicatoren/KostenWoningbouw/Regulier_NCW';
+		: 'MakeDefined(Regulier_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor + PrevIndicatoren/KostenWoningbouw/Regulier_NCW'
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Regulier_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	,	StorageType = "gdalwrite.grid";
 
 	attribute<Eur> MeerkostenBodemdaling_NCW (AdminDomain) := = IsFirstAllocYear
 		? 'MakeDefined(MeerkostenBodemdaling_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor'
@@ -191,6 +195,8 @@ container KostenWoningbouw
 	attribute<Eur> BeheerEnOnderhoud_NCW (AdminDomain) := = IsFirstAllocYear
 		? 'MakeDefined(BeheerEnOnderhoud_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor'
 		: 'MakeDefined(BeheerEnOnderhoud_perHa * Nieuwbouw_Ha_dezePeriode, 0[Eur]) * Verdiscontering/Factor + PrevIndicatoren/KostenWoningbouw/BeheerEnOnderhoud_NCW'
+	,	StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_BeheerEnOnderhoud_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	,	StorageType = "gdalwrite.grid"
 	,	Descr = "Let op de dubbele verdiscontering in de betekenis: het bedrag zelf is al een contante waarde over honderd jaar vanaf oplevering, uit tabel E-9, en wordt hier nog eens teruggerekend van het bouwjaar naar het basisjaar.";
 
 	attribute<Eur> Bouwkosten_NCW (AdminDomain) := = IsFirstAllocYear
@@ -200,17 +206,54 @@ container KostenWoningbouw
 	,	StorageType = "gdalwrite.grid"
 	,	Descr = "De bouwkosten in netto contante waarde, per periode opgebouwd volgens dezelfde regel als de posten hierboven (#651, #763).";
 
-	parameter<Eur> Regulier_Per_NL                  := sum(Regulier);
-	parameter<Eur> MeerkostenBodemdaling_Per_NL     := sum(MeerkostenBodemdaling);
-	parameter<Eur> BeheerEnOnderhoud_Per_NL         := sum(BeheerEnOnderhoud);
-	parameter<Eur> MeerkostenBodemdaling_NCW_Per_NL := sum(MeerkostenBodemdaling_NCW);
-	parameter<Eur> Regulier_NCW_Per_NL              := sum(Regulier_NCW);
-	parameter<Eur> BeheerEnOnderhoud_NCW_Per_NL     := sum(BeheerEnOnderhoud_NCW);
-	parameter<Eur> Bouwkosten_Per_NL                := sum(Bouwkosten);
-	parameter<Eur> Bouwkosten_NCW_Per_NL            := sum(Bouwkosten_NCW);
-	parameter<Eur> MeerkostenBouwwijze_Per_NL       := sum(MeerkostenBouwwijze);
+	// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824) --
+	// Elke som hieronder en in Per_Regio leest Bron/<post>. Met ModelParameters/TabellenUitExport uit is Bron de container
+	// Live, dus de items hierboven; aan is het Lees, de tifs die diezelfde items in een eerdere export van dit zichtjaar
+	// hebben geschreven, onder dezelfde bestandsnamen. De regels van de aggregatie veranderen daarmee niet.
+	container Lees
+	: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+	{
+		attribute<Eur> Regulier (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Regulier_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> Regulier_NCW (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Regulier_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> MeerkostenBodemdaling (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_MeerkostenBodemdaling_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> MeerkostenBodemdaling_NCW (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_MeerkostenBodemdaling_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> BeheerEnOnderhoud (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_BeheerEnOnderhoud_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> BeheerEnOnderhoud_NCW (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_BeheerEnOnderhoud_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> Bouwkosten (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Bouwkosten_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> Bouwkosten_NCW (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Bouwkosten_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> MeerkostenBouwwijze (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_MeerkostenBouwwijze_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Ha> Nieuwbouw_Ha (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Nieuwbouw_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<BW> Bouwwijze (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWoningbouw_Bouwwijze_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	}
+	container Live
+	: Descr = "Dezelfde posten als levende items, zodat Bron met een enkele keuze naar een van beide containers kan wijzen."
+	{
+		attribute<Eur> Regulier (AdminDomain) := KostenWoningbouw/Regulier;
+		attribute<Eur> Regulier_NCW (AdminDomain) := KostenWoningbouw/Regulier_NCW;
+		attribute<Eur> MeerkostenBodemdaling (AdminDomain) := KostenWoningbouw/MeerkostenBodemdaling;
+		attribute<Eur> MeerkostenBodemdaling_NCW (AdminDomain) := KostenWoningbouw/MeerkostenBodemdaling_NCW;
+		attribute<Eur> BeheerEnOnderhoud (AdminDomain) := KostenWoningbouw/BeheerEnOnderhoud;
+		attribute<Eur> BeheerEnOnderhoud_NCW (AdminDomain) := KostenWoningbouw/BeheerEnOnderhoud_NCW;
+		attribute<Eur> Bouwkosten (AdminDomain) := KostenWoningbouw/Bouwkosten;
+		attribute<Eur> Bouwkosten_NCW (AdminDomain) := KostenWoningbouw/Bouwkosten_NCW;
+		attribute<Eur> MeerkostenBouwwijze (AdminDomain) := KostenWoningbouw/MeerkostenBouwwijze;
+		attribute<Ha> Nieuwbouw_Ha (AdminDomain) := KostenWoningbouw/Nieuwbouw_Ha;
+		attribute<BW> Bouwwijze (AdminDomain) := KostenWoningbouw/Bouwwijze;
+	}
+	container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+	, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
 
-	parameter<Ha>  Nieuwbouw_Ha_Per_NL := sum(Nieuwbouw_Ha), Descr = "Controlegetal: over hoeveel hectare deze bedragen zijn geboekt.";
+	parameter<Eur> Regulier_Per_NL                  := sum(Bron/Regulier);
+	parameter<Eur> MeerkostenBodemdaling_Per_NL     := sum(Bron/MeerkostenBodemdaling);
+	parameter<Eur> BeheerEnOnderhoud_Per_NL         := sum(Bron/BeheerEnOnderhoud);
+	parameter<Eur> MeerkostenBodemdaling_NCW_Per_NL := sum(Bron/MeerkostenBodemdaling_NCW);
+	parameter<Eur> Regulier_NCW_Per_NL              := sum(Bron/Regulier_NCW);
+	parameter<Eur> BeheerEnOnderhoud_NCW_Per_NL     := sum(Bron/BeheerEnOnderhoud_NCW);
+	parameter<Eur> Bouwkosten_Per_NL                := sum(Bron/Bouwkosten);
+	parameter<Eur> Bouwkosten_NCW_Per_NL            := sum(Bron/Bouwkosten_NCW);
+	parameter<Eur> MeerkostenBouwwijze_Per_NL       := sum(Bron/MeerkostenBouwwijze);
+
+	parameter<Ha>  Nieuwbouw_Ha_Per_NL := sum(Bron/Nieuwbouw_Ha), Descr = "Controlegetal: over hoeveel hectare deze bedragen zijn geboekt.";
 
 	parameter<String> Controle :=
 		  'Kosten woningbouw, ' + Casus_name + ', ' + Zichtjaar_name + ', landelijk totaal in miljoen euro\n'
@@ -233,16 +276,16 @@ container KostenWoningbouw
 	container Per_Regio
 	: Descr = "De drie posten per regio van de indicatorentabellen, gestuurd door ModelParameters/Advanced/IndicatorRegio_ref."
 	{
-		attribute<Eur> Regulier                  (Regio) := sum(KostenWoningbouw/Regulier,                  Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> MeerkostenBodemdaling     (Regio) := sum(KostenWoningbouw/MeerkostenBodemdaling,     Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> BeheerEnOnderhoud         (Regio) := sum(KostenWoningbouw/BeheerEnOnderhoud,         Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> MeerkostenBodemdaling_NCW (Regio) := sum(KostenWoningbouw/MeerkostenBodemdaling_NCW, Regio/Per_AdminDomain_Fijn);
-		attribute<Ha>  Nieuwbouw_Ha              (Regio) := sum(KostenWoningbouw/Nieuwbouw_Ha,              Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> Regulier_NCW              (Regio) := sum(KostenWoningbouw/Regulier_NCW,              Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> BeheerEnOnderhoud_NCW     (Regio) := sum(KostenWoningbouw/BeheerEnOnderhoud_NCW,     Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> Bouwkosten                (Regio) := sum(KostenWoningbouw/Bouwkosten,                Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> Bouwkosten_NCW            (Regio) := sum(KostenWoningbouw/Bouwkosten_NCW,            Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> MeerkostenBouwwijze       (Regio) := sum(KostenWoningbouw/MeerkostenBouwwijze,       Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> Regulier                  (Regio) := sum(KostenWoningbouw/Bron/Regulier,                  Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> MeerkostenBodemdaling     (Regio) := sum(KostenWoningbouw/Bron/MeerkostenBodemdaling,     Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> BeheerEnOnderhoud         (Regio) := sum(KostenWoningbouw/Bron/BeheerEnOnderhoud,         Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> MeerkostenBodemdaling_NCW (Regio) := sum(KostenWoningbouw/Bron/MeerkostenBodemdaling_NCW, Regio/Per_AdminDomain_Fijn);
+		attribute<Ha>  Nieuwbouw_Ha              (Regio) := sum(KostenWoningbouw/Bron/Nieuwbouw_Ha,              Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> Regulier_NCW              (Regio) := sum(KostenWoningbouw/Bron/Regulier_NCW,              Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> BeheerEnOnderhoud_NCW     (Regio) := sum(KostenWoningbouw/Bron/BeheerEnOnderhoud_NCW,     Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> Bouwkosten                (Regio) := sum(KostenWoningbouw/Bron/Bouwkosten,                Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> Bouwkosten_NCW            (Regio) := sum(KostenWoningbouw/Bron/Bouwkosten_NCW,            Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> MeerkostenBouwwijze       (Regio) := sum(KostenWoningbouw/Bron/MeerkostenBouwwijze,       Regio/Per_AdminDomain_Fijn);
 
 		attribute<Eur_Ha> MeerkostenBodemdaling_perHa (Regio) := (MeerkostenBodemdaling / Nieuwbouw_Ha)[Eur_Ha]
 		,	Descr = "De meerkosten per hectare nieuwbouw in deze regio. Handiger om regio's mee te vergelijken dan het totaal, dat vooral de bouwopgave weerspiegelt.";

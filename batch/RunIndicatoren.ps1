@@ -26,6 +26,11 @@
    Alleen het exportzichtjaar opnieuw (bijvoorbeeld een tabel na een reparatie), met de ketens van
    een eerdere ontkoppelde run:
        .\RunIndicatoren.ps1 -Varianten BAU -IndicatorRegio Landschappen -Ontkoppeld -AlleenExportZichtjaar
+   De tabellen uit de geschreven export (#824): eerst alle kaarten, dan in een eigen proces de tabellen,
+   die die kaarten teruglezen in plaats van de indicatoren opnieuw te rekenen:
+       .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerder -IndicatorRegio Landschappen -Ontkoppeld -TabellenUitExport
+   Alleen de landschapstabellen opnieuw, op de kaarten van een eerdere export van hetzelfde zichtjaar:
+       .\RunIndicatoren.ps1 -Varianten BAU -IndicatorRegio Landschappen -AlleenLandschapstabellen -TabellenUitExport
    Daarna de oplevering samenstellen met batch\MaakOplevering.ps1.
 
  INSTELLINGEN
@@ -68,10 +73,20 @@
                             waarschuwt als ze ouder zijn dan de stand van dat zichtjaar, want dan is de
                             allocatie opnieuw gedaan en hoort de reeks ook opnieuw. -AlleenLandschapstabellen
                             slaat de reeks ook over.
+      -TabellenUitExport    De tabellen lezen de kaarten terug die de export van hetzelfde zichtjaar heeft
+                            geschreven (#824), via ModelParameters/TabellenUitExport. De export gaat dan in
+                            twee processen: eerst generates/Generate_Kaarten met de schakelaar uit, daarna
+                            generates/Themas/Tabellen met de schakelaar aan. Elke volgende regio draait alleen
+                            generates/Indicatoren_PerIndeling met de schakelaar aan, en met
+                            -AlleenLandschapstabellen doen alle regio's dat. Een tabelstap eist dat de kaarten
+                            van dat zichtjaar er staan: een ontbrekende tif geeft een [E]-regel in het log en
+                            de stap valt om. De bereikbaarheid van groen rekent per regio opnieuw, op
+                            teruggelezen invoer; alleen de landelijke tabel leest de groenkaarten zelf terug.
       -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
 
    B. Omgevingsvariabelen die dit script zelf zet: StandAllocatieOntkoppeld=TRUE (stand uit de tifs),
       VariantDataOntkoppeld=TRUE, IndicatorenOntkoppeld (TRUE met -Ontkoppeld, anders FALSE),
+      TabellenUitExport (per stap: TRUE alleen voor de tabelstappen van -TabellenUitExport),
       IndicatorRegio en ExportZichtjaar. LocalDataProjDir wordt gewist, GeoDMS leidt het pad af uit
       LocalDataDir plus de mapnaam boven cfg.
 
@@ -108,6 +123,7 @@ param(
     [switch]   $AlleenLandschapstabellen,
     [switch]   $Ontkoppeld,
     [switch]   $AlleenExportZichtjaar,
+    [switch]   $TabellenUitExport,
     [switch]   $GeenToets
 )
 
@@ -120,6 +136,7 @@ $env:StandAllocatieOntkoppeld = 'TRUE'
 $env:VariantDataOntkoppeld    = 'TRUE'
 $env:IndicatorRegio           = $IndicatorRegio
 $env:IndicatorenOntkoppeld    = if ($Ontkoppeld) { 'TRUE' } else { 'FALSE' }
+$env:TabellenUitExport        = 'FALSE'
 Remove-Item Env:\LocalDataProjDir -ErrorAction SilentlyContinue
 
 $status = Join-Path $LogDir 'status.tsv'
@@ -243,6 +260,7 @@ Write-Regel "varianten : $($Varianten -join ', ')"
 Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"
 Write-Regel "regio     : $IndicatorRegio$(if ($IndicatorRegio -eq 'Landschappen') { ', de vier landschapsgebieden van #760 na elkaar' })"
 Write-Regel "ketens    : $(if ($Ontkoppeld) { 'ontkoppeld, via tifs per zichtjaar (#824)' } else { 'in een proces, elke export rekent alle voorgaande zichtjaren mee' })"
+Write-Regel "tabellen  : $(if ($TabellenUitExport) { 'uit de geschreven kaarten, in een eigen proces na de kaarten (#824)' } else { 'levend, in hetzelfde proces als de kaarten' })"
 
 $alleJaren = Get-Zichtjaren
 $leen      = Get-VariantKolom $Cfg 'StandVanVariant'
@@ -349,25 +367,42 @@ for ($r = 0; $r -lt $regios.Count; $r++) {
     $regio = $regios[$r]
     $env:IndicatorRegio = $regio
     $alleenTabel = $AlleenLandschapstabellen -or ($r -gt 0)
-    $wat  = if ($alleenTabel) { 'Zichtjaren/Export/generates/Indicatoren_PerIndeling' } else { 'Zichtjaren/Export/Generate_Indicatoren' }
-    $naam = if ($alleenTabel) { "tabel-$regio" } else { "indicatoren-$regio" }
-    if ($Gebundeld) {
-        Write-Regel "modus     : gebundeld, per zichtjaar een proces voor $($Varianten.Count) varianten ($regio)"
-        foreach ($y in $Zichtjaren) {
-            foreach ($v in $Varianten) { Assert-Voorganger $v $y }
-            $env:ExportZichtjaar = $y
-            $items = @($Varianten | ForEach-Object { "/Indicatoren/${Scenario}_$_/$wat" })
-            Invoke-Export "$naam-gebundeld-$y" $items
-        }
+    # De stappen voor deze regio. Zonder -TabellenUitExport is dat een aanroep: de volledige export, of
+    # alleen de regionale tabel. Met de schakelaar gaat de volledige export in twee processen (#824): eerst
+    # alle kaarten met TabellenUitExport uit, dan de tabellen met de schakelaar aan. Een lezer kent zijn
+    # schrijver niet, dus in een proces zou een tabel een tif kunnen openen voordat hij geschreven is.
+    $stappen = @()
+    if (-not $TabellenUitExport) {
+        $wat  = if ($alleenTabel) { 'Zichtjaren/Export/generates/Indicatoren_PerIndeling' } else { 'Zichtjaren/Export/Generate_Indicatoren' }
+        $naam = if ($alleenTabel) { "tabel-$regio" } else { "indicatoren-$regio" }
+        $stappen += [pscustomobject]@{ Wat = $wat; UitExport = 'FALSE'; Naam = $naam }
+    } elseif ($alleenTabel) {
+        $stappen += [pscustomobject]@{ Wat = 'Zichtjaren/Export/generates/Indicatoren_PerIndeling'; UitExport = 'TRUE'; Naam = "tabel-$regio" }
     } else {
-        foreach ($v in $Varianten) {
+        $stappen += [pscustomobject]@{ Wat = 'Zichtjaren/Export/generates/Generate_Kaarten'; UitExport = 'FALSE'; Naam = "kaarten-$regio" }
+        $stappen += [pscustomobject]@{ Wat = 'Zichtjaren/Export/generates/Themas/Tabellen';  UitExport = 'TRUE';  Naam = "tabellen-$regio" }
+    }
+    foreach ($stap in $stappen) {
+        $env:TabellenUitExport = $stap.UitExport
+        if ($Gebundeld) {
+            Write-Regel "modus     : gebundeld, per zichtjaar een proces voor $($Varianten.Count) varianten ($($stap.Naam))"
             foreach ($y in $Zichtjaren) {
-                Assert-Voorganger $v $y
+                foreach ($v in $Varianten) { Assert-Voorganger $v $y }
                 $env:ExportZichtjaar = $y
-                Invoke-Export "$naam-$v-$y" @("/Indicatoren/${Scenario}_$v/$wat")
+                $items = @($Varianten | ForEach-Object { "/Indicatoren/${Scenario}_$_/$($stap.Wat)" })
+                Invoke-Export "$($stap.Naam)-gebundeld-$y" $items
+            }
+        } else {
+            foreach ($v in $Varianten) {
+                foreach ($y in $Zichtjaren) {
+                    Assert-Voorganger $v $y
+                    $env:ExportZichtjaar = $y
+                    Invoke-Export "$($stap.Naam)-$v-$y" @("/Indicatoren/${Scenario}_$v/$($stap.Wat)")
+                }
             }
         }
     }
+    $env:TabellenUitExport = 'FALSE'
 }
 
 $totaal.Stop()
