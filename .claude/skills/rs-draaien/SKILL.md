@@ -16,7 +16,7 @@ Gemeten op 2026-09-01 op GeoDms20.17.0.m:
 | Soort stap | Kosten |
 |---|---|
 | geos-buffer met poly2grid over AdminDomain (3.912 polygonen) | 3 s per item, piek 0,6 GB |
-| parse-check op een enkel item zonder storage | 3 s |
+| parse-check op een goedkoop item, zoals `/ModelParameters/StudyArea` | 3 s |
 | zeefmeting over negen zichtjaren, inclusief variantdata voor twee varianten | 3,4 min |
 | schade-uitdraai op een ontkoppelde stand | 300 s |
 | `/Diagnose/GenerateAll` | 400 tot 960 s |
@@ -47,6 +47,28 @@ Exit 0 is niet genoeg om een stap goed te keuren. Twee gemeten gevallen lopen me
 De grens van deze trap: exit 0 op een groot attribuut zonder IntegrityCheck bewijst alleen parse, naamresolutie en domeincheck, dus UpdateMetaInfo. Een keten over negen miljoen cellen die in 0,002 s klaar is, is niet gematerialiseerd. Kijk altijd naar de rekentijd voordat je conclusies trekt. TIFFOpen-fouten op ontkoppelde bestanden vuren wel al bij UpdateMetaInfo, want die lezen de header.
 
 Een leverancierslijst is tekst en geen graaf. Een naam in `generates/Alles_lijst` van `Templates/Indicatoren_T/Export.dms` die niet als parameter in `generates` bestaat, of een `ExplicitSuppliers`-pad dat niet oplost, valt bij het laden niet op en merk je pas als de export draait, aan het eind van een run. Grep daarom na elke merge waarin `Export.dms` meekomt elke naam uit `Alles_lijst` tegen de parameters in `generates`. Tot #779 stond die lijst als een regel van duizenden tekens en verloor een mergeconflict er stil zes leveranciers uit; sindsdien staat hij regel voor regel, maar de controle blijft nodig.
+
+### Een opgevraagd item rekent zijn hele keten door
+
+Een parameter of een klein attribuut opvragen is geen goedkope toets als de keten erachter zwaar is. GeoDmsRun rekent een opgevraagd item echt uit, ook als het zelf geen storage heeft, en schrijft onderweg elk item met een `StorageName` dat in die keten zit. Alleen een elementgewijze keten op een groot domein kan in milliseconden klaar zijn zonder te rekenen, zie hierboven; een aggregatie daarover dwingt het rekenen af.
+
+Gemeten op 2026-09-16 met GeoDms20.17.0.m, op de code van #824 in een kopie met een eigen LocalData en met `IndicatorenOntkoppeld` op FALSE. `Dichtheid/Wonen/Per_NL`, een parameter, kostte 2,6 s en schreef onderweg `Dichtheid_NieuwWonen_Y2120_WonHa_Nederland.tif`. `Verharding/Werken/Per_Regio`, een attribuut op de regio-indeling zonder StorageName, schreef de verhardingskaart en de allocatiekaart van werken. En `Verharding/Bron_Result`, dat met de schakelaar van #824 uit `Verharding/Result` van Y2120 doorgeeft, kostte 523 s: het las de stand van alle negen zichtjaren vanaf 2040 en schreef onderweg 33 verhardingskaarten van die zichtjaren.
+
+Op een gedeelde LocalData is zo'n toets dus een schrijvende run; zie Toetsen terwijl een ander draait.
+
+### De resolutieronde, en waarom stoppen na die ronde niet veilig is
+
+GeoDmsRun lost eerst voor alle opgevraagde items de namen op en begint pas daarna te rekenen. Die resolutieronde zet per item een regel `[progress]Item <pad>` in het log, met een `[E]`-regel erachter als een naam niet oplost (`Unknown identifier`, of `the specified item ... was not found`). De rekenronde begint met de eerste regel `{ Updating::[[<pad>]]`. Een ronde over 71 items, vooral tabelkolommen, kostte op 2026-09-16 acht seconden, inclusief het laden van de configuratie.
+
+Het proces stoppen zodra die eerste Updating-regel verschijnt is daarmee een snelle naamcontrole, maar alleen in een kopie met een eigen LocalData. De rekenronde begint in dezelfde seconde als de laatste resolutieregel, en zodra GeoDMS aan een schrijvend item in de keten begint, maakt het dat bestand opnieuw aan, niet pas als de data klaar is. Gemeten op 2026-09-17, twee keer: gestopt binnen een seconde na de eerste Updating-regel, geen `storage write` in het log, en van `Dichtheid_NieuwWonen_Y2120_WonHa_Nederland.tif` stond nog 83.874 van de 6.374.831 bytes.
+
+`scripts/resolutie.ps1` doet dit, en weigert zonder `-EigenLocalData`:
+
+```powershell
+.\.claude\skills\rs-draaien\scripts\resolutie.ps1 -EigenLocalData -Config "<kopie>\cfg\main.dms" -Items "/pad/naar/item", "/pad/naar/ander/item"
+```
+
+Het leest het log met gedeelde toegang, want GeoDmsRun houdt het tijdens de run open voor schrijven en een gewone lees faalt dan. Het stopt het proces op zijn PID, toont de foutregels en noemt het item waaraan GeoDMS was begonnen; vraag dat item daarna volledig op of gooi de kopie weg. Het neemt de omgevingsvariabelen van de aanroeper over, dus zet de schakelaars zelf, want een meta-expressie kiest zijn tak daarop. En het toetst namen en domeinen, geen data.
 
 ### Bij een meta-expressie moet je elke tak instantieren
 
@@ -171,7 +193,7 @@ Een waarde eenmalig aflezen kan ook zonder tekstbestand, met de actie `@statisti
 
 Let op de vorm. `@statistics` is een eigen argument. Plak je het achter het itempad, dan zoekt GeoDMS een item dat zo heet en krijg je "not found" met exit 1, wat leest als een configuratiefout terwijl het een aanroepfout is. `Run2120.ps1` haalt op deze manier de zichtjaren uit de configuratie in plaats van ze in het script te herhalen.
 
-GeoDmsRun rekent alleen door wat naar een storage gaat. Vraag je een item op met een `StorageName`, dan schrijft hij dat bestand ook echt weg. Wil je alleen toetsen, kies dan een item zonder storage, of een IntegrityCheck; en lees hieronder bij Toetsen terwijl een ander draait waarom dat op zichzelf niet garandeert dat er niets wordt geschreven.
+Vraag je een item op met een `StorageName`, dan schrijft GeoDmsRun dat bestand ook echt weg. Een item zonder storage kiezen voorkomt dat niet: elk opgevraagd item wordt uitgerekend, met elke schrijvende leverancier in zijn keten. Zie in trap 1 Een opgevraagd item rekent zijn hele keten door, en hieronder Toetsen terwijl een ander draait. Wie niets wil schrijven, toetst in een kopie met een eigen LocalData.
 
 Semantiek van een operator of een randgeval bewijs je het snelst in een losse minimale .dms in de scratchpad, met eigen unitdeclaraties. Neem daar altijd een bewust falende kanarie in op, zodat je weet dat exit 1 ook echt werkt.
 
@@ -230,7 +252,7 @@ Een tweede PowerShell-valkuil in dezelfde familie. `$regios = if ($x) { @('a','b
 
 ### Vraag een exportkolom niet via de tabel op
 
-Een item onder `/Indicatoren/<casus>/Zichtjaren/Export/PerNederland/Tabel/...` opvragen trekt de hele tabel en daarmee elke indicator die erin staat: na tien minuten nog niet klaar. De losse `Per_NL`- en `Per_Regio`-items eronder kosten 15 seconden en bewijzen hetzelfde.
+Een item onder `/Indicatoren/<casus>/Zichtjaren/Export/PerNederland/Tabel/...` opvragen trekt de hele tabel en daarmee elke indicator die erin staat: na tien minuten nog niet klaar. De losse `Per_NL`- en `Per_Regio`-items eronder kosten 15 seconden als hun keten licht is, en bewijzen hetzelfde. Leest de keten meer zichtjaren, zoals `Verharding/Result` van Y2120 (523 s, zie trap 1), dan kost ook zo'n los item minuten en schrijft het onderweg kaarten.
 
 Let ook op het pad: de exportcontainer hangt onder `Zichtjaren`, dus `/Indicatoren/<casus>/Zichtjaren/Export/...` en niet `/Indicatoren/<casus>/Export/...`.
 
