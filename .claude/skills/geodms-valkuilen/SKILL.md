@@ -1,6 +1,6 @@
 ---
 name: geodms-valkuilen
-description: Stille fouten in GeoDMS-configuratie die geen foutmelding geven maar wel een verkeerd antwoord; naamafscherming en de kale name, poly2grid-volgorde bij geneste polygonen, PropValue op StorageName, ExplicitSuppliers op een container, null-semantiek en Classify, een negatie na een lege opzoeking, BANDS telt vanaf 1, externe grids op hun eigen gridunit, teller en noemer op hetzelfde masker, een te korte handmatige lijst, en een geschiktheid die een spikkelkaart oplevert. Lees dit voordat je DMS-code in RSopen schrijft of wijzigt.
+description: Stille fouten in GeoDMS-configuratie die geen foutmelding geven maar wel een verkeerd antwoord; naamafscherming en de kale name, poly2grid-volgorde bij geneste polygonen, PropValue op StorageName, ExplicitSuppliers op een container, null-semantiek en Classify, een negatie na een lege opzoeking, BANDS telt vanaf 1, externe grids op hun eigen gridunit, teller en noemer op hetzelfde masker, een te korte handmatige lijst, een StorageName op een item met subitems, een tif zonder interne georeferentie in een map van meer dan 1000 bestanden, en een geschiktheid die een spikkelkaart oplevert. Lees dit voordat je DMS-code in RSopen schrijft of wijzigt.
 ---
 
 # Stille fouten in GeoDMS-configuratie
@@ -57,7 +57,7 @@ Zo kwam op 2026-09-11 (#823) de tabel `Tabellen/PerIndeling/Tabel` op de landsch
 
 ## Een StorageName die niemand opvraagt schrijft niets
 
-GeoDmsRun rekent alleen door wat wordt opgevraagd en naar een storage gaat. Een item met een `StorageName` dat in geen enkele `Generate`-lijst voorkomt bestaat dus wel in de boom, maar het bestand ontstaat nooit. Er komt geen waarschuwing, want er is niets mis: niemand heeft erom gevraagd.
+GeoDmsRun schrijft alleen een storage-item dat wordt opgevraagd of in de keten van een opgevraagd item zit. Een item met een `StorageName` dat in geen enkele `Generate`-lijst voorkomt en nergens als leverancier dient, bestaat dus wel in de boom, maar het bestand ontstaat nooit. Er komt geen waarschuwing, want er is niets mis: niemand heeft erom gevraagd.
 
 Dat is anders dan de valkuil hierboven. Daar staat het kind onder een container die wel wordt opgevraagd en lift de eigenschap niet mee; hier staat het kind helemaal niet in de lijst.
 
@@ -135,6 +135,35 @@ Hetzelfde mechanisme, maar dan verraderlijker, want hier is er wel een bestand: 
 Op 31 augustus 2026 ging dat twee keer bijna mis. `grondbalans_bestemmingen` gaf 437,5 ha waterberging op vruchtbare landbouwgrond terwijl de verse uitdraai op nul stond, en `waterberging_perregio` toonde voor BAU een opgave van 28,7 miljoen m3 die `#664` net had afgeschaft. Beide bestanden waren uren oud en van een andere codestand. Wie ze naast de verse getallen legt vindt een tegenspraak die er niet is, of concludeert dat een wijziging niet werkt terwijl hij wel werkt.
 
 Controleer daarom bij elke aflezing de mtime tegen het tijdstip van je eigen run, ook als de rest van de map er vers uitziet.
+
+## Een StorageName op een item met subitems neemt die subitems mee
+
+Zet je een `StorageName` op een item dat zelf subitems heeft, dan rekent GeoDMS die subitems tot dezelfde opslag. Een tif kan alleen een kaart bevatten, dus een subitem dat geen kaart is faalt, en wat erop leunt valt weg terwijl de uitvoer er compleet uitziet.
+
+Gebeurd in de bewijsrun van #824 op 2026-09-16. In `Templates/Indicatoren/Grondgebruik.dms` kregen de zeven bool-kaarten onder `Verandering` een schrijver op het item zelf, terwijl hun aggregaties eronder stonden:
+
+```
+attribute<bool> Verstedelijking (AdminDomain) := ..., StorageName = "...", StorageType = "tif"
+{
+	attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
+	parameter<ha> Per_NL := sum(float32(.) * AdminDomain/NrHaPerCell);
+}
+```
+
+De kaarten kwamen op schijf, per subitem stond er `[W] [[.../Verstedelijking/Per_Regio]] Domain should be 2-dimensional` in het log, en de indicatorentabel, geschreven met `gdalwrite.vect`, had 114 in plaats van 121 kolommen. Aan het bestand zelf is niet te zien dat er iets ontbreekt.
+
+Nagebootst op 2026-09-17 in een losse dms met GeoDms20.17.0.m: een kaart van vier bij vier cellen met `Per_Regio` en `Per_NL` eronder, dezelfde kaart zonder StorageName ernaast, en een tabel met een kolom van elk. De csv kwam er met alleen de kolom van de kaart zonder StorageName. Het log gaf wel `[E] ErrorLevel up to 1 due to failure: Domain should be 2-dimensional` en GeoDmsRun eindigde met exit 1, zowel bij het rechtstreeks opvragen als via een `ExplicitSuppliers` zoals in `generates`. Een batch die op `[E]` en de exitcode toetst vangt het dus; wie alleen de uitvoer bekijkt niet, want de tabel is dan al geschreven.
+
+Schrijf zo'n kaart daarom met een apart item zonder subitems. In de laag Bronnen van #824 staan de schrijvers van `Grondgebruik/Verandering` in een eigen container:
+
+```
+container Schrijf
+{
+	attribute<UInt8> Verstedelijking (AdminDomain) := UInt8(Verandering/Verstedelijking), StorageName = "=replace(StorageStr, '@V@', 'Verstedelijking')", StorageType = "gdalwrite.grid";
+}
+```
+
+Kijk bij elke nieuwe `StorageName` of het item een blok met subitems opent. Grep een log op `Domain should be 2-dimensional`, en tel bij een geschreven tabel de kolommen tegen de configuratie.
 
 ## Een handmatige lijst die korter is dan het domein wordt stil aangevuld
 
@@ -369,6 +398,42 @@ De conventie in RSopen, vastgelegd bij #759 toen bleek dat de trede en de zeef o
 Verhuist een keten van AllocDomain naar AdminDomain, dan zit het gevaar op de naad tussen verhuisd en achtergebleven. Een toets op de ene resolutie die een item van de andere leest waarschuwt niet: het antwoord past qua domein, alleen zegt het iets anders. Harde fouten komen er alleen als de bron is verwijderd, en dan op een plek die niets met de migratie te maken lijkt te hebben. Bij #770 viel elke werken-allocatie om op een `Unknown identifier` in de zichtjaar-zeef, die nog een verwijderd item van 100 meter las terwijl de kantoordominantie al op 25 meter stond.
 
 Twee regels. Raakt een wijziging AllocDomain of AdminDomain, loop dan de afnemers na en niet alleen de bron: grep op de itemnaam in heel `cfg/main` en toets dat elke treffer op het nieuwe domein staat. En aggregeer een verhoudingsmaat nooit met `any` of `all` naar een grover domein: tel de tellers en de noemers op en pas de drempel opnieuw toe. Op 100 meter waren 54.486 hectare kantoordominant tegen 418.139 cellen van 25 meter, ruim een factor twee, en `any` had een derde getal gegeven.
+
+## Een tif zonder interne georeferentie leest in een volle map als leeg
+
+`StorageType = "tif"` schrijft een bool-kaart zonder georeferentie in het bestand zelf: de ligging staat alleen in de losse `.tfw` ernaast. Met `GDAL_GEOREF_SOURCES=INTERNAL` geeft zo'n tif geen geotransform. Leest GeoDMS hem terug met `gdal.grid`, dan moet GDAL die `.tfw` vinden, en in een map met meer dan 1000 items vindt het geen `.tfw` die in de mapvolgorde na plaats 1000 staat. De kaart ligt dan op pixelcoordinaten, en er komt niets uit, met alleen twee waarschuwingen:
+
+```
+[W] Factor difference encountered between item gdal.grid: [25,-25] and storage .../Verstedelijking_Y2120_Nederland.tif: [1,1]
+[W] Extent of domain of item gdal.grid and storage .../Verstedelijking_Y2120_Nederland.tif don't overlap
+```
+
+Exit 0, geen `[E]`, en een som over de kaart wordt 0 of leeg. De factor [1,1] is het kenmerk: er is helemaal geen georeferentie gevonden. Een factor als [100,-100] of [250,-250] is iets anders, een grovere bron op het modelraster, zoals de HELP-bodemkaart, de DD30-kaart en de veendikte onder `SourceData/Landbouw`, die alle drie in het log van een export van 2120 staan; zie Rasters die niet op het modelraster liggen.
+
+Gebeurd in de bewijsrun van #824 op 2026-09-16. De casusmap `Indicatoren/WLO_hoog_BAU` telde 1.163 bestanden. `Verstedelijking` (de `.tfw` op plaats 1104) en de twee verhardingsallocaties (plaats 1017 en 1047) kwamen leeg terug; de bool-kaarten met hun `.tfw` voor plaats 1000 lazen goed. Op NTFS volgt de mapvolgorde de naam, dus het raakt eerst de kaarten achteraan het alfabet, en pas zodra een map groeit.
+
+Nagebootst op 2026-09-17 met GeoDms20.17.0.m in een losse dms, met bool-kaarten van vier bij vier cellen:
+
+| map | schrijver | plaats `.tfw` | cellen gelezen |
+|---|---|---|---|
+| 2 items | tif | 1 | 16 van 16 |
+| 1.106 items | tif | 1 | 16 van 16 |
+| 1.106 items | tif | 1103 | 0, met de twee waarschuwingen |
+| 1.106 items, `GDAL_READDIR_LIMIT_ON_OPEN=5000` | tif | 1103 | 16 van 16 |
+| 1.106 items | `gdalwrite.grid` | 1105 | 16 van 16 |
+
+`GDAL_READDIR_LIMIT_ON_OPEN` is de GDAL-optie die bepaalt hoeveel items GDAL van een map leest om bijbestanden te vinden, standaard 1000; GeoDMS 20.17 gebruikt GDAL 3.12.4. GDAL 3.9.1 uit QGIS 3.38 vond bij een tif zonder interne georeferentie de `.tfw` op plaats 1103 wel, dus een controle in QGIS of Python laat de fout niet zien.
+
+Schrijf daarom elke kaart die later met `gdal.grid` wordt teruggelezen met `gdalwrite.grid`, dat de georeferentie in de tif zelf zet. Een bool gaat dan als UInt8 en komt terug met `== 1b`, zoals `Templates/Indicatoren/Ketens.dms` het doet:
+
+```
+attribute<UInt8> Sloop_NieuweNatuur_IsSloopCel (AdminDomain) := UInt8(SloopAlsGevolgVanNieuweNatuur/IsSloopCel), StorageName = "=Pad+'Sloop_NieuweNatuur_IsSloopCel'+Staart", StorageType = "gdalwrite.grid";
+
+attribute<UInt8> IsSloopCel_u8 (AdminDomain) : StorageName = "=Ketens/Pad+'Sloop_NieuweNatuur_IsSloopCel'+Ketens/PrevStaart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+attribute<Bool>  IsSloopCel    (AdminDomain) := IsSloopCel_u8 == 1b;
+```
+
+Grep een leeslog op `Factor difference` met `[1,1]` en op `don't overlap`.
 
 ## De GDAL-optie BANDS telt vanaf 1
 
