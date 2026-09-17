@@ -1060,6 +1060,194 @@ container AdHoc
 			}
 		}
 
+		// Woningvoorraad naar bouwjaar, toegevoegd op 17 september 2026 op verzoek van de eigenaar: de woningen in 2120 en de woningen
+		// met een bouwjaar voor 1970, voor BAU1, BAU2 en NbSGenuanceerder. Leest de ontkoppelde stand van het exportzichtjaar, de stand
+		// van het basisjaar en de BAG van het basisjaar; schrijft de tabel met controlekolommen in Rapport_v01, en de levering (tabel
+		// en kaarten) in de uitleveringsmap.
+
+		container WoningvoorraadBouwjaar
+		: Descr = "De woningvoorraad in het exportzichtjaar, en het deel daarvan met een bouwjaar voor 1970, landelijk en per landschapsgebied van #760.
+
+					Woningen is de stand van het zichtjaar zoals de allocatie hem heeft weggeschreven: Stand/Aantal_Woningen_Totaal, de som over de vier
+					WP2xVSSH-segmenten, dezelfde grootheid als Wonen_stand in ClaimRealisatie.
+
+					De stand draagt geen bouwjaar. Een woning met een bouwjaar voor 1970 kan in het zichtjaar alleen een woning uit het basisjaar zijn, want
+					alles wat de BAG-nieuwbouw en de allocatie erbij zetten is van na 2023. Het item telt daarom per cel welk deel van de basisjaarwoningen er
+					in het zichtjaar nog staat, en welk deel van de basisjaarwoningen van voor 1970 is.
+					1. Het aandeel van voor 1970 per cel komt uit de BAG van het basisjaar, met dezelfde toedeling van panden over cellen als de basisjaarstand
+					   (BaseData/Verdeling_VSSH, Uitsmeren_T): per pand de unieke woon-vbo's, als het oorspronkelijke bouwjaar van het pand voor BouwjaarGrens
+					   ligt, maal ToedelingPand_CAD. Woningen in een pand zonder bekend bouwjaar en vbo's zonder pand tellen niet als van voor 1970, maar staan
+					   wel in de noemer van het aandeel.
+					2. Op een cel waar het model een ontwikkelpakket heeft gealloceerd is niets van het basisjaar over: de allocatie vervangt daar de hele stand
+					   door de dichtheid van het pakket (Allocatie_T/Impl/Update_Expr met IterSubsector_T_Wonen/PotentieleStateNaAllocatie). Zo'n cel heeft
+					   Stand/OP_rel gevuld en is geen BAG-nieuwbouw volgens StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen, dezelfde
+					   afbakening als IsOPCel in WaardeNabijheidGroen.
+					3. Op de overige cellen blijft van de basisjaarwoningen het deel over dat de stand van het zichtjaar nog draagt: de stand van het zichtjaar
+					   gedeeld door die van het basisjaar, begrensd op 1. Dat vangt de sloop uit VariantData/<variant>/Sloop (de cel gaat in het eerste zichtjaar
+					   leeg), de verdringing door een andere sector (werken, waterberging en landbouw zetten de woningen daar op nul) en de netto sloop in de BAG
+					   tussen het basisjaar en het recente BAG-jaar. Een netto toename door BAG-nieuwbouw laat de basisjaarwoningen staan.
+					Woningen_BouwjaarVoor1970 is per cel de basisjaarstand maal het behouden deel uit 3 maal het aandeel uit 1.
+
+					Twee aannames. Een gedeeltelijke afname, alleen mogelijk door netto sloop in de BAG, raakt de woningen van voor en na 1970 naar rato. En waar
+					de BAG op dezelfde cel zowel sloop als nieuwbouw kent en de nieuwbouw netto groter is, telt de gesloopte basisjaarvoorraad hier als behouden.
+
+					Controlekolommen in Rijen: Woningen_Basisjaar en Woningen_Basisjaar_BouwjaarVoor1970 (de uitgangssituatie), Woningen_Basisjaar_Behouden
+					(alle basisjaarwoningen die in het zichtjaar nog staan), Woningen_OpModelpakket (de woningen op cellen met een door het model gealloceerd
+					pakket), Woningen_Basisjaar_ZonderBouwjaar (basisjaarwoningen met een onbekend bouwjaar) en Controle_Basisjaar_BAG, de basisjaarwoningen
+					opnieuw geteld uit de BAG. Die laatste hoort gelijk te zijn aan Woningen_Basisjaar; wijkt hij af, dan komt het aandeel uit een andere BAG
+					dan de stand. De landschapskolommen overlappen elkaar en tellen niet op tot Nederland.
+
+					Levering schrijft alleen de twee gevraagde kolommen, en PerCasus/<casus>/Kaarten de twee grootheden als kaart van 25 meter, beide in de
+					uitleveringsmap Uitlevering onder LocalDataProjDir; de LEESMIJ daar staat niet in de configuratie.
+
+					Structureel: de woningen als kolom in RegionaleIndicatoren_T (Templates/Indicatoren_T/Export.dms), de som van Stand/Aantal_Woningen_Totaal
+					per regio; het bouwjaar als indicator in Templates/Indicatoren.dms met deze rekenregel, bij voorkeur naar de bouwjaarklassen van
+					SourceData/Vastgoed (voor 1940, 1940 tot 1970, 1970 tot 1990, vanaf 1990). Exact, zonder de twee aannames, wordt het pas met de
+					bouwperiode als dimensie van de woningstand in StateBasisjaar, die de allocatie dan net als de segmenten vervangt of verdringt; dat vraagt
+					een nieuwe allocatierun."
+		{
+			parameter<Units/yr> BouwjaarGrens := 1970[Units/yr], Descr = "Een woning telt als van voor 1970 als het oorspronkelijke bouwjaar van haar pand (BAG, Bouwjaar_trunc) kleiner is dan dit jaar, dus tot en met 1969. Dezelfde grens als in de bouwjaarklassen van SourceData/Vastgoed.";
+			parameter<String>   Uitlevering   := 'Uitlevering_20260917_woningen', Descr = "De uitleveringsmap onder LocalDataProjDir waarin Levering en de kaarten van PerCasus/<casus>/Kaarten worden geschreven.";
+			parameter<String>   ExportJaar    := ='/Indicatoren/' + first(Casus/Map) + '/Zichtjaren/Export/ExportZichtjaar', Descr = "Het exportzichtjaar voor de bestandsnaam van Levering. Voor de drie casussen gelijk, want het komt uit dezelfde omgevingsvariabele ExportZichtjaar.";
+			attribute<Float32>  Studiegebied (/Geography/AdminDomain) := /Geography/AdminDomain/IsCompactedDomain ? 1f : null_f, Descr = "1 binnen het studiegebied en leeg erbuiten, zodat de kaarten buiten het model geen nul tonen maar geen waarde.";
+
+			unit<uint8> Casus : NrOfRows = 3, Descr = "De drie varianten van het rapport, met de casusnaam."
+			{
+				attribute<String> name : ['BAU1', 'BAU2', 'NbSGenuanceerder'];
+				attribute<String> Map  : ['WLO_hoog_BAU', 'WLO_hoog_BAU2', 'WLO_hoog_NbSGenuanceerder'];
+			}
+			unit<uint8> Regio : NrOfRows = 5, Descr = "Landelijk en de vier landschapsgebieden van #760 (Landschapsgebieden/Impl)."
+			{
+				attribute<String> name : ['Nederland', 'Kust', 'Rivieren', 'Veen', 'Zand'];
+			}
+			container Masker
+			{
+				attribute<Bool> Nederland (/Geography/AdminDomain) := const(TRUE, /Geography/AdminDomain);
+				attribute<Bool> Kust      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsKust;
+				attribute<Bool> Rivieren  (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsRivieren;
+				attribute<Bool> Veen      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsVeen;
+				attribute<Bool> Zand      (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsZand;
+			}
+
+			container Basisjaar
+			: Descr = "Het aandeel woningen met een bouwjaar voor BouwjaarGrens per cel in het basisjaar, uit de BAG van het basisjaar met dezelfde toedeling als de basisjaarstand. Variantonafhankelijk, dus een keer gerekend voor de drie varianten."
+			{
+				unit<UInt32> Pand      := ='/SourceData/Vastgoed/BAG/PerJaar/Y' + string(/ModelParameters/Model_StartYear) + '/pand', Descr = "De pandenset van het basisjaar, dezelfde als in Verdeling_VSSH en EigendomStaat.";
+				unit<UInt32> Toedeling := Pand/ToedelingsMatrix, Descr = "Pand maal cel met het aandeel van het pand in de cel; ToedelingPand_CAD is hernormaliseerd binnen het CompactedAdminDomain, zoals Uitsmeren_T de woningen telt.";
+
+				attribute<Units/Woning> Woningen_perPand       (Pand) := Pand/Counts/woon_VBOs_uniek[Units/Woning], Descr = "De unieke woon-vbo's per pand, dezelfde telling als count_vbo_pand_woon in EigendomStaat.";
+				attribute<Units/Woning> Voor1970_perPand       (Pand) := Pand/Bouwjaar_trunc < BouwjaarGrens ? Woningen_perPand : 0[Units/Woning], Descr = "Een pand zonder bekend bouwjaar valt hier weg, want een vergelijking met null geeft FALSE.";
+				attribute<Units/Woning> ZonderBouwjaar_perPand (Pand) := IsNull(Pand/Bouwjaar_trunc) ? Woningen_perPand : 0[Units/Woning];
+
+				attribute<Units/Woning> Woningen_Pand_CAD       (/Geography/CompactedAdminDomain) := sum(Woningen_perPand[Toedeling/Pand_rel]       * Toedeling/ToedelingPand_CAD, Toedeling/CompactedAdminDomain_rel);
+				attribute<Units/Woning> Voor1970_CAD            (/Geography/CompactedAdminDomain) := sum(Voor1970_perPand[Toedeling/Pand_rel]       * Toedeling/ToedelingPand_CAD, Toedeling/CompactedAdminDomain_rel);
+				attribute<Units/Woning> ZonderBouwjaar_Pand_CAD (/Geography/CompactedAdminDomain) := sum(ZonderBouwjaar_perPand[Toedeling/Pand_rel] * Toedeling/ToedelingPand_CAD, Toedeling/CompactedAdminDomain_rel);
+				attribute<Units/Woning> ZonderPand_CAD          (/Geography/CompactedAdminDomain) := ='add(' + AsItemList('/BaseData/StartState/Verdeling_VSSH/VBOsZonderPand/Per_CAD_WP2/' + /Classifications/Vastgoed/WP2/name) + ')', Descr = "Woon-vbo's zonder pand in de pandenset, die de basisjaarstand op hun vbo-punt telt; hun bouwjaar is onbekend.";
+
+				attribute<Units/Woning> Woningen       (/Geography/AdminDomain) := recollect_by_cond(/Geography/AdminDomain/IsCompactedDomain, Woningen_Pand_CAD + ZonderPand_CAD, 0[Units/Woning]), Descr = "Alle woningen van het basisjaar opnieuw geteld; hoort gelijk te zijn aan Basisjaar/Stand/Aantal_Woningen_Totaal.";
+				attribute<Units/Woning> Voor1970       (/Geography/AdminDomain) := recollect_by_cond(/Geography/AdminDomain/IsCompactedDomain, Voor1970_CAD, 0[Units/Woning]);
+				attribute<Units/Woning> ZonderBouwjaar (/Geography/AdminDomain) := recollect_by_cond(/Geography/AdminDomain/IsCompactedDomain, ZonderBouwjaar_Pand_CAD + ZonderPand_CAD, 0[Units/Woning]);
+
+				attribute<Float32> Aandeel_Voor1970       (/Geography/AdminDomain) := Woningen > 0[Units/Woning] ? Voor1970[Float32] / Woningen[Float32] : 0f, Descr = "Het deel van de basisjaarwoningen in de cel met een bouwjaar voor BouwjaarGrens. Als aandeel en niet als aantal toegepast op de stand, zodat een verschil tussen deze telling en de basisjaarstand nooit meer woningen van voor 1970 geeft dan de cel draagt.";
+				attribute<Float32> Aandeel_ZonderBouwjaar (/Geography/AdminDomain) := Woningen > 0[Units/Woning] ? ZonderBouwjaar[Float32] / Woningen[Float32] : 0f;
+			}
+
+			container PerCasus := for_each_ne(Casus/name, 'Casus_T(' + quote(Casus/Map) + ', ' + quote(Casus/name) + ')');
+			template Casus_T
+			{
+				parameter<String> Map;
+				parameter<String> Naam;
+				parameter<String> Jaar := ='/Indicatoren/' + Map + '/Zichtjaren/Export/ExportZichtjaar', Descr = "Het exportzichtjaar van de casus, zodat dit item met de omgevingsvariabele ExportZichtjaar meebeweegt.";
+				container Z     := ='/Indicatoren/' + Map + '/Zichtjaren/' + Jaar + '/Stand';
+				container B     := ='/Indicatoren/' + Map + '/Basisjaar/Stand';
+				container Start := ='/Allocatie/' + Map + '/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw';
+
+				attribute<Units/Woning> Woningen_Cel           (/Geography/AdminDomain) := MakeDefined(Z/Aantal_Woningen_Totaal, 0[Units/Woning]), Descr = "De stand van het zichtjaar.";
+				attribute<Units/Woning> Woningen_Basisjaar_Cel (/Geography/AdminDomain) := MakeDefined(B/Aantal_Woningen_Totaal, 0[Units/Woning]), Descr = "De stand van het basisjaar, zonder de BAG-nieuwbouw.";
+				attribute<Bool>         IsBAGnieuwbouwWonen    (/Geography/AdminDomain) := recollect_by_cond(/Geography/AdminDomain/IsCompactedDomain, Start/IsBAGnieuwbouwWonen, FALSE), Descr = "Cel waar OP_rel uit de BAG-nieuwbouw komt en niet uit de allocatie (#550).";
+				attribute<Bool>         IsModelpakket          (/Geography/AdminDomain) := IsDefined(Z/OP_rel) && !IsBAGnieuwbouwWonen, Descr = "Cel waar het model een ontwikkelpakket heeft gealloceerd en de stand van het basisjaar dus heeft vervangen.";
+				attribute<Float32>      Behouden               (/Geography/AdminDomain) := IsModelpakket || Woningen_Basisjaar_Cel <= 0[Units/Woning] ? 0f : min_elem(Woningen_Cel[Float32] / Woningen_Basisjaar_Cel[Float32], 1f), Descr = "Het deel van de basisjaarwoningen dat in het zichtjaar nog staat, zie punt 2 en 3 in de Descr van de container.";
+
+				attribute<Units/Woning> Basisjaar_Behouden_Cel         (/Geography/AdminDomain) := Woningen_Basisjaar_Cel * Behouden;
+				attribute<Units/Woning> BouwjaarVoor1970_Cel           (/Geography/AdminDomain) := Basisjaar_Behouden_Cel * Basisjaar/Aandeel_Voor1970, Descr = "Woningen in het zichtjaar met een bouwjaar voor BouwjaarGrens.";
+				attribute<Units/Woning> Basisjaar_BouwjaarVoor1970_Cel (/Geography/AdminDomain) := Woningen_Basisjaar_Cel * Basisjaar/Aandeel_Voor1970;
+				attribute<Units/Woning> Basisjaar_ZonderBouwjaar_Cel   (/Geography/AdminDomain) := Woningen_Basisjaar_Cel * Basisjaar/Aandeel_ZonderBouwjaar;
+
+				container Kaarten
+				: Descr = "De twee grootheden als kaart van 25 meter in de uitleveringsmap, een map per variant, leeg buiten het studiegebied. Eigen schrijvers zonder subitems, want een StorageName op een item met subitems neemt die subitems mee; gdalwrite.grid zet de georeferentie in de tif zelf."
+				{
+					attribute<Units/Woning> Woningen                  (/Geography/AdminDomain) := Woningen_Cel * Studiegebied
+					, StorageName = "='%LocalDataProjDir%/' + Uitlevering + '/kaarten/' + Naam + '/Woningen_' + Jaar + '.tif'", StorageType = "gdalwrite.grid"
+					, Descr = "Woningen per cel in het zichtjaar.";
+					attribute<Units/Woning> Woningen_BouwjaarVoor1970 (/Geography/AdminDomain) := BouwjaarVoor1970_Cel * Studiegebied
+					, StorageName = "='%LocalDataProjDir%/' + Uitlevering + '/kaarten/' + Naam + '/Woningen_BouwjaarVoor1970_' + Jaar + '.tif'", StorageType = "gdalwrite.grid"
+					, Descr = "Woningen per cel in het zichtjaar met een bouwjaar voor BouwjaarGrens.";
+				}
+
+				container PerRegio := for_each_ne(Regio/name, 'Regio_T(' + quote(Regio/name) + ', Masker/' + Regio/name + ')');
+				template Regio_T
+				{
+					parameter<String> RegioNaam;
+					attribute<Bool>   IsRegio (/Geography/AdminDomain);
+					parameter<Float64> Woningen                             := sum(IsRegio ? Woningen_Cel[Float64]                   : 0d);
+					parameter<Float64> Woningen_BouwjaarVoor1970            := sum(IsRegio ? BouwjaarVoor1970_Cel[Float64]           : 0d);
+					parameter<Float64> Woningen_Basisjaar                   := sum(IsRegio ? Woningen_Basisjaar_Cel[Float64]         : 0d);
+					parameter<Float64> Woningen_Basisjaar_BouwjaarVoor1970  := sum(IsRegio ? Basisjaar_BouwjaarVoor1970_Cel[Float64] : 0d);
+					parameter<Float64> Woningen_Basisjaar_Behouden          := sum(IsRegio ? Basisjaar_Behouden_Cel[Float64]         : 0d);
+					parameter<Float64> Woningen_OpModelpakket               := sum(IsRegio && IsModelpakket ? Woningen_Cel[Float64]  : 0d);
+					parameter<Float64> Woningen_Basisjaar_ZonderBouwjaar    := sum(IsRegio ? Basisjaar_ZonderBouwjaar_Cel[Float64]   : 0d);
+					parameter<Float64> Controle_Basisjaar_BAG               := sum(IsRegio ? Basisjaar/Woningen[Float64]             : 0d);
+				}
+				unit<uint8> Tabel := Regio, Descr = "De vijf gebieden van deze casus als tabel, zonder meta-expressies, zodat Rijen en Levering ze kunnen stapelen."
+				{
+					attribute<String>  Zichtjaar                           := const(Jaar, .);
+					attribute<Float64> Woningen                            := union_data(., PerRegio/Nederland/Woningen,                            PerRegio/Kust/Woningen,                            PerRegio/Rivieren/Woningen,                            PerRegio/Veen/Woningen,                            PerRegio/Zand/Woningen);
+					attribute<Float64> Woningen_BouwjaarVoor1970           := union_data(., PerRegio/Nederland/Woningen_BouwjaarVoor1970,           PerRegio/Kust/Woningen_BouwjaarVoor1970,           PerRegio/Rivieren/Woningen_BouwjaarVoor1970,           PerRegio/Veen/Woningen_BouwjaarVoor1970,           PerRegio/Zand/Woningen_BouwjaarVoor1970);
+					attribute<Float64> Woningen_Basisjaar                  := union_data(., PerRegio/Nederland/Woningen_Basisjaar,                  PerRegio/Kust/Woningen_Basisjaar,                  PerRegio/Rivieren/Woningen_Basisjaar,                  PerRegio/Veen/Woningen_Basisjaar,                  PerRegio/Zand/Woningen_Basisjaar);
+					attribute<Float64> Woningen_Basisjaar_BouwjaarVoor1970 := union_data(., PerRegio/Nederland/Woningen_Basisjaar_BouwjaarVoor1970, PerRegio/Kust/Woningen_Basisjaar_BouwjaarVoor1970, PerRegio/Rivieren/Woningen_Basisjaar_BouwjaarVoor1970, PerRegio/Veen/Woningen_Basisjaar_BouwjaarVoor1970, PerRegio/Zand/Woningen_Basisjaar_BouwjaarVoor1970);
+					attribute<Float64> Woningen_Basisjaar_Behouden         := union_data(., PerRegio/Nederland/Woningen_Basisjaar_Behouden,         PerRegio/Kust/Woningen_Basisjaar_Behouden,         PerRegio/Rivieren/Woningen_Basisjaar_Behouden,         PerRegio/Veen/Woningen_Basisjaar_Behouden,         PerRegio/Zand/Woningen_Basisjaar_Behouden);
+					attribute<Float64> Woningen_OpModelpakket              := union_data(., PerRegio/Nederland/Woningen_OpModelpakket,              PerRegio/Kust/Woningen_OpModelpakket,              PerRegio/Rivieren/Woningen_OpModelpakket,              PerRegio/Veen/Woningen_OpModelpakket,              PerRegio/Zand/Woningen_OpModelpakket);
+					attribute<Float64> Woningen_Basisjaar_ZonderBouwjaar   := union_data(., PerRegio/Nederland/Woningen_Basisjaar_ZonderBouwjaar,   PerRegio/Kust/Woningen_Basisjaar_ZonderBouwjaar,   PerRegio/Rivieren/Woningen_Basisjaar_ZonderBouwjaar,   PerRegio/Veen/Woningen_Basisjaar_ZonderBouwjaar,   PerRegio/Zand/Woningen_Basisjaar_ZonderBouwjaar);
+					attribute<Float64> Controle_Basisjaar_BAG              := union_data(., PerRegio/Nederland/Controle_Basisjaar_BAG,              PerRegio/Kust/Controle_Basisjaar_BAG,              PerRegio/Rivieren/Controle_Basisjaar_BAG,              PerRegio/Veen/Controle_Basisjaar_BAG,              PerRegio/Zand/Controle_Basisjaar_BAG);
+				}
+			}
+
+			unit<uint32> RijenBron := combine(Casus, Regio)
+			, Descr = "De regels, los van de weggeschreven units: een kolom van een unit met StorageName mag niet op een zusterkolom steunen."
+			{
+				attribute<String> CasusNaam := Casus/name[first_rel];
+				attribute<String> RegioNaam := Regio/name[second_rel];
+			}
+			unit<uint32> Rijen := RijenBron
+			, StorageName = "='%LocalDataProjDir%/Rapport_v01/WoningvoorraadBouwjaar.csv'"
+			, StorageType = "gdalwrite.vect"
+			, Descr       = "Een regel per variant en gebied: de woningen en de woningen met een bouwjaar voor 1970 in het zichtjaar, met de controlekolommen uit de Descr van de container."
+			{
+				attribute<String>  Variant                             := RijenBron/CasusNaam;
+				attribute<String>  Gebied                              := RijenBron/RegioNaam;
+				attribute<String>  Zichtjaar                           := union_data(., PerCasus/BAU1/Tabel/Zichtjaar,                           PerCasus/BAU2/Tabel/Zichtjaar,                           PerCasus/NbSGenuanceerder/Tabel/Zichtjaar);
+				attribute<Float64> Woningen                            := union_data(., PerCasus/BAU1/Tabel/Woningen,                            PerCasus/BAU2/Tabel/Woningen,                            PerCasus/NbSGenuanceerder/Tabel/Woningen);
+				attribute<Float64> Woningen_BouwjaarVoor1970           := union_data(., PerCasus/BAU1/Tabel/Woningen_BouwjaarVoor1970,           PerCasus/BAU2/Tabel/Woningen_BouwjaarVoor1970,           PerCasus/NbSGenuanceerder/Tabel/Woningen_BouwjaarVoor1970);
+				attribute<Float64> Woningen_Basisjaar                  := union_data(., PerCasus/BAU1/Tabel/Woningen_Basisjaar,                  PerCasus/BAU2/Tabel/Woningen_Basisjaar,                  PerCasus/NbSGenuanceerder/Tabel/Woningen_Basisjaar);
+				attribute<Float64> Woningen_Basisjaar_BouwjaarVoor1970 := union_data(., PerCasus/BAU1/Tabel/Woningen_Basisjaar_BouwjaarVoor1970, PerCasus/BAU2/Tabel/Woningen_Basisjaar_BouwjaarVoor1970, PerCasus/NbSGenuanceerder/Tabel/Woningen_Basisjaar_BouwjaarVoor1970);
+				attribute<Float64> Woningen_Basisjaar_Behouden         := union_data(., PerCasus/BAU1/Tabel/Woningen_Basisjaar_Behouden,         PerCasus/BAU2/Tabel/Woningen_Basisjaar_Behouden,         PerCasus/NbSGenuanceerder/Tabel/Woningen_Basisjaar_Behouden);
+				attribute<Float64> Woningen_OpModelpakket              := union_data(., PerCasus/BAU1/Tabel/Woningen_OpModelpakket,              PerCasus/BAU2/Tabel/Woningen_OpModelpakket,              PerCasus/NbSGenuanceerder/Tabel/Woningen_OpModelpakket);
+				attribute<Float64> Woningen_Basisjaar_ZonderBouwjaar   := union_data(., PerCasus/BAU1/Tabel/Woningen_Basisjaar_ZonderBouwjaar,   PerCasus/BAU2/Tabel/Woningen_Basisjaar_ZonderBouwjaar,   PerCasus/NbSGenuanceerder/Tabel/Woningen_Basisjaar_ZonderBouwjaar);
+				attribute<Float64> Controle_Basisjaar_BAG              := union_data(., PerCasus/BAU1/Tabel/Controle_Basisjaar_BAG,              PerCasus/BAU2/Tabel/Controle_Basisjaar_BAG,              PerCasus/NbSGenuanceerder/Tabel/Controle_Basisjaar_BAG);
+			}
+			unit<uint32> Levering := RijenBron
+			, StorageName = "='%LocalDataProjDir%/' + Uitlevering + '/Woningvoorraad_' + ExportJaar + '.csv'"
+			, StorageType = "gdalwrite.vect"
+			, Descr       = "Alleen de twee gevraagde grootheden, een regel per variant en gebied, rechtstreeks in de uitleveringsmap."
+			{
+				attribute<String>  Variant                   := RijenBron/CasusNaam;
+				attribute<String>  Gebied                    := RijenBron/RegioNaam;
+				attribute<String>  Zichtjaar                 := union_data(., PerCasus/BAU1/Tabel/Zichtjaar,                 PerCasus/BAU2/Tabel/Zichtjaar,                 PerCasus/NbSGenuanceerder/Tabel/Zichtjaar);
+				attribute<Float64> Woningen                  := union_data(., PerCasus/BAU1/Tabel/Woningen,                  PerCasus/BAU2/Tabel/Woningen,                  PerCasus/NbSGenuanceerder/Tabel/Woningen);
+				attribute<Float64> Woningen_BouwjaarVoor1970 := union_data(., PerCasus/BAU1/Tabel/Woningen_BouwjaarVoor1970, PerCasus/BAU2/Tabel/Woningen_BouwjaarVoor1970, PerCasus/NbSGenuanceerder/Tabel/Woningen_BouwjaarVoor1970);
+			}
+		}
+
 
 		container PerCasus :=
 			for_each_ne(
