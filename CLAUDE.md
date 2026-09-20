@@ -40,6 +40,12 @@ Sluitende woorden als "Fixes #634" sluiten het issue automatisch zodra de commit
 
 Alle tekstbestanden staan in de werkkopie op CRLF en in git op LF; `.gitattributes` dwingt dat af, onafhankelijk van `core.autocrlf`. Dms-bestanden zijn UTF-8 zonder BOM en springen in met tabs (`.editorconfig`). Bewerk dms-bestanden in bytes of met `newline=''`, zodat een scriptbewerking de regeleindes niet omzet en geen BOM toevoegt. Controleer na een scriptbewerking `git diff --stat`: een diff van ongeveer twee keer het aantal regels van het bestand betekent dat de regeleindes zijn geraakt, en die hoort niet in een commit.
 
+## Descr en Source
+
+Een Descr zegt wat het item doet of betekent, in een zin; waar nodig waarom het er is, en bij een instelling wat de consequentie van de waarde is. Een verwijzing met hekje naar het issue waar de afweging staat blijft. De bron van een kental of een dataset staat in de property `Source`, met jaargang of leveringsdatum; een afleiding van een regel mag daar ook staan, een afleiding van een alinea staat in het issue.
+
+Eruit blijven: meetuitkomsten en de datum ervan, de geschiedenis van wat er eerder stond, de weg waarlangs een fout is gevonden, lessen over GeoDMS (skill geodms-valkuilen), instructies aan de volgende lezer (skills) en versienummers of exitcodes. Vorm: een aaneengesloten tekst zonder witregels, inline waar dat kan, vervolgregels ingesprongen op de itemregel plus drie tabs. Richtpunt: parameters en attributen onder de 300 tekens, containers en sjablonen onder de 800.
+
 ## Meetharnassen
 
 Een harnas dat een vraag uit een issue beantwoordt is tijdelijk en gaat weg zodra het issue dicht is; de meting staat dan in het issue. Wat blijft staat in een thematische container van `cfg/main/Diagnose.dms` (Waterberging, Natuur, Groen, Werken en zo verder) onder een naam die zegt wat er gemeten wordt, draait mee in `GenerateAll` of `GenerateBasisjaar` of zegt in zijn Descr dat het op aanvraag is, en heeft als controlewaarde een norm in `batch/ToetsOplevering.ps1`. Geen containers of bestanden met een issuenummer als naam.

@@ -13,26 +13,21 @@
 // (nieuwbouwcohort, m2-precisie circa 0,8; voorraad-ratio 0,87). De condities lopen bewust NIET via
 // de gebruiksdoel-plus-machinerie: die hangt zelf aan IsLogistiekFunctie en zou circulair worden.
 // Het resultaat (alleen pand_bag_nr) wordt gelezen door SourceData/Vastgoed/Logistiek_panden_Aanvulling
-// wanneer ModelParameters/Advanced/BAG_LogistiekDynamisch aan staat.
+// wanneer ModelParameters/Werken/BAG_LogistiekDynamisch aan staat.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container LogistiekAanvulling : using = "Units"
 , Descr = "Maakt de LISA-afgeleide aanvulling op de statische logistieke pandenset: nieuwbouw vanaf het peiljaar, ontkoppeld weggeschreven als pand_bag_nr-lijst"
 {
-	parameter<UInt32>  NefsPeiljaar      := 2021,  Descr = "Stand van de statische set; alleen panden met bouwjaar vanaf dit jaar komen voor aanvulling in aanmerking. Oudere panden zijn door de bronset beoordeeld; dat oordeel blijft leidend.";
-	parameter<Float32> MinKernAandeel    := 0.3f,  Descr = "Minimaal aandeel kern-logistieke banen (groothandel zonder handelsbemiddeling, plus vervoer, opslag en post) in het pand";
-	parameter<Float64> MinFootprint      := 500d,  Descr = "Ondergrens footprint in m2, gelijk aan de ondergrens van de bronset";
-	parameter<Float64> MinFootprint_Leeg := 2500d, Descr = "Ondergrens footprint in m2 voor panden zonder eigen vestiging (de nabijheidsregel)";
-	parameter<Float64> BufferAfstand     := 100d,  Descr = "Zoekafstand in meter vanaf de pandrand naar een kern-logistiek LISA-punt, voor panden zonder eigen vestiging. Vanaf de rand en niet vanaf de centroid: grote hallen hebben hun middelpunt ver van de rand. Op het nieuwbouwcohort van de replicatie-toets ruilt dit precisie voor recall (m2-precisie circa 0,75 bij m2-recall 0,75) en is de voorraadomvang vrijwel in balans, waar de centroid-variant de logistieke voorraad zo'n 19 procent onderschat.";
 
 	unit<UInt32> Pand := ='SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/pand'
 	, Descr = "Meest recente BAG-jaargang: de aanvulling dekt alle nieuwbouw tot en met dit jaar en geldt via pand_bag_nr ook voor eerdere jaargangen"
 	{
 		attribute<Bool> NietInBronset := !IsDefined(rlookup(pand_bag_nr, SourceData/Vastgoed/Logistiek_panden/pand_bag_nr)), Descr = "Buiten de volledige statische set, dus ook buiten de daar afgekeurde categorie XXL retail";
-		attribute<Bool> IsNieuw       := uint32(Bouwjaar_trunc) >= NefsPeiljaar;
+		attribute<Bool> IsNieuw       := uint32(Bouwjaar_trunc) >= /ModelParameters/Werken/LogistiekAanvulling/NefsPeiljaar;
 		attribute<Bool> GeenWoon      := Counts/woon_VBOs == 0;
-		attribute<Bool> GrootGenoeg   := Footprint >= value(MinFootprint, m2PandFootprint);
+		attribute<Bool> GrootGenoeg   := Footprint >= value(/ModelParameters/Werken/LogistiekAanvulling/MinFootprint, m2PandFootprint);
 	}
 
 	unit<UInt32> vbo_j := ='SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/vbo'
@@ -70,13 +65,13 @@ container LogistiekAanvulling : using = "Units"
 	attribute<UInt32> TotaalBanen (Pand) := sum(LISA_pnt/banen, LISA_pnt/Pand_rel);
 
 	attribute<Bool> Kandidaat    (Pand) := Pand/NietInBronset && Pand/IsNieuw && Pand/GeenWoon && Pand/GrootGenoeg && DoelTellingen/Doel_ok;
-	attribute<Bool> DirectLogistiek (Pand) := Kandidaat && TotaalBanen > 0 && float32(KernBanen) > MinKernAandeel * float32(TotaalBanen);
+	attribute<Bool> DirectLogistiek (Pand) := Kandidaat && TotaalBanen > 0 && float32(KernBanen) > /ModelParameters/Werken/LogistiekAanvulling/MinKernAandeel * float32(TotaalBanen);
 
-	unit<UInt32> LegeKandidaten := select_with_org_rel(Kandidaat && TotaalBanen == 0 && Pand/Footprint >= value(MinFootprint_Leeg, m2PandFootprint))
+	unit<UInt32> LegeKandidaten := select_with_org_rel(Kandidaat && TotaalBanen == 0 && Pand/Footprint >= value(/ModelParameters/Werken/LogistiekAanvulling/MinFootprint_Leeg, m2PandFootprint))
 	, Descr = "Kandidaten zonder eigen vestiging: grote hallen waarvan het LISA-punt vaak op een buurpand staat. Een kern-logistiek punt binnen de zoekafstand telt als bewijs."
 	{
 		attribute<rdc_meter> geometry (poly)        := org_rel -> geometry;
-		attribute<rdc_meter> geometry_buffer (poly) := bg_buffer_multi_polygon(geometry, BufferAfstand, 4b);
+		attribute<rdc_meter> geometry_buffer (poly) := bg_buffer_multi_polygon(geometry, /ModelParameters/Werken/LogistiekAanvulling/BufferAfstand, 4b);
 	}
 
 	unit<UInt32> KernPunten := select_with_org_rel(LISA_pnt/IsKernLogistiek)
@@ -85,11 +80,11 @@ container LogistiekAanvulling : using = "Units"
 		attribute<LegeKandidaten> LegeKandidaat_rel := point_in_polygon(geometry, LegeKandidaten/geometry_buffer);
 	}
 
-	attribute<Bool> NabijLogistiek (Pand) := recollect_by_cond(Kandidaat && TotaalBanen == 0 && Pand/Footprint >= value(MinFootprint_Leeg, m2PandFootprint), pcount(KernPunten/LegeKandidaat_rel) > 0, false);
+	attribute<Bool> NabijLogistiek (Pand) := recollect_by_cond(Kandidaat && TotaalBanen == 0 && Pand/Footprint >= value(/ModelParameters/Werken/LogistiekAanvulling/MinFootprint_Leeg, m2PandFootprint), pcount(KernPunten/LegeKandidaat_rel) > 0, false);
 
 	unit<UInt32> Make_Aanvulling := select_with_org_rel(DirectLogistiek || NabijLogistiek)
 	,	StorageName    = "='%RSo_DataDir%/Vastgoed/LogistiekBuildings/LogistiekPandenAanvulling_BAG'+string(ModelParameters/BAG_RecentYear)+'_LISA'+string(ModelParameters/LISA_StartYear)+'_v1.mmd'"
-	,	IntegrityCheck = "lowercase(/ModelParameters/StudyArea) == lowercase('Nederland') && not(/ModelParameters/Advanced/BAG_LogistiekDynamisch)"
+	,	IntegrityCheck = "lowercase(/ModelParameters/StudyArea) == lowercase('Nederland') && not(/ModelParameters/Werken/BAG_LogistiekDynamisch)"
 	,	Descr          = "Schrijft de aanvulling ontkoppeld weg: alleen pand_bag_nr, geen banen of vestigingsgegevens. Genereren kan alleen met BAG_LogistiekDynamisch op FALSE (anders trekt het pand-domein het nog te schrijven bestand als supplier mee); de IntegrityCheck dwingt dat af. Publicatie van dit bestand behoeft een check op de LISA-licentievoorwaarden."
 	{
 		attribute<uint64> pand_bag_nr := org_rel -> pand_bag_nr;
