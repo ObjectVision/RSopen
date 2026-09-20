@@ -27,22 +27,24 @@ $env:DiagJaar  = "'Y2040'"
 
 Let op de aanhalingstekens rond het zichtjaar. `Diagnose/Jaar` is een `=`-expressie, dus de waarde van `DiagJaar` komt in een expressiecontext terecht en moet daar een stringliteral zijn. Zonder de binnenste aanhalingstekens faalt de run met "Unknown identifier 'Y2040'". `DiagCasus` heeft ze niet nodig, want dat is een gewone stringparameter.
 
-De tabel `Checks` bepaalt wat er gemeten wordt: per regel een naam, een pad (Z is het zichtjaar van de indicatoren, V is variantdata, A is allocatie), een aggregatie (p parameter, s som over het grid, b aantal cellen waar waar, c aantal gevulde cellen, l lijst per regio, m maximum, n minimum) en het item. Een check toevoegen is een regel in vier lijsten plus `nrofrows` een hoger; loopt dat uit de pas, dan geeft `GenerateAll` exit 1 en schrijft hij niets, zie in geodms-valkuilen het kopje over handmatige lijsten.
+De tabel `Checks` bepaalt wat er gemeten wordt: per regel een naam, een pad (Z is het zichtjaar van de indicatoren, V is variantdata, A is allocatie, D is een parameter in het harnas zelf, B de container `Basisjaar`), een aggregatie (p parameter, s som over het grid, b aantal cellen waar waar, c aantal gevulde cellen, l lijst per regio, m maximum, n minimum) en het item. Een check toevoegen is een regel in vier lijsten plus `nrofrows` een hoger; loopt dat uit de pas, dan geeft `GenerateAll` exit 1 en schrijft hij niets, zie in geodms-valkuilen het kopje over handmatige lijsten.
 
 De hele set kost ongeveer 7,3 minuten los van de allocatie. Met `StandAllocatieOntkoppeld` op TRUE leest de indicatorenkant de stand uit de tifs en hoeft er niet gealloceerd te worden.
+
+De tabel `ChecksBasisjaar` werkt hetzelfde voor grootheden die niet met het zichtjaar veranderen (woningen en banen in het basisjaar, hoge gronden, de bouwperiodeterm, de verwervingskosten van niet-woon vastgoed); `/Diagnose/GenerateBasisjaar` schrijft ze een keer per casus, in een minuut, met `Basisjaar` in plaats van het zichtjaar in de bestandsnaam. De normen voor beide tabellen staan in `batch/ToetsOplevering.ps1` (`$NormenZichtjaar`, `$NormenBasisjaar`).
 
 Wat moet sluiten:
 
 - Grondbalans. De arealen per landgebruik tellen op tot het studiegebied. Sluit doorgaans op enkele honderdsten van een procent; alles boven een tiende procent is een bevinding. Een vaste rest van enkele tientallen hectare die niet meeschaalt met het verlies wijst op een bestemming die geen naam heeft, niet op een fout die meeschaalt.
 - Claimrealisatie per allocatieregio: `claimreal_NL_*`, `claimreal_NVM_woningen`, `claimreal_Provincie_banen`, `claimreal_Waterberging`. Kijk naar het minimum en het maximum over de regio's, niet naar het landelijke gemiddelde. Een landelijke 1,00 kan tientallen regio's onder de norm verbergen.
 - Kruiselings tussen zichtjaren. De sterftecijfers horen over de zichtjaren tot op zeven cijfers te sluiten.
-- Decomposities. De sloop valt uiteen in exogeen, gealloceerd en rest; de inbreiding in een teller en een noemer met bruto bij en af. Tellen de delen niet op tot het totaal, dan is er een categorie zoek.
+- Decomposities. De sloop valt uiteen in drie oorzaken (`SloopAlsGevolgVan*` in de indicatoren, met een IntegrityCheck op de som); de grondbalans in drie bestemmingen (`grondbalans_bestemmingen`). Tellen de delen niet op tot het totaal, dan is er een categorie zoek.
 - Gevulde kaarten. Alle weggeschreven kaarten per zichtjaar horen gevuld te zijn, geen enkele leeg of geheel nul. Een lege kaart is een stille fout.
 - Tabelsom tegen rastersom. Leg bij een oplevering de som van een weggeschreven kaart naast de som van de bijbehorende tabelkolom; zie Noemer en masker onder Wat een bevinding is.
 
 ### Uitdraaien buiten de tabel Checks
 
-Niet alles past in de drie paden Z, V en A. `/Diagnose/Ongemeten/uitdraaiWB` schrijft `Diagnose/piekbuiberging_<casus>_<jaar>.txt`, een regel met gelabelde waarden uit BaseData en het basisjaar; `batch/ToetsOplevering.ps1` leest dat bestand. Hij hangt als ExplicitSupplier aan `GenerateAll`, dus een volledige diagnosedraai maakt hem vanzelf; los opvragen kan met dezelfde omgevingsvariabelen. Reken op ongeveer 5,5 minuut per casus en zichtjaar, waarvan circa 2 minuten en 40 GB voor de ToedelingsMatrix van alle panden.
+Niet alles past in een getal per rij. `/Diagnose/Piekbuiberging/Dekking` schrijft `Diagnose/piekbuiberging_<casus>_<jaar>.txt`, een regel met gelabelde waarden uit BaseData en het basisjaar; `batch/ToetsOplevering.ps1` leest dat bestand. Hij hangt als ExplicitSupplier aan `GenerateAll`, dus een volledige diagnosedraai maakt hem vanzelf; los opvragen kan met dezelfde omgevingsvariabelen. De overige thematische containers (`Waterberging`, `Natuur`, `Groen`, `Verharding`, `Werken`, `Claims`) staan in de Descr van `Diagnose` en zeggen zelf of ze in `GenerateAll` meedraaien of op aanvraag zijn. Reken op ongeveer 5,5 minuut per casus en zichtjaar, waarvan circa 2 minuten en 40 GB voor de ToedelingsMatrix van alle panden.
 
 De regel bevat opgave, aanbod, gedekt, ongedekt en dekkingsgraad, sinds #746 het dakoppervlak gesplitst in plat en schuin voor bestaand gebied en nieuwbouw (`best_dak_plat_mlnm2`, `best_dak_schuin_mlnm2`, `nb_dak_plat_mlnm2`, `nb_dak_schuin_mlnm2`, `nb_daken_werken`) en sinds #757 het aanbod per maatregel. Twee ijkpunten: de opgave is 497,023 mln m3 in elke variant en elk zichtjaar (107,8 mm over 460.879,56 ha bebouwd gebied), en het aanbod van gealloceerde bergingscellen is per constructie nul. Wijkt de opgave af, dan is de maskering of het basisjaar veranderd en niet het aanbod.
 
@@ -110,7 +112,7 @@ Die brontifs zijn rechtstreeks met rasterio te lezen en dat is vaak sneller dan 
 
 Een tabel per bodemgebruiksklasse, bijvoorbeeld welk deel van elke klasse aan wonen is toegewezen, is alleen iets waard als hij op dezelfde kaart is gemaakt als de zeef. Twee dingen gaan daar stil mis.
 
-De kaart. Het model leest de BBG-jaargang uit `ModelParameters/BBG_Year` via `/BaseData/StartState/Bodemstatistiek/gg_CBS`. Op de share ligt een kant-en-klaar modusraster van een ander jaar, en dat is niet dezelfde kaart: het jaar verschilt en de klassen zijn verschoven omdat busbaan toen nog een actieve rij was. Gemeten op dat raster kwam semi-verhard terrein op 18,5 procent toegewezen en dagrecreatief terrein op 20,9; op gg_CBS is dat 0,2 en 0,6 procent. Het harnas `Diagnose/PerIssue/DiagnoseVerdikking/Kalibratie` schrijft gg_CBS en de plancapaciteit als tif weg, met de klassenamen op indexvolgorde in een zijbestand, zodat je buiten GeoDMS op de juiste kaart rekent.
+De kaart. Het model leest de BBG-jaargang uit `ModelParameters/BBG_Year` via `/BaseData/StartState/Bodemstatistiek/gg_CBS`. Op de share ligt een kant-en-klaar modusraster van een ander jaar, en dat is niet dezelfde kaart: het jaar verschilt en de klassen zijn verschoven omdat busbaan toen nog een actieve rij was. Gemeten op dat raster kwam semi-verhard terrein op 18,5 procent toegewezen en dagrecreatief terrein op 20,9; op gg_CBS is dat 0,2 en 0,6 procent. Schrijf gg_CBS en de plancapaciteit als tif weg, met de klassenamen op indexvolgorde in een zijbestand, zodat je buiten GeoDMS op de juiste kaart rekent; het harnas dat dat bij #668 deed is opgeruimd, de opzet staat in de geschiedenis van Diagnose.dms.
 
 De index. `Classifications/Grondgebruik/CBSKlasse2020.dms` heeft uitgecommentarieerde regels (busbaan, wrakkenopslagplaatsen, natuurlijk grasland, kustduinen), dus de rasterindex loopt niet gelijk met de EK2020-code en ook niet met de leesvolgorde daarvan. Lees de etiketten uit dat zijbestand en controleer op arealen die je kent: voor Noord-Holland hoort 41.388 ha woonterrein en 111.375 ha IJsselmeer uit te komen. Een tabel met verschoven etiketten valt pas op als een uitgesloten klasse toch een hoog percentage krijgt.
 
@@ -123,7 +125,7 @@ Bouwterrein hoort bovenaan te staan (29,9 procent toegewezen in Y2040 van BAU, g
 Een wijziging aan de landbouwgeschiktheid, de transitiekosten of het saldo toetsen op de allocatie geeft bij band 0 dus altijd geen verschil. Dat leest als een wijziging die niet doorwerkt of als een kapotte toets, terwijl het een eigenschap van de claim is. Bij #202 was `Alloc_Result` na een volledige herbouw van de transitiekostenmatrix byte-identiek; met de band op 0,05 verschoof 4.053 ha. Toets zo'n wijziging daarom op twee dingen:
 
 1. De geschiktheid zelf, per klasse en alleen op landbouwcellen met bodemcode. Het rastergemiddelde uit `@statistics` gaat ook over steden en water en is niet te lezen.
-2. De allocatie met `RSO_CLAIMBANDBREEDTE=0.05`, de gevoeligheidsstand waarvoor die omgevingsvariabele bestaat. `cfg/main/Diagnose/Diagnose202.dms` is het voorbeeldharnas.
+2. De allocatie met `RSO_CLAIMBANDBREEDTE=0.05`, de gevoeligheidsstand waarvoor die omgevingsvariabele bestaat.
 
 ## Laag 3: ruimtelijke patronen met de RS-testomgeving
 

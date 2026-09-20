@@ -49,7 +49,29 @@ function Meld {
 
 # Verwachte setgroottes per variant, uit de OP-tabel na #721.
 $OPSetGrootte = @{ 'BAU'=27; 'BAU2'=27; 'NbSGenuanceerder'=39; 'NbSGenuanceerd'=39 }
-$AantalSubsectoren = 11
+
+# Normen voor de losse controlewaarden uit de tabellen Checks en ChecksBasisjaar in cfg/main/Diagnose.dms:
+# bestandsnaam zonder casus en jaar, omschrijving, ondergrens, bovengrens. De rekenregel achter elke waarde
+# staat in de Descr van het item dat de rij in de tabel noemt. Een waarde null betekent dat de controle in
+# deze opzet niet van toepassing is (de Descr zegt wanneer) en telt als INFO, niet als PASS.
+$NormenZichtjaar = @(
+    @('waterberging_regios_met_tekort', 'waterbergingsregio''s waar de opgave niet in het volume past', 0,    0),
+    @('groenwaarde_lek_eur',            'groenwaarde nieuwbouw meet verandering, geen niveau (euro)',    0,    1000),
+    @('verharding_cellen_gedaald',      'verharding kan dalen (cellen)',                                 1,    1e12),
+    @('ijburg2_woningen_groei',         'woningen erbij op IJburg2 sinds het basisjaar',                 1,    1e12)
+)
+# De basisjaarcontroles gelden per casus en niet per zichtjaar; de bestanden dragen Basisjaar in de naam.
+# De bandbreedtes zijn gezet op de meting van 20 september 2026 (woningen 8.123.721, banen 9.298.568,
+# hoge gronden 1.819.410 ha, bouwperiodeterm -0,093, verwerving 566 mld): ruim genoeg voor een nieuwe
+# BAG-jaargang, krap genoeg om een losgeraakte keten (een nul) of een dubbeltelling van tienden te zien.
+$NormenBasisjaar = @(
+    @('basisjaar_woningen',                 'woningvoorraad basisjaar tegen de CBS-voorraad',          8.0e6,  8.5e6),
+    @('basisjaar_banen',                    'banen basisjaar tegen het LISA-totaal',                   8.5e6,  10.0e6),
+    @('hogegronden_ha',                     'hoge gronden binnen het studiegebied (ha)',               1.75e6, 1.90e6),
+    @('bouwperiode_term',                   'bouwperiodecoefficient bestaande voorraad, gewogen',      -0.15,  -0.05),
+    @('verwerving_nietwoon_mld',            'verwervingskosten niet-woon vastgoed (mld euro)',         250,    900),
+    @('verblijfsrecreatie_stand_tov_trend', 'stand logies in CBS-gebied tegen de trend, verhouding',   0,      1)
+)
 
 function Get-Zichtjaren([string]$casusPad) {
     Get-ChildItem $casusPad -Directory -Filter 'Stand Y*' -ErrorAction SilentlyContinue |
@@ -116,10 +138,13 @@ function TrapA([string]$variant) {
         } else {
             $inhoud = Get-Content $params[0].FullName -Raw
             $nOP  = ((($inhoud -split 'op_set=')[1] -split ';')[0] -split ',').Count
-            $nSub = ((($inhoud -split 'subsector_set=')[1]) -split ',').Count
+            $nSub = ((($inhoud -split 'subsector_set=')[1] -split ';')[0] -split ',').Count
+            # Het SS-nummer in de bestandsnaam is het aantal subsectoren waarmee de stand is geschreven; de
+            # legenda hoort daar precies zoveel namen voor te dragen.
+            $nSS  = if ($params[0].Name -match 'SS-(\d+)') { [int]$Matches[1] } else { -1 }
             $okOP = ($OPSetGrootte.ContainsKey($variant) -and $nOP -eq $OPSetGrootte[$variant])
             Meld 'A' $casus "$jaar legenda, aantal pakketten" $(if ($okOP) {'PASS'} else {'FAIL'}) "$nOP" "$($OPSetGrootte[$variant])"
-            Meld 'A' $casus "$jaar legenda, aantal subsectoren" $(if ($nSub -eq $AantalSubsectoren) {'PASS'} else {'FAIL'}) "$nSub" "$AantalSubsectoren"
+            Meld 'A' $casus "$jaar legenda, aantal subsectoren" $(if ($nSub -eq $nSS) {'PASS'} else {'FAIL'}) "$nSub" "SS-$nSS in de bestandsnaam"
         }
 
         # Een leeggeschreven tif is de klassieke uitkomst van twee runs op dezelfde LocalData.
@@ -156,6 +181,23 @@ function Ontleed([string]$tekst) {
         if ($d.Count -ge 2 -and $d[1] -match '^-?[\d.]+$') { $h[$d[0]] = [double]$d[1] }
     }
     return $h
+}
+
+function ToetsNormen([string]$casus, [string]$jaarlabel, $normen) {
+    foreach ($n in $normen) {
+        $d = LeesDiag "${casus}_${jaarlabel}_$($n[0]).txt"
+        if ($null -eq $d) { Meld 'B' $casus "$jaarlabel $($n[1])" 'GEEN DATA' 'bestand ontbreekt' 'draai de diagnose'; continue }
+        if ($d.Verouderd) { Meld 'B' $casus "$jaarlabel $($n[1])" 'GEEN DATA' "bestand van $($d.Tijd.ToString('dd-MM HH:mm'))" 'na de runstart'; continue }
+        $tekst = $d.Tekst -replace ',','.'
+        if ($tekst -eq '' -or $tekst -eq 'null') { Meld 'B' $casus "$jaarlabel $($n[1])" 'INFO' 'niet van toepassing' 'zie de Descr in Diagnose.dms'; continue }
+        $w = [double]$tekst
+        $ok = ($w -ge $n[2] -and $w -le $n[3])
+        Meld 'B' $casus "$jaarlabel $($n[1])" $(if ($ok) {'PASS'} else {'FAIL'}) ("{0:N4}" -f $w) ("{0} tot {1}" -f $n[2], $n[3])
+    }
+}
+
+function TrapBasisjaar([string]$variant) {
+    ToetsNormen "${Scenario}_$variant" 'Basisjaar' $NormenBasisjaar
 }
 
 function TrapB([string]$variant, [string]$jaar) {
@@ -258,6 +300,8 @@ function TrapB([string]$variant, [string]$jaar) {
             Meld 'B' $casus "$j waterberging haalt de opgave" $(if ($min -ge 0.99) {'PASS'} else {'FAIL'}) ("{0:N4} over {1} regio's" -f $min, $r.Count) 'minstens 0,99'
         }
     }
+
+    ToetsNormen $casus $j $NormenZichtjaar
 }
 
 # --------------------------------------------------------- trap C: wat zelf gerekend moet worden
@@ -276,6 +320,19 @@ function TrapC([string]$variant, [string]$jaar) {
     Meld 'C' $casus "$j diagnoseharnas gedraaid" $(if ($code -eq 0 -and $errs.Count -eq 0) {'PASS'} else {'FAIL'}) "exit $code, $($errs.Count) foutregels" 'exit 0, geen foutregels'
 }
 
+function TrapCBasisjaar([string]$variant) {
+    $casus = "${Scenario}_$variant"
+    $env:DiagCasus = $casus
+    $env:LocalDataProjDir = $LocalData
+    $log = Join-Path $env:TEMP "toets_${casus}_basisjaar.log"
+    if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
+
+    & $Exe "/L$log" $Cfg '/Diagnose/GenerateBasisjaar' 2>&1 | Out-Null
+    $code = $LASTEXITCODE
+    $errs = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
+    Meld 'C' $casus 'basisjaarcontroles gedraaid' $(if ($code -eq 0 -and $errs.Count -eq 0) {'PASS'} else {'FAIL'}) "exit $code, $($errs.Count) foutregels" 'exit 0, geen foutregels'
+}
+
 # ----------------------------------------------------------------------------------- uitvoeren
 Write-Host ""
 Write-Host "LocalData : $LocalData"
@@ -287,6 +344,8 @@ Write-Host ("-" * 120)
 
 foreach ($v in $Varianten) {
     TrapA $v
+    if ($TrapC) { TrapCBasisjaar $v }
+    TrapBasisjaar $v
     $pad = Join-Path $LocalData "Allocatie\${Scenario}_$v"
     $standen = @(Get-ChildItem $pad -Directory -Filter 'Stand*' -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -notmatch 'vintage' } | ForEach-Object { $_.Name })

@@ -219,9 +219,9 @@ Neem een zelftoets op zodra je een samengestelde toets met de hand nabouwt, bijv
 
 Die twee werken niet hetzelfde. `DiagCasus` voedt een gewone parameter, dus `WLO_hoog_BAU` volstaat. `DiagJaar` voedt een meta-expressie, dus de waarde moet zelf aanhalingstekens dragen: `'Y2040'` en niet `Y2040`. Zonder die aanhalingstekens wordt het zichtjaar als itemnaam gelezen en krijg je `Unknown identifier 'Y2040'`, een melding die naar het diagnose-item wijst en niet naar de omgevingsvariabele.
 
-Meetharnassen per issue staan als `Diagnose<nummer>.dms` in `cfg/main/Diagnose/`, met een `#include` in de container `PerIssue` onderaan `cfg/main/Diagnose.dms`. Ze zijn tijdelijk en horen weg zodra de getallen in het issue staan. Een nieuw harnas hangt onder `/Diagnose/PerIssue/Diagnose<nummer>/` en niet in de wortel, zodat de bovenste laag van de boom leesbaar blijft; het hoofdharnas blijft `/Diagnose`, dus `/Diagnose/GenerateAll` en `/Diagnose/Casus` zijn onveranderd.
+Een meetharnas dat een vraag uit een issue beantwoordt is tijdelijk: bouw het in een thematische container van `cfg/main/Diagnose.dms` (`Waterberging`, `Natuur`, `Groen`, `Werken` en zo verder) of als los bestand in `cfg/main/Diagnose/`, en haal het weg zodra de getallen in het issue staan. Wat blijft krijgt een thematische naam en een norm in `batch/ToetsOplevering.ps1`, en draait mee in `GenerateAll` of `GenerateBasisjaar`, of zegt in zijn Descr dat het op aanvraag is.
 
-Let bij een nieuw harnas op de naamketen. Een kale naam zoekt vanaf `PerIssue` omhoog en komt dan langs de items van het hoofdharnas voordat hij de wortel bereikt, dus namen als `Casus`, `Jaar`, `Variant` en `Pad_Z` binden aan het hoofdharnas zodra je ze niet zelf definieert. Verwijs naar modelcode daarom met een absoluut pad.
+Let bij een nieuw harnas op de naamketen. Een kale naam zoekt vanuit de container omhoog en komt dan langs de items van het hoofdharnas voordat hij de wortel bereikt, dus namen als `Casus`, `Jaar`, `Variant` en `Pad_Z` binden aan het hoofdharnas zodra je ze niet zelf definieert. Verwijs naar modelcode daarom met een absoluut pad.
 
 ## Trap 4: allocatie draaien
 

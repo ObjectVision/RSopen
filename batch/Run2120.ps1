@@ -49,7 +49,8 @@
       -AlleenLandbouw Bevestigt dat alleen de landbouw alloceert. Hoort samen met de schakelaar
                       OntkoppelStedelijkeKlasses op TRUE (zie B); het script toetst dat.
       -DiagnoseNaZichtjaar  Na welke zichtjaren het diagnoseharnas meedraait (ongeveer acht
-                      minuten per zichtjaar per variant). Leeg is nooit.
+                      minuten per zichtjaar per variant), plus een keer per variant de
+                      basisjaarcontroles. Leeg is nooit.
 
    B. Schakelaars in de configuratie die dit script NIET zet maar waar de run wel van afhangt.
       Loop ze na voordat je start; ze staan in cfg\main\ModelParameters.dms tenzij anders vermeld.
@@ -436,6 +437,12 @@ foreach ($v in $Varianten) {
         }
         Write-Regel "overslaan : allocatie-$v, leent de stand van $uitlener"
         continue
+    }
+    # De basisjaarcontroles een keer per variant, voor de zichtjaren: ze veranderen niet met het
+    # zichtjaar en horen bij dezelfde beoordeling als de diagnose per zichtjaar.
+    if ($DiagnoseNaZichtjaar.Count -gt 0) {
+        $env:DiagCasus = "${Scenario}_$v"
+        Invoke-Stap "diagnose-$v-basisjaar" '/Diagnose/GenerateBasisjaar' -NietFataal
     }
     foreach ($y in $Zichtjaren) {
         Invoke-Stap "allocatie-$v-$y" "/Allocatie/${Scenario}_$v/Zichtjaren/$y/Impl/Generate"
