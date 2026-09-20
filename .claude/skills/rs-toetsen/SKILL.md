@@ -204,6 +204,8 @@ Concreet voor die vergelijking, mocht hij herhaald moeten worden. De basis was `
 
 Meld altijd expliciet wat je niet getoetst hebt. Bij die vergelijking waren dat de werken-schakelaars afzonderlijk, de NbS-variant en de zeeflaag.
 
+En neem als tegenhanger nooit een variant die er toevallig naast ligt. Bij #715 leek uit NbSMax, dat met de BAU-dichtheidsfactoren op 28,0 woningen per hectare uitkwam, te volgen dat tweederde van het dichtheidsverschil van de pakketten kwam; NbSMax heeft andere pakketten dan NbSGenuanceerd, dus die vergelijking verschilde op twee assen tegelijk en kon de vraag niet beantwoorden. Twee runs van dezelfde variant waarin alleen de parameter verschilt gaven het antwoord: 22,6 tegen 33,9 woningen per hectare en 30.897 hectare ruimtebeslag uit alleen de dichtheidsfactoren. Een controlegroep is dezelfde variant met een ding anders, en anders is het geen controlegroep.
+
 ### Scheid het effect van de code van het effect van de allocatie
 
 Een toetsronde over een reeks commits raakt allebei. Dat gaat in twee trappen op dezelfde nieuwe code. Trap 1 vergelijkt oude tegen nieuwe code op een stilstaande stand en meet dus het indicatoreffect. Trap 2 vergelijkt dezelfde nieuwe code op de oude tegen de nieuwe stand en meet dus het allocatie-effect. Daarvoor moeten twee dingen weggezet zijn voordat er iets draait: de standmappen als `Stand<jaar>_vintage<datum>` en de hele map `Diagnose` met `cp -rp`, zie Bewaar de oude uitdraaien en Een oude stand opnieuw doormeten hieronder. Zonder die twee kopieen is er achteraf geen voor-meting meer.

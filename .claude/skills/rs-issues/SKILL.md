@@ -144,6 +144,22 @@ Een diff die een BOM toevoegt of alle regeleindes raakt hoort niet in de commit.
 
 Commit of push alleen wanneer daarom gevraagd is.
 
+### Een merge in de eenregelige suppliersregel
+
+`Generate_Indicatoren` in `cfg/main/Templates/Indicatoren_T/Export.dms` zet alle suppliers van de indicatorenexport op een enkele regel van duizenden tekens. Git kan daar niets samenvoegen: elk conflict in dat blok is kies-links-of-rechts, en de verliezende kant verdwijnt zonder dat de diff laat zien welke suppliers dat waren. Zo raakte de export in `ad49d348` zes items kwijt en kreeg er twee namen voor terug die na #705 en #720 niet meer bestonden; dat valt pas aan het eind van een run om, op een pad dat niet oplost.
+
+Toets na elke merge waarin `Export.dms` meekomt de namen zelf, niet de regel:
+
+```bash
+extract() { git show "$1:cfg/main/Templates/Indicatoren_T/Export.dms" \
+  | grep -A1 "parameter<string> Generate_Indicatoren" | tr ';' '\n' \
+  | grep -o "[A-Za-z_][A-Za-z_0-9/]*" | sort -u; }
+comm -23 <(extract <voor>) <(extract <na>)   # wat is er kwijt
+comm -13 <(extract <voor>) <(extract <na>)   # wat kwam erbij, en bestaat dat nog?
+```
+
+Elke naam die erbij komt hoort ook als item in de configuratie te staan; grep hem.
+
 ## Een issue sluiten
 
 "Dit issue mag dicht" betekent drie handelingen, in deze volgorde:

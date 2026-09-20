@@ -461,6 +461,12 @@ De regel: normaliseer met een noemer die voor alle typen gelijk is, namelijk de 
 
 Meet het, want met het oog op een uitgezoomde kaart zie je het niet. Het getal dat het vangt is het aandeel buurcellen binnen 50 meter dat dezelfde bestemming krijgt, gemiddeld over de gealloceerde cellen, afgezet tegen wat een willekeurige trekking uit dezelfde zeef zou geven. Bij zand ging dat van 0,19 naar 0,80.
 
+## Een pakketkenmerk per hectare op een cel van 25 meter
+
+De kolommen van een ontwikkelpakket zijn per netto-buurthectare: woningen per hectare, woonoppervlak per hectare, een fractie van het terrein. Een cel van 25 meter is 0,0625 hectare. Wie zo'n kolom via `OP_rel` op de cel opzoekt en als celwaarde gebruikt, telt zestien keer te veel, en wie de laag- of WP2-splitsing van het pakket daarna nog eens toepast telt dubbel. Zo kwam bij #609 de overstromingsschade van een zichtjaar op 3,6 keer het basisjaar uit, met exitcode 0 en een plausibel ogende kaart.
+
+Vermenigvuldig een pakketkenmerk altijd met `AdminDomain/NrHaPerCell` voordat het een celgrootheid wordt, en spiegel elke laag- of typesplitsing aan de formule van `Aantal_Woningen` in de stand, want die is de referentie voor hoe het pakket op de cel landt. De goedkoopste toets is `@statistics` per categorie op het basisjaar naast het eerste zichtjaar: een categorie die met een factor in de buurt van zestien verspringt is deze fout.
+
 ## Er is geen CalcCache meer
 
 De CalcCache, de persistente schijfcache met automatische invalidatie, is verdwenen sinds de GeoDMS 8-serie. Presenteer hem nooit als bestaande voorziening; wiki-pagina's die er in de tegenwoordige tijd over schrijven zijn GeoDMS 7-documentatie.
