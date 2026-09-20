@@ -26,7 +26,10 @@ Template Zichtjaar_T
 {
 	//
 	parameter<String> Zichtjaar_name;
-	container         PrevIndicatoren;
+	container         PrevIndicatoren_Live : Descr = "Het vorige zichtjaar als levende container, zoals Indicatoren_T hem meegeeft; voor het eerste allocatiezichtjaar is dat Basisjaar.";
+	//
+	container PrevIndicatoren := = /ModelParameters/IndicatorenOntkoppeld && !IsFirstAllocYear ? 'Ketens/Lees' : 'PrevIndicatoren_Live'
+	, Descr = "Waar de cumulatieve indicatoren hun vorige zichtjaar lezen. Ontkoppeld (#824) is dat Ketens/Lees, dat de grootheden van het vorige zichtjaar uit tifs haalt, zodat dit zichtjaar niet de hele reeks ervoor meerekent; anders de levende container. Het eerste allocatiezichtjaar leest altijd het basisjaar.";
 	//
 	
 	container PrevStand       := PrevIndicatoren/Stand;
@@ -252,10 +255,37 @@ Template Zichtjaar_T
 		
 		attribute<bool> BestaandBebouwdGebied                (AdminDomain) := /BaseData/Omgeving/UrbanContour;
 		attribute<bool> BestaandGroenInBestaandBebouwdGebied (AdminDomain) := IsDefined(Basisjaar/Grondgebruik/Groen) && BestaandBebouwdGebied;
+		// #824: de twee bools hierboven als UInt8 met gdalwrite.grid, zodat een tabelrun met TabellenUitExport aan ze kan
+		// teruglezen; zie de toelichting bij Grondgebruik/Verandering/Schrijf voor waarom niet als bool met de tif-opslag.
+		container Schrijf
+		{
+			attribute<UInt8> BestaandBebouwdGebied                (AdminDomain) := UInt8(Inbreiding/BestaandBebouwdGebied),                StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Inbreiding_BestaandBebouwdGebied_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdalwrite.grid";
+			attribute<UInt8> BestaandGroenInBestaandBebouwdGebied (AdminDomain) := UInt8(Inbreiding/BestaandGroenInBestaandBebouwdGebied), StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Inbreiding_BestaandGroenInBestaandBebouwdGebied_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdalwrite.grid";
+		}
 		
 		attribute<Woning> WoningenErbij (AdminDomain) := max_elem(Aantal_Woningen_Totaal_BijTovBasisjaar, 0[Woning])
+		, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Inbreiding_WoningenErbij_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdalwrite.grid"
 		, Descr = "Alleen de toename per cel. De fracties hieronder delen bruto door bruto: met het netto verschil in teller en noemer kantelt de maat zodra er ergens gesloopt wordt, en kan hij zelfs negatief worden. Zie #639.";
 		
+		// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+		container Lees
+		: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+		{
+			attribute<Woning> WoningenErbij (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Inbreiding_WoningenErbij_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> BestaandBebouwdGebied_u8 (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Inbreiding_BestaandBebouwdGebied_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> BestaandGroenInBestaandBebouwdGebied_u8 (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Inbreiding_BestaandGroenInBestaandBebouwdGebied_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<bool> BestaandBebouwdGebied                (AdminDomain) := BestaandBebouwdGebied_u8 == 1b;
+			attribute<bool> BestaandGroenInBestaandBebouwdGebied (AdminDomain) := BestaandGroenInBestaandBebouwdGebied_u8 == 1b;
+		}
+		container Live
+		{
+			attribute<Woning> WoningenErbij                        (AdminDomain) := Inbreiding/WoningenErbij;
+			attribute<bool>   BestaandBebouwdGebied                (AdminDomain) := Inbreiding/BestaandBebouwdGebied;
+			attribute<bool>   BestaandGroenInBestaandBebouwdGebied (AdminDomain) := Inbreiding/BestaandGroenInBestaandBebouwdGebied;
+		}
+		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+		, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+
 		parameter<float32> FractieWoningenErbijInBestaandBebouwdGebied                := sum(WoningenErbij * float32(BestaandBebouwdGebied)) / sum(WoningenErbij)[float32];
 		parameter<float32> FractieWoningenErbijInBestaandGroenInBestaandBebouwdGebied := sum(WoningenErbij * float32(BestaandGroenInBestaandBebouwdGebied)) / sum(WoningenErbij)[float32];
 		
@@ -275,9 +305,42 @@ Template Zichtjaar_T
 	{
 		parameter<Woning_ha> MaxWoningenInGroen                         := 5[Woning_ha];
 		parameter<ha>        MinimumAaneengeslotenOppervlakte           := 1[Ha];
-		attribute<Woning>    Woningen0                    (AdminDomain) := Stand/Aantal_Woningen_Totaal[Woning];
+		// -- de invoer van de potentialen: levend, of teruggelezen uit de export (#824) --
+		// De sjablonen obv_BBG en obv_BGT lezen Woningen0, Woningen, Groen en GroenFractieCel op dit niveau. Met
+		// ModelParameters/TabellenUitExport aan zijn dat de vier kaarten die de _Live-items schrijven. De potentialen per
+		// regio worden dan opnieuw gerekend, want een regio snijdt woningen en groen af op haar eigen grens en de
+		// landelijke kaart met een woningmasker geeft daar andere getallen; alleen de landelijke instantie leest haar
+		// indicatorkaarten terug, zie BereikbaarGroen_Indicatoren_T in Templates.dms.
+		parameter<string> StorageStr_Invoer := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/BereikbaarheidGroen_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "De bestandsnaam van de vier invoerkaarten van de groenbereikbaarheid (#824); @V@ is de grootheid.";
+		attribute<Woning>    Woningen0_Live               (AdminDomain) := Stand/Aantal_Woningen_Totaal[Woning], StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenTotaal')", StorageType = "gdalwrite.grid";
 		attribute<Bool>      AllocatieHeeftPlaatsgevonden (AdminDomain) := Impl/StandVar/Subsector/Sector_rel[Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Wonen;
-		attribute<Woning>    Woningen                     (AdminDomain) := Woningen0 * float32(AllocatieHeeftPlaatsgevonden);
+		attribute<Woning>    Woningen_Live                (AdminDomain) := Woningen0_Live * float32(AllocatieHeeftPlaatsgevonden), StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenGealloceerd')", StorageType = "gdalwrite.grid";
+		attribute<GroenK>    Groen_Live                   (AdminDomain) := LandgebruikskaartNL2120/GroenInZichtjaar, StorageName = "=replace(StorageStr_Invoer, '@V@', 'Groen')", StorageType = "gdalwrite.grid"
+		, Descr = "Het groen van de landgebruikskaart van dit zichtjaar, de klassetak van de BBG-bereikbaarheid. Stond tot #824 rechtstreeks in BereikbaarheidGroenBBG_T.";
+		attribute<float32>   GroenFractieCel_Live         (AdminDomain) := min_elem(MakeDefined(WaardeNabijheidGroen/Fracties/NatuurCel, 0f) + MakeDefined(WaardeNabijheidGroen/Fracties/WaterCel, 0f), 1f), StorageName = "=replace(StorageStr_Invoer, '@V@', 'GroenFractieCel')", StorageType = "gdalwrite.grid"
+		, Descr = "Het groene deel van de cel, natuur plus water, begrensd op een; de fractietak van de BBG-bereikbaarheid. Stond tot #824 in Per_GroenK_T, daar nog vermenigvuldigd met de regiovlag.";
+		container Lees
+		: Descr = "De vier invoerkaarten van dit zichtjaar teruggelezen, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de _Live-items hierboven."
+		{
+			attribute<Woning>  Woningen0       (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenTotaal')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Woning>  Woningen        (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenGealloceerd')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<GroenK>  Groen           (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'Groen')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<float32> GroenFractieCel (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'GroenFractieCel')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container Live
+		{
+			attribute<Woning>  Woningen0       (AdminDomain) := BereikbaarheidGroen/Woningen0_Live;
+			attribute<Woning>  Woningen        (AdminDomain) := BereikbaarheidGroen/Woningen_Live;
+			attribute<GroenK>  Groen           (AdminDomain) := BereikbaarheidGroen/Groen_Live;
+			attribute<float32> GroenFractieCel (AdminDomain) := BereikbaarheidGroen/GroenFractieCel_Live;
+		}
+		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+		, Descr = "Waar de sjablonen hun invoer vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+		attribute<Woning>    Woningen0                    (AdminDomain) := Bron/Woningen0;
+		attribute<Woning>    Woningen                     (AdminDomain) := Bron/Woningen;
+		attribute<GroenK>    Groen                        (AdminDomain) := Bron/Groen;
+		attribute<float32>   GroenFractieCel              (AdminDomain) := Bron/GroenFractieCel;
 		
 		parameter<meter2>    MinimumOppervlakteInCelOmMeeTeDoen := 100[meter2];
 		parameter<Float32>   FractieGroenWerken                 := 1f - min_elem(VariantParameters/FractiesGroenInWerken/Default/Verhard * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f);
@@ -340,7 +403,7 @@ Template Zichtjaar_T
 		unit<UInt8> OP := ='ThisVariantClassifications/Vastgoed/OP';
 
 		attribute<Bool> IsNieuwbouw  (AdminDomain) := KostenWoningbouw/Nieuwbouw_Ha > 0[Ha] && WaardeNabijheidGroen/Bron_Zichtjaar/IsOPCel, Descr = "De cellen waarover het saldo wordt geboekt: netto woningen erbij sinds het basisjaar, met een pakket dat het model zelf heeft ingericht. IsOPCel is dezelfde toets als bij de groenwaardering en de piekbuiberging: een gealloceerd pakket dat geen BAG-nieuwbouw is.";
-		attribute<Ha>   Nieuwbouw_Ha (AdminDomain) := IsNieuwbouw ? AdminDomain/NrHaPerCell : 0[Ha], Descr = "De hectares waarover het saldo is geboekt, elk voor de volle cel. De noemer van de kolom per hectare in de indicatorentabel; kleiner dan KostenWoningbouw/Nieuwbouw_Ha met precies de BAG-nieuwbouw.";
+		attribute<Ha>   Nieuwbouw_Ha (AdminDomain) := IsNieuwbouw ? AdminDomain/NrHaPerCell : 0[Ha], StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Grondexploitatie_Nieuwbouw_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdalwrite.grid", Descr = "De hectares waarover het saldo is geboekt, elk voor de volle cel. De noemer van de kolom per hectare in de indicatorentabel; kleiner dan KostenWoningbouw/Nieuwbouw_Ha met precies de BAG-nieuwbouw.";
 
 		container Posten
 		: Descr = "De posten van het saldo, in dezelfde volgorde als in de geschiktheid en elk voor de volle cel van het gealloceerde pakket. Alle bedragen zijn nul buiten IsNieuwbouw."
@@ -389,8 +452,23 @@ Template Zichtjaar_T
 		, StorageType = "gdalwrite.grid"
 		, Descr = "Het exploitatiesaldo van het gealloceerde pakket, in euro per cel voor de volle cel. Negatief is een tekort dat elders gedekt moet worden, positief een overschot. Leeg buiten de cellen met nieuwbouw, zodat de kaart de nul van een gebouwde cel kan onderscheiden van een cel waar niets is gebeurd.";
 
-		parameter<Eur> Saldo_Per_NL        := sum(Saldo), Descr = "Landelijk totaal, nominaal.";
-		parameter<Ha>  Nieuwbouw_Ha_Per_NL := sum(Nieuwbouw_Ha), Descr = "Controlegetal: over hoeveel hectare het saldo is geboekt. Het verschil met KostenWoningbouw/Nieuwbouw_Ha_Per_NL is de BAG-nieuwbouw.";
+		// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+		container Lees
+		: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+		{
+			attribute<Eur> Saldo (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Grondexploitatie_Saldo_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Ha> Nieuwbouw_Ha (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Grondexploitatie_Nieuwbouw_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container Live
+		{
+			attribute<Eur> Saldo        (AdminDomain) := Grondexploitatie/Saldo;
+			attribute<Ha>  Nieuwbouw_Ha (AdminDomain) := Grondexploitatie/Nieuwbouw_Ha;
+		}
+		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+		, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+
+		parameter<Eur> Saldo_Per_NL        := sum(Bron/Saldo), Descr = "Landelijk totaal, nominaal.";
+		parameter<Ha>  Nieuwbouw_Ha_Per_NL := sum(Bron/Nieuwbouw_Ha), Descr = "Controlegetal: over hoeveel hectare het saldo is geboekt. Het verschil met KostenWoningbouw/Nieuwbouw_Ha_Per_NL is de BAG-nieuwbouw.";
 	}
 	
 	container SterfteAfnameDoorGroenToename: using = "Classifications/Grondgebruik;Classifications/Actor"
@@ -523,8 +601,8 @@ Template Zichtjaar_T
 			container Sterfte
 			: Descr = "Vermeden sterfgevallen door meer groen. Een negatieve waarde betekent extra sterfgevallen door minder groen."
 			{
-				attribute<Persoon> AfnameZittendeBewoners (AdminDomain) := = replace(CalcStrSterfteAfname, '@NDVIToename@', 'NDVI/VeranderingOpLocatie'      , '@Bewoners@', 'Zichtjaar/Bewoners_Zittend', '@Periode@', 'Periode'), Descr = "Bijdrage van bewoners die er in het basisjaar al woonden, afgezet tegen de verandering op hun eigen locatie.";
-				attribute<Persoon> AfnameNieuweBewoners   (AdminDomain) := = replace(CalcStrSterfteAfname, '@NDVIToename@', 'NDVI/VerschilMetRegiogemiddelde', '@Bewoners@', 'Zichtjaar/Bewoners_Nieuw'  , '@Periode@', 'Periode'), Descr = "Bijdrage van bewoners die sinds het basisjaar zijn bijgekomen, afgezet tegen het regiogemiddelde in het basisjaar.";
+				attribute<Persoon> AfnameZittendeBewoners (AdminDomain) := = replace(CalcStrSterfteAfname, '@NDVIToename@', 'NDVI/VeranderingOpLocatie'      , '@Bewoners@', 'Zichtjaar/Bewoners_Zittend', '@Periode@', 'Periode'), StorageName = "=replace(StorageStr, '@V@', 'SterfteAfname_PerPeriode_ZittendeBewoners')", StorageType = "gdalwrite.grid", Descr = "Bijdrage van bewoners die er in het basisjaar al woonden, afgezet tegen de verandering op hun eigen locatie.";
+				attribute<Persoon> AfnameNieuweBewoners   (AdminDomain) := = replace(CalcStrSterfteAfname, '@NDVIToename@', 'NDVI/VerschilMetRegiogemiddelde', '@Bewoners@', 'Zichtjaar/Bewoners_Nieuw'  , '@Periode@', 'Periode'), StorageName = "=replace(StorageStr, '@V@', 'SterfteAfname_PerPeriode_NieuweBewoners')", StorageType = "gdalwrite.grid", Descr = "Bijdrage van bewoners die sinds het basisjaar zijn bijgekomen, afgezet tegen het regiogemiddelde in het basisjaar.";
 				
 				attribute<Persoon> AfnamePerPeriode       (AdminDomain) := AfnameZittendeBewoners + AfnameNieuweBewoners, StorageName = "=replace(StorageStr, '@V@', 'SterfteAfname_PerPeriode')", StorageType = "gdalwrite.grid", Descr = "Vermeden sterfgevallen in de periode tussen het vorige en dit zichtjaar.";
 				attribute<Persoon> AfnameCumulatief       (AdminDomain) := = IsFirstAllocYear
@@ -532,8 +610,27 @@ Template Zichtjaar_T
 					: 'AfnamePerPeriode + PrevIndicatoren/SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief'
 				, StorageName = "=replace(StorageStr, '@V@', 'SterfteAfname_Cumulatief')", StorageType = "gdalwrite.grid", Descr = "Vermeden sterfgevallen vanaf het basisjaar tot en met dit zichtjaar. Telt alleen de perioden tot hier op, niet de zichtjaren die nog moeten komen.";
 				
-				parameter<Persoon> AfnamePerPeriode_Totaal := sum(AfnamePerPeriode), Descr = "Landelijk totaal over deze periode.";
-				parameter<Persoon> AfnameCumulatief_Totaal := sum(AfnameCumulatief), Descr = "Landelijk totaal vanaf het basisjaar tot en met dit zichtjaar.";
+				// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+				container Lees
+				: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+				{
+					attribute<Persoon> AfnamePerPeriode (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'SterfteAfname_PerPeriode')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+					attribute<Persoon> AfnameCumulatief (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'SterfteAfname_Cumulatief')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+					attribute<Persoon> AfnameZittendeBewoners (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'SterfteAfname_PerPeriode_ZittendeBewoners')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+					attribute<Persoon> AfnameNieuweBewoners (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'SterfteAfname_PerPeriode_NieuweBewoners')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+				}
+				container Live
+				{
+					attribute<Persoon> AfnamePerPeriode (AdminDomain) := Sterfte/AfnamePerPeriode;
+					attribute<Persoon> AfnameCumulatief (AdminDomain) := Sterfte/AfnameCumulatief;
+					attribute<Persoon> AfnameZittendeBewoners (AdminDomain) := Sterfte/AfnameZittendeBewoners;
+					attribute<Persoon> AfnameNieuweBewoners (AdminDomain) := Sterfte/AfnameNieuweBewoners;
+				}
+				container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+				, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+
+				parameter<Persoon> AfnamePerPeriode_Totaal := sum(Bron/AfnamePerPeriode), Descr = "Landelijk totaal over deze periode.";
+				parameter<Persoon> AfnameCumulatief_Totaal := sum(Bron/AfnameCumulatief), Descr = "Landelijk totaal vanaf het basisjaar tot en met dit zichtjaar.";
 			}
 		}
 	}
@@ -685,15 +782,39 @@ Template Zichtjaar_T
 		attribute<Eur> WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW (AdminDomain) := WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen * Verdiscontering/Factor, StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW')", StorageType = "gdalwrite.grid";
 		attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_NCW          (AdminDomain) := WaardeVeranderingDoorGroenVerandering_Woningen          * Verdiscontering/Factor, StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen_NCW')", StorageType = "gdalwrite.grid";
 		
-		parameter<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_Per_NL := sum(WaardeVeranderingDoorGroenVerandering_BestaandeWoningen), Descr = "Landelijk totaal van de bestaande-voorraadterm, nominaal. Staat er sinds #678 om de twee termen tegen elkaar af te kunnen wegen zonder de kaarten te openen.";
-		parameter<Eur> WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_Per_NL := sum(WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen), Descr = "Landelijk totaal van de nieuwbouwterm, nominaal. Deze term is nul waar de natuur- en waternabijheid niet is veranderd. Dat hij ook in BAU positief uitvalt komt van het landgebruik dat daar verandert en van het water dat de ontwikkelpakketten aanleggen, niet van de omvang van de nieuwbouw; dat laatste was voor #678 wel het geval.";
-		parameter<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_Per_NL          := sum(WaardeVeranderingDoorGroenVerandering_Woningen),          Descr = "Landelijk totaal, nominaal ofwel in prijzen van het basisjaar zonder verdiscontering.";
-		parameter<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_NCW_Per_NL      := sum(WaardeVeranderingDoorGroenVerandering_Woningen_NCW),      Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
+		// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+		container Lees
+		: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+		{
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_NCW (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'WaardeVeranderingDoorGroenVerandering_Woningen_NCW')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container Live
+		{
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen (AdminDomain) := WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen;
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen (AdminDomain) := WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen;
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen (AdminDomain) := WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen;
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW (AdminDomain) := WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW;
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW (AdminDomain) := WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW;
+			attribute<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_NCW (AdminDomain) := WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen_NCW;
+		}
+		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+		, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+
+		parameter<Eur> WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_Per_NL := sum(Bron/WaardeVeranderingDoorGroenVerandering_BestaandeWoningen), Descr = "Landelijk totaal van de bestaande-voorraadterm, nominaal. Staat er sinds #678 om de twee termen tegen elkaar af te kunnen wegen zonder de kaarten te openen.";
+		parameter<Eur> WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_Per_NL := sum(Bron/WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen), Descr = "Landelijk totaal van de nieuwbouwterm, nominaal. Deze term is nul waar de natuur- en waternabijheid niet is veranderd. Dat hij ook in BAU positief uitvalt komt van het landgebruik dat daar verandert en van het water dat de ontwikkelpakketten aanleggen, niet van de omvang van de nieuwbouw; dat laatste was voor #678 wel het geval.";
+		parameter<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_Per_NL          := sum(Bron/WaardeVeranderingDoorGroenVerandering_Woningen),          Descr = "Landelijk totaal, nominaal ofwel in prijzen van het basisjaar zonder verdiscontering.";
+		parameter<Eur> WaardeVeranderingDoorGroenVerandering_Woningen_NCW_Per_NL      := sum(Bron/WaardeVeranderingDoorGroenVerandering_Woningen_NCW),      Descr = "Landelijk totaal, netto contante waarde in het basisjaar.";
 		
 		parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
 	}
 	
 	#include<Woningwaarde.dms>
+	#include<Ketens.dms>
 
 	#include<KostenWoningbouw.dms>
 	#include<KostenWerklocaties.dms>

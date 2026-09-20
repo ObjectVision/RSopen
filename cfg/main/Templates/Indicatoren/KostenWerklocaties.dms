@@ -45,12 +45,16 @@ container KostenWerklocaties
 	, Descr = "Het tarief per m2 terrein voor de extra ophoging, met dezelfde opslag van 19 procent voor algemene kosten, uitvoeringskosten en winst en risico die het rapport op alle aanlegkosten legt.";
 
 	attribute<Ha> Werklocatie_Ha (AdminDomain) := IsWerklocatie ? AdminDomain/NrHaPerCell : 0[Ha]
+	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_Werklocatie_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'"
+	, StorageType = "gdalwrite.grid"
 	, Descr = "Het oppervlak waarover deze post wordt geboekt: elke cel waar een werksubsector staat, voor zijn volle celoppervlak. Zelfde grofheid als Nieuwbouw_Ha in KostenWoningbouw, en om dezelfde reden: het kengetal is per m2 terrein en niet per baan of per m2 pand.";
 
 	attribute<meter2> Werklocatie_m2 (AdminDomain) := IsWerklocatie ? AdminDomain/NrMeter2PerCell : 0[meter2]
 	, Descr = "Hetzelfde oppervlak in m2, want het tarief staat per m2.";
 
 	attribute<Eur> MeerkostenOverstroming (AdminDomain) := MakeDefined(Tarief_ExtraOphoging * Werklocatie_m2, 0[Eur])
+	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenOverstroming_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	, StorageType = "gdalwrite.grid"
 	, Descr = "De rekening van de overstromingsmaatregel op deze werkcel, nominaal in het zichtjaar.";
 
 	// #651: ophogen is een eenmalige uitgave bij aanleg, en de post is cumulatief sinds het basisjaar. De NCW wordt
@@ -63,20 +67,39 @@ container KostenWerklocaties
 
 	attribute<Eur> MeerkostenOverstroming_NCW (AdminDomain) := = IsFirstAllocYear
 		? 'MakeDefined(Tarief_ExtraOphoging * convert(Werklocatie_Ha_dezePeriode, meter2), 0[Eur]) * Verdiscontering/Factor'
-		: 'MakeDefined(Tarief_ExtraOphoging * convert(Werklocatie_Ha_dezePeriode, meter2), 0[Eur]) * Verdiscontering/Factor + PrevIndicatoren/KostenWerklocaties/MeerkostenOverstroming_NCW';
+		: 'MakeDefined(Tarief_ExtraOphoging * convert(Werklocatie_Ha_dezePeriode, meter2), 0[Eur]) * Verdiscontering/Factor + PrevIndicatoren/KostenWerklocaties/MeerkostenOverstroming_NCW'
+	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenOverstroming_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	, StorageType = "gdalwrite.grid";
 
-	parameter<Eur> MeerkostenOverstroming_Per_NL     := sum(MeerkostenOverstroming);
-	parameter<Eur> MeerkostenOverstroming_NCW_Per_NL := sum(MeerkostenOverstroming_NCW);
-	parameter<Ha>  Werklocatie_Ha_Per_NL             := sum(Werklocatie_Ha), Descr = "Controlegetal: over hoeveel hectare dit bedrag is geboekt.";
+	// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+	container Lees
+	: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+	{
+		attribute<Eur> MeerkostenOverstroming (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenOverstroming_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> MeerkostenOverstroming_NCW (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenOverstroming_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Ha> Werklocatie_Ha (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_Werklocatie_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	}
+	container Live
+	{
+		attribute<Eur> MeerkostenOverstroming     (AdminDomain) := KostenWerklocaties/MeerkostenOverstroming;
+		attribute<Eur> MeerkostenOverstroming_NCW (AdminDomain) := KostenWerklocaties/MeerkostenOverstroming_NCW;
+		attribute<Ha>  Werklocatie_Ha             (AdminDomain) := KostenWerklocaties/Werklocatie_Ha;
+	}
+	container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+	, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+
+	parameter<Eur> MeerkostenOverstroming_Per_NL     := sum(Bron/MeerkostenOverstroming);
+	parameter<Eur> MeerkostenOverstroming_NCW_Per_NL := sum(Bron/MeerkostenOverstroming_NCW);
+	parameter<Ha>  Werklocatie_Ha_Per_NL             := sum(Bron/Werklocatie_Ha), Descr = "Controlegetal: over hoeveel hectare dit bedrag is geboekt.";
 
 	unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
 
 	container Per_Regio
 	: Descr = "De post per regio van de indicatorentabellen, gestuurd door ModelParameters/Advanced/IndicatorRegio_ref."
 	{
-		attribute<Eur> MeerkostenOverstroming     (Regio) := sum(KostenWerklocaties/MeerkostenOverstroming,     Regio/Per_AdminDomain_Fijn);
-		attribute<Eur> MeerkostenOverstroming_NCW (Regio) := sum(KostenWerklocaties/MeerkostenOverstroming_NCW, Regio/Per_AdminDomain_Fijn);
-		attribute<Ha>  Werklocatie_Ha             (Regio) := sum(KostenWerklocaties/Werklocatie_Ha,             Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> MeerkostenOverstroming     (Regio) := sum(KostenWerklocaties/Bron/MeerkostenOverstroming,     Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> MeerkostenOverstroming_NCW (Regio) := sum(KostenWerklocaties/Bron/MeerkostenOverstroming_NCW, Regio/Per_AdminDomain_Fijn);
+		attribute<Ha>  Werklocatie_Ha             (Regio) := sum(KostenWerklocaties/Bron/Werklocatie_Ha,             Regio/Per_AdminDomain_Fijn);
 	}
 
 	container Per_NL

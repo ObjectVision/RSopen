@@ -25,7 +25,10 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 	//
 
 	parameter<Bool>   IsStartJaar         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
-	parameter<String> Prev_Zichtjaar_name := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevName_triv);
+	// De kaart van het vorige zichtjaar komt via PrevIndicatoren van de omvattende Zichtjaar_T, en niet meer via
+	// de naam van dat zichtjaar (#824): ontkoppeld is dat Ketens/Lees, dat Result en Write_Result_SA van het vorige
+	// zichtjaar uit tifs leest; anders de levende container, en dan is het dezelfde kaart als voorheen. In het
+	// basisjaar bestaat PrevIndicatoren niet, maar daar staat IsStartJaar voor elke verwijzing.
 
 
 	attribute<LandgebruikType> Type       (AdminDomain) := SrcStand/Landgebruik_Type
@@ -43,13 +46,13 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 
 	attribute<Bool> IsLU_NoData (AdminDomain) := =IsStartJaar
 		? '!/Geography/rdc_meter/IsStudyArea_AdminDomain'
-		: 'IsNull(' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Result)';
+		: 'IsNull(PrevIndicatoren/LandgebruikskaartNL2120/Result)';
 	attribute<Bool> IsLU_Water (AdminDomain) := =IsStartJaar
-		? 'LandgebruikType/IsWater[Type]'
-		: 'LU_NL2120/IsWater[' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Result]';
-	attribute<Bool> IsLU_Wonen              (AdminDomain) := Sector_behoud == S_Wonen;
-	attribute<Bool> IsLU_Werken             (AdminDomain) := Sector_behoud == S_Werken;
-	attribute<Bool> IsLU_Verblijfsrecreatie (AdminDomain) := Sector_behoud == S_Verblijfsrecreatie;
+		? 'MakeDefined(LandgebruikType/IsWater[Type], FALSE)'
+		: 'MakeDefined(LU_NL2120/IsWater[PrevIndicatoren/LandgebruikskaartNL2120/Result], FALSE)';
+	attribute<Bool> IsLU_Wonen (AdminDomain) := MakeDefined(Sector_behoud == S_Wonen, FALSE);
+	attribute<Bool> IsLU_Werken (AdminDomain) := MakeDefined(Sector_behoud == S_Werken, FALSE);
+	attribute<Bool> IsLU_Verblijfsrecreatie (AdminDomain) := MakeDefined(Sector_behoud == S_Verblijfsrecreatie, FALSE);
 
 	attribute<Bool> IsWonen_StartState              (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? 'SrcStand/Aantal_Woningen_Totaal >= ModelParameters/Advanced/MinimumWoningAmount * AdminDomain/NrHaPerCell / 1[ha]' : 'const(FALSE, AdminDomain)';
 	attribute<Bool> IsWerken_StartState             (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector ? 'SrcStand/PandFootprint_Werken >= ModelParameters/Advanced/MinimumPandFootprint * AdminDomain/NrHaPerCell / 1[ha]' : 'const(FALSE, AdminDomain)';
@@ -128,7 +131,7 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 
 	attribute<Actor/Sector/wo_Landbouw> Sector_behoud (AdminDomain) := =IsStartJaar
 		? '/BaseData/StartState/Landgebruik/LGN_Bebouwd_Sector'
-		: 'LU_NL2120/Sector_rel[' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Result]'
+		: 'LU_NL2120/Sector_rel[PrevIndicatoren/LandgebruikskaartNL2120/Result]'
 	, Descr = "Wat er stond: in het basisjaar de bebouwing die LGN zelf aanwijst, klasse 18 wonen en klasse 19 werken, en daarna de sector van deze kaart in het vorige zichtjaar. Dit is het doorgeefluik dat in de oude kaart gg_prev heette.";
 
 	attribute<Actor/Sector/wo_Landbouw> Sector_rel (AdminDomain) := switch(
@@ -159,11 +162,18 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 
 	// -- de twee kaarten --
 
-	attribute<LU_NL2120> Result (AdminDomain) := switch(
+	attribute<LU_NL2120> Result_Berekend (AdminDomain) := switch(
 		 case(Voorrang_rel == Voorrang/V/GeenData, null_b[LU_NL2120])
 		,case(IsDefined(Sector_rel), invert(LU_NL2120/SectorVerhardingK_rel)[SectorVerharding_rel])
 		, invert(LU_NL2120/LandgebruikType_rel)[Type]
-	), Descr = "Waar de landgebruikskaart een sector toont de sector met haar verhardingsklasse, en anders het type uit de stand. Waar de kaart niets weet blijft de cel leeg; waar zij wel iets weet en de stand niet, is de cel ook leeg en telt Toets_KaartTegenStand hem.";
+	), Descr = "Waar de landgebruikskaart een sector toont de sector met haar verhardingsklasse, en anders het type uit de stand. Waar de kaart niets weet blijft de cel leeg; waar zij wel iets weet en de stand niet, is de cel hier ook leeg en telt Toets_KaartTegenStand hem. Result hieronder vult zo'n cel met de klasse van het vorige zichtjaar (#826).";
+
+	attribute<LU_NL2120> Result (AdminDomain) := =IsStartJaar ? 'Result_Berekend' : 'MakeDefined(Result_Berekend, PrevIndicatoren/LandgebruikskaartNL2120/Result)'
+	, Descr = "De kaart van dit jaar: de berekende klasse, en waar die leeg is en de kaart van het vorige zichtjaar niet, de klasse van vorig jaar (#826).
+
+				Waarom. De stand krijgt haar landgebruikstype per zichtjaar op het gecomprimeerde rekendomein van de allocatie, en dat volgt het studiegebied op AllocDomain-niveau (Geography/IsCompactedDomain). Een 25-metercel binnen het studiegebied waarvan de 100-metercel erbuiten valt heeft vanaf het eerste zichtjaar geen type, geen subsector en geen verharding meer, terwijl de basisjaarkaart er wel een klasse heeft. Zonder deze terugval vielen zo 67.483 cellen (4.218 ha) uit elke kaart vanaf 2040, in alle varianten dezelfde: randcellen langs de kust, de grote wateren en de landsgrens. De grondbalans sloot daardoor niet en 1.242 ha telde als verdwenen natuur en 1.181 ha als verdwenen landbouw zonder dat er iets was gebeurd (productierun van 10 en 11 september 2026).
+
+				Buiten het gecomprimeerde domein alloceert het model niet en legt het niets op, dus de klasse van vorig jaar is daar de juiste; via de keten is dat de basisjaarklasse. De structurele reparatie, de basisjaarwaarden in de stand zelf laten staan buiten het gecomprimeerde domein, vraagt een nieuwe allocatie en staat in #826 voor de volgende productierun. Een cel die in beide jaren leeg is blijft leeg. In het basisjaar is er geen vorige kaart en is Result gelijk aan Result_Berekend; de 89,25 ha zonder type die daar al leeg waren blijven leeg, zie Areaal_ZonderType.";
 
 	attribute<LU_Hoofdklasse> Result_Hoofdklasse (AdminDomain) :=
 		Voorrang_rel == Voorrang/V/GeenData
@@ -187,13 +197,13 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 	attribute<CBSKlasse/Aggr/Groen> GroenInZichtjaar (AdminDomain) := (GroenInBasisjaar[uint8] / uint8(!/Classifications/Actor/Sector/xSubsector/LegtCelVast[Stand/Subsector_rel]))[CBSKlasse/Aggr/Groen]
 	, Descr = "Het groen van het basisjaar, weggevallen op de cellen die de allocatie heeft bebouwd. De toets loopt sinds #803 langs LegtCelVast: landbouw legt de cel niet vast en houdt haar groen, terwijl dat groen met een kale IsDefined op het hele landbouwareaal zou verdwijnen zodra landbouw meealloceert.";
 	
-	parameter<String> Result_prev_str := 'Write_Result_SA != ' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Write_Result_SA';
+	parameter<String> Result_prev_str := 'Write_Result_SA != PrevIndicatoren/LandgebruikskaartNL2120/Write_Result_SA';
 
 	// Wat er dit zichtjaar bij komt en af gaat ten opzichte van het vorige: de klasse van dit jaar,
 	// respectievelijk die van vorig jaar, op de cellen waar de kaart is veranderd. Verhuisd uit de kaart
 	// op LU_ModelType (#803). Zonder Descr, want achter een meta-expressie past hier geen eigenschap meer.
 	attribute<LU_NL2120> Result_bij_tov_PrevYear (AdminDomain) := =IsStartJaar ? 'const(null_b, AdminDomain, LU_NL2120)' : Result_prev_str + ' ? Write_Result_SA : null_b';
-	attribute<LU_NL2120> Result_af_tov_PrevYear  (AdminDomain) := =IsStartJaar ? 'const(null_b, AdminDomain, LU_NL2120)' : Result_prev_str + ' ? ' + Prev_Zichtjaar_name + '/LandgebruikskaartNL2120/Write_Result_SA : null_b';
+	attribute<LU_NL2120> Result_af_tov_PrevYear (AdminDomain) := =IsStartJaar ? 'const(null_b, AdminDomain, LU_NL2120)' : Result_prev_str + ' ? PrevIndicatoren/LandgebruikskaartNL2120/Write_Result_SA : null_b';
 
 	// -- wegschrijven --
 
@@ -203,17 +213,26 @@ Template Make_LandgebruikskaartNL2120_T : using = "Classifications/Actor;Classif
 	attribute<LU_NL2120> Write_Result_SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Result : null_b
 	, StorageName = "=StorageStr_Detail"
 	, StorageType = "gdalwrite.grid"
-	, Descr = "Wegschrijven alleen, zonder lees-terug-schakelaar, net als bij de NL2120-kaart: dit is een afgeleide en wordt altijd opnieuw uitgerekend.";
+	, Descr = "Wegschrijven. De kaart zelf wordt altijd opnieuw uitgerekend, want het is een afgeleide; alleen de arealentabellen kunnen hem sinds #824 teruglezen, via Bron_Result_SA hieronder.";
 
 	attribute<LU_Hoofdklasse> Write_Result_Hoofdklasse_SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Result_Hoofdklasse : null_b
 	, StorageName = "=StorageStr_Hoofdklasse"
 	, StorageType = "gdalwrite.grid";
 
+	// -- de bron van de arealentabellen: levend, of teruggelezen uit de export (#824) --
+	// De arealentabellen in Templates/Indicatoren_T/Export.dms lezen Bron_Result_SA en Bron_Result_Hoofdklasse_SA. Met
+	// ModelParameters/TabellenUitExport aan zijn dat de twee kaarten hierboven zoals de export ze heeft geschreven.
+	attribute<LU_NL2120>      Lees_Result_SA             (AdminDomain) : StorageName = "=StorageStr_Detail",      StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	attribute<LU_Hoofdklasse> Lees_Result_Hoofdklasse_SA (AdminDomain) : StorageName = "=StorageStr_Hoofdklasse", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	attribute<LU_NL2120>      Bron_Result_SA             (AdminDomain) := = /ModelParameters/TabellenUitExport ? 'Lees_Result_SA' : 'Write_Result_SA';
+	attribute<LU_Hoofdklasse> Bron_Result_Hoofdklasse_SA (AdminDomain) := = /ModelParameters/TabellenUitExport ? 'Lees_Result_Hoofdklasse_SA' : 'Write_Result_Hoofdklasse_SA';
+
 	// -- controlegetallen --
 
 	parameter<Ha> Areaal_Totaal      := sum(Geography/rdc_meter/IsStudyArea_AdminDomain            ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het studiegebied, waar alle arealen hieronder bij op moeten tellen.";
 	parameter<Ha> Areaal_Sector      := sum(IsDefined(Sector_rel) && Voorrang_rel != Voorrang/V/GeenData ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Wat de sectoren van de kaart beslaan; die krijgen hun verhardingsonderverdeling.";
-	parameter<Ha> Areaal_ZonderType  := sum(Voorrang_rel != Voorrang/V/GeenData && IsNull(Sector_rel) && IsNull(Type) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen waar de kaart wel een klasse heeft en de stand geen type. Die vallen in de detailkaart leeg en in de kaartbeeldkaart op Overig. In het basisjaar ging het om 89,25 ha van de 3.509.101; loopt dit op, dan is de stand-administratie ergens niet dekkend.";
+	parameter<Ha> Areaal_ZonderType  := sum(Voorrang_rel != Voorrang/V/GeenData && IsNull(Sector_rel) && IsNull(Type) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen waar de kaart wel een klasse heeft en de stand geen type. Die vallen in Result_Berekend leeg en in de kaartbeeldkaart op Overig; Result vult ze sinds #826 met de klasse van vorig jaar, zie Areaal_TerugValOpVorigeKaart. In het basisjaar ging het om 89,25 ha van de 3.509.101; loopt dit op, dan is de stand-administratie ergens niet dekkend.";
+	parameter<Ha> Areaal_TerugValOpVorigeKaart := sum(IsNull(Result_Berekend) && IsDefined(Result) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen die hun klasse aan het vorige zichtjaar ontlenen omdat de berekening leeg was (#826). In de productierun van 10 en 11 september 2026 is dat 4.217,7 ha in elk zichtjaar, de randcellen buiten het gecomprimeerde rekendomein. Nul in het basisjaar. Loopt dit op, dan verliest de stand ergens anders haar type.";
 	parameter<Ha> Areaal_ZonderKaart := sum(Voorrang_rel == Voorrang/V/GeenData ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen buiten de landgebruikskaart. Die blijven in beide kaarten leeg.";
 
 	parameter<Ha> Areaal_Natuur := sum(LU_NL2120/IsNatuur[Result] ? AdminDomain/NrHaPerCell : 0[Ha])
