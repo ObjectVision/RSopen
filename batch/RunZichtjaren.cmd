@@ -1,9 +1,8 @@
-REM LET OP: dit script kent het lenen van een allocatiestand NIET. Sinds a9ca6b47 leent BAU2
-REM zijn stand van BAU, via de kolom StandVanVariant in VariantParameters/VariantK.dms, en hoeft
-REM zijn allocatie niet te draaien. Draai je BAU2 hiermee, dan alloceert hij alsnog en kost dat
-REM 7,71 uur voor een stand die byte-identiek wordt aan die van BAU. Gebruik voor een reeks
+REM LET OP: dit script kent het lenen van een allocatiestand NIET. Een variant die in de kolom
+REM StandVanVariant van VariantParameters/VariantK.dms naar een andere variant wijst hoeft haar
+REM allocatie niet te draaien, maar dit script alloceert haar toch. Gebruik voor een reeks
 REM batch/Run2120.ps1; die slaat een lenende variant over en toetst bovendien of de aanname
-REM eronder nog klopt. Zie de skill rs-draaien.
+REM eronder klopt. Zie de skill rs-draaien.
 
 REM ================================================================================
 REM
