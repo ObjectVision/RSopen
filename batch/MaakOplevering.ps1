@@ -69,7 +69,6 @@ $varianten = [ordered]@{
     'WLO_hoog_BAU2'           = 'BAU2'
     'WLO_hoog_NbSGenuanceerd' = 'NbSGenuanceerd'
     'WLO_hoog_NbSGenuanceerder' = 'NbSGenuanceerder'
-    'WLO_hoog_NbSMax'         = 'NbSMax'
 }
 if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
 

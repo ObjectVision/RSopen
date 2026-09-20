@@ -48,7 +48,7 @@ function Meld {
 }
 
 # Verwachte setgroottes per variant, uit de OP-tabel na #721.
-$OPSetGrootte = @{ 'BAU'=27; 'BAU2'=27; 'NbSMax'=41; 'NbSGenuanceerd'=39 }
+$OPSetGrootte = @{ 'BAU'=27; 'BAU2'=27; 'NbSGenuanceerder'=39; 'NbSGenuanceerd'=39 }
 $AantalSubsectoren = 11
 
 function Get-Zichtjaren([string]$casusPad) {
