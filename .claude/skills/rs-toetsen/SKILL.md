@@ -96,7 +96,7 @@ Elk veengetal staat op een van drie oppervlakken, en een uitspraak van Deltares 
 
 Noem daarom bij elk veengetal op welke afbakening het staat, en vergelijk een kolom uit het areaalblad van team Veen nooit in absolute hectares met een modelgetal. Wie een van de drie voor de andere aanziet leest een tegenspraak waar er geen is, of mist er juist een. De kentallen van team Veen gelden voor het hele peilvakoppervlak en SOMERS rekent op de percelen; dat verschil is precies waarom er kentallen bestaan voor gebied waar het model geen SOMERS-getal heeft.
 
-Twee vallen bij het meten van een nieuwe veenpost. Een post die naast een bestaande komt moet dezelfde schakelaars honoreren; de eerste versie van het kentalregime uit #758 liep om `Koolstof_OxidatieBuitenSOMERSOokHoogNL` heen, waardoor hoog Nederland in de NbS-varianten wel uitstoot kreeg en in BAU niet, 145.000 ha variantverschil dat alleen uit de bedrading kwam. En tel op de tak die de cel werkelijk krijgt en niet op de voorwaarde: een teller op `IsVernatVeenweide` overtelt, want de helft van die percelen is een veenvormende klasse geworden en valt onder een ander kental.
+Twee vallen bij het meten van een nieuwe veenpost. Een post die naast een bestaande komt moet dezelfde afbakening honoreren; de eerste versie van het kentalregime uit #758 sloeg hoog Nederland over terwijl de emissiefactorpost het meetelde, waardoor hoog Nederland in de NbS-varianten wel uitstoot kreeg en in BAU niet, 145.000 ha variantverschil dat alleen uit de bedrading kwam. En tel op de tak die de cel werkelijk krijgt en niet op de voorwaarde: een teller op `IsVernatVeenweide` overtelt, want de helft van die percelen is een veenvormende klasse geworden en valt onder een ander kental.
 
 ### Kentallen voor de werkenkant
 
