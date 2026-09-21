@@ -1,3 +1,9 @@
+REM LET OP: dit script kent het lenen van een allocatiestand NIET. Een variant die in de kolom
+REM StandVanVariant van VariantParameters/VariantK.dms naar een andere variant wijst hoeft haar
+REM allocatie niet te draaien, maar dit script alloceert haar toch. Gebruik voor een reeks
+REM batch/Run2120.ps1; die slaat een lenende variant over en toetst bovendien of de aanname
+REM eronder klopt. Zie de skill rs-draaien.
+
 REM ================================================================================
 REM
 REM Dit is RSOpen, de open source versie van het model RuimteScanner.
@@ -16,14 +22,29 @@ REM
 REM ================================================================================
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms20.3.0.c
+REM De geinstalleerde GeoDMS, niet de build uit Visual Studio. Die laatste is een bewegend doel:
+REM hij wordt opnieuw gecompileerd zonder dat de configuratie verandert, en een run kan dan
+REM halverwege op een andere engine draaien dan waarmee hij begon.
+set geodmsversion=GeoDms20.17.0.m
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 REM set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
-set LocalDataProjDir=C:\prj\LocalData
+REM Moet meebewegen met de naam van de werkkopie: GeoDMS leidt dit pad anders zelf af uit LocalDataDir plus de
+REM configuratienaam. Stond tot #714 op C:\LocalData\RSopen, een map die in deze werkkopie niet bestaat.
+set LocalDataProjDir=C:\LocalData\RSopen_SpaceForEnergy
 
 set MT_FLAGS=/S1 /S2 /S3
+
+REM Overrulet ModelParameters/StandAllocatieOntkoppeld. Dit is een BATCH-instelling.
+REM FALSE: alle zichtjaren in een proces. De stand blijft in het geheugen en de padafhankelijkheid trekt de
+REM        eerdere zichtjaren mee, dus de batch vraagt alleen om het laatste zichtjaar. De stand-tifs worden
+REM        nog steeds geschreven, dus de indicatoren en de GUI kunnen er daarna mee verder.
+REM TRUE:  zichtjaar N+1 leest de stand van N terug uit een tif. Omdat GeoDMS storage bij het laden bindt heeft
+REM        elk zichtjaar dan een eigen proces nodig, en dat kan dit script niet meer regelen. Zet deze waarde
+REM        dus alleen op TRUE als het geheugen de hele keten niet aankan, en roep de zichtjaren dan met de hand
+REM        stuk voor stuk aan.
+set StandAllocatieOntkoppeld=FALSE
 
 set CurrentDir=%CD%
 CD ..
@@ -34,10 +55,18 @@ REM ========= EINDE PARAMETER INSTELLINGEN ===========
 REM deletes the old log file; each run adds the timed version to it.
 del log\log.txt
 
-set AlleenEindjaar=TRUE
+REM Default is sequentieel doorrekenen, dus alle zichtjaren. De padafhankelijkheid doet dan mee, en dat is
+REM nodig voor onder meer de geschiktheid voor wonen: die gebruikt de natuur en het water die aan het begin
+REM van een zichtjaar liggen, en dat kan alleen als de tussenliggende zichtjaren echt doorgerekend worden (#637).
+REM Geef J als eerste argument mee om toch alleen het eindjaar te rekenen.
+set AlleenEindjaar=FALSE
 
-if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030 en 2040 overslaan?"
-if ErrorLevel 2 set AlleenEindjaar=FALSE
+if "%1%" neq "" goto zichtjarenKeuzeGemaakt
+CHOICE /M "Wil je alleen het eindjaar uitrekenen, dus de tussenliggende zichtjaren overslaan?"
+if ErrorLevel 2 goto zichtjarenKeuzeGemaakt
+set AlleenEindjaar=TRUE
+:zichtjarenKeuzeGemaakt
+if "%1%" equ "J" set AlleenEindjaar=TRUE
 if "%1%" equ "N" set AlleenEindjaar=FALSE
 
 if "%2%" equ ""  CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
@@ -71,7 +100,7 @@ REM if %ErrorLevel% NEQ 0 goto ErrorEnd
 :runPrepareVariantdata
 
 REM deletes the old VariantData folder.
-REM rmdir %LocalDataProjDir%\VariantData /s /q 
+REM rmdir %LocalDataProjDir%\VariantData /s /q
 
 set RSL_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd

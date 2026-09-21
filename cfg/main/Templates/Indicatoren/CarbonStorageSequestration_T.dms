@@ -1,0 +1,790 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template CarbonStorageSequestration_T 
+: using = "Classifications;/SourceData/Landbouw;/Classifications/Grondgebruik/LGNKlasse"
+, Descr = ""
+{
+	//
+	parameter<String>  Zichtjaar_name;
+	//
+	
+	parameter<string> StorageStr_stock_zichtjaar := IsStartYear 
+		? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/CarbonStorageSequestration_stock_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+		: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/CarbonStorageSequestration_stock_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif';
+		
+	parameter<string> StorageStr_flow_zichtjaar := IsStartYear 
+		? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/CarbonStorageSequestration_seq_ThisPeriod_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+		: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/CarbonStorageSequestration_seq_ThisPeriod_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif';
+		
+	parameter<string> StorageStr_flow_TovBasisjaar := IsStartYear 
+		? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/CarbonStorageSequestration_stock_FromBaseYear_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+		: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/CarbonStorageSequestration_stock_FromBaseYear_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif';
+	
+	// #733: de ongedekte veenoxidatie als eigen kaart. Zonder deze kaart is de post alleen als landelijk totaal in een
+	// diagnose-uitdraai te zien, terwijl hij ruimtelijk sterk geconcentreerd is: in BAU ligt hij op 116.007 van de 245.968
+	// hectare veenweideperceel, vooral op de moerige gronden in het noorden en oosten en op de percelen buiten de
+	// BOFEK-veenbodem.
+	parameter<string> StorageStr_ongedekt := IsStartYear
+		? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/CarbonStorageSequestration_ongedekt_Cumulatief_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+		: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/CarbonStorageSequestration_ongedekt_Cumulatief_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif';
+
+	parameter<string> StorageStr_perbron := IsStartYear
+		? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/CarbonStorageSequestration_PerBron_@V@_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+		: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/CarbonStorageSequestration_PerBron_@V@_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De negen posten van Zichtjaar/CO2/PerBron als kaart (#824), zodat de tabelkolommen ze kunnen teruglezen; @V@ is de post. Dezelfde twee takken als de andere StorageStr-parameters.";
+	parameter<string> StorageStr_stock_pool := IsStartYear
+		? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/CarbonStorageSequestration_stock_@V@_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+		: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/CarbonStorageSequestration_stock_@V@_'+Zichtjaar_name+'_tonCO2_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De twee pools van de voorraad, Bovenlaag en Veenreserve, als kaart (#824, #736).";
+
+	parameter<Bool>      IsStartYear         := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	parameter<Int16>     PrevZichtjaar_value := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel);
+	parameter<Int16>     Zichtjaar_value     := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
+	parameter<Bool>      IsFirstAllocYear    := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
+	parameter<jaar>      Periode             := IsStartYear ? 0[jaar] : Zichtjaar_Value[jaar] - PrevZichtjaar_Value[jaar], Descr = "Lengte van de periode waarover in dit zichtjaar koolstof wordt vastgelegd. In het basisjaar is dat nul: daar staat alleen de startvoorraad, er is nog geen periode verstreken. Zonder deze nul is PrevZichtjaar_Value niet gevonden en wordt de vastlegging missing, waarna de begrenzing op het klassemaximum terugvalt.";
+	parameter<float32>   C_to_CO2            := 44f / 12f;   // ton C -> ton CO2
+	
+	unit<uint8> OP := = Zichtjaar_name+'/impl/StandVar/OP';
+	unit<uint8> OPSubklasseK := Classifications/Grondgebruik/OPSubklasseK;
+	
+	container OP_Buurt := = Zichtjaar_name+'/impl/StandVar/OP_Buurt';
+	
+	attribute<bool> Hoog_NL (AdminDomain) := /BaseData/Omgeving/NbSOPToepassingsgebied/Hoog_NL;
+
+	// #657: de veenbodem als vlag op templateniveau, want sinds deze ronde hebben drie plekken hem nodig: de veenreserve,
+	// de vastleggingskentallen van team Veen en de oxidatie buiten de SOMERS-percelen. Hij heet bewust niet IsVeenbodem,
+	// omdat die naam binnen BaseYear/Carbon/Veenreserve al bestaat en een gelijke naam daar zichzelf zou afschermen.
+	attribute<bool> OpVeenbodem    (AdminDomain) := /SourceData/Bodem/BOFEK/IsVeenOfMoerig_grid, Descr = "Veengrond of moerige grond volgens BOFEK2020. Niet de afbakening waarop SOMERS rekent, want een deel van de SOMERS-veenweidepercelen ligt buiten deze bodems (#736); waar het gaat om de vraag of er een oxideerbare veenkolom onder de cel ligt staat OpSOMERSPerceel hieronder ernaast.";
+	attribute<bool> OpMoerigeBodem (AdminDomain) := /SourceData/Bodem/BOFEK/IsMoerig_grid, Descr = "Alleen de moerige gronden. Nodig omdat de aangeleverde emissiefactor daar hoger ligt dan op veengrond.";
+
+	// #736: het perceelbestand waarop SOMERS zelf rekent, als tweede afbakening naast de bodemkaart. Het stond al als
+	// BuitenSOMERS/InSOMERS in dit sjabloon, maar de veenreserve kon er niet bij zonder vanuit het basisjaar naar een
+	// zichtjaarcontainer te wijzen. Nu hier, langs dezelfde lijn als OpVeenbodem in #657.
+	attribute<bool> OpSOMERSPerceel (AdminDomain) := IsDefined(/SourceData/Landbouw/SOMERS/Veenweide_percelen/AdminDomain_rel), Descr = "Ligt hier een veenweideperceel waarvoor SOMERS een oxidatie berekent? Dit is de afbakening van de vraagkant van de balans, en die valt niet samen met de veen- en moerige gronden van BOFEK2020; zie OpVeenbodem hierboven.";
+
+	container   VeenKentallen   := /Classifications/Grondgebruik/VeenBroeikasgas;
+	unit<UInt8> LandgebruikType := /Classifications/Grondgebruik/LandgebruikType, Descr = "De classificatie van de stand-administratie (#751): het type per cel, met de koolstofklasse en de kentallen van team Veen als kolommen.";
+
+	// #657: de kentallen van team Veen voor de veenvormende klassen op veenbodem, in plaats van de generieke Cseq en Cmax.
+	// De reden dat ook het maximum mee moet: de voorraad uit de bodemkoolstofkaart ligt op de veenbodem rond 169 ton C per
+	// hectare, ver boven het generieke maximum van 55 van Riet en watervegetatie, waardoor min_elem in Groei_ha daar nooit
+	// ruimte ziet en het kental alleen niets uithaalt. Zie de schakelaar Koolstof_VeenVastleggingUitBouwstenen.
+	// #758: de kentallen gelden alleen in de NbS-varianten. Deltares heeft op 03-09-2026 laten weten dat BAU en BAU2
+	// uitsluitend met SOMERS gerekend moeten worden en dat de kentallen daar niet horen; die beschrijven een eindtoestand
+	// die in die twee varianten niet wordt gebouwd. Zonder deze poort raakte de schakelaar ook BAU, waar 16.546 ha
+	// veenvormende klasse op veenbodem ligt tegen 126.530 ha in NbSGenuanceerd.
+	parameter<Bool> VeenKentalInDezeVariant := /ModelParameters/Koolstof/Koolstof_VeenVastleggingUitBouwstenen && /VariantParameters/VariantK/IsNbSVariant[Variant_rel]
+	, Descr = "Gelden de kentallen van team Veen in deze variant: staat de schakelaar aan en is dit een NbS-variant? De variantkolom is IsNbSVariant in VariantParameters/VariantK, dezelfde die bepaalt welke ontwikkelpakketten zijn toegestaan.";
+
+	attribute<bool> VeenKentalGeldt (AdminDomain) := = VeenKentalInDezeVariant
+														? 'OpVeenbodem || OpSOMERSPerceel'
+														: 'const(FALSE, AdminDomain)'
+	, Descr = "Geldt het kentalregime op deze cel: gelden de kentallen in deze variant, en ligt hier veen- of moerige bodem of een SOMERS-veenweideperceel? De unie en niet de bodemkaart alleen, om dezelfde
+				reden als bij Veenreserve/DraagtReserve (#736): een deel van de veenweidepercelen ligt buiten de veen- en moerige gronden van BOFEK2020, en waar SOMERS zelf zegt dat de cel oxideert hoort
+				daar in de NbS-varianten een kental tegenover te staan in plaats van een SOMERS-getal dat volgens Deltares daar niet bruikbaar is. Binnen dit regime levert SOMERS niets meer, ook niet op de
+				percelen (Oxidatie/NaLUC); wat een cel dan krijgt staat in VeenKental, en welke klassen het kental als vastlegging krijgen in VeenKentalHier.";
+
+	attribute<bool> VeenKentalHier (AdminDomain) := VeenKentalGeldt && IsVeenvormendNu
+	, Descr = "Geldt het kental van team Veen op deze cel: veen- of moerige bodem en een veenvormende landgebruiksklasse in dit zichtjaar. Twee dingen hangen hieraan: de vastlegging komt uit Cseq_ha_veen
+				in plaats van uit de generieke Cseq_ha, en de veenoxidatie uit SOMERS wordt hier niet geboekt, want team Veen geeft een netto bodemstroom en geen vastlegging bovenop de oxidatie (dezelfde
+				kolom in hun tabel geeft voor ontwaterd landbouwgrasland precies de bruto oxidatie die SOMERS ook produceert). De twee indicatoren lopen op deze cellen daarom bewust uit elkaar: SOMERS
+				rapporteert zijn eigen getal en de koolstofboekhouding gebruikt dat van team Veen, verdedigbaar omdat de SOMERS-rekenregels zijn afgeleid voor ontwaterd veenweideland en niet voor een
+				veenvormend moeras. Hoeveel uitstoot dat verdringt staat in Oxidatie/Verdrongen_StGebied.";
+
+	// #657: de veenoxidatie op de veen- en moerige gronden die buiten de SOMERS-veenweidepercelen liggen. Daar rekent
+	// RSopen tot nu toe nergens oxidatie, terwijl er volgens BOFEK 231.783 ha ligt, ongeveer evenveel als binnen de
+	// percelen. Het kental is een vaste emissiefactor per bodemtype uit EF_low_nl_2025.csv en hangt niet aan de
+	// grondwaterstand, dus deze post verandert het niveau van de landelijke balans en niet het verschil tussen de
+	// varianten; alleen waar het landgebruik naar water of bebouwing gaat valt hij weg. Zie de schakelaar
+	// Koolstof_EFStedelijkOpNul en de twee kentallen in ModelParameters/Koolstof.
+	// #758: deze vier vlaggen en de emissiefactor stonden in BuitenSOMERS. Sinds de kentallen in de NbS-varianten ook
+	// binnen de veenweidepercelen gelden zijn er twee lezers, dus staan ze hier, langs dezelfde lijn als OpVeenbodem
+	// in #657 en OpSOMERSPerceel in #736.
+	attribute<float32> EF_ton_ha_jaar (AdminDomain) := OpMoerigeBodem
+														? /ModelParameters/Koolstof/Koolstof_EF_Moerig_tonCO2_ha_jaar
+														: /ModelParameters/Koolstof/Koolstof_EF_Veen_tonCO2_ha_jaar
+	, Descr = "De emissiefactor van deze bodem in ton CO2 per hectare per jaar, voordat de uitsluitingen eroverheen gaan.";
+
+	attribute<bool> IsWaterklasse (AdminDomain) := CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 16b || CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 17b || CarbonClass/code[Zichtjaar/Grondgebruik/CC] == 19b, Descr = "Open water. De aangeleverde tabel zet grote wateren op nul en geeft sloten alleen methaan, dus hier geen CO2.";
+
+	// #778: de bouwsteencomponent van deze cel, voor zover de veenlevering er een landbouwklasse oplegt. De klasse is
+	// voor deze twee te grof: natte teelt komt via Rietteelt uit op koolstofklasse 18, en die draagt het kental van
+	// bouwsteen 5, een mozaiek dat maar voor 0,30 uit natte teelt bestaat. De component is de fijnere sleutel en is
+	// sinds trap 2 van #684 per cel bekend. Zie de schakelaar Koolstof_KentalUitBouwsteencomponent.
+	unit<uint8> NbSLandgebruik := /Classifications/Grondgebruik/NbSVeen/NbSLandgebruik;
+
+	attribute<NbSLandgebruik> Component_rel (AdminDomain) := /Classifications/Grondgebruik/LandbouwType/Component_rel[LandgebruikType/LandbouwType_rel[Zichtjaar/Grondgebruik/Type]]
+	, Descr = "Welk hoofdtype landgebruik van de bouwstenentabel ligt hier volgens de stand-administratie (#751)? Via het landbouwtype van het type: natte teelt (Riet_paludicultuur), vernat
+				productiegrasland en vernat kruidenrijk grasland dragen een component, de rest niet. Het riet uit de BRP in het basisjaar draagt hetzelfde landbouwtype, maar of de component ook telt beslist
+				HeeftComponentKental hieronder.";
+
+	attribute<bool> HeeftComponentKental (AdminDomain) := = /ModelParameters/Koolstof/Koolstof_KentalUitBouwsteencomponent
+															? 'NbSLandgebruik/HeeftComponentKental[Component_rel] && Zichtjaar/Grondgebruik/Type != BaseYear/Grondgebruik/Type'
+															: 'const(FALSE, AdminDomain)'
+	, Descr = "Rekent deze cel met het kental van haar bouwsteencomponent in plaats van met dat van haar koolstofklasse? Alleen waar het type sinds het basisjaar is veranderd, dus waar de veenlevering de
+				natte teelt of het vernatte grasland heeft opgelegd. Riet dat er in het basisjaar al ligt houdt zijn veenvormende rietklasse; zonder deze poort zou het in BAU en BAU2 geen veenvormer meer
+				zijn en zou BuitenSOMERS er de emissiefactor voor gedraineerd veen boeken. Staat de schakelaar uit, dan is dit overal FALSE en is natte teelt een veenvormende rietklasse (#778).";
+
+	attribute<float32> ComponentKental_CO2 (AdminDomain) := MakeDefined(LandgebruikType/CO2_veen_ton_ha_jaar[Zichtjaar/Grondgebruik/Type], 0f)
+	, Descr = "Het CO2-kental van de component, in ton per hectare per jaar en positief is uitstoot, als kolom op het type. Voor natte teelt 1, voor vernat kruidenrijk grasland 4,02 en voor vernat productiegrasland 7.";
+	attribute<float32> ComponentKental_CH4 (AdminDomain) := MakeDefined(/Classifications/Grondgebruik/LandbouwType/CH4_veen_ton_CO2eq_ha_jaar[LandgebruikType/LandbouwType_rel[Zichtjaar/Grondgebruik/Type]], 0f)
+	, Descr = "Het methaankental van de component, in ton CO2-equivalent per hectare per jaar; lezer Methaan_T. Voor natte teelt 5, voor vernat kruidenrijk grasland 3 en voor vernat productiegrasland 0.";
+
+	attribute<bool> IsVeenvormendNu (AdminDomain) := VeenKentallen/IsVeenvormend[Zichtjaar/Grondgebruik/CC] && !HeeftComponentKental
+	, Descr = "Is het landgebruik hier een veenvormende klasse geworden? Dan boekt deze post niets meer: de emissiefactor beschrijft een gedraineerde veenbodem onder het huidige gebruik en niet een vernat
+				moeras, en hem laten doorlopen zou de vernatting van veen buiten de veenweidepercelen als uitstoot boeken en via Oxidatie/Actief de vastlegging bevriezen op precies de cellen waar het veen
+				weer aangroeit. De aftrek van HeeftComponentKental is de kern van #778: koolstofklasse 18 dekt rietmoeras als natuurbeheertype, dat veen vormt, en rietteelt als gewas, dat volgens de
+				kentallen van team Veen een netto bron is; de klasse kan die twee niet uit elkaar houden, de opleggingsstroom wel. Zonder deze aftrek zou een cel die natte teelt wordt zowel de vastlegging
+				van een veenmoeras krijgen als het verhoogde maximum.";
+
+	// De stedelijke toets moet langs twee wegen. Sector/IsStedelijk, waar Zichtjaar/Grondgebruik/IsStedelijk op
+	// rust, staat alleen op cellen met een gealloceerde stedelijke sector; bestaande bebouwing die in dit zichtjaar
+	// niet opnieuw is gealloceerd valt daarbuiten terwijl haar koolstofklasse wel Dichtbebouwd is. Op alleen die
+	// vlag toetsen liet de emissiefactor op ruim 28.000 ha bestaand stedelijk veen landen.
+	attribute<bool> IsBebouwdNu (AdminDomain) := VeenKentallen/IsBebouwdeKlasse[Zichtjaar/Grondgebruik/CC] || Zichtjaar/Grondgebruik/IsStedelijk
+	, Descr = "Bebouwd gebied, zowel het bestaande via de landgebruiksklasse als het nieuw gealloceerde via de sector.";
+
+	attribute<bool> IsBebouwdInBasisjaar (AdminDomain) := VeenKentallen/IsBebouwdeKlasse[BaseYear/Grondgebruik/CC]
+	, Descr = "Was deze cel in het basisjaar al bebouwd? Nodig sinds #758 om bestaande bebouwing van nieuwe te onderscheiden: op bestaand stedelijk veen loopt de oxidatie door, terwijl de inrichting van nieuwbouw in de NbS-varianten de oxidatie volgens Deltares direct op nul brengt.";
+
+	// #758: de emissiekant van het kentalregime. Deltares heeft op 03-09-2026 laten weten dat SOMERS voor de NbS-varianten
+	// niet bruikbaar is en dat daar met de kentallen van team Veen gerekend moet worden, en dat BAU en BAU2 juist alleen
+	// met SOMERS rekenen. Binnen het regime levert deze container dus de hele CO2-stroom en staat Oxidatie/NaLUC op nul.
+	//
+	// Vier van de vijf regels komen rechtstreeks uit hun tabel. De vijfde, gedraineerd veen dat geen bouwsteen krijgt,
+	// staat op de emissiefactor uit EF_low_nl_2025.csv: die ligt met 10,59 dicht bij de 13 die zij voor het ontwaterde
+	// landbouwgrasland van bouwsteen 1 geven, en zo hoeft er geen kental verzonnen te worden voor een cel die in hun
+	// tabel niet voorkomt. Het gaat om percelen die de vernatting niet meekrijgen omdat de SOMERS-datasheet er geen
+	// infiltratiemaatregel voor kent (#619), en om landbouwveen buiten de percelen.
+	container VeenKental
+	: Descr = "Wat een veencel in de NbS-varianten aan CO2 uitstoot of vastlegt, in plaats van wat SOMERS erover zegt. Leeg in BAU en BAU2."
+	{
+		attribute<float32> Zomerdrooglegging_m (AdminDomain) := ThisYear/SOMERS_CO2_laagveen/Huidige_Percelen/Zomerdrooglegging_m_perGrid
+		, Descr = "De zomerdrooglegging die deze variant op het veenweideperceel legt, in meters onder maaiveld. Null buiten de percelen. Dezelfde bron als de methaanindicator gebruikt.";
+
+		attribute<bool> IsVernatVeenweide (AdminDomain) := Zomerdrooglegging_m < VeenKentallen/Drooglegging_VernatGrens_m
+		, Descr = "Ligt hier een veenweideperceel dat in deze variant vernat wordt? Zelfde toets en zelfde grens als in Methaan_T, zodat CO2 en methaan niet op verschillende hectares kunnen landen.";
+
+		attribute<bool> GeenUitstoot (AdminDomain) := IsVeenvormendNu || IsWaterklasse || (IsBebouwdNu && !IsBebouwdInBasisjaar)
+		, Descr = "De drie redenen waarom een cel binnen het regime geen uitstoot boekt, in de volgorde waarin ze gaan voor de twee kentallen hieronder.";
+
+		attribute<bool> KrijgtComponentKental (AdminDomain) := !GeenUitstoot && HeeftComponentKental
+		, Descr = "Krijgt deze cel het kental van haar bouwsteencomponent? Dat is de scherpste sleutel die er is en gaat daarom voor op de twee hieronder: de levering zegt hier met zoveel woorden dat deze cel natte teelt of vernat grasland wordt, en de bouwstenentabel geeft voor precies die componenten een getal. Nieuw met #778.";
+
+		attribute<bool> KrijgtVernatKental (AdminDomain) := !GeenUitstoot && !HeeftComponentKental && IsVernatVeenweide
+		, Descr = "Krijgt deze cel het kental van de vernatte veenweide? De post die in de plaats van SOMERS komt, dus het getal dat telt bij de vraag wat de overstap kost of oplevert. Alleen waar de component
+					onbekend is (#778): dat kental is het met areaal gewogen gemiddelde van bouwsteen 3a, 3b, 4a en 4b, en waar de veenlevering zegt welke van de vier op de cel ligt is het gemiddelde de
+					slechtere schatting; het blijft de terugval voor het vernatte perceel zonder bouwsteencomponent.";
+
+		attribute<bool> KrijgtEF (AdminDomain) := !GeenUitstoot && !HeeftComponentKental && !IsVernatVeenweide
+		, Descr = "Krijgt deze cel de emissiefactor, dus is dit gedraineerd veen zonder bouwsteen? Hoog Nederland telt mee, net als bij de emissiefactorpost (#758). De aftrek
+					van HeeftComponentKental voorkomt dat een cel die de veenlevering als natte teelt aanwijst de emissiefactor voor gedraineerd veen boekt, omdat de landbouwstroom geen koolstofklasse krijgt en
+					de cel anders als gedraineerd grasland in de boeken staat (#778).";
+
+		attribute<float32> PerHa_jaar (AdminDomain) := KrijgtComponentKental ? ComponentKental_CO2
+													: KrijgtVernatKental ? VeenKentallen/CO2_VernatteVeenweide
+													: KrijgtEF           ? EF_ton_ha_jaar
+													:                      0f
+		, Descr = "Het CO2-kental van deze cel in ton per hectare per jaar, positief is uitstoot. De drie vlaggen hierboven zijn de voorrangsregel. Een veenvormende klasse staat op nul omdat haar kental een
+					netto opname is en aan de vastleggingskant hoort (VeenKentalHier en Max/UitAllocAlgemeen). Open water staat op nul omdat de aangeleverde tabel dat zegt, met alleen methaan. Nieuwe bebouwing
+					staat op nul omdat de inrichting in deze varianten de oxidatie volgens Deltares direct beeindigt; bestaande bebouwing valt in de laatste regel en blijft uitstoten, de tegenstelling met
+					bouwsteen 10a die in #758 bij team Veen ligt. Hoog Nederland telt mee, net als bij de emissiefactorpost, anders zit er een variantverschil in de uitkomst dat alleen uit de
+					bedrading komt. Dit kental staat los van de emissiefactorpost BuitenSOMERS: die gaat over oxidatie op veen buiten de SOMERS-percelen, dit over het kental dat in de NbS-varianten in
+					de plaats van SOMERS komt.";
+
+		attribute<ton_ha> Vraag_ha (AdminDomain) := VeenKentalGeldt
+														? (PerHa_jaar * float32(Periode / 1[jaar]) / C_to_CO2)[ton_ha]
+														: 0[ton_ha]
+		, Descr = "De uitstoot over deze periode in ton C per hectare, in dezelfde eenheid en met hetzelfde teken als Oxidatie/Vraag_ha, zodat de drie posten bij elkaar opgeteld kunnen worden.";
+
+		parameter<mton> Vraag_StGebied   := sum(Vraag_ha * AdminDomain/NrHaPerCell)[mton], Descr = "Landelijk totaal van deze post in Mton C over de periode.";
+		parameter<Ha>   Areaal           := sum(VeenKentalGeldt && PerHa_jaar != 0f ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Op hoeveel hectare deze post werkelijk uitstoot boekt.";
+		parameter<Ha>   Areaal_Vernat    := sum(VeenKentalGeldt && KrijgtVernatKental ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan vernat veenweideperceel, de hectares waar dit kental werkelijk in de plaats van SOMERS komt. Op de vlag en niet op IsVernatVeenweide zelf: een vernat perceel dat een veenvormende klasse is geworden telt hier niet mee, want daar gaat het kental van die klasse voor. Van de 171.112 hectare vernat perceel in NbSGenuanceerd is dat ongeveer de helft.";
+		parameter<Ha>   Areaal_EF        := sum(VeenKentalGeldt && KrijgtEF ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan gedraineerd veen zonder bouwsteen, dat de emissiefactor krijgt.";
+		parameter<Ha>   Areaal_Component := sum(VeenKentalGeldt && KrijgtComponentKental ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan natte teelt of vernat grasland uit de veenbouwstenen, dat het kental van zijn eigen component krijgt (#778). Nul zodra Koolstof_KentalUitBouwsteencomponent uitstaat, en nul in elke variant zonder veenlevering.";
+	}
+
+	container BuitenSOMERS
+	{
+		attribute<bool> InSOMERS (AdminDomain) := OpSOMERSPerceel, Descr = "Ligt hier een veenweideperceel waarvoor SOMERS al een emissie geeft? Daar boekt deze post niets, anders telt dezelfde koolstof twee keer. Staat sinds #736 op templateniveau, omdat de veenreserve dezelfde afbakening nodig heeft.";
+
+		attribute<bool> Telt (AdminDomain) := = 'OpVeenbodem && !InSOMERS && !IsWaterklasse && !IsVeenvormendNu && !VeenKentalGeldt'
+			  + ' && (' + string(!/ModelParameters/Koolstof/Koolstof_EFStedelijkOpNul) + ' || !IsBebouwdNu)'
+		, Descr = "Waar deze post daadwerkelijk boekt, op laag en hoog Nederland. De schakelaar voor stedelijk veen staat als letterlijke TRUE of FALSE in de expressie, zodat een uitgeschakelde tak niet eens
+					wordt uitgerekend.";
+
+		attribute<ton_ha> Vraag_ha (AdminDomain) := Telt
+														? (EF_ton_ha_jaar * float32(Periode / 1[jaar]) / C_to_CO2)[ton_ha]
+														: 0[ton_ha]
+		, Descr = "De oxidatie over deze periode in ton C per hectare, in dezelfde eenheid en met hetzelfde teken als Oxidatie/Vraag_ha uit SOMERS, zodat de twee bij elkaar opgeteld kunnen worden.";
+
+		parameter<mton> Vraag_StGebied := sum(Vraag_ha * AdminDomain/NrHaPerCell)[mton], Descr = "Landelijk totaal van deze post in Mton C over de periode.";
+		parameter<Ha>   Areaal         := sum(Telt ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Op hoeveel hectare deze post boekt. Hoort met de schakelaar aan en zonder hoog Nederland rond 44.400 ha te liggen; zie Diagnose657.";
+	}
+	
+	container BaseYear
+	{
+		container Grondgebruik
+		{
+			// #751: het landgebruik van het basisjaar uit de stand-administratie en niet meer uit LGN. Het type draagt zijn
+			// koolstofklasse als kolom, dus de vertaalstap LGN naar CarbonClass (met rjoin en aanvulling, #657) is hier niet
+			// meer nodig. Op natuur is dat fijner dan LGN (het beheertype), op landbouw grover: bouwland staat uniform op
+			// klasse 38 en grasland op 24 of 25 waar LGN per gewas een klasse gaf, zie LandbouwType/CarbonClass_rel. De
+			// basislijn van voorraad en maximum verschuift daardoor op vrijwel elke natuur- en landbouwcel; de oplegging is
+			// uitkomstneutraal gemeten, deze basis niet. Buiten het studiegebied is de stand leeg; daar valt het terug op de
+			// basiskaart, die het hele raster dekt.
+			attribute<LandgebruikType> Type (AdminDomain) := MakeDefined(Basisjaar/Stand/Landgebruik_Type, /BaseData/StartState/Landgebruik/Type), Descr = "Het type per cel in het basisjaar, uit de stand-administratie (#751).";
+			attribute<CarbonClass>     CC   (AdminDomain) := LandgebruikType/CarbonClass_rel[Type], Descr = "De koolstofklasse van dat type.";
+		}
+		
+		container Carbon
+		{
+			container Stock
+			{
+				attribute<ton_ha> Max_ha    (AdminDomain) := VeenKentalGeldt && VeenKentallen/IsVeenvormend[Grondgebruik/CC]
+																? VeenKentallen/Cmax_ha_veen[Grondgebruik/CC][ton_ha]
+																: CarbonClass/Cmax_ha[Grondgebruik/CC]
+				, Descr = "Het klassemaximum in het basisjaar, op veenbodem eventueel het verhoogde maximum voor de veenvormende klassen (#657). Deze tak moet dezelfde zijn als die in het zichtjaar, anders leest MaximumDaalt in het eerste allocatiezichtjaar een sprong die er niet is.";
+				// #657: de bron staat sinds deze wijziging op zijn eigen resolutie van 25 meter en niet meer op rdc_100m, dus de
+				// omweg via rdc_100m_rel is eruit. Blijft AdminDomain op 25 meter staan, dan is dit een een-op-een-lezing.
+				attribute<ton_ha> Kaart_ha  (AdminDomain) := MakeDefined(/SourceData/Bodem/BodemKoolstofvoorraad[AdminDomain/rdc_25m_rel], 0[ton_ha]), Descr = "Koolstofvoorraad in de bovenste 30 cm bodem in het basisjaar, uit de bodemkoolstofkaart van de Atlas Natuurlijk Kapitaal. Waar de kaart geen waarde heeft (buiten het bereik van de bron) wordt nul aangehouden.";
+				attribute<ton_ha> Result_ha (AdminDomain) := Kaart_ha, Descr = "Startvoorraad koolstof in het basisjaar: de kaart, onbegrensd (#483). Begrenzen op het klassemaximum zou met een startvoorraad uit de kaart een grote eenmalige afboeking in het
+																			eerste zichtjaar geven, en bij nul beginnen maakt de vastlegging een bovengrens, want in werkelijkheid zit er al koolstof in bodem en begroeiing.";
+				attribute<ton>    Result    (AdminDomain) := Result_ha * AdminDomain/NrHaPerCell;
+
+				// #733: het beginpunt van de cumulatieve ongedekte oxidatie. In het basisjaar is er geen periode verstreken,
+				// dus is die nul. Staat hier zodat het zichtjaar altijd langs PrevZichtjaar kan optellen en er geen aparte tak
+				// voor het eerste allocatiezichtjaar nodig is; PrevZichtjaar wijst daar naar BaseYear.
+				attribute<ton_ha> Ongedekt_Cumulatief_ha (AdminDomain) := const(0[ton_ha], AdminDomain), Descr = "De ongedekte oxidatie sinds het basisjaar, in het basisjaar per definitie nul.";
+			}
+
+			// #657, spoor 3. De koolstofkaart geeft de bovenste 30 cm, terwijl SOMERS de hele gedraineerde veenkolom laat
+			// oxideren. Die twee tegen elkaar boeken zou de voorraad op de veenweidepercelen binnen de modelhorizon leegtrekken,
+			// waarna de varianten niet meer van elkaar verschillen. De reserve hieronder is de koolstof onder die bovenste 30 cm,
+			// afgeleid uit de veendikte. Alleen de reserve vangt de oxidatie op; pas als hij leeg is bijt de afschrijving in de
+			// voorraad zelf. De twee kengetallen staan in ModelParameters/Advanced en zijn met de bron die Deltares in #657 aanwees
+			// onderbouwd: 0,103 ton organische stof per m3 maal een koolstoffractie van 0,5, samen 515 ton C per hectare per meter.
+			// De omvang van de reserve is op aanwijzing van Deltares begrensd op de bodemkaart (#657), want GeoTOP telt ook
+			// begraven veen mee dat niet oxideert; een begrenzing op de GLG is er bewust niet, zie Ondergrens (#736).
+			container Veenreserve
+			{
+				attribute<meter>  Dikte             (AdminDomain) := MakeDefined(/SourceData/Landbouw/Peat_thickness[AdminDomain/rdc_25m_rel], 0[meter]), Descr = "Dikte van het veenpakket uit GeoTOP, nul waar de bron niets geeft. De bron heeft geen nulwaarden, dus ontbreken betekent niet gekarteerd of niet aanwezig; het grootste deel van de
+																		veenweidepercelen zonder waarde ligt op moerige grond, waar de gemiddelde veendikte klein is, dus voor dat deel bevestigt de ontbrekende waarde dat er geen veenpakket onder ligt. De
+																		omrekening naar nul is daarmee verdedigbaar: een cel zonder veenpakket kan geen eeuw lang oxideren. Wat er wel uit volgt is dat de ongedekte post gerapporteerd moet worden, want SOMERS
+																		blijft daar rekenen; zie Stock/Ongedekt_Cumulatief_ha en #733.";
+
+				attribute<bool>    IsVeenbodem      (AdminDomain) := OpVeenbodem, Descr = "Veengrond of moerige grond volgens BOFEK2020. Staat sinds #657 op templateniveau als OpVeenbodem, omdat er inmiddels drie lezers zijn.";
+
+				// #736: de reserve volgt niet langer alleen de bodemkaart, maar ook het perceelbestand waarop SOMERS rekent.
+				// De reden om de bodemkaart te nemen is dat GeoTOP ook begraven veen meetelt dat niet oxideert. Dat argument
+				// gaat niet op waar SOMERS zelf zegt dat de cel oxideert: daar is een oxideerbare veenkolom een gegeven van de
+				// vraagkant, en dan hoort er een pool tegenover te staan. Zonder deze unie kreeg 39.084 van de 245.968 hectare
+				// veenweideperceel wel een oxidatievraag en geen enkele reserve, goed voor 35,7 van de 96,1 Mton CO2 die in BAU
+				// tot 2120 ongedekt bleef. Het herstelt de post niet helemaal: op maar 17.540 van die hectares geeft GeoTOP een
+				// veendikte, op de rest blijft de reserve nul omdat de bron daar niets weet.
+				attribute<bool>    DraagtReserve    (AdminDomain) := IsVeenbodem || OpSOMERSPerceel, Descr = "Waar de veenreserve gevuld mag worden: op de veen- en moerige gronden van BOFEK2020, en op de veenweidepercelen van SOMERS ook waar de bodemkaart die niet als veen aanwijst. De twee kanten van de balans beschrijven zo hetzelfde gebied.";
+				attribute<float32> GLG_Bron         (AdminDomain) := /SourceData/Water/Grondwaterstanden/Referentie/GLG_2017_TR29_11[AdminDomain/rdc_25m_rel], Descr = "Gemiddeld laagste grondwaterstand in het basisjaar, in meters onder maaiveld en positief naar beneden. Zelfde bron en zelfde tekenafspraak als SourceData/Landbouw/WWL, waar gxg_sign en gxg_scale die afspraak vastleggen.";
+				attribute<bool>    HeeftGLG         (AdminDomain) := IsDefined(GLG_Bron);
+				attribute<float32> GLG_m            (AdminDomain) := MakeDefined(GLG_Bron, 1000f), Descr = "Dezelfde stand, met een onbereikbaar diepe waarde waar de kaart niets geeft. Zonder GLG dus geen begrenzing, en dat is de ruime kant. Hoeveel veenbodem dat betreft staat in Areaal_ZonderGLG.";
+
+				attribute<meter>  Ondergrens        (AdminDomain) := Dikte
+				, Descr = "Tot hoe diep de reserve reikt: de veendikte, bewust niet begrensd op de basisjaar-GLG (#736). Bij gehandhaafde drooglegging zakt het maaiveld door oxidatie en klink en zakt het peil
+														mee, zodat de aerobe zone als een schijf van vaste dikte door de kolom migreert en over de hele reeks cumulatief de hele kolom onder de bovenste 30 cm bereikt; de veenbasis
+														uit GeoTOP is de zelfterminerende grens die overblijft. GLG_m hierboven blijft staan voor het controlegetal Areaal_ZonderGLG.";
+
+				attribute<meter>  OnderToplaag      (AdminDomain) := DraagtReserve ? max_elem(Ondergrens - 0.30[meter], 0[meter]) : 0[meter]
+				, Descr = "De laag waar de reserve in zit: onder de bovenste 30 cm, want die zit al in de voorraad uit de bodemkoolstofkaart, en boven Ondergrens. Nul buiten de veenbodem en de SOMERS-percelen
+							(DraagtReserve), want GeoTOP telt ook begraven veen mee dat niet oxideert (#657). Een ternair en geen vermenigvuldiging met een vlag: bij rekenen propageert een null door een factor nul
+							heen, en dan zou een cel zonder veendikte de hele som null maken.";
+
+				parameter<Ha>      Areaal_Veenbodem                       := sum(IsVeenbodem ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: hoeveel hectare veengrond en moerige grond BOFEK2020 in het studiegebied aanwijst.";
+				parameter<Ha>      Areaal_MetReserve                      := sum(OnderToplaag > 0[meter] ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: waar de reserve werkelijk gevuld is, dus veenbodem met meer dan 30 cm veen boven de GLG.";
+				parameter<Ha>      Areaal_ZonderGLG                       := sum(IsVeenbodem && !HeeftGLG ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal: veenbodem waar de GLG-kaart niets geeft en de begrenzing op de grondwaterstand dus niet werkt. Loopt dit op, dan is de reserve daar de volle kolom.";
+				parameter<Ha>      Areaal_SOMERSBuitenBodemkaart          := sum(OpSOMERSPerceel && !IsVeenbodem ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Controlegetal bij #736: SOMERS-veenweideperceel dat buiten de veen- en moerige gronden van BOFEK2020 valt.";
+				parameter<Ha>      Areaal_SOMERSBuitenBodemkaart_MetDikte := sum(OpSOMERSPerceel && !IsVeenbodem && Dikte > 0[meter] ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Het deel daarvan waar GeoTOP wel een veendikte geeft en de unie uit #736 dus werkelijk een reserve oplevert. Het verschil met Areaal_SOMERSBuitenBodemkaart is het deel waar de bron niets weet; daar blijft de post ongedekt.";
+				attribute<float32> Dikte_getal                            (AdminDomain) := OnderToplaag / 1[meter], Descr = "Dezelfde dikte zonder eenheid, zodat de omrekening naar ton C per hectare met de twee dimensieloze kengetallen kan.";
+				attribute<ton_ha>  Result_ha                              (AdminDomain) := (Dikte_getal * 10000f * /ModelParameters/Koolstof/Koolstof_VeenOrganischeStofdichtheid * /ModelParameters/Koolstof/Koolstof_VeenKoolstoffractie)[ton_ha]
+				, Descr = "Koolstofreserve in het veen onder de bovenste 30 cm, in ton C per hectare: dikte maal 10.000 m3 per hectare maal de organischestofdichtheid maal de koolstoffractie. De reserve vangt de
+							veenoxidatie op voordat de voorraad uit de bodemkoolstofkaart wordt aangesproken (#657); zonder reserve is de voorraad op de veenweidepercelen binnen de modelhorizon op en verschillen
+							de varianten niet meer.";
+				attribute<ton>    Result            (AdminDomain) := Result_ha * AdminDomain/NrHaPerCell;
+				parameter<mton>   Result_StGebied                 := sum(Result)[mton], Descr = "Landelijk totaal van de veenreserve in het basisjaar, in Mton C.";
+			}
+		}
+
+		container CO2
+		{
+			// #657, spoor 3. De gerapporteerde voorraad is sindsdien de som van twee pools: de bovenste 30 cm uit de
+			// bodemkoolstofkaart plus de veenreserve daaronder. Dat moet, want SOMERS oxideert de hele gedraineerde veenkolom
+			// en die afschrijving moet ergens vandaan komen. Het niveau van deze indicator is daardoor een stuk hoger dan
+			// voorheen; de verandering tussen basisjaar en zichtjaar is het getal waar het om gaat.
+			attribute<ton> Stock_Bovenlaag   (AdminDomain) := Carbon/Stock/Result * C_to_CO2, Descr = "Alleen de bovenste 30 cm plus biomassa, dus de indicator zoals hij voor #657 was.";
+			attribute<ton> Stock_Veenreserve (AdminDomain) := Carbon/Veenreserve/Result * C_to_CO2, Descr = "Alleen de veenkoolstof onder de bovenste 30 cm.";
+			attribute<ton> Stock             (AdminDomain) := Stock_Bovenlaag + Stock_Veenreserve;
+		}
+	}
+	
+	container PrevZichtjaar := =IsFirstAllocYear || IsStartYear ? 'BaseYear' : 'PrevIndicatoren/CarbonStorageSequestration/Zichtjaar';
+	
+	container Zichtjaar
+	{
+		container Grondgebruik
+		{
+			// #751: het type per cel uit de stand van dit zichtjaar. De oplegging landt in het eerste zichtjaar in de stand
+			// (Templates/Allocatie/Zichtjaar_T) en reist daarna mee, dus een tweede bron voor dezelfde informatie is niet meer
+			// nodig; tot #751 las dit ThisVariantData/ExogeenOpleggen/carbonclass_rel met een terugval op PrevZichtjaar. Het type
+			// blijft staan onder wonen, werken en verblijfsrecreatie; de sectortoets hieronder blijft daarom nodig.
+			attribute<LandgebruikType> Type (AdminDomain) := MakeDefined(Stand/Landgebruik_Type, BaseYear/Grondgebruik/Type), Descr = "Het type per cel in dit zichtjaar, uit de stand-administratie; buiten het studiegebied het basisjaartype.";
+
+			// #657: dit stond op IsDefined(Stand/Subsector_rel), en dat is waar voor elke gealloceerde cel, niet alleen voor de
+			// stedelijke sectoren. In Y2030 kregen daardoor ook de 15.542 waterbergingscellen de klasse Dichtbebouwd, met een
+			// maximum van 15 ton C per ha en dus een afboeking van de hele voorraad. Zodra Landbouw weer in
+			// ModelParameters/SectorAllocRegio staat draagt het hele landelijk gebied een subsector en gaat heel Nederland zo de
+			// boeken in. De toets is nu dezelfde als elders in het model, zie Templates/Indicatoren/Grondgebruik.dms.
+			attribute<bool>        IsStedelijk (AdminDomain) := /Classifications/Actor/Sector/IsStedelijk[Stand/Sector_rel], Descr = "Draagt deze cel een gealloceerde stedelijke sector? Waterberging is de enige gealloceerde sector die niet stedelijk is en staat hieronder apart.";
+
+			// #778, bevinding 6. Een gealloceerde sector verzet Stand/Landgebruik_Type niet: dat item neemt de oplegging in
+			// het eerste zichtjaar over en reist daarna mee. Voor de stedelijke sectoren vangt de regel hierboven dat op, maar
+			// waterberging is niet stedelijk en viel daardoor door beide zeven heen: op de landgebruikskaart wordt zo'n cel
+			// water via de allocatiecase in de landgebruikskaart, en hier hield hij de klasse van zijn oude
+			// gebruik. Gevolg: geen methaankental waar de kaart open water toont, en op veenbodem liep de emissiefactor voor
+			// gedraineerd veen gewoon door. SOMERS deed het al wel goed, zie IsStedelijk_Nu in SOMERS_CO2_T.
+			//
+			// De klasse is 16, grote zoetwaterlichamen. Dat is de klasse die VeenBroeikasgas/Regel zelf aanwijst met de
+			// herkomst 'bouwsteen 9a en 9b, open water', dus de tabel rekende al op deze route; alleen de bedrading ontbrak.
+			// Hij draagt Cseq nul en MagAfboeken nul, dus de bodemkoolstof blijft staan en er wordt niets afgeboekt: een
+			// bergingsgebied dekt de bodem niet af en graaft hem niet weg.
+			attribute<bool>        IsWaterberging (AdminDomain) := /Classifications/Actor/Sector/IsWaterberging[Stand/Sector_rel], Descr = "Draagt deze cel de gealloceerde sector Waterberging? Op de sectorvlag en niet op V/Waterberging, zodat de expressie blijft staan wanneer de sector uit ModelParameters/SectorAllocRegio wordt gehaald.";
+
+			attribute<CarbonClass> CC         (AdminDomain) := IsStedelijk    ? CarbonClass/v/Dichtbebouwde_stedelijke_gebieden
+															: IsWaterberging ? CarbonClass/v/Grote_zoetwaterlichamen_meren_
+															:                  LandgebruikType/CarbonClass_rel[Type]
+			, Descr = "De koolstofklasse van dit zichtjaar: Dichtbebouwd waar een stedelijke sector is gealloceerd, open water waar waterberging is gealloceerd (#778), anders de klasse van het type in de stand.";
+			
+			attribute<OP> OP_rel (AdminDomain) := Stand/OP_rel;
+			
+			container FractiePerOPSubklasse := for_each_nedv(
+				OPSubklasseK/name,
+				'OP_Buurt/Terreinoppervlakte/Totaal/'+OPSubklasseK/SrcRef+'[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32]',
+				OP,
+				float32
+			);
+		}
+		
+		container Carbon
+		{
+			// #737: de klok van de vastlegging. De rekenregel die Deltares in #483 heeft opgeschreven vermenigvuldigt de
+			// opbouw met (zichtjaar min het jaar van de landgebruiksverandering); de afboekkant van diezelfde regel zit al in
+			// VoorraadBovenMax, de opbouwkant telde tot nu toe gewoon de verstreken periode. Daardoor
+			// groeide elke cel met ruimte onder haar klassemaximum een eeuw lang door, ook als er niets gebeurde: 80 procent
+			// van de bruto toename in BAU viel op cellen met een ongewijzigde klasse, waarvan 155 van de 215 Mton CO2 op
+			// bestaand bos. Zie de twee schakelaars in ModelParameters/Advanced.
+			//
+			// De vlaggen staan hier en niet in Grondgebruik, omdat alleen de koolstofkant ze leest en de naam CC daar al
+			// bezet is. Ze staan bewust voor container Max, want daar worden ze gelezen.
+			attribute<bool> KlasseGewijzigd (AdminDomain) := (Grondgebruik/CC != BaseYear/Grondgebruik/CC) || IsDefined(Grondgebruik/OP_rel) || VeenKentalHier
+			, Descr = "Is hier sinds het basisjaar iets veranderd waar de koolstofboekhouding aanwas aan mag hangen? Drie wegen, want de klasse alleen is niet genoeg. De klassevergelijking zelf, die eraan hangt
+						dat het basisjaar overal een koolstofklasse heeft: daarvoor is Classifications/Grondgebruik/CarbonClassAanvulling gemaakt, met een IntegrityCheck op CarbonClass_rel die omvalt zodra er een
+						klasse zonder koolstofklasse bij komt, en de MakeDefined hier is de vangnetlaag. Het ontwikkelpakket: een cel met een pakket draagt via IsStedelijk de klasse Dichtbebouwd, en op een
+						inbreidingslocatie die in het basisjaar al bebouwd was ziet de klassevergelijking geen verandering terwijl het pakket wel nieuwe bomen en nieuw gras brengt; het basisjaar kent geen
+						ontwikkelpakketten, dus een gevuld OP_rel betekent dat hier tijdens de run is ontwikkeld. En het veen: een veenvormende klasse op veen- of moerige bodem bouwt nieuw veen op ook zonder dat er
+						iets verandert, wat de kentallen van team Veen beschrijven; zonder deze term zou de poort van #737 die opbouw dichtzetten op een bestaand hoogveen of rietmoeras.";
+
+			attribute<bool> KlasseWisseltNu (AdminDomain) := Grondgebruik/CC != PrevZichtjaar/Grondgebruik/CC
+			, Descr = "Viel de klassewisseling in deze periode? Dan telt maar een deel van de periode mee als aanwastijd, zie Koolstof_VastleggingsdeelInWisselperiode. Deze toets loopt alleen over de klasse en
+						niet ook over OP_rel, anders dan KlasseGewijzigd hierboven, want het basisjaar heeft geen OP_rel en PrevZichtjaar wijst in het eerste allocatiezichtjaar naar het basisjaar; een
+						inbreidingslocatie die in het basisjaar al bebouwd was krijgt daardoor de volle periode in plaats van de helft, de ruime kant op een kleine post.";
+
+			attribute<bool> LegtVast (AdminDomain) := KlasseGewijzigd
+			, Descr = "Mag deze cel in dit zichtjaar vastleggen: alleen waar de koolstofklasse sinds het basisjaar is veranderd (#737). Bestaand bos dat een eeuw niets doet groeit anders tot het klassemaximum
+						door, en dat gat tussen kaartvoorraad en klassemaximum is een verschil in afbakening en geen groeiruimte.";
+
+			attribute<jaar> Aanwasduur (AdminDomain) := LegtVast
+																? (KlasseWisseltNu ? Periode * /ModelParameters/Koolstof/Koolstof_VastleggingsdeelInWisselperiode : Periode)
+																: 0[jaar]
+			, Descr = "De tijd die in dit zichtjaar als aanwas meetelt, per cel; vervangt Periode op de twee plekken waar Flow_ha wordt opgebouwd. Er is geen teller per cel nodig om vanaf de verandering te tellen:
+						de klasse wordt door de keten van zichtjaren meegedragen, dus KlasseGewijzigd is vanaf het zichtjaar van de wisseling waar en blijft dat. Geen demping met de leeftijd: een cel die van klasse
+						verandert groeit vanaf dat moment met een constant tempo tot het klassemaximum, verdedigbaar voor nieuw bos, waar de biomassa er nog helemaal moet komen, minder voor bodemkoolstof; zie de
+						restpunten in #737.";
+
+			container Max
+			{
+				container UitAllocAlgemeen
+				{
+					// #657: op veen- en moerige bodem gelden voor de veenvormende klassen de kentallen van team Veen, zowel
+					// het maximum als de vastlegging. Zonder het maximum haalt het kental niets uit, want de voorraad op de
+					// veenbodem ligt ver boven het generieke maximum van de rietklasse. Zie Koolstof_VeenVastleggingUitBouwstenen.
+					attribute<bool> VeenKental (AdminDomain) := VeenKentalHier;
+
+					attribute<ton_ha> Stock_ha               (AdminDomain) := VeenKental ? VeenKentallen/Cmax_ha_veen[Grondgebruik/CC][ton_ha]          : CarbonClass/Cmax_ha[Grondgebruik/CC];
+					attribute<ton_ha_jaarlijks> Flow_ha_jaar (AdminDomain) := VeenKental ? VeenKentallen/Cseq_ha_veen[Grondgebruik/CC][ton_ha_jaarlijks] : CarbonClass/Cseq_ha[Grondgebruik/CC];
+					attribute<ton_ha> Flow_ha                (AdminDomain) := Flow_ha_jaar * Aanwasduur; // #737: Aanwasduur en niet Periode, zodat de aanwas vanaf de landgebruiksverandering telt
+				}
+				
+				container PerOPSubklasse := for_each_ne(OPSubklasseK/name, 'OPSubklasseT('+string(id(OPSubklasseK))+'[OPSubklasseK])')
+				{
+					container Totaal
+					{
+						attribute<ton_ha>           Stock_ha     (AdminDomain) := = 'add('+AsItemList('PerOPSubklasse/'+OPSubklasseK/name+'/Stock_ha')+')';
+						attribute<ton_ha_jaarlijks> Flow_ha_jaar (AdminDomain) := = 'add('+AsItemList('PerOPSubklasse/'+OPSubklasseK/name+'/Flow_ha_jaar')+')';
+						attribute<ton_ha>           Flow_ha      (AdminDomain) :=  Flow_ha_jaar * Aanwasduur; // #737, zie Zichtjaar/Carbon/Aanwasduur
+					}
+
+				}
+				
+				container Totaal
+				{
+					attribute<ton_ha>           Stock_ha     (AdminDomain) := IsDefined(Grondgebruik/OP_rel) ? PerOPSubklasse/Totaal/Stock_ha : UitAllocAlgemeen/Stock_ha;
+					attribute<ton_ha_jaarlijks> Flow_ha_jaar (AdminDomain) := IsDefined(Grondgebruik/OP_rel) ? PerOPSubklasse/Totaal/Flow_ha_jaar : UitAllocAlgemeen/Flow_ha_jaar;
+					attribute<ton_ha>           Flow_ha      (AdminDomain) := IsDefined(Grondgebruik/OP_rel) ? PerOPSubklasse/Totaal/Flow_ha : UitAllocAlgemeen/Flow_ha;
+				}
+				
+				Template OPSubklasseT
+				{
+					//
+					parameter<OPSubklasseK> id;
+					//
+					
+					parameter<CarbonClass> CC_Hoog_NL       := OPSubklasseK/CarbonClass_rel_Hoog_NL[id];
+					parameter<CarbonClass> CC_Laag_NL       := OPSubklasseK/CarbonClass_rel_Laag_NL[id];
+					parameter<CarbonClass> CC_NbSOP_Hoog_NL := OPSubklasseK/CarbonClass_rel_NbSOP_Hoog_NL[id];
+					parameter<CarbonClass> CC_NbSOP_Laag_NL := OPSubklasseK/CarbonClass_rel_NbSOP_Laag_NL[id];
+					
+					attribute<float32> Fractie (OP) := = 'Grondgebruik/FractiePerOPSubklasse/'+OPSubklasseK/name[id];
+					
+					attribute<ton_ha> Stock_ha_Hoog_NL (OP) := Fractie * (OP/IsNbSOP ? CarbonClass/Cmax_ha[CC_NbSOP_Hoog_NL] : CarbonClass/Cmax_ha[CC_Hoog_NL]);
+					attribute<ton_ha> Stock_ha_Laag_NL (OP) := Fractie * (OP/IsNbSOP ? CarbonClass/Cmax_ha[CC_NbSOP_Laag_NL] : CarbonClass/Cmax_ha[CC_Laag_NL]);
+					
+					attribute<ton_ha_jaarlijks> Flow_ha_Hoog_NL (OP) := Fractie * (OP/IsNbSOP ? CarbonClass/Cseq_ha[CC_NbSOP_Hoog_NL] : CarbonClass/Cseq_ha[CC_Hoog_NL]);
+					attribute<ton_ha_jaarlijks> Flow_ha_Laag_NL (OP) := Fractie * (OP/IsNbSOP ? CarbonClass/Cseq_ha[CC_NbSOP_Laag_NL] : CarbonClass/Cseq_ha[CC_Laag_NL]);
+					
+					attribute<ton_ha>           Stock_ha     (AdminDomain) := Hoog_NL ? Stock_ha_Hoog_NL[Stand/OP_rel] : Stock_ha_Laag_NL[Grondgebruik/OP_rel];
+					attribute<ton_ha_jaarlijks> Flow_ha_jaar (AdminDomain) := Hoog_NL ? Flow_ha_Hoog_NL[Stand/OP_rel] : Flow_ha_Laag_NL[Grondgebruik/OP_rel];
+				}
+			}
+			
+			// #657, spoor 3. Wat SOMERS_CO2_laagveen in dit zichtjaar aan veenoxidatie rapporteert, omgerekend naar de eenheid
+			// van de voorraad. NaLUC en niet Jaarlijks, want NaLUC is al nul waar het landgebruik stedelijk of water is geworden
+			// en daar hoort de oxidatie ook op te houden. Periode uit deze template en niet de cumulatieve reeks van SOMERS: die
+			// laatste boekt in het basisjaar bewust een jaar uitstoot, terwijl een voorraadbalans daar op nul hoort te beginnen.
+			// De MakeDefined is niet cosmetisch: NaLUC is null buiten de veenweidepercelen, en zonder deze nul propageert die
+			// null door de hele voorraadketen en wordt de landelijke koolstofkaart leeg zonder foutmelding.
+			container Oxidatie
+			{
+				attribute<kg_jaarlijks> NaLUC_SOMERS (AdminDomain) := = 'MakeDefined(ThisYear/SOMERS_CO2_laagveen/Emissies/'+/ModelParameters/Koolstof/Koolstof_SOMERSEmissieVariant+'/NaLUC, 0[kg_jaarlijks])', Descr = "De jaarlijkse veenoxidatie uit SOMERS voor de gekozen emissievariant, nul buiten de veenweidepercelen.";
+
+				attribute<bool> HeeftVeenpakket (AdminDomain) := MakeDefined(/SourceData/Landbouw/Peat_thickness[AdminDomain/rdc_25m_rel], 0[meter]) > 0[meter]
+				, Descr = "Geeft de ondergrondkaart hier een veenpakket? Onwaar waar de kaart niets geeft en waar zij nul geeft. Dat is 76.289 hectare, grotendeels moerige grond in Friesland, Groningen, Overijssel en Drenthe, plus heel Flevoland dat buiten GeoTOP valt.";
+
+			attribute<kg_jaarlijks> NaLUC (AdminDomain) := VeenKentalGeldt || !HeeftVeenpakket ? 0[kg_jaarlijks] : NaLUC_SOMERS
+			, Descr = "Dezelfde stroom, maar nul waar het kental van team Veen geldt, en sinds #793 ook nul waar de ondergrondkaart geen veenpakket geeft, want zonder die afbakening loopt de uitstoot door
+						tot 2120 op een voorraad die er niet is (#733). Daar beschrijft dat kental de netto bodemstroom al, inclusief wat er nog oxideert, dus de SOMERS-stroom er nog eens naast boeken zou dezelfde koolstof twee keer afschrijven en bovendien via Actief de vastlegging bevriezen op precies de cellen waar het veen aangroeit.";
+
+			parameter<mton> Verdrongen_StGebied := sum((NaLUC_SOMERS - NaLUC)[ton_jaarlijks] * 1[jaar])[mton], Descr = "Hoeveel jaarlijkse SOMERS-uitstoot door het kental van team Veen wordt vervangen, in Mton CO2 per jaar. Dit is het getal dat zegt hoe groot de bewuste divergentie tussen de twee indicatoren is.";
+
+				attribute<ton_ha> Vraag_ha (AdminDomain) := (NaLUC * Periode)[ton] / C_to_CO2 / AdminDomain/NrHaPerCell
+				, Descr = "De oxidatie over deze periode, in ton C per hectare, die van de koolstofvoorraad wordt afgeschreven (spoor 3 uit #657). Van kg CO2 per cel per jaar via de periode naar ton, gedeeld door
+							44/12 naar koolstof, gedeeld door het aantal hectare per cel.";
+
+				// #657: sinds de emissiefactoren van 31-08-2026 kan er ook buiten de veenweidepercelen oxidatie lopen. De
+				// boekhouding hieronder werkt met een enkele vraag, dus de twee bronnen worden hier opgeteld. Ze sluiten
+				// elkaar per cel uit: BuitenSOMERS/Telt toetst zelf op !InSOMERS.
+				attribute<ton_ha> Vraag_Totaal_ha (AdminDomain) := Vraag_ha + BuitenSOMERS/Vraag_ha + VeenKental/Vraag_ha, Descr = "De totale afschrijvingsvraag over deze periode in ton C per hectare, over de drie posten samen: de veenoxidatie uit SOMERS, de emissiefactor daarbuiten, en sinds #758 het kental van team Veen in de NbS-varianten. De drie sluiten elkaar per cel uit.";
+
+				attribute<bool>   Actief   (AdminDomain) := Vraag_Totaal_ha > 0[ton_ha], Descr = "Loopt hier veenoxidatie in deze periode? Op zulke cellen wordt geen vastlegging geboekt: een ontwaterende veenbodem legt niet tegelijk koolstof vast.";
+
+				parameter<mton> Vraag_StGebied        := sum(Vraag_ha * AdminDomain/NrHaPerCell)[mton], Descr = "Landelijk totaal van de gevraagde afschrijving uit SOMERS in Mton C. Maal 44/12 hoort dit gelijk te zijn aan de cumulatieve uitstoot van SOMERS over dezelfde periode; zie de IntegrityCheck bij Stock/Balansverschil.";
+				parameter<mton> Vraag_Totaal_StGebied := sum(Vraag_Totaal_ha * AdminDomain/NrHaPerCell)[mton], Descr = "Idem inclusief de post buiten de veenweidepercelen. Dit is het getal waarop de balanscontrole rust.";
+			}
+
+			container Stock
+			{
+				attribute<ton_ha> Max_ha        (AdminDomain) := Max/Totaal/Stock_ha;
+				
+				attribute<bool>   MaximumDaalt  (AdminDomain) := Max_ha < PrevZichtjaar/Carbon/Stock/Max_ha, Descr = "Het maximum van de klasse in dit zichtjaar ligt lager dan dat van de vorige periode. Dat kan alleen als het landgebruik is veranderd naar een klasse met een lager maximum.";
+
+				// #657, spoor 1. De afboeking naar het klassemaximum hoort alleen te vuren waar de ingreep de bodem afdekt of
+				// afgraaft. Bij een verandering van alleen de begroeiing, zoals landbouwgrasland dat rietmoeras wordt, blijft de
+				// bodemkoolstof gewoon zitten. Dat die afboeking daar toch vuurde kwam doordat de startvoorraad de bodem in de
+				// bovenste 30 cm is en het klassemaximum een totaal van bodem en biomassa; zie de Descr bij de schakelaar.
+				// Cellen met een ontwikkelpakket hebben geen enkele klasse maar een gewogen som over OP-subklassen. Die dragen
+				// een stedelijke sector en dus Grondgebruik/CC = Dichtbebouwd, waardoor MagAfboeken daar vanzelf TRUE is.
+				attribute<bool>   MagAfboeken   (AdminDomain) := CarbonClass/MagAfboeken[Grondgebruik/CC], Descr = "Mag de voorraad op deze cel worden afgeboekt gegeven de klasse waar het landgebruik heen gaat? Zie de kolom MagAfboeken in Classifications/Grondgebruik/CarbonClass.";
+				attribute<bool>   VoorraadBovenMax (AdminDomain) := MaximumDaalt && Max_ha < PrevZichtjaar/Carbon/Stock/Result_ha
+				, Descr = "De voorraad van de vorige periode ligt boven het maximum van deze klasse, en dat telt alleen bij een landgebruiksverandering naar een klasse met een lager maximum (#483). Ook afboeken waar
+							de voorraad al boven het maximum van de eigen klasse lag zou met een startvoorraad uit de kaart een grote eenmalige afboeking in het eerste zichtjaar geven.";
+
+				attribute<bool>   RuimteNeemtAf (AdminDomain) := VoorraadBovenMax && MagAfboeken, Descr = "Waar wordt de voorraad daadwerkelijk afgeboekt naar het maximum van de nieuwe klasse: de voorraad moet boven dat maximum liggen en de nieuwe klasse moet de bodem afdekken of afgraven (#657).";
+				attribute<ton_ha> Prev_ha       (AdminDomain) := PrevZichtjaar/Carbon/Stock/Result_ha;
+				attribute<ton_ha> Groei_ha      (AdminDomain) := min_elem(Prev_ha + Flow/Max_ha, Max_ha), Descr = "Voorraad van de vorige periode plus de vastlegging in deze periode, begrensd op het maximum van de klasse.";
+
+				// #657, spoor 3. De volgorde is hier het hele punt. Eerst groeien, dan pas oxideren, en de vastlegging
+				// bevriezen waar de oxidatie loopt. Zonder die bevriezing ontstaat een nieuw artefact: zodra de oxidatie de
+				// voorraad onder het klassemaximum duwt, gaat min_elem in Groei_ha weer ruimte zien en krijgt precies de cel
+				// waarvan SOMERS zegt dat het veen wegoxideert vastlegging toegekend. Dat gebeurt bij het BAU-tempo eerder dan
+				// bij vernatting, dus het artefact begunstigt de variant die het meeste veen verstookt.
+				attribute<ton_ha> NaGroei_ha    (AdminDomain) := Oxidatie/Actief ? Prev_ha : max_elem(Groei_ha, Prev_ha), Descr = "De voorraad na vastlegging en voor oxidatie. Waar oxidatie loopt is er geen vastlegging, dus blijft de voorraad van de vorige periode staan.";
+
+				attribute<ton_ha> UitReserve_ha  (AdminDomain) := min_elem(Oxidatie/Vraag_Totaal_ha, PrevZichtjaar/Carbon/Veenreserve/Result_ha), Descr = "Het deel van de oxidatie dat de veenreserve onder de bovenste 30 cm opvangt.";
+				attribute<ton_ha> RestVraag_ha   (AdminDomain) := Oxidatie/Vraag_Totaal_ha - UitReserve_ha, Descr = "Wat de reserve niet kon opvangen en dus in de voorraad zelf bijt.";
+				// #736: de afschrijving uit de bovenste 30 cm stopt bij een minerale ondergrens en niet bij nul. Aerobe
+				// oxidatie van een veenbovengrond eindigt in een moerige eerdgrond of een humeuze zandgrond, niet in
+				// koolstofvrij materiaal, en er staat grasland op dat jaarlijks wortels en strooisel inbrengt. Zonder deze
+				// grens stond in BAU 115.884 hectare veenweideperceel in 2120 op precies nul ton koolstof over beide pools.
+				// De grens bijt alleen op de oxidatie: de afboeking naar het klassemaximum in Result_ha hieronder gaat er
+				// wel doorheen, want bij bebouwen of afgraven verdwijnt de bodem werkelijk.
+				attribute<ton_ha> Ondergrens_ha  (AdminDomain) := min_elem(const(/ModelParameters/Koolstof/Koolstof_MineraleOndergrens_tonC_ha[ton_ha], AdminDomain), BaseYear/Carbon/Stock/Result_ha), Descr = "De minerale koolstofvoorraad die in de bovenste 30 cm achterblijft als het veen daar volledig is geoxideerd, nooit hoger dan wat de cel in het basisjaar had. De regel is dat een bodem niet
+																meer verliest dan hij heeft, en niet dat elke bodem er minstens zoveel houdt: zonder die begrenzing zou een cel die al onder de landelijke waarde begint vanaf het eerste zichtjaar niets meer
+																kunnen afschrijven en uit de variantvergelijking vallen.";
+				attribute<ton_ha> Afschrijfbaar_ha (AdminDomain) := max_elem(NaGroei_ha - Ondergrens_ha, 0[ton_ha]), Descr = "Wat er van de voorraad uit de bodemkoolstofkaart nog afgeschreven mag worden. Nul waar de kaart al onder de ondergrens ligt; daar is in de bovenste 30 cm geen veen meer dat kan verdwijnen en loopt de hele restvraag naar Ongedekt_ha.";
+				attribute<ton_ha> UitVoorraad_ha   (AdminDomain) := min_elem(RestVraag_ha, Afschrijfbaar_ha), Descr = "Het deel van de oxidatie dat de voorraad uit de bodemkoolstofkaart opvangt, tot aan de minerale ondergrens.";
+				attribute<ton_ha> Ongedekt_ha      (AdminDomain) := RestVraag_ha - UitVoorraad_ha, Descr = "Oxidatie waar geen koolstof meer tegenover staat. Hier houdt de boekhouding op te sluiten: SOMERS blijft uitstoot rapporteren terwijl de voorraad al leeg is. Op een reeks tot 2120 is deze
+																	post niet klein (#733), en dat komt uit twee bronnen van de reserve en niet uit hoe diep hij reikt: de veendikte uit SourceData/Landbouw/Peat_thickness ontbreekt op een groot deel van de
+																	veenweidepercelen, een gat in de bron en geen keuze in de configuratie, en SOMERS legt op die cellen bovendien meer uitstoot per hectare dan waar wel veendikte bekend is. De post is daarmee
+																	geen tekortkoming van de boekhouding maar de maat voor hoever de statische SOMERS-getallen en de voorraadbalans uit elkaar lopen, en hoort gerapporteerd te worden in plaats van weggewerkt;
+																	zie Ongedekt_Cumulatief_ha hieronder en de kaart Write_CO2Ongedekt_Cumulatief. De reserve volgt ook de SOMERS-percelen en de basisjaar-GLG begrenst hem niet meer (#736), en de afschrijving
+																	stopt bij Ondergrens_ha in plaats van bij nul, zodat de onbalans wordt afgezet tegen een eindtoestand die fysiek kan bestaan.";
+
+				attribute<ton_ha> NaOxidatie_ha (AdminDomain) := NaGroei_ha - UitVoorraad_ha;
+
+				attribute<ton_ha> Result_ha     (AdminDomain) := RuimteNeemtAf ? min_elem(Max_ha, NaOxidatie_ha) : NaOxidatie_ha
+				, IntegrityCheck = "all(this >= 0[ton_ha]) && all(!Oxidatie/Actief || NaGroei_ha == Prev_ha)"
+				, ExplicitSuppliers = "Balansverschil"
+				, Descr = "Zonder afboeking en zonder oxidatie kan de voorraad niet dalen. De afboeking naar het klassemaximum trekt een al leeggelopen cel niet omhoog, vandaar de min_elem. De IntegrityCheck bewaakt
+								twee dingen: de voorraad wordt nooit negatief, en er wordt nergens tegelijk geoxideerd en vastgelegd. De ExplicitSuppliers trekt de balanscontrole onderaan deze container in de rekengraaf
+								(#772), want Balansverschil en Afgeschreven_StGebied hebben zelf geen afnemer; dit item is de plek voor de haak omdat het in dezelfde container staat en zelf wordt opgevraagd, via Result
+								naar de kaarten in Generate_Indicatoren, zonder kringverwijzing, want Balansverschil leest alleen items boven Result_ha in de keten.";
+
+				attribute<ton>    Result        (AdminDomain) := Result_ha * AdminDomain/NrHaPerCell;
+
+				parameter<mton>   Ongedekt_StGebied := sum(Ongedekt_ha * AdminDomain/NrHaPerCell)[mton], Descr = "Landelijk totaal van de ongedekte oxidatie over deze periode, in Mton C.";
+
+				// #733: dezelfde post cumulatief sinds het basisjaar, langs dezelfde opbouw als Methaan en SOMERS_CO2_laagveen,
+				// zodat de drie reeksen op elkaar aansluiten. Dit is de grootheid die naast het koolstofsaldo hoort te staan:
+				// het saldo per zichtjaar zegt niets over hoeveel er onderweg is blijven liggen, en per periode gemeten is de
+				// post op 2040 nog verwaarloosbaar terwijl hij op 2120 een kwart van de SOMERS-uitstoot beslaat.
+				attribute<ton_ha> Ongedekt_Cumulatief_ha (AdminDomain) := PrevZichtjaar/Carbon/Stock/Ongedekt_Cumulatief_ha + Ongedekt_ha
+				, IntegrityCheck = "all(this >= 0[ton_ha])"
+				, Descr = "De ongedekte oxidatie opgeteld vanaf het basisjaar tot en met dit zichtjaar, in ton C per hectare. In het eerste allocatiezichtjaar wijst PrevZichtjaar naar het basisjaar, waar de teller op nul staat.";
+
+				attribute<ton>    Ongedekt_Cumulatief (AdminDomain) := Ongedekt_Cumulatief_ha * AdminDomain/NrHaPerCell;
+
+				parameter<mton>   Ongedekt_Cumulatief_StGebied := sum(Ongedekt_Cumulatief)[mton], Descr = "Landelijk totaal van de ongedekte oxidatie sinds het basisjaar, in Mton C: hoeveel van de SOMERS-uitstoot niet in de koolstofbalans is verwerkt. Maal 44/12 geeft Mton CO2. Wat er per saldo
+																					in deze post bij komt gaat een op een van de afschrijving af, dus CO2FlowTovBasisjaar schuift met hetzelfde bedrag de andere kant op en CO2FlowTovBasisjaar_InclOngedekt blijft op de tweede
+																					orde na gelijk (#736).";
+
+				// De enige controle met inhoud: wat er van de voorraad en de reserve af gaat plus wat ongedekt blijft, hoort
+				// gelijk te zijn aan wat SOMERS voor dezelfde periode rapporteert. Dat toetst de eenhedenketen en de
+				// MakeDefined, en het valt om zodra iemand aan een van beide kanten van definitie verandert.
+				// #772: tot dan hing deze toets naast de rekengraaf, want geen van beide items heeft een afnemer. Result_ha
+				// hierboven noemt Balansverschil sindsdien in zijn ExplicitSuppliers; lees de toelichting daar.
+				parameter<mton>    Afgeschreven_StGebied := sum((UitReserve_ha + UitVoorraad_ha + Ongedekt_ha) * AdminDomain/NrHaPerCell)[mton];
+				parameter<float32> Balansverschil        := float32(Afgeschreven_StGebied - Oxidatie/Vraag_Totaal_StGebied)
+				, IntegrityCheck = "abs(Balansverschil) < 0.01f"
+				, Descr = "Verschil tussen wat er is afgeschreven en wat SOMERS vraagt, in Mton C. Hoort nul te zijn.";
+			}
+
+			container Veenreserve
+			{
+				attribute<ton_ha> Result_ha (AdminDomain) := PrevZichtjaar/Carbon/Veenreserve/Result_ha - Stock/UitReserve_ha
+				, IntegrityCheck = "all(this >= 0[ton_ha])"
+				, Descr = "De veenreserve na de oxidatie van deze periode. Kan niet negatief worden omdat UitReserve_ha op de stand van de vorige periode is begrensd.";
+
+				attribute<ton>    Result    (AdminDomain) := Result_ha * AdminDomain/NrHaPerCell;
+				parameter<mton>   Result_StGebied         := sum(Result)[mton], Descr = "Landelijk totaal van de resterende veenreserve in Mton C.";
+			}
+			
+			container Flow
+			{
+				attribute<ton_ha> Max_ha    (AdminDomain) := Max/Totaal/Flow_ha;
+
+				attribute<ton_ha> Bovenlaag_ha   (AdminDomain) := Stock/Result_ha - PrevZichtjaar/Carbon/Stock/Result_ha, Descr = "Verandering van de bovenste 30 cm plus biomassa over deze periode.";
+				attribute<ton_ha> Veenreserve_ha (AdminDomain) := Veenreserve/Result_ha - PrevZichtjaar/Carbon/Veenreserve/Result_ha, Descr = "Verandering van de veenreserve over deze periode, dus min de oxidatie die de reserve heeft opgevangen (#657, spoor 3).";
+
+				// #657, spoor 3: de stroom telt beide pools, net als de voorraad. Anders zou de kaart met de voorraad de
+				// veenoxidatie wel tonen en de kaart met de stroom niet.
+				attribute<ton_ha> Result_ha (AdminDomain) := Bovenlaag_ha + Veenreserve_ha;
+				attribute<ton>    Result    (AdminDomain) := Result_ha * AdminDomain/NrHaPerCell;
+			}
+
+			// #758: het saldo van deze periode uit elkaar gelegd naar de post die het veroorzaakt. De vraag vanuit Deltares
+			// was om de verschillende bronnen en typen oxidatie los weg te schrijven, met als eis dat ze niet dubbeltellen
+			// en dus bij elkaar opgeteld kunnen worden. Dat kan hier exact, want de voorraadbalans van deze periode bestaat
+			// uit precies vijf termen:
+			//
+			//     Flow/Result_ha = Vastlegging - Afboeking - UitVoorraad - UitReserve
+			//
+			// De eerste is de aanwas, de tweede de afboeking naar het klassemaximum bij een bodemingreep, en de laatste twee
+			// samen zijn de oxidatie die de boekhouding werkelijk heeft verwerkt. Die oxidatie is per cel aan precies een van
+			// de drie bronnen toe te schrijven, want Oxidatie/Vraag_Totaal_ha telt drie posten op die elkaar per cel
+			// uitsluiten: SOMERS op de veenweidepercelen, de emissiefactor op het veen daarbuiten, en het kental van team
+			// Veen in de NbS-varianten. Die uitsluiting is een aanname over de bedrading, en die wordt hieronder getoetst.
+			//
+			// Waarom per periode en niet cumulatief sinds het basisjaar. Cumuleren vraagt om een keten langs PrevZichtjaar,
+			// zoals Ongedekt_Cumulatief_ha die heeft, en dat is per post een raster dat over de zichtjaren heen blijft
+			// staan. Acht van die ketens erbij is een veelvoud van wat deze indicator vandaag vasthoudt. Per periode is even
+			// sluitend en kost niets extra: de vijf posten tellen op tot Flow/Result_ha, en dat is dezelfde grootheid als de
+			// kolom CO2Flow_Zichtjaar in de exporttabel. Wie het cumulatieve beeld wil telt de zichtjaren bij elkaar op; de
+			// som daarvan is per constructie CO2Flow_TovBasisjaar.
+			//
+			// Het teken is dat van de bijdrage aan het saldo, dus vastlegging positief en de vier andere posten negatief,
+			// gelijk aan CO2FlowTovBasisjaar zelf. De ongedekte oxidatie staat er apart onder: die raakt de voorraad per
+			// definitie niet en hoort dus niet in de som, maar hij is wel de enige post die zegt welke bron uitstoot
+			// rapporteert waar geen koolstof meer tegenover staat (#733).
+			container Herkomst
+			: Descr = "Het koolstofsaldo van deze periode uitgesplitst naar de post die het veroorzaakt, zo dat de posten optellen tot Flow/Result_ha (#758)."
+			{
+				attribute<bool> DoorSOMERS     (AdminDomain) := Oxidatie/Vraag_ha     > 0[ton_ha], Descr = "Komt de oxidatievraag op deze cel uit SOMERS? Nul buiten de veenweidepercelen, en nul waar het kental van team Veen de SOMERS-stroom vervangt.";
+				attribute<bool> DoorEF         (AdminDomain) := BuitenSOMERS/Vraag_ha > 0[ton_ha], Descr = "Komt de oxidatievraag uit de emissiefactor voor veen buiten de SOMERS-percelen?";
+				attribute<bool> DoorVeenkental (AdminDomain) := VeenKental/Vraag_ha   > 0[ton_ha], Descr = "Komt de oxidatievraag uit het kental van team Veen? Alleen in de NbS-varianten, en daar in de plaats van SOMERS.";
+
+				attribute<ton_ha> Vastlegging_ha (AdminDomain) := Stock/NaGroei_ha - Stock/Prev_ha
+				, IntegrityCheck = "all(this >= 0[ton_ha])"
+				, Descr = "Wat er in deze periode is vastgelegd, in ton C per hectare. Nul waar oxidatie loopt, want NaGroei_ha houdt de voorraad daar op de stand van de vorige periode.";
+
+				attribute<ton_ha> Afboeking_ha (AdminDomain) := Stock/Result_ha - Stock/NaOxidatie_ha
+				, IntegrityCheck = "all(this <= 0[ton_ha])"
+				, Descr = "Wat er is afgeboekt naar het klassemaximum omdat het landgebruik naar een klasse ging die de bodem afdekt of afgraaft. Nul waar RuimteNeemtAf FALSE is.";
+
+				attribute<ton_ha> Oxidatie_ha (AdminDomain) := 0[ton_ha] - (Stock/UitReserve_ha + Stock/UitVoorraad_ha)
+				, IntegrityCheck = "all(this <= 0[ton_ha])"
+				, Descr = "De veenoxidatie die de boekhouding in deze periode werkelijk heeft verwerkt, over beide pools samen. Dit is niet de gevraagde oxidatie: wat de reserve en de voorraad niet konden dragen staat in Stock/Ongedekt_ha, en hieronder per bron.";
+
+				attribute<ton_ha> Oxidatie_SOMERS_ha     (AdminDomain) := DoorSOMERS     ? Oxidatie_ha : 0[ton_ha], Descr = "Het deel van die oxidatie dat uit SOMERS komt.";
+				attribute<ton_ha> Oxidatie_EF_ha         (AdminDomain) := DoorEF         ? Oxidatie_ha : 0[ton_ha], Descr = "Het deel dat uit de emissiefactor buiten de SOMERS-percelen komt.";
+				attribute<ton_ha> Oxidatie_Veenkental_ha (AdminDomain) := DoorVeenkental ? Oxidatie_ha : 0[ton_ha], Descr = "Het deel dat uit het kental van team Veen komt.";
+
+				attribute<ton_ha> Ongedekt_SOMERS_ha     (AdminDomain) := DoorSOMERS     ? Stock/Ongedekt_ha : 0[ton_ha], Descr = "Oxidatie uit SOMERS waar geen koolstof meer tegenover stond. Telt niet mee in Totaal_ha, want deze post raakt de voorraad niet; zie #733.";
+				attribute<ton_ha> Ongedekt_EF_ha         (AdminDomain) := DoorEF         ? Stock/Ongedekt_ha : 0[ton_ha], Descr = "Idem voor de emissiefactor buiten de percelen.";
+				attribute<ton_ha> Ongedekt_Veenkental_ha (AdminDomain) := DoorVeenkental ? Stock/Ongedekt_ha : 0[ton_ha], Descr = "Idem voor het kental van team Veen.";
+
+				// De sluitcontrole die in de vraag van #758 zit, in twee delen. Het eerste toetst de aanname waarop de
+				// toerekening rust, namelijk dat de drie oxidatiebronnen elkaar per cel uitsluiten; zonder die aanname zou
+				// Oxidatie_ha meer dan een keer worden geteld. Het tweede toetst dat de vijf posten samen het saldo van deze
+				// periode zijn. Valt er een om, dan is er een term in de voorraadbalans bijgekomen die niet in de
+				// uitsplitsing zit, en dan telt de som niet meer op tot de indicator.
+				attribute<ton_ha> Totaal_ha (AdminDomain) := Vastlegging_ha + Afboeking_ha + Oxidatie_SOMERS_ha + Oxidatie_EF_ha + Oxidatie_Veenkental_ha
+				, IntegrityCheck = "all(!(DoorSOMERS && DoorEF) && !(DoorSOMERS && DoorVeenkental) && !(DoorEF && DoorVeenkental)) && all(abs((Totaal_ha - Flow/Result_ha) / 1[ton_ha]) < 0.01f)"
+				, Descr = "De vijf posten bij elkaar. Hoort per cel gelijk te zijn aan Flow/Result_ha, en landelijk aan de kolom CO2Flow_Zichtjaar in de exporttabel.";
+
+				parameter<mton> Vastlegging_StGebied         := sum(Vastlegging_ha         * AdminDomain/NrHaPerCell)[mton], Descr = "Landelijk totaal van deze post over deze periode, in Mton C. Maal 44/12 geeft Mton CO2.";
+				parameter<mton> Afboeking_StGebied           := sum(Afboeking_ha           * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Oxidatie_SOMERS_StGebied     := sum(Oxidatie_SOMERS_ha     * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Oxidatie_EF_StGebied         := sum(Oxidatie_EF_ha         * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Oxidatie_Veenkental_StGebied := sum(Oxidatie_Veenkental_ha * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Ongedekt_SOMERS_StGebied     := sum(Ongedekt_SOMERS_ha     * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Ongedekt_EF_StGebied         := sum(Ongedekt_EF_ha         * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Ongedekt_Veenkental_StGebied := sum(Ongedekt_Veenkental_ha * AdminDomain/NrHaPerCell)[mton];
+				parameter<mton> Totaal_StGebied              := sum(Totaal_ha              * AdminDomain/NrHaPerCell)[mton], Descr = "Hoort gelijk te zijn aan de som van Carbon/Flow/Result over het studiegebied.";
+			}
+		}
+		
+		container CO2
+		{
+			attribute<ton> Stock_Bovenlaag   (AdminDomain) := Carbon/Stock/Result * C_to_CO2, StorageName = "=replace(StorageStr_stock_pool, '@V@', 'Bovenlaag')", StorageType = "gdalwrite.grid", Descr = "Alleen de bovenste 30 cm plus biomassa, dus de indicator zoals hij voor #657 was.";
+			attribute<ton> Stock_Veenreserve (AdminDomain) := Carbon/Veenreserve/Result * C_to_CO2, StorageName = "=replace(StorageStr_stock_pool, '@V@', 'Veenreserve')", StorageType = "gdalwrite.grid", Descr = "Alleen de veenkoolstof onder de bovenste 30 cm, na de oxidatie van deze periode.";
+			attribute<ton> Stock             (AdminDomain) := Stock_Bovenlaag + Stock_Veenreserve, Descr = "De totale voorraad over beide pools. Zie de toelichting bij het basisjaar (#657, spoor 3).";
+			attribute<ton> Flow              (AdminDomain) := Carbon/Flow/Result * C_to_CO2, Descr = "De verandering van de bovenlaag over deze periode. De verandering van de veenreserve staat in Carbon/Veenreserve; het totaal zit in CO2FlowTovBasisjaar.";
+
+			// #733: de post die naast Stock en Flow hoort te staan. Niet bij de voorraad opgeteld en er niet van afgetrokken:
+			// het is de SOMERS-uitstoot waar geen koolstof tegenover stond, dus geen voorraad en geen stroom maar het verschil
+			// tussen wat SOMERS rapporteert en wat de balans heeft kunnen verwerken.
+			attribute<ton> Ongedekt_Cumulatief (AdminDomain) := Carbon/Stock/Ongedekt_Cumulatief * C_to_CO2, Descr = "De ongedekte veenoxidatie sinds het basisjaar in ton CO2, per cel.";
+
+			// #758: dezelfde uitsplitsing als Carbon/Herkomst, maar in ton CO2 per cel, zodat de exporttabel er niet zelf
+			// mee hoeft te rekenen. De eerste vijf tellen op tot Flow, de kolom CO2Flow_Zichtjaar; de laatste drie horen
+			// daar niet bij opgeteld te worden en staan naast CO2Ongedekt_Cumulatief.
+			//
+			// Alle negen dragen hetzelfde studiegebiedmasker als de Write-items onderaan deze template. Dat is geen
+			// cosmetiek: de exportkolom CO2Flow_Zichtjaar leest Write_CO2Flow_Zichtjaar en telt dus alleen cellen binnen
+			// het studiegebied, terwijl Carbon/Herkomst over het hele raster staat. Zonder dit masker zou de uitsplitsing
+			// in de tabel op een provincierun niet optellen tot de kolom waar hij bij hoort, en dan is de sluitcontrole
+			// die de hele vraag van #758 is precies op de plek waar hij gelezen wordt niet waar.
+			container PerBron
+			: Descr = "Het saldo van dit zichtjaar per veroorzakende post, in ton CO2, binnen het studiegebied (#758). De eerste vijf optellen mag en hoort uit te komen op Write_CO2Flow_Zichtjaar."
+			{
+				attribute<ton> Vastlegging         (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Vastlegging_ha         * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Vastlegging')", StorageType = "gdalwrite.grid", Descr = "Vastlegging in dit zichtjaar, positief.";
+				attribute<ton> Afboeking           (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Afboeking_ha           * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Afboeking')", StorageType = "gdalwrite.grid", Descr = "Afboeking naar het klassemaximum bij een bodemingreep, negatief.";
+				attribute<ton> Oxidatie_SOMERS     (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Oxidatie_SOMERS_ha     * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Oxidatie_SOMERS')", StorageType = "gdalwrite.grid", Descr = "Verwerkte veenoxidatie uit SOMERS, negatief.";
+				attribute<ton> Oxidatie_EF         (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Oxidatie_EF_ha         * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Oxidatie_EF')", StorageType = "gdalwrite.grid", Descr = "Verwerkte veenoxidatie uit de emissiefactor buiten de SOMERS-percelen, negatief.";
+				attribute<ton> Oxidatie_Veenkental (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Oxidatie_Veenkental_ha * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Oxidatie_Veenkental')", StorageType = "gdalwrite.grid", Descr = "Verwerkte veenoxidatie uit het kental van team Veen, negatief. Nul in BAU en BAU2.";
+				attribute<ton> Totaal              (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Totaal_ha              * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Totaal')", StorageType = "gdalwrite.grid", Descr = "De vijf posten hierboven bij elkaar. Hoort gelijk te zijn aan Write_CO2Flow_Zichtjaar, dus aan Flow binnen het studiegebied.";
+
+				attribute<ton> Ongedekt_SOMERS     (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Ongedekt_SOMERS_ha     * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Ongedekt_SOMERS')", StorageType = "gdalwrite.grid", Descr = "Gevraagde oxidatie uit SOMERS waar geen koolstof meer tegenover stond. Niet bij de vijf optellen; zie #733.";
+				attribute<ton> Ongedekt_EF         (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Ongedekt_EF_ha         * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Ongedekt_EF')", StorageType = "gdalwrite.grid", Descr = "Idem voor de emissiefactor buiten de percelen.";
+				attribute<ton> Ongedekt_Veenkental (AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain ? Carbon/Herkomst/Ongedekt_Veenkental_ha * AdminDomain/NrHaPerCell * C_to_CO2 : null_f, StorageName = "=replace(StorageStr_perbron, '@V@', 'Ongedekt_Veenkental')", StorageType = "gdalwrite.grid", Descr = "Idem voor het kental van team Veen.";
+			}
+		}
+	}
+	
+	// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+	container Lees
+	: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+	{
+		attribute<ton> CO2Stock_Zichtjaar (AdminDomain) : StorageName = "=StorageStr_stock_zichtjaar", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> CO2Flow_Zichtjaar (AdminDomain) : StorageName = "=StorageStr_flow_zichtjaar", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> CO2Flow_TovBasisjaar (AdminDomain) : StorageName = "=StorageStr_flow_TovBasisjaar", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> CO2Ongedekt_Cumulatief (AdminDomain) : StorageName = "=StorageStr_ongedekt", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> Stock_Bovenlaag (AdminDomain) : StorageName = "=replace(StorageStr_stock_pool, '@V@', 'Bovenlaag')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> Stock_Veenreserve (AdminDomain) : StorageName = "=replace(StorageStr_stock_pool, '@V@', 'Veenreserve')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Vastlegging (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Vastlegging')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Afboeking (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Afboeking')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Oxidatie_SOMERS (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Oxidatie_SOMERS')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Oxidatie_EF (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Oxidatie_EF')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Oxidatie_Veenkental (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Oxidatie_Veenkental')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Totaal (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Totaal')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Ongedekt_SOMERS (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Ongedekt_SOMERS')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Ongedekt_EF (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Ongedekt_EF')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<ton> PerBron_Ongedekt_Veenkental (AdminDomain) : StorageName = "=replace(StorageStr_perbron, '@V@', 'Ongedekt_Veenkental')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	}
+	container Live
+	{
+		attribute<ton> CO2Stock_Zichtjaar          (AdminDomain) := CarbonStorageSequestration/Write_CO2Stock_Zichtjaar;
+		attribute<ton> CO2Flow_Zichtjaar           (AdminDomain) := CarbonStorageSequestration/Write_CO2Flow_Zichtjaar;
+		attribute<ton> CO2Flow_TovBasisjaar        (AdminDomain) := CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar;
+		attribute<ton> CO2Ongedekt_Cumulatief      (AdminDomain) := CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief;
+		attribute<ton> Stock_Bovenlaag             (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/Stock_Bovenlaag;
+		attribute<ton> Stock_Veenreserve           (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/Stock_Veenreserve;
+		attribute<ton> PerBron_Vastlegging         (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Vastlegging;
+		attribute<ton> PerBron_Afboeking           (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Afboeking;
+		attribute<ton> PerBron_Oxidatie_SOMERS     (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Oxidatie_SOMERS;
+		attribute<ton> PerBron_Oxidatie_EF         (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Oxidatie_EF;
+		attribute<ton> PerBron_Oxidatie_Veenkental (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Oxidatie_Veenkental;
+		attribute<ton> PerBron_Totaal              (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Totaal;
+		attribute<ton> PerBron_Ongedekt_SOMERS     (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Ongedekt_SOMERS;
+		attribute<ton> PerBron_Ongedekt_EF         (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Ongedekt_EF;
+		attribute<ton> PerBron_Ongedekt_Veenkental (AdminDomain) := CarbonStorageSequestration/Zichtjaar/CO2/PerBron/Ongedekt_Veenkental;
+	}
+	container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+	, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+
+	attribute<ton> CO2FlowTovBasisjaar (AdminDomain) := Zichtjaar/CO2/Stock - BaseYear/CO2/Stock;
+
+	// #733: hetzelfde saldo met de ongedekte oxidatie erbij opgeteld als verlies. Dit is uitdrukkelijk NIET de indicator:
+	// de begrenzing in de boekhouding is fysiek juist, want veen dat er niet ligt oxideert niet, en het is in #733 gemeten
+	// dat de post vooral op moerige grond zonder veenpakket valt. Deze grootheid staat er als ondergrens naast, zodat te
+	// zien is wat het saldo zou zijn als de SOMERS-uitstoot onverkort werd geboekt. Het verschil tussen de twee is precies
+	// de ruimte waarbinnen de koolstofindicator en de SOMERS-indicator elkaar op de lange horizon tegenspreken: op 2120
+	// stond BAU op de run van 01-09-2026 op plus 7,2 Mton CO2 langs deze weg en op min 88,9 langs de andere. Juist deze
+	// grootheid is bestand tegen de wijzigingen uit #736: die verschuiven alleen de grens tussen wat als voorraadverlies
+	// wordt geboekt en wat ongedekt blijft, en die twee staan hier bij elkaar opgeteld.
+	attribute<ton> CO2FlowTovBasisjaar_InclOngedekt (AdminDomain) := CO2FlowTovBasisjaar - Zichtjaar/CO2/Ongedekt_Cumulatief;
+	
+	// attribute<ton> InRivierengebied (AdminDomain) := CO2FlowTovBasisjaar * IsDefined(/SourceData/RegioIndelingen/Landschappen/Rivierengebied_500m_buffer/StudyArea/Per_AdminDomain)[float32];
+	
+	attribute<ton> Write_CO2Stock_Zichtjaar     (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Zichtjaar/CO2/Stock : null_f, StorageName = "=StorageStr_stock_zichtjaar", StorageType = "gdalwrite.grid";
+	attribute<ton> Write_CO2Flow_Zichtjaar      (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Zichtjaar/CO2/Flow : null_f, StorageName = "=StorageStr_flow_zichtjaar", StorageType = "gdalwrite.grid";
+	attribute<ton> Write_CO2Flow_TovBasisjaar   (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? CO2FlowTovBasisjaar : null_f, StorageName = "=StorageStr_flow_TovBasisjaar", StorageType = "gdalwrite.grid";
+	attribute<ton> Write_CO2Ongedekt_Cumulatief (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain ? Zichtjaar/CO2/Ongedekt_Cumulatief : null_f, StorageName = "=StorageStr_ongedekt", StorageType = "gdalwrite.grid"
+	, Descr = "De ongedekte veenoxidatie sinds het basisjaar, in ton CO2 per cel. Hoort bij het lezen van CarbonStorageSequestration_stock_FromBaseYear naast die kaart gelegd te worden: waar deze kaart oploopt is het saldo daar te gunstig, omdat SOMERS er uitstoot rapporteert die de voorraad niet kon dragen (#733).";
+}

@@ -109,18 +109,30 @@ unit<UInt8> INL_Beheertype : NrOfRows = 84
 	attribute<ton_ha_jaarlijks>   Cseq_ha                  := CarbonClass/Cseq_ha[CarbonClass_rel];
 	attribute<ton_ha>             Cmax_ha                  := CarbonClass/Cmax_ha[CarbonClass_rel];
 	
-	attribute<Actor/LU_ModelType> LU_ModelType_rel         := NVK/LHMType/LU_ModelType_rel[LHMType_rel];
+	attribute<Grondgebruik/LandgebruikType> LandgebruikType_rel := invert(/Classifications/Grondgebruik/LandgebruikType/INL_Beheertype_rel)
+	, Descr = "De eigen rij van deze klasse in LandgebruikType, de opvolger van LU_ModelType (#803). LandgebruikType is een union over de drie delen INL_Beheertype, LandbouwType en LGNKlasse, en de kolom per deel draagt de eigen identiteit van de rij, dus invert() geeft de weg terug.";
 	
 	attribute<UInt16>             LGN_code                 := uint16(elem/values[value(uint32(id(.)) * nrAttr + 8, elem)]);
 	attribute<LGNKlasse>          LGNKlasse_rel            := rlookup(LGN_code, LGNKlasse/code);
 	attribute<Float32>            ndvi_min                 := LGNKlasse/ndvi_min[LGNKlasse_rel];
 	attribute<Float32>            ndvi_max                 := LGNKlasse/ndvi_max[LGNKlasse_rel];
 	attribute<Float32>            ndvi_mid                 := LGNKlasse/ndvi_mid[LGNKlasse_rel];
-	attribute<Bool>               ndvi_excl                := MakeDefined(LGNKlasse/ndvi_excl[LGNKlasse_rel], TRUE);
+	attribute<Bool>               ndvi_excl                := IsNull(LGNKlasse_rel) || LGNKlasse/ndvi_excl[LGNKlasse_rel]
+	, Descr = "Valt dit beheertype buiten de groenindex? Een type zonder LGN-klasse valt erbuiten, en die toets staat op de index: een opzoeking met een lege index geeft op een booleaanse kolom FALSE en geen null, dus een MakeDefined eromheen zou het type juist meenemen.";
 	
 	attribute<String>             NatuurType_code          := substr(code, 0, 3);
 	attribute<NatuurType>         NatuurType_rel           := rlookup(NatuurType_code, NatuurType/code);
+	attribute<Bool>               IsWater                  := NVK/LHMType/IsWater[LHMType_rel]
+	, Descr = "Is dit beheertype open water op de landgebruikskaart: zee en wad, rivier, beek en bron en de stilstaande wateren N04, via de LHMType-kolom die de kaartklasse bepaalt. Bewust dezelfde
+		definitie als de kaart en geen eigen lijstje, zodat er een antwoord is; de vennen N06.05 en N06.06 staan daardoor op natuur. De vlag waarop de stand-administratie en de natuuroplegging
+		(#751) natuur van water scheiden; N01.02 duin- en kwelderlandschap, N01.03 rivier- en moeraslandschap en N01.04 zand- en kalklandschap zijn hier land, zoals de kaart ze toont.";
 	
+	attribute<Bool>               IsNat                    := code != 'N01.04' && NatuurType/IsNat[NatuurType_rel]
+	, Descr = "Natte natuur volgens de tweedeling die het resultatenrapport 1.0 (hoofdstuk 5) aan team natuur heeft voorgelegd: de hoofdgroepen N01 behalve N01.04, N02 tot en met N06, N09, N10, N13 en N14. Zie NatuurType/IsNat; N01.04 zand- en kalklandschap is de enige uitzondering binnen een hoofdgroep. Verhuisd uit het AdHoc-item NatuurNatDroog van het rapport, zodat de legenda van de landgebruikskaart hem kan meegeven.";
+	attribute<Bool>               IsDroog                  := code == 'N01.04' || NatuurType/IsDroog[NatuurType_rel]
+	, Descr = "Droge natuur volgens dezelfde tweedeling: N01.04, N07, N08, N11, N12, N15, N16 en N17. N00 is nat noch droog.";
+	attribute<String>             NatDroog                 := IsNat ? 'nat' : IsDroog ? 'droog' : '';
+
 	attribute<bool>               IsKlimaatBos             := NatuurType_rel == NatuurType/v/Bossen_met_productiefunctie;
 	
 	parameter<UInt32> nrAttr := 9;
@@ -137,8 +149,10 @@ unit<UInt8> INL_Beheertype : NrOfRows = 84
 unit<UInt8> NatuurType : NrOfRows = 18
 {
 	attribute<String> code: ['N00', 'N01', 'N02', 'N03', 'N04', 'N05', 'N06', 'N07', 'N08', 'N09', 'N10', 'N11', 'N12', 'N13', 'N14', 'N15', 'N16', 'N17'];
-	attribute<String> name: ['Nog om te vormen'
-								, 'Grootschalige dynamische natuur'
+	// De namen volgen de Index Natuur en Landschap, onderdeel natuurbeheertypen, versie 1.0 (BIJ12, 11 juni 2026): de website van BIJ12 schrijft
+	// bij N10 en N11 schraalgraslanden, het document schraallanden; hier het document. N00 en de komma in N01 zijn op 15 september 2026 gelijkgetrokken.
+	attribute<String> name: ['Nog om te vormen naar natuur'
+								, 'Grootschalige, dynamische natuur'
 								, 'Rivieren' //
 								, 'Beken en bronnen' //
 								, 'Stilstaande wateren' //
@@ -157,9 +171,12 @@ unit<UInt8> NatuurType : NrOfRows = 18
 								, 'Cultuurhistorische bossen'
 							];
 	attribute<String> Label := code + ' ' + name;
-	
-	attribute<bool>   IsExogeenOpTeLeggen_Natuur : [TRUE , FALSE, FALSE, FALSE, FALSE , TRUE , TRUE , TRUE , TRUE , TRUE , TRUE , TRUE , TRUE , TRUE , TRUE , TRUE , TRUE , TRUE];
-	attribute<bool>   IsExogeenOpTeLeggen_Water  : [FALSE, TRUE ,  TRUE, TRUE , FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE];
-	
+
+	attribute<Bool>   IsNat   := code == 'N01' || code == 'N02' || code == 'N03' || code == 'N04' || code == 'N05' || code == 'N06' || code == 'N09' || code == 'N10' || code == 'N13' || code == 'N14'
+	, Descr = "Natte natuur op het niveau van de hoofdgroep: water, moeras, veen, vochtige heide, nat en vochtig schraalland, weidevogelgrasland en vochtig bos. Het voorstel uit het resultatenrapport 1.0 aan team natuur; op beheertype geldt de uitzondering N01.04, zie INL_Beheertype/IsNat.";
+	attribute<Bool>   IsDroog := code == 'N07' || code == 'N08' || code == 'N11' || code == 'N12' || code == 'N15' || code == 'N16' || code == 'N17'
+	, Descr = "Droge natuur op het niveau van de hoofdgroep. N00 is nat noch droog.";
+	attribute<String> NatDroog := IsNat ? 'nat' : IsDroog ? 'droog' : '';
+
 	container V := for_each_nedv(AsItemName(name), 'value('+string(id(.))+', ..)', void, .);
 }

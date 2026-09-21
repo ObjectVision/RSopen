@@ -11,13 +11,13 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-container Grondgebruik : using = "SourceData/Grondgebruik"
+container Grondgebruik : using = "/SourceData/Grondgebruik"
 {
 	container Verandering
 	{
 		parameter<string> Zichtjaar_name := ThisYear/Zichtjaar_name;
-
-		unit<UInt32> Regio := SourceData/RegioIndelingen/Provincie/StudyArea;
+		
+		unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
 		
 		unit<UInt8> VeranderingK := combine_uint8(Classifications/Grondgebruik/CBSKlasse/Aggr2, /Classifications/Actor/Sector)
 		{
@@ -35,14 +35,14 @@ container Grondgebruik : using = "SourceData/Grondgebruik"
 			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
 		}
 		
-		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr2>       Basisjaar   (AdminDomain) := Classifications/Grondgebruik/CBSKlasse/Aggr2_rel[/BaseData/StartState/Grondgebruik/Per_AdminDomain/gg_CBS];
+		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr2>       Basisjaar   (AdminDomain) := Classifications/Grondgebruik/CBSKlasse/Aggr2_rel[/BaseData/StartState/Bodemstatistiek/gg_CBS];
 		attribute<Classifications/Actor/Sector>                       Zichtjaar   (AdminDomain) := Classifications/Actor/Sector/xSubsector/Sector_rel[Stand/SubSector_rel];
 		
 		attribute<UInt8>        LU_Basisjaar (rdc_25m) := uint8(basisjaar) + 1b;
 		attribute<UInt8>        LU_Y2050     (rdc_25m) := (uint8(Zichtjaar) + 1b)  * 10b;
 		attribute<VeranderingK> LU_Mutatie   (rdc_25m) := rlookup(LU_Basisjaar + LU_Y2050, VeranderingK/TransCode);
 		
-		container Per_NL0 := 
+		container Per_NL0 :=
 			for_each_nedv(
 				VeranderingK/name
 				,'sum_uint32(LU_Mutatie == VeranderingK/V/'+VeranderingK/name+')[float32] * AdminDomain/NrHaPerCell'
@@ -55,48 +55,164 @@ container Grondgebruik : using = "SourceData/Grondgebruik"
 		container Per_Regio := 
 			for_each_nedv(
 				VeranderingK/name
-				,'sum_uint32(LU_Mutatie == VeranderingK/V/'+VeranderingK/name+', Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell'
+				,'sum_uint32(LU_Mutatie == VeranderingK/V/'+VeranderingK/name+', Regio/Per_AdminDomain_Fijn)[float32] * AdminDomain/NrHaPerCell'
 				, Regio
 				, ha
 			);
 			
-		attribute<LU_ModelType> LU_MT_Basisjaar          (AdminDomain) := ThisCasus/Basisjaar/Landgebruikskaart/Result_SA;
-		attribute<LU_ModelType> LU_MT_Zichtjaar          (AdminDomain) := Landgebruikskaart/Result_SA;
-		
-		attribute<Sector> LU_Sector_Basisjaar          (AdminDomain) := LU_ModelType/Sector_rel[LU_MT_Basisjaar];
-		attribute<Sector> LU_Sector_Zichtjaar          (AdminDomain) := LU_ModelType/Sector_rel[LU_MT_Zichtjaar];
+		attribute</Classifications/Grondgebruik/LU_NL2120> LU_MT_Basisjaar (AdminDomain) := ThisCasus/Basisjaar/LandgebruikskaartNL2120/Write_Result_SA;
+		attribute</Classifications/Grondgebruik/LU_NL2120> LU_MT_Zichtjaar (AdminDomain) := LandgebruikskaartNL2120/Write_Result_SA;
+		// LU_Sector_Basisjaar en LU_Sector_Zichtjaar stonden hier en hadden nul lezers; met #803 verwijderd.
 		
 		attribute<Bool> Sector_rel_Verstedelijking                  (AdminDomain) := /Classifications/Actor/Sector/IsStedelijk[Sector_rel];	
-		attribute<Bool> Sector_rel_Verstedelijking_Buitenstedelijk  (AdminDomain) := !/SourceData/RegioIndelingen/Bevolkingskern_2011/Is_BBG_AdminDomain ? Sector_rel_Verstedelijking : false;
+		attribute<Bool> Sector_rel_Verstedelijking_Buitenstedelijk  (AdminDomain) := !/BaseData/Omgeving/UrbanContour ? Sector_rel_Verstedelijking : false
+		, Descr = "Verstedelijking buiten bestaand bebouwd gebied, de teller van het buitenstedelijke aandeel. Leest dezelfde begrenzing als de zeef en de trede, de eigen afleiding met peiljaar
+					ModelParameters/BegrenzingBebouwdGebied_jaar (#749); de CBS-bevolkingskernen van 2011 zijn vijftien jaar ouder dan het basisjaar, zodat alles wat tussen 2011 en 2022 is gebouwd daar als
+					buitenstedelijk zou tellen.";
 		
 		attribute<bool> Verstedelijking                             (AdminDomain) := Sector_rel_Verstedelijking_Buitenstedelijk
+		, Descr = "Verstedelijking buiten bestaand bebouwd gebied, in hectares. Leest via Sector_rel de stand en niet de landgebruikskaart, en is daarmee ongevoelig voor de maskering die #766 beschrijft. Dat
+					de drie arealenindicatoren in deze container uit verschillende bronnen lezen is een keuze per indicator (#766): hier de stand, bij NieuweNatuur de kaart, bij WaterbergingVeen weer de stand.
+					De vruchtbare-grondvarianten van alle drie lezen wel de kaart, want zij snijden op VerdwenenVruchtbareLandbouw, en de vraag of de cel landbouw was en het niet meer is, is precies wat de
+					kaart bijhoudt."
 		{
-			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain);
-			parameter<ha> Per_NL := sum(float32(.) * AdminDomain/NrHaPerCell);
+			attribute<ha> Per_Regio (Regio) := sum(float32(Bron/Verstedelijking) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
+			parameter<ha> Per_NL    := sum(float32(Bron/Verstedelijking) * AdminDomain/NrHaPerCell);
 		}
 		
 		attribute</SourceData/Grondgebruik/ABCD/ABCD_subK> VerstedelijkingInABCD (AdminDomain) := (/SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m[uint8] / uint8(Sector_rel_Verstedelijking_Buitenstedelijk))[/SourceData/Grondgebruik/ABCD/ABCD_subK];
 		
-		attribute<bool> VerstedelijkingOpVruchtbareLandbouwgronden (AdminDomain) := VerstedelijkingInABCD == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A
+		attribute<bool> VerstedelijkingOpVruchtbareLandbouwgronden (AdminDomain) := VerdwenenVruchtbareLandbouw && VerstedelijkingInABCD == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A
 		{
-			attribute<ha> Per_Regio (Regio) := sum(float32(.) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain);
-			parameter<ha> Per_NL := sum(float32(.) * AdminDomain/NrHaPerCell);
-			parameter<float32> TovTotaal := Per_NL[float32] / sum(float32(VerstedelijkingInABCD) * AdminDomain/NrHaPerCell);
+			attribute<ha>      Per_Regio (Regio) := sum(float32(Bron/VerstedelijkingOpVruchtbareLandbouwgronden) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
+			parameter<ha>      Per_NL    := sum(float32(Bron/VerstedelijkingOpVruchtbareLandbouwgronden) * AdminDomain/NrHaPerCell);
+			parameter<float32> TovTotaal := Per_NL[float32] / Verstedelijking/Per_NL[float32], Descr = "Aandeel van de verstedelijking dat op vruchtbare landbouwgrond terechtkomt. Sinds ObjectVision/RSopen#634 eist de teller dat de cel ook echt vruchtbare landbouwgrond was en die functie verliest, gelijk aan de verlieskant VerdwenenVruchtbareLandbouw. Zonder die eis telden ook cellen mee die al geen landbouw waren, en overschreden de drie bestemmingsindicatoren samen het totale verlies.";
+		}
+
+		// Natuur volgens de landgebruikskaart, dus zowel gealloceerde als exogeen opgelegde natuur.
+		attribute<bool> Natuur_Basisjaar (AdminDomain) := /Classifications/Grondgebruik/LU_NL2120/IsNatuur[LU_MT_Basisjaar];
+		attribute<bool> Natuur_Zichtjaar (AdminDomain) := /Classifications/Grondgebruik/LU_NL2120/IsNatuur[LU_MT_Zichtjaar]
+		, Descr = "Natuur volgens de landgebruikskaart. Sinds #803 op de NL2120-kaart, en daarmee op alle natuurbeheertypen in plaats van op de ene klasse Natuur_Totaal die LU_ModelType kende. Dat verbreedt de vlag met opzet: de kaart weet nu welk type natuur er ligt.";
+		
+		// Cellen die in het zichtjaar natuur zijn en dat in het basisjaar niet waren.
+		attribute<bool> NieuweNatuur (AdminDomain) := Natuur_Zichtjaar && !Natuur_Basisjaar
+		, Descr = "Cellen die in het zichtjaar natuur zijn en dat in het basisjaar niet waren. Leest de kaart en niet de stand, anders dan WaterbergingVeen hieronder (#766): natuur is geen gealloceerde sector,
+					nieuwe natuur komt uitsluitend uit VariantData/ExogeenOpleggen, die in de switch van de landgebruikskaart de tweede case heeft, meteen na geen data, dus er is geen case die haar kan maskeren
+					en geen stand om in plaats van de kaart te lezen. Wat de kaart wel afsnijdt is het deel van de levering binnen bestaand bebouwd gebied, want ExogeenOpleggen/MagOpleggen laat dat vervallen
+					(#641); hoeveel dat is telt ExogeenOpleggen/Opp_GespaardInBebouwdGebied."
+		{
+			attribute<ha> Per_Regio (Regio) := sum(float32(Bron/NieuweNatuur) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
+			parameter<ha> Per_NL            := sum(float32(Bron/NieuweNatuur) * AdminDomain/NrHaPerCell);
+		}
+		
+		// Cellen die in het basisjaar natuur waren en dat in het zichtjaar niet meer zijn.
+		attribute<bool> VerdwenenNatuur (AdminDomain) := Natuur_Basisjaar && !Natuur_Zichtjaar
+		, Descr = "De tegenhanger van NieuweNatuur en de evenknie van VerdwenenLandbouw. Sinds ObjectVision/RSopen#652 legt het model bestaande natuur niet meer exogeen op in de NbS-varianten, zodat de allocatie er terecht mag waar geen restrictie op zit. Deze indicator maakt zichtbaar wat dat kost."
+		{
+			attribute<ha> Per_Regio (Regio) := sum(float32(Bron/VerdwenenNatuur) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
+			parameter<ha> Per_NL            := sum(float32(Bron/VerdwenenNatuur) * AdminDomain/NrHaPerCell);
+		}
+
+		attribute</SourceData/Grondgebruik/ABCD/ABCD_subK> NieuweNatuurInABCD (AdminDomain) := (/SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m[uint8] / uint8(NieuweNatuur))[/SourceData/Grondgebruik/ABCD/ABCD_subK];
+		
+		attribute<bool> NieuweNatuurOpVruchtbareLandbouwgronden (AdminDomain) := VerdwenenVruchtbareLandbouw && NieuweNatuurInABCD == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A
+		{
+			attribute<ha>      Per_Regio (Regio) := sum(float32(Bron/NieuweNatuurOpVruchtbareLandbouwgronden) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
+			parameter<ha>      Per_NL            := sum(float32(Bron/NieuweNatuurOpVruchtbareLandbouwgronden) * AdminDomain/NrHaPerCell);
+			parameter<float32> TovTotaal         := Per_NL[float32] / NieuweNatuur/Per_NL[float32], Descr = "Aandeel van de nieuwe natuur dat op vruchtbare landbouwgrond terechtkomt. Zie de toelichting bij VerstedelijkingOpVruchtbareLandbouwgronden/TovTotaal.";
+		}
+
+		// De waterbergingsector, in NL2120 de waterberging in het veenweidegebied.
+		parameter<Sector> Waterberging_Sector := rlookup(lowercase('Waterberging'), lowercase(/Classifications/Actor/Sector/name)), Descr = "Opgezocht in plaats van rechtstreeks naar Sector/V/Waterberging verwezen: de unit Sector wordt opgebouwd uit de actieve regels in ModelParameters/SectorAllocRegio, en staat waterberging uit, dan bestaat die sector niet en geeft een rechtstreekse verwijzing een parsefout. Nu is de uitkomst dan null en zijn de indicatoren hieronder overal false.";
+
+		attribute<bool> WaterbergingVeen (AdminDomain) := Sector_rel == Waterberging_Sector
+		, Descr = "Waar heeft het model waterberging gealloceerd? Leest de stand en niet de landgebruikskaart, net als Verstedelijking hierboven (#766). Waterberging is de enige gealloceerde sector zonder
+					eigen case in de switch van Templates/Indicatoren/Landgebruikskaart: wonen, werken en verblijfsrecreatie komen daar langs de dominantieregel op de kaart, waterberging hangt aan de generieke
+					allocatiecase achter de afscherming van de oplegging, van water en van bestaand bebouwd gebied, en alles wat daarvoor wint maskeert de gealloceerde klasse; een vintageverschil tussen stand
+					en basisdata kon daardoor als een grote sprong in de indicator verschijnen. Op de stand tellen deze indicator en de bergingscapaciteit dezelfde cellen. Het water van veenbouwsteen 9a en 9b
+					wordt niet opgelegd maar aan de sector Waterberging gelaten (#664), dus dat telt hier alleen mee waar die sector het alloceert."
+		{
+			attribute<ha> Per_Regio (Regio) := sum(float32(Bron/WaterbergingVeen) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
+			parameter<ha> Per_NL            := sum(float32(Bron/WaterbergingVeen) * AdminDomain/NrHaPerCell);
+		}
+		
+		attribute</SourceData/Grondgebruik/ABCD/ABCD_subK> WaterbergingVeenInABCD (AdminDomain) := (/SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m[uint8] / uint8(WaterbergingVeen))[/SourceData/Grondgebruik/ABCD/ABCD_subK];
+		
+		attribute<bool> WaterbergingVeenOpVruchtbareLandbouwgronden (AdminDomain) := VerdwenenVruchtbareLandbouw && WaterbergingVeenInABCD == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A
+		{
+			attribute<ha>      Per_Regio (Regio) := sum(float32(Bron/WaterbergingVeenOpVruchtbareLandbouwgronden) * AdminDomain/NrHaPerCell, Regio/Per_AdminDomain_Fijn);
+			parameter<ha>      Per_NL            := sum(float32(Bron/WaterbergingVeenOpVruchtbareLandbouwgronden) * AdminDomain/NrHaPerCell);
+			parameter<float32> TovTotaal         := Per_NL[float32] / WaterbergingVeen/Per_NL[float32], Descr = "Aandeel van de waterberging dat op vruchtbare landbouwgrond terechtkomt. Zie de toelichting bij VerstedelijkingOpVruchtbareLandbouwgronden/TovTotaal.";
 		}
 
 		// Aantal cellen landbouwgrond dat verdwijnt door iets tussen 2120 en basisjaar
-		attribute<bool> VerdwenenLandbouw (AdminDomain) := LU_ModelType/IsLandbouw[LU_MT_Basisjaar] &&  NOT(LU_ModelType/IsLandbouw)[LU_MT_Zichtjaar], StorageName = "=replace(StorageStr, '@V@', 'VerdwenenLandbouw')", StorageType = "tif";
+		attribute<bool> VerdwenenLandbouw (AdminDomain) := /Classifications/Grondgebruik/LU_NL2120/IsLandbouw[LU_MT_Basisjaar] && !/Classifications/Grondgebruik/LU_NL2120/IsLandbouw[LU_MT_Zichtjaar];
 		// Aantal cellen vruchtbare landbouwgrond dat verdwijnt door iets tussen 2120 en basisjaar
-		attribute<bool> VerdwenenVruchtbareLandbouw (AdminDomain) := VerdwenenLandbouw ? SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A : FALSE, StorageName = "=replace(StorageStr, '@V@', 'VerdwenenVruchtbareLandbouw')", StorageType = "tif";
+		attribute<bool> VerdwenenVruchtbareLandbouw (AdminDomain) := VerdwenenLandbouw ? /SourceData/Grondgebruik/ABCD/ABCD_sub_rel_25m == /SourceData/Grondgebruik/ABCD/ABCD_subK/V/A : FALSE;
 
 		parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+
+		// #824: de negen kaarten hierboven worden hier geschreven, als UInt8 met gdalwrite.grid, om twee redenen.
+		// Een StorageName op een kaart met Per_Regio en Per_NL eronder laat de opslag die subitems tot haar inhoud rekenen
+		// (waarschuwing 'Domain should be 2-dimensional'), en hun kolommen vallen dan zonder foutregel uit de tabel. En de
+		// tif-opslag zet de georeferentie van een bool alleen in een losse .tfw, die GDAL in een map van meer dan 1000
+		// bestanden niet vindt; Lees las die kaarten dan als nullen. Zelfde bestandsnamen als voorheen, waarden 0 en 1.
+		container Schrijf
+		{
+			attribute<UInt8> Verstedelijking                             (AdminDomain) := UInt8(Verandering/Verstedelijking), StorageName = "=replace(StorageStr, '@V@', 'Verstedelijking')", StorageType = "gdalwrite.grid";
+			attribute<UInt8> VerstedelijkingOpVruchtbareLandbouwgronden  (AdminDomain) := UInt8(Verandering/VerstedelijkingOpVruchtbareLandbouwgronden), StorageName = "=replace(StorageStr, '@V@', 'VerstedelijkingOpVruchtbareLandbouwgronden')", StorageType = "gdalwrite.grid";
+			attribute<UInt8> NieuweNatuur                                (AdminDomain) := UInt8(Verandering/NieuweNatuur), StorageName = "=replace(StorageStr, '@V@', 'NieuweNatuur')", StorageType = "gdalwrite.grid";
+			attribute<UInt8> VerdwenenNatuur                             (AdminDomain) := UInt8(Verandering/VerdwenenNatuur), StorageName = "=replace(StorageStr, '@V@', 'VerdwenenNatuur')", StorageType = "gdalwrite.grid";
+			attribute<UInt8> NieuweNatuurOpVruchtbareLandbouwgronden     (AdminDomain) := UInt8(Verandering/NieuweNatuurOpVruchtbareLandbouwgronden), StorageName = "=replace(StorageStr, '@V@', 'NieuweNatuurOpVruchtbareLandbouwgronden')", StorageType = "gdalwrite.grid";
+			attribute<UInt8> WaterbergingVeen                            (AdminDomain) := UInt8(Verandering/WaterbergingVeen), StorageName = "=replace(StorageStr, '@V@', 'WaterbergingVeen')", StorageType = "gdalwrite.grid";
+			attribute<UInt8> WaterbergingVeenOpVruchtbareLandbouwgronden (AdminDomain) := UInt8(Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden), StorageName = "=replace(StorageStr, '@V@', 'WaterbergingVeenOpVruchtbareLandbouwgronden')", StorageType = "gdalwrite.grid";
+			attribute<UInt8> VerdwenenLandbouw                           (AdminDomain) := UInt8(Verandering/VerdwenenLandbouw), StorageName = "=replace(StorageStr, '@V@', 'VerdwenenLandbouw')", StorageType = "gdalwrite.grid";
+			attribute<UInt8> VerdwenenVruchtbareLandbouw                 (AdminDomain) := UInt8(Verandering/VerdwenenVruchtbareLandbouw), StorageName = "=replace(StorageStr, '@V@', 'VerdwenenVruchtbareLandbouw')", StorageType = "gdalwrite.grid";
+		}
+		// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+		container Lees
+		: Descr = "De kaarten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Een bool staat op schijf als byte 0 of 1 en wordt als UInt8 gelezen."
+		{
+			attribute<UInt8> Verstedelijking_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'Verstedelijking')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> VerstedelijkingOpVruchtbareLandbouwgronden_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'VerstedelijkingOpVruchtbareLandbouwgronden')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> NieuweNatuur_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'NieuweNatuur')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> VerdwenenNatuur_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'VerdwenenNatuur')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> NieuweNatuurOpVruchtbareLandbouwgronden_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'NieuweNatuurOpVruchtbareLandbouwgronden')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> WaterbergingVeen_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'WaterbergingVeen')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> WaterbergingVeenOpVruchtbareLandbouwgronden_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'WaterbergingVeenOpVruchtbareLandbouwgronden')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> VerdwenenLandbouw_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'VerdwenenLandbouw')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<UInt8> VerdwenenVruchtbareLandbouw_u8 (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', 'VerdwenenVruchtbareLandbouw')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Bool> Verstedelijking                             (AdminDomain) := Verstedelijking_u8 == 1b;
+			attribute<Bool> VerstedelijkingOpVruchtbareLandbouwgronden  (AdminDomain) := VerstedelijkingOpVruchtbareLandbouwgronden_u8 == 1b;
+			attribute<Bool> NieuweNatuur                                (AdminDomain) := NieuweNatuur_u8 == 1b;
+			attribute<Bool> VerdwenenNatuur                             (AdminDomain) := VerdwenenNatuur_u8 == 1b;
+			attribute<Bool> NieuweNatuurOpVruchtbareLandbouwgronden     (AdminDomain) := NieuweNatuurOpVruchtbareLandbouwgronden_u8 == 1b;
+			attribute<Bool> WaterbergingVeen                            (AdminDomain) := WaterbergingVeen_u8 == 1b;
+			attribute<Bool> WaterbergingVeenOpVruchtbareLandbouwgronden (AdminDomain) := WaterbergingVeenOpVruchtbareLandbouwgronden_u8 == 1b;
+			attribute<Bool> VerdwenenLandbouw                           (AdminDomain) := VerdwenenLandbouw_u8 == 1b;
+			attribute<Bool> VerdwenenVruchtbareLandbouw                 (AdminDomain) := VerdwenenVruchtbareLandbouw_u8 == 1b;
+		}
+		container Live
+		{
+			attribute<Bool> Verstedelijking                             (AdminDomain) := Verandering/Verstedelijking;
+			attribute<Bool> VerstedelijkingOpVruchtbareLandbouwgronden  (AdminDomain) := Verandering/VerstedelijkingOpVruchtbareLandbouwgronden;
+			attribute<Bool> NieuweNatuur                                (AdminDomain) := Verandering/NieuweNatuur;
+			attribute<Bool> VerdwenenNatuur                             (AdminDomain) := Verandering/VerdwenenNatuur;
+			attribute<Bool> NieuweNatuurOpVruchtbareLandbouwgronden     (AdminDomain) := Verandering/NieuweNatuurOpVruchtbareLandbouwgronden;
+			attribute<Bool> WaterbergingVeen                            (AdminDomain) := Verandering/WaterbergingVeen;
+			attribute<Bool> WaterbergingVeenOpVruchtbareLandbouwgronden (AdminDomain) := Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden;
+			attribute<Bool> VerdwenenLandbouw                           (AdminDomain) := Verandering/VerdwenenLandbouw;
+			attribute<Bool> VerdwenenVruchtbareLandbouw                 (AdminDomain) := Verandering/VerdwenenVruchtbareLandbouw;
+		}
+		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+		, Descr = "Waar Per_Regio en Per_NL van de kaarten hierboven en de twee landbouwkolommen van de indicatorentabel hun cellen vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
 
 
 		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> Groen_Basisjaar  (AdminDomain) := ThisCasus/Basisjaar/Grondgebruik/Groen;
 		attribute<Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> Groen_Zichtjaar  (AdminDomain) := switch(
 																			case(LU_MT_Basisjaar == LU_MT_Zichtjaar, Groen_Basisjaar)
-																			, case(LU_ModelType/IsLandbouw[LU_MT_Zichtjaar], Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/overige_agrarisch_gebruik)
-																			, case(LU_MT_Zichtjaar == LU_ModelType/V/Natuur_Totaal, Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/Natuur)
+																			, case(/Classifications/Grondgebruik/LU_NL2120/IsLandbouw[LU_MT_Zichtjaar], Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/overige_agrarisch_gebruik)
+																			, case(/Classifications/Grondgebruik/LU_NL2120/IsNatuur[LU_MT_Zichtjaar], Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/Natuur)
 																			, null_b
 																			);
 	}

@@ -1,3 +1,9 @@
+REM LET OP: dit script kent het lenen van een allocatiestand NIET. Een variant die in de kolom
+REM StandVanVariant van VariantParameters/VariantK.dms naar een andere variant wijst hoeft haar
+REM allocatie niet te draaien, maar dit script alloceert haar toch. Gebruik voor een reeks
+REM batch/Run2120.ps1; die slaat een lenende variant over en toetst bovendien of de aanname
+REM eronder klopt. Zie de skill rs-draaien.
+
 REM ================================================================================
 REM
 REM Dit is RSOpen, de open source versie van het model RuimteScanner.
@@ -9,32 +15,37 @@ REM Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
 REM Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 REM Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 REM
-REM Roept de allocatie per zichtjaar aan voor een gegeven scenario/variant combinatie. Afhankelijk van de
-REM AlleenEindjaar-vlag worden tussenjaren (2030, 2040) overgeslagen.
+REM Roept de allocatie aan voor een gegeven scenario/variant combinatie.
+REM
+REM Er staat hier bewust geen enkel jaartal en ook geen lijst zichtjaren. De batch vraagt om
+REM Generate_LastZichtjaar en de configuratie zoekt het laatste zichtjaar zelf op met last(), zodat de set
+REM zichtjaren volledig uit Model_FinalYear en AlleenEindjaar volgt (pbl-nl/model-RSopen#37).
+REM
+REM Een aanroep volstaat omdat RunAll.cmd StandAllocatieOntkoppeld op FALSE zet: de stand blijft dan in het
+REM geheugen en de padafhankelijkheid trekt de eerdere zichtjaren binnen hetzelfde proces mee. De stand-tifs
+REM worden daarbij nog steeds geschreven (zie WriteStand in Templates/Allocatie/Zichtjaar_T.dms), dus de
+REM indicatoren en de GUI kunnen er daarna gewoon mee verder.
 REM
 REM ================================================================================
 
-if "%AlleenEindjaar%" EQU "TRUE" goto runLastYear
-
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Zichtjaren/Y2030/Impl/Generate
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Zichtjaren/Y2040/Impl/Generate
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Impl/Generate_LastZichtjaar
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Basisjaar/Landgebruikskaart/Result_SA
-REM if %ErrorLevel% NEQ 0 goto ErrorEnd
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Y2030/Landgebruikskaart/Result_SA
-REM if %ErrorLevel% NEQ 0 goto ErrorEnd
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Y2040/Landgebruikskaart/Result_SA
-REM if %ErrorLevel% NEQ 0 goto ErrorEnd
-
-
-:runLastYear
-
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms Allocatie/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Zichtjaren/Y2050/Impl/Generate
+REM De indicatoren draaien in een eigen proces met StandAllocatieOntkoppeld op TRUE, zodat ze de stand uit de
+REM zojuist geschreven tifs lezen. Zonder die schakelaar zou dit tweede proces de hele allocatie opnieuw
+REM uitrekenen, want GeoDMS bewaart niets tussen processen. De aanroep stond hier tot #714 uitgecommentarieerd
+REM en wees bovendien naar /Indicatoren/Export, een pad dat niet bestaat: het casusniveau ontbrak en de
+REM container Export hangt onder Zichtjaren.
+REM
+REM Generate_Indicatoren schrijft precies een zichtjaar, standaard het laatste. Wie ook de tussenliggende
+REM zichtjaren wil wegschrijven zet de omgevingsvariabele ExportZichtjaar en roept dit per jaar aan; dat doet
+REM batch\RunIndicatoren.ps1, dat over varianten en zichtjaren heen loopt.
+set StandAllocatieOntkoppeld=TRUE
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Zichtjaren/Export/Generate_Indicatoren
 if %ErrorLevel% NEQ 0 goto ErrorEnd
+set StandAllocatieOntkoppeld=FALSE
 
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/Export/Generate_Indicatoren
+REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /Indicatoren/%RSL_SCENARIO_NAME%_%RSL_VARIANT_NAME%/Basisjaar/Landgebruikskaart/Result_SA
 REM if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 exit /b

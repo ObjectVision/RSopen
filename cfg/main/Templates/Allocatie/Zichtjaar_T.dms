@@ -21,33 +21,130 @@ Template Zichtjaar_T
 	container StateVoorAllocatie0;
 	container Impl0;
 	//
-	parameter<YearRange> Zichtjaar_value := rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/YearRange_rel);
+	parameter<YearRange> Zichtjaar_value     := rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/YearRange_rel);
+	parameter<Bool>      IsSkeletonZichtjaar := /ModelParameters/Skeleton/Actief && Zichtjaar_value >= /ModelParameters/Skeleton/VanafZichtjaar
+	, Descr = "Draait dit zichtjaar in de verkorte opzet? Zo ja, dan bepaalt de kolom ItersNaXZichtjaar per sectorallocregio of hij overgeslagen wordt en met hoeveel iteraties hij anders draait; zie
+				ModelParameters/Skeleton. Deze voorwaarde komt alleen uit de configuratie en Time/Zichtjaar en niet uit een berekende grootheid zoals de restclaim, want de boomvorm van een zichtjaar hangt
+				ervan af en een voorwaarde die eerst gerekend moet worden maakt het uitklappen van de treeview in de GUI even duur als een run (dezelfde reden dat het dynamische stopcriterium in Iter_T
+				uitstaat).";
 	parameter<Jaar>      AantalJarenWerkGroeiAanpassing := /ModelParameters/AlleenEindjaar && Zichtjaar_value > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt
 														? ModelParameters/Werken/Groeifactor/Groeifactor_WanneerToepassen * (ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt - rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel))[Jaar] //ook hier de 0.5-factor, anders verdunt AlleenEindjaar ~2x sterker dan sequentieel (#591)
 														: Zichtjaar_value > ModelParameters/Werken/Groeifactor/JaarVanafWaarGeenWerkdichtheidMeerAangepastWordt 
 															? 0[jaar] 
 															: ModelParameters/Werken/Groeifactor/Groeifactor_WanneerToepassen * (Zichtjaar_value - rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel))[Jaar];
 	
+	container TredeDynamischeUrbanContour
+	: Descr = "De trede-ladders van dit zichtjaar, opgebouwd op een bestaand bebouwd gebied dat meegroeit met wat het model in eerdere zichtjaren heeft gebouwd (#749). Hier en niet in VariantData, want de
+				UrbanContour van 2060 hangt af van wat er in 2050 is gealloceerd en VariantData is op het basisjaar geankerd; dit is de enige plek waar de vorige zichtjaarstand beschikbaar is, via
+				StateVoorAllocatie0. De ladder zelf, de unit met zijn treden, blijft gedeeld in VariantParameters/Tredes; hier gebeurt per zichtjaar alleen de toewijzing van cellen aan klassen en de ArgMin
+				daarover."
+	{
+		parameter<Bool> IsEersteZichtjaar := lowercase(name) == lowercase(first(Time/Zichtjaar/name))
+		, Descr = "In het eerste zichtjaar heeft het model nog niets gebouwd, en draagt StateVoorAllocatie0 bovendien geen SubSector_rel omdat het dan de basisjaarstand is en niet de uitkomst van een vorig zichtjaar.";
+
+		attribute<Bool> IsModelNieuwbouw (CompactedAdminDomain) := =IsEersteZichtjaar
+					? 'const(FALSE, CompactedAdminDomain)'
+					: 'IsDefined(StateVoorAllocatie0/SubSector_rel) && /Classifications/Actor/Sector/xSubsector/TeltAlsBebouwdGebied[StateVoorAllocatie0/SubSector_rel]'
+		, Descr = "Cellen die het model in een eerder zichtjaar heeft gealloceerd voor wonen of werken. SubSector_rel is eerste-wint en wordt over de zichtjaren heen nooit gewist, dus dit is de cumulatieve modelnieuwbouw tot en met het vorige zichtjaar.";
+
+		attribute<Bool> IsModelNieuwbouw_AdminDomain (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, IsModelNieuwbouw, FALSE);
+
+		attribute<Bool> Aangroei (AdminDomain) := potential(float32(IsModelNieuwbouw_AdminDomain), /Geography/Distmatrices_25m/pot100m/Flat2) > 0f
+		, Descr = "De schijf van 100 meter rond die nieuwbouw. Honderd meter is een AllocDomain-cel, dus dit is precies 'direct aangrenzend op de resolutie waarop gealloceerd wordt'. Ruimer werkt niet: een schijf van 500 meter rond het bestaande bebouwde gebied voegt al 862.700 hectare toe, bijna tweemaal dat gebied zelf, en dan betekent binnenstedelijk niets meer.";
+
+		attribute<Bool> UrbanContour_AdminDomain (AdminDomain) := /BaseData/Omgeving/UrbanContour || Aangroei;
+		attribute<Bool> BinnenUrbanContour       (AdminDomain) := UrbanContour_AdminDomain;
+		attribute<Bool> BuitenUrbanContour       (AdminDomain) := !BinnenUrbanContour;
+
+		container src := ThisVariantData/Trede/src
+		, Descr = "De trede-bron van dit zichtjaar: alles geerfd van VariantData, met alleen de twee UrbanContour-vlaggen vervangen. Meer hoeft er niet overschreven te worden, want geen enkel ander item in die bron leest UrbanContour; de eigendom-as leest hem wel maar via BaseData en niet via deze container, en volgt de aangroei dus niet."
+		{
+			attribute<Bool> BinnenUrbanContour (AdminDomain) := ../BinnenUrbanContour;
+			attribute<Bool> BuitenUrbanContour (AdminDomain) := ../BuitenUrbanContour;
+		}
+
+		container src_ZonderPlancapaciteit := ThisVariantData/Trede/src_ZonderPlancapaciteit
+		, Descr = "Dezelfde ingreep op de bron waarin de plancapaciteit is platgelegd (#739), zodat de twee vervaldatums onafhankelijk van elkaar werken."
+		{
+			attribute<Bool> BinnenUrbanContour (AdminDomain) := ../BinnenUrbanContour;
+			attribute<Bool> BuitenUrbanContour (AdminDomain) := ../BuitenUrbanContour;
+		}
+
+
+		container src_ZonderEigendom := ThisVariantData/Trede/src_ZonderEigendom
+		, Descr = "Dezelfde UrbanContour-ingreep op de bron waarin de eigendom-as is platgelegd (#749)."
+		{
+			attribute<Bool> BinnenUrbanContour (AdminDomain) := ../BinnenUrbanContour;
+			attribute<Bool> BuitenUrbanContour (AdminDomain) := ../BuitenUrbanContour;
+		}
+
+		container src_ZonderPlancapaciteitEnEigendom := ThisVariantData/Trede/src_ZonderPlancapaciteitEnEigendom
+		, Descr = "En op de bron waarin beide assen plat zijn."
+		{
+			attribute<Bool> BinnenUrbanContour (AdminDomain) := ../BinnenUrbanContour;
+			attribute<Bool> BuitenUrbanContour (AdminDomain) := ../BuitenUrbanContour;
+		}
+
+		container SectorxSubsectoren :=
+			for_each_ne(
+				Sector/xSubsector/name
+				, 'Templates/VariantData/Trede_T('+string(id(Sector/xSubsector))+'[Sector/xSubsector], src)'
+			);
+
+		container SectorxSubsectoren_ZonderPlancapaciteit :=
+			for_each_ne(
+				Sector/xSubsector/name
+				, 'Templates/VariantData/Trede_T('+string(id(Sector/xSubsector))+'[Sector/xSubsector], src_ZonderPlancapaciteit)'
+			);
+
+		container SectorxSubsectoren_ZonderEigendom :=
+			for_each_ne(
+				Sector/xSubsector/name
+				, 'Templates/VariantData/Trede_T('+string(id(Sector/xSubsector))+'[Sector/xSubsector], src_ZonderEigendom)'
+			);
+
+		container SectorxSubsectoren_ZonderPlancapaciteitEnEigendom :=
+			for_each_ne(
+				Sector/xSubsector/name
+				, 'Templates/VariantData/Trede_T('+string(id(Sector/xSubsector))+'[Sector/xSubsector], src_ZonderPlancapaciteitEnEigendom)'
+			);
+	}
+
 	container StateVoorAllocatie := StateVoorAllocatie0
 	{
-		attribute<bool> NeedsToBeEmptieDueToExogenousDevelopments (CompactedAdminDomain) := ='collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, IsDefined(/VariantData/'+variant_name+'/ExogeenOpleggen/Totaal))';
+		container Landgebruik
+		: Descr = "De stand-administratie landgebruik waarmee dit zichtjaar de allocatie in gaat (#751). In het eerste zichtjaar landt hier de exogene oplegging: elke cel die een beheertype of een landbouwklasse krijgt opgelegd, krijgt dat type in de state, met dit zichtjaar als jaar van verandering. Daarna wordt alleen doorgegeven; de iteratie zet het jaar bij de eerste allocatie van een cel. Dezelfde plek en dezelfde eenmaligheid als het legen van de woningvoorraad in Wonen hieronder."
+		{
+			parameter<Bool>                                          IsEersteZichtjaar := first(lowercase(Time/Zichtjaar/name)) == lowercase(name);
+			parameter<Yr>                                            Jaar              := UInt16(right(name, 4))[Yr];
+			attribute</Classifications/Grondgebruik/LandgebruikType> Exo               (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain
+				, MakeDefined(
+					  /Classifications/Grondgebruik/LandgebruikType/Van_INL[ThisVariantData/ExogeenOpleggen/Beheertype]
+					, /Classifications/Grondgebruik/LandgebruikType/Van_LandbouwType[ThisVariantData/ExogeenOpleggen/LandbouwType_rel]))
+			, Descr = "Wat de oplegging deze cel aan type geeft: het beheertype van de natuur- en waterstroom, anders het landbouwtype van de landbouwstroom, anders niets.";
+			attribute</Classifications/Grondgebruik/LandgebruikType> Type            (CompactedAdminDomain) := = IsEersteZichtjaar ? 'MakeDefined(Exo, StateVoorAllocatie0/Landgebruik/Type)' : 'StateVoorAllocatie0/Landgebruik/Type';
+			attribute<Yr>                                            JaarVerandering (CompactedAdminDomain) := = IsEersteZichtjaar ? 'IsDefined(Exo) ? Jaar : StateVoorAllocatie0/Landgebruik/JaarVerandering' : 'StateVoorAllocatie0/Landgebruik/JaarVerandering';
+		}
+
+		attribute<bool> WordtGesloopt (CompactedAdminDomain) := ='/VariantData/'+variant_name+'/Sloop/Totaal'
+		, Descr = "Wijkt de bestaande bebouwing in deze cel? Een verwijzing en geen eigen som: de vraag wordt beantwoord in VariantData/<variant>/Sloop, waar ook staat hoe sloop zich verhoudt tot opleggen en tot op slot zetten. Hier stond dezelfde expressie los opgeschreven, naast een tweede kopie in Templates/Indicatoren, en de twee heetten net niet hetzelfde.";
 
 		container Wonen := 
 			for_each_nedv(
 				WP2xVSSH/name
 				, (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //om te kunnen rekenen zonder wonen als sectorAllocRegio
-					? 'NeedsToBeEmptieDueToExogenousDevelopments
+					? 'WordtGesloopt
 						? 0[Woning]
 						: StateVoorAllocatie0/Wonen/'+WP2xVSSH/name
 					: 'StateVoorAllocatie0/Wonen/'+WP2xVSSH/name
 				, CompactedAdminDomain
 				, Woning
-			), Descr = "Exogeen opgelegde gebieden leegmaken."
+			), Descr = "De woningvoorraad waarmee dit zichtjaar de allocatie in gaat. In het eerste zichtjaar worden de cellen uit WordtGesloopt geleegd; daarna houdt de zeef ze leeg, dus het legen hoeft maar een keer."
 		{
 			attribute<Woning>          Totaal        (CompactedAdminDomain) := ='add('+asItemList(WP2xVSSH/name)+')';
 			attribute<m2PandFootprint> Footprint     (CompactedAdminDomain) := = (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
-																					? 'NeedsToBeEmptieDueToExogenousDevelopments ? 0[m2PandFootprint] : StateVoorAllocatie0/Wonen/Footprint'
-																					: 'StateVoorAllocatie0/Wonen/Footprint'; //footprint mee legen met de woningen in exogeen opgelegd gebied (#596)
+																					? 'WordtGesloopt ? 0[m2PandFootprint] : StateVoorAllocatie0/Wonen/Footprint'
+																					: 'StateVoorAllocatie0/Wonen/Footprint'; //footprint mee legen met de woningen in de gesloopte cellen (#596)
 		}
 		
 		container Werken0 := 
@@ -55,8 +152,8 @@ Template Zichtjaar_T
 				Jobs6/name
 				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector) //om te kunnen rekenen zonder werken als sectorAllocRegio
 					? 'const(0[Job], CompactedAdminDomain)'
-					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen; daarna houdt de zeef deze cellen leeg (#596)
-						? 'NeedsToBeEmptieDueToExogenousDevelopments
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //legen alleen in het eerste zichtjaar, conform wonen; daarna houdt de zeef deze cellen leeg (#596)
+						? 'WordtGesloopt
 							? 0[Job]
 							: MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/Groeifactor_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)), 0[job])'
 						: 'MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/Groeifactor_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * AantalJarenWerkGroeiAanpassing)), 0[job])'
@@ -66,51 +163,51 @@ Template Zichtjaar_T
 		
 		container Werken := Werken0, Descr = "uitkomst in job/m2, factor gaat over groei m2/job. Src=job/m2"
 		{
-			attribute<job> Zak_dienstverlening (CompactedAdminDomain) :=
-				= first(lowercase(Time/Zichtjaar/name)) == lowercase(name) && ModelParameters/werken/Thuiswerk_verdikking_ook_op_bestaandekantoren
-					? 'MakeDefined(1f / ((1f / Werken0/Zak_dienstverlening) * (1f + VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+'])), 0[job])'
-					: 'Werken0/Zak_dienstverlening', Descr = "Eenmalig ophoging van het aantal kantoorbanen per cel. Het idee erachter is dat je door verdikking meer mensen/banen in een kantoorgebouw kwijt kunt en je minder nieuwe kantoren hoeft te bouwen. Hierdoor krijg je wellicht al overrealisatie voordat de allocatie begint. Maar je hoeft dus geen nieuwe kantoorruimte te creeren.";
+			attribute<job> Zak_dienstverlening (CompactedAdminDomain) := Werken0/Zak_dienstverlening, Descr = "Ongewijzigd: de bureaudeling verhoogt niet het aantal kantoorbanen per bestaande cel (#668), want het aantal banen is exogeen en de
+						claimvariabele, dus bureaudeling hoort de ruimtevraag van dezelfde banen te verlagen. Die werking loopt langs de dichtheid, zie de kantoor-override in Templates/Densities/DichtheidZichtjaar_T (#590).";
 		}
 
 		container PandFootprint :=
 			for_each_nedv(
 				Jobs6/name
 				, (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
-					? 'NeedsToBeEmptieDueToExogenousDevelopments
+					? 'WordtGesloopt
 						? 0[m2PandFootprint]
 						: StateVoorAllocatie0/PandFootprint/'+Jobs6/name
 					: 'StateVoorAllocatie0/PandFootprint/'+Jobs6/name
 				, CompactedAdminDomain
 				, m2PandFootprint
-			), Descr = "Werk-pandfootprint mee legen met de banen in exogeen opgelegd gebied (#596).";
+			), Descr = "Werk-pandfootprint mee legen met de banen in de gesloopte cellen (#596).";
 
 		container Verblijfsrecreatie :=
 			for_each_nedv(
 				VerblijfsrecreatieK/Subsector_name
 				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector) //om te kunnen rekenen zonder Verblijfsrecreatie als sectorAllocRegio
 					? 'const(0[float32], CompactedAdminDomain)'
-					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen (#596)
-						? 'NeedsToBeEmptieDueToExogenousDevelopments
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //legen alleen in het eerste zichtjaar, conform wonen (#596)
+						? 'WordtGesloopt
 							? 0[float32]
 							: StateVoorAllocatie0/Verblijfsrecreatie/'+VerblijfsrecreatieK/Subsector_name
 						: 'StateVoorAllocatie0/Verblijfsrecreatie/'+VerblijfsrecreatieK/Subsector_name
 				, CompactedAdminDomain
 				, float32
-			), Descr = "Exogeen opgelegde gebieden leegmaken.";
+			), Descr = "Verblijfsrecreatie mee legen in de gesloopte cellen, conform wonen en werken (#596).";
 
 		container Wind
+		: Descr = "Windmolens in dit zichtjaar. Twee dingen kunnen ze wegnemen: de afschrijving op leeftijd en de sloop, net als bij wonen, werken, verblijfsrecreatie en zon; zonder de sloop bleef een turbine staan in een cel waar nieuwe natuur werd opgelegd, telde hij mee als gerealiseerd vermogen in de restclaim en legde hij met zijn werpafstandsbuffer ruimte vast."
 		{
 			attribute<Bool>  MoetWindmolenAfgebrokenWorden (CompactedAdminDomain) := jaartal_ingebruikname_0 + ModelParameters/Wind/WindmolenAfschrijving < UInt16(right(name, 4)), Descr = "Als de jaartal ingebruikname + afschrijving kleiner is dan het zichtjaar, moet de windmolen worden afgebroken";
 			attribute<Yr>    jaartal_ingebruikname_0       (CompactedAdminDomain) := StateVoorAllocatie0/Wind/jaartal_ingebruikname, Descr = "Het jaartal van ingebruikname van de windmolen in het vorige zichtjaar";
-			attribute<Yr>    jaartal_ingebruikname         (CompactedAdminDomain) := ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? (0/0)[Yr] : jaartal_ingebruikname_0, Descr = "Het jaartal van ingebruikname van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
+			attribute<Bool>  WijktVoorSloop                (CompactedAdminDomain) := WordtGesloopt && first(lowercase(Time/Zichtjaar/name)) == lowercase(name), Descr = "Wijkt de turbine voor de sloop? Alleen in het eerste zichtjaar, conform de andere sectoren; daarna houdt de zeef de cel leeg.";
+			attribute<Yr>    jaartal_ingebruikname         (CompactedAdminDomain) := WijktVoorSloop ? (0/0)[Yr] : ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? (0/0)[Yr] : jaartal_ingebruikname_0, Descr = "Het jaartal van ingebruikname van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
 			attribute<MW>    Totaal                        (CompactedAdminDomain) := =NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector) 
-																						? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/StartState/StateBasisjaar/src/Wind/Totaal)'
-																						: 'ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden
+																						? 'WijktVoorSloop ? 0[MW] : collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/StartState/StateBasisjaar/src/Wind/Totaal)'
+																						: 'WijktVoorSloop || ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden
 																							? 0[MW]
 																							: StateVoorAllocatie0/Wind/Totaal', Descr = "Het totaal vermogen aan windmolens in dit zichtjaar, of 0 als de windmolen is afgebroken";
-			attribute<Meter> MaxWerpafstandNom             (CompactedAdminDomain) := ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/MaxWerpafstandNom, Descr = "De max werpafstand van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
-			attribute<Meter> Ashoogte                      (CompactedAdminDomain) := ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/Ashoogte, Descr = "De Ashoogte van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
-			attribute<Meter> Rotordiameter                 (CompactedAdminDomain) := ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/Rotordiameter, Descr = "De Rotordiameter van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
+			attribute<Meter> MaxWerpafstandNom             (CompactedAdminDomain) := WijktVoorSloop || ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/MaxWerpafstandNom, Descr = "De max werpafstand van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
+			attribute<Meter> Ashoogte                      (CompactedAdminDomain) := WijktVoorSloop || ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/Ashoogte, Descr = "De Ashoogte van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
+			attribute<Meter> Rotordiameter                 (CompactedAdminDomain) := WijktVoorSloop || ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector && MoetWindmolenAfgebrokenWorden ? null_f[Meter] : StateVoorAllocatie0/Wind/Rotordiameter, Descr = "De Rotordiameter van de windmolen in dit zichtjaar, of undefined als de windmolen is afgebroken";
 		}
 
 		container Zon := 
@@ -118,29 +215,202 @@ Template Zichtjaar_T
 				ZonK/Subsector_name
 				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasZonSector) //om te kunnen rekenen zonder Zon als sectorAllocRegio
 					? 'const(0[float32], CompactedAdminDomain)'
-					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //exogeen leegmaken alleen in het eerste zichtjaar, conform wonen (#596)
-						? 'NeedsToBeEmptieDueToExogenousDevelopments
+					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //legen alleen in het eerste zichtjaar, conform wonen (#596)
+						? 'WordtGesloopt
 							? 0[float32]
 							: StateVoorAllocatie0/Zon/'+ZonK/Subsector_name
 						: 'StateVoorAllocatie0/Zon/'+ZonK/Subsector_name
 				, CompactedAdminDomain
 				, float32
-			), Descr = "Exogeen opgelegde gebieden leegmaken.";
+			), Descr = "Verblijfsrecreatie mee legen in de gesloopte cellen, conform wonen en werken (#596).";
 
 		
-		//debug
 		container RestClaims
+		: Descr = "Claim, stand voor allocatie en het verschil daartussen, per NVM-regio en per subsector. Waar de restclaim negatief is, was de claim al gehaald voordat er ook maar iets gealloceerd werd, en zegt de claimrealisatie van dit zichtjaar niets over de allocatie. Dat gebeurt als het basisjaar van de claims ouder is dan de waargenomen voorraad. Uitgebreid vanuit twee debugregels, zie #639."
 		{
-			attribute<Float32> Wonen_Claim     (NVM) := = replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/NVM_Wonen/Totaal','@Z@' , Context/ThisZichtjaar_name);
-			attribute<Float32> Wonen_Stand     (NVM) := sum(StateVoorAllocatie/Wonen/Totaal, NVM/Per_CompactedAdminDomain);
-			attribute<Float32> Wonen_RestClaim (NVM) := Wonen_Claim - Wonen_Stand;
+			container Wonen
+			{
+				container Claim :=
+					for_each_nedv(
+						WP2xVSSH/name
+						, replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/NVM_Wonen/'+WP2xVSSH/name, '@Z@', Context/ThisZichtjaar_name)
+						, NVM
+						, float32
+					);
+				container Stand :=
+					for_each_nedv(
+						WP2xVSSH/name
+						, 'sum(StateVoorAllocatie/Wonen/'+WP2xVSSH/name+', NVM/Per_CompactedAdminDomain)'
+						, NVM
+						, float32
+					);
+				container RestClaim :=
+					for_each_nedv(
+						WP2xVSSH/name
+						, 'Claim/'+WP2xVSSH/name+' - Stand/'+WP2xVSSH/name
+						, NVM
+						, float32
+					);
 
-			attribute<Float32> Nijverheid_Claim     (NVM) := = replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/NVM_Werken/Nijverheid','@Z@' , Context/ThisZichtjaar_name);
-			attribute<Float32> Nijverheid_Stand     (NVM) := sum(StateVoorAllocatie/Werken/Nijverheid, NVM/Per_CompactedAdminDomain);
-			attribute<Float32> Nijverheid_RestClaim (NVM) := Nijverheid_Claim - Nijverheid_Stand;
+				attribute<Float32> Totaal_Claim     (NVM) := = replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/NVM_Wonen/Totaal','@Z@' , Context/ThisZichtjaar_name);
+				attribute<Float32> Totaal_Stand     (NVM) := sum(StateVoorAllocatie/Wonen/Totaal, NVM/Per_CompactedAdminDomain);
+				attribute<Float32> Totaal_RestClaim (NVM) := Totaal_Claim - Totaal_Stand;
+
+				parameter<Float32> NrRegiosAlGehaald := sum(float32(Totaal_RestClaim <= 0f)), Descr = "Aantal NVM-regio's waar de claim voor de allocatie al gehaald was.";
+				parameter<Float32> NrRegios          := sum(float32(IsDefined(Totaal_Claim)));
+			}
+
+			container Werken
+			{
+				container Claim :=
+					for_each_nedv(
+						Jobs6/name
+						, replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/NVM_Werken/'+Jobs6/name, '@Z@', Context/ThisZichtjaar_name)
+						, NVM
+						, float32
+					);
+				container Stand :=
+					for_each_nedv(
+						Jobs6/name
+						, 'sum(StateVoorAllocatie/Werken/'+Jobs6/name+', NVM/Per_CompactedAdminDomain)'
+						, NVM
+						, float32
+					);
+				container RestClaim :=
+					for_each_nedv(
+						Jobs6/name
+						, 'Claim/'+Jobs6/name+' - Stand/'+Jobs6/name
+						, NVM
+						, float32
+					);
+
+				attribute<Float32> Totaal_Claim     (NVM) := ='add('+asItemList('Claim/'+Jobs6/name)+')';
+				attribute<Float32> Totaal_Stand     (NVM) := ='add('+asItemList('Stand/'+Jobs6/name)+')';
+				attribute<Float32> Totaal_RestClaim (NVM) := Totaal_Claim - Totaal_Stand;
+
+				parameter<Float32> NrRegiosAlGehaald := sum(float32(Totaal_RestClaim <= 0f)), Descr = "Aantal NVM-regio's waar de claim voor de allocatie al gehaald was.";
+				parameter<Float32> NrRegios          := sum(float32(IsDefined(Totaal_Claim)));
+			}
 		}
 	}
 	
+	container GroenNabijheid
+	: Descr = "Hedonische natuur- en waternabijheid aan het begin van dit zichtjaar, als correctie op de geschiktheid voor wonen (#637). De prijsindex waardeert natuur in de schijf 0-2500m en water in de schijf 0-500m (#481, #566), maar de opbrengsten per ontwikkelpakket zijn gerekend met de basisjaar-fracties. Hier wordt bepaald hoeveel die fracties inmiddels zijn veranderd. Wat in een zichtjaar wordt gebouwd, is gebouwd in de periode ervoor, en kan dus niet beprijsd zijn met natuur die in diezelfde periode is aangelegd; daarom telt alleen wat aan het begin van het zichtjaar al ligt. Daarmee is er ook geen endogeniteit binnen het zichtjaar: de kaart ligt vast voordat de eerste iteratie begint."
+	{
+		unit<UInt8> OP  := ThisVariantClassifications/Vastgoed/OP;
+		unit<UInt8> WP4 := /Classifications/Vastgoed/WP4;
+
+		parameter<bool> IsEersteZichtjaar := first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
+		, Descr = "Is dit het eerste zichtjaar? Dan is er nog niets gerealiseerd dat hier mee kan tellen: de exogene oplegging gebeurt in dit zichtjaar, de BAG-nieuwbouw uit StartState_metBAGnieuwbouw is gebouwd in deze periode, en gealloceerd is er nog niets. De fracties zijn dan gelijk aan het basisjaar en de geschiktheid verandert niet ten opzichte van de situatie voor #637. Let op: bij AlleenEindjaar is er maar een zichtjaar, dus dan verandert er niets.";
+
+		container Bron
+		: Descr = "De stand aan het begin van dit zichtjaar, als invoer voor het gedeelde groenfracties-sjabloon."
+		{
+			attribute<bool> IsBAGnieuwbouwWonen (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, ThisCasus/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), Descr = "BAG-nieuwbouwcel (issue #550): heeft wel een gematchte OP_rel maar geen fysieke OP-inrichting; houdt daarom de basisjaarwaarden.";
+
+			attribute<OP>   OP_rel  (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, StateVoorAllocatie/OP_rel), Descr = "Het ontwikkelpakket dat in een eerder zichtjaar in deze cel is gealloceerd.";
+			attribute<bool> IsOPCel (AdminDomain) := = IsEersteZichtjaar ? 'const(FALSE, AdminDomain)' : 'IsDefined(OP_rel) && !IsBAGnieuwbouwWonen', Descr = "Cel waar de allocatie een ontwikkelpakket fysiek heeft ingericht; die inrichting bepaalt dan de natuur- en watercelwaarde.";
+
+			attribute<Sector> Sector_Mutatie (AdminDomain) := = IsEersteZichtjaar ? 'const(null_b, AdminDomain, Sector)' : 'Sector/xSubsector/Sector_rel[recollect_by_cond(AdminDomain/IsCompactedDomain, StateVoorAllocatie/SubSector_rel)]'
+			, Descr = "Welke sector de allocatie hier in een eerder zichtjaar heeft neergezet, anders leeg. SubSector_rel is alleen gevuld waar de allocatie sinds het basisjaar heeft toegeslagen. In het eerste zichtjaar staat hier alleen de BAG-nieuwbouw, en die is gebouwd in dezelfde periode als waarover dit zichtjaar alloceert, dus die telt nog niet mee.";
+			attribute</Classifications/Grondgebruik/LandgebruikType> Type_Mutatie (AdminDomain) := = IsEersteZichtjaar ? 'const(null_b, AdminDomain, /Classifications/Grondgebruik/LandgebruikType)' : 'MakeDefined(/Classifications/Grondgebruik/LandgebruikType/Van_INL[ThisVariantData/ExogeenOpleggen/Beheertype_Kaart], /Classifications/Grondgebruik/LandgebruikType/Van_LandbouwType[ThisVariantData/ExogeenOpleggen/LandbouwType_rel])'
+			, Descr = "Welk landgebruikstype de variant hier exogeen oplegt, als type uit de stand-administratie en niet als klasse van de landgebruikskaart. Natuur en water komen langs Beheertype_Kaart, de landbouwstroom van de veenbouwstenen langs LandbouwType_rel; dat zijn dezelfde twee stromen die samen ExogeenOpleggen/Totaal vormen.";
+
+			// De drie hedonische vlaggen die het gedeelde sjabloon verwacht. De oplegging gaat voor de allocatie,
+			// net als in de landgebruikskaart. Natuur en water komen van het type, want dat zegt wat de cel is;
+			// waterberging en landbouw komen van de sector, want dat zegt wie de cel bezet. Tot 8 september 2026
+			// liep dit alles via een LU_ModelType, die beide vragen met een klasse beantwoordde en daarmee het
+			// beheertype van de natuur plat sloeg tot een enkele LGN-code.
+			attribute<bool> IsMutatie          (AdminDomain) := IsDefined(Type_Mutatie) || IsDefined(Sector_Mutatie);
+			attribute<bool> Mutatie_IsNatuur   (AdminDomain) := /Classifications/Grondgebruik/LandgebruikType/IsNatuur_hedonisch[Type_Mutatie];
+			attribute<bool> Mutatie_IsWater    (AdminDomain) := IsDefined(Type_Mutatie) ? /Classifications/Grondgebruik/LandgebruikType/IsWater_hedonisch[Type_Mutatie] : Sector/IsWaterberging[Sector_Mutatie];
+			attribute<bool> Mutatie_IsLandbouw (AdminDomain) := IsDefined(Type_Mutatie) ? /Classifications/Grondgebruik/LandgebruikType/IsLandbouw[Type_Mutatie] : Sector/IsLandbouw[Sector_Mutatie];
+		}
+
+		container Fracties := Templates/Suitabilities/Groenfracties_T(Bron), Descr = "Zelfde sjabloon, zelfde definities en zelfde noemers als de indicator WaardeNabijheidGroen (#566), maar dan gevoed met de beginstand in plaats van de eindstand.";
+
+		container Prijsopslag_perWP4 :=
+			for_each_nedv(
+				WP4/name
+				, IsEersteZichtjaar
+					? 'const(0f, CompactedAdminDomain)'
+					: 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Fracties/Prijsopslag_perWP4/'+WP4/name+')'
+				, CompactedAdminDomain
+				, float32
+			), Descr = "De relatieve prijsverandering per woningtype op het compacted domain, klaar voor gebruik in de geschiktheid voor wonen (IterSubsector_T_Wonen). In het eerste zichtjaar expliciet nul, zodat de dure schijfberekening daar helemaal niet hoeft te draaien.";
+	}
+
+	container WerkenGeschiktheid
+	: Descr = "Werken-geschiktheid met de landgebruiksaandelen van het begin van dit zichtjaar (#647, analoog aan GroenNabijheid #637). De logit is geschat op start-of-period landgebruik: de aandelen
+						wonen, natuur en water in de cel en het buurtaandeel overig bebouwd (1000 m) worden bijgewerkt met wat het model sinds het basisjaar heeft gealloceerd of exogeen opgelegd, beginstand van het
+						zichtjaar, dus geen endogeniteit binnen het zichtjaar. Nieuw werken telt via het buurtaandeel mee en trekt zo vervolgallocaties aan. Bouwterrein en de UAI blijven statisch, daarvoor is geen
+						modelbron. Alleen toevoegingen tellen; wat een cel voorheen was wordt niet van de statische aandelen afgetrokken, want nieuw gebruik landt vrijwel altijd op cellen die aan geen van deze
+						aandelen bijdroegen. In het eerste zichtjaar is de kaart exact de statische kaart."
+	{
+		parameter<bool> IsEersteZichtjaar := GroenNabijheid/IsEersteZichtjaar;
+
+		container Bron
+		: Descr = "Zelfde beginstand-bron als GroenNabijheid (#637): het nieuwe landgebruik waar dat sinds het basisjaar is veranderd, anders null."
+		{
+			// doelklassen conform de gg-indeling van de logit: wonen naar residential, werken naar otherbuiltup
+			// (telt alleen via de 1000m-buurtterm), natuur naar nature, water inclusief waterberging naar
+			// unavailable. Wie de cel bezet komt van de sector, wat de cel is van het type; zie GroenNabijheid/Bron.
+			attribute<float32> NieuwResidential  (AdminDomain) := float32(Sector/IsWonen[GroenNabijheid/Bron/Sector_Mutatie] && !IsDefined(GroenNabijheid/Bron/Type_Mutatie));
+			attribute<float32> NieuwOtherBuiltup (AdminDomain) := float32(Sector/IsWerken[GroenNabijheid/Bron/Sector_Mutatie] && !IsDefined(GroenNabijheid/Bron/Type_Mutatie));
+			attribute<float32> NieuwNature       (AdminDomain) := float32(GroenNabijheid/Bron/Mutatie_IsNatuur);
+			attribute<float32> NieuwWater        (AdminDomain) := float32(GroenNabijheid/Bron/Mutatie_IsWater);
+		}
+
+		container Deltas
+		: Descr = "Toename van de aandelen per 100m-cel (het schattingsgrid), en van het buurtaandeel overig bebouwd met exact dezelfde kernel en noemer als de statische variabele (SourceData/Grondgebruik/BBG Avg_shr_LUType_neigh r1000)."
+		{
+			attribute<float32> dResidential  (Geography/rdc_100m) := mean(Bron/NieuwResidential,  AdminDomain/rdc_100m_rel);
+			attribute<float32> dOtherBuiltup (Geography/rdc_100m) := mean(Bron/NieuwOtherBuiltup, AdminDomain/rdc_100m_rel);
+			attribute<float32> dNature       (Geography/rdc_100m) := mean(Bron/NieuwNature,       AdminDomain/rdc_100m_rel);
+			attribute<float32> dWater        (Geography/rdc_100m) := mean(Bron/NieuwWater,        AdminDomain/rdc_100m_rel);
+
+			attribute<float32> dOtherBuiltup_ngh1000 (Geography/rdc_100m) := /Geography/rdc_100m/IsStudyArea
+				?	potential(dOtherBuiltup * float32(/Geography/rdc_100m/IsStudyArea), /Geography/Distmatrices/Impl_100m/pot1000m/PotRange/neighbourhood)
+					/ potential(float32(/Geography/rdc_100m/IsStudyArea), /Geography/Distmatrices/Impl_100m/pot1000m/PotRange/neighbourhood)
+				:	0f;
+		}
+
+		container PerSector := for_each_ne(Jobs6/name, 'PerSector_T('+quote(Jobs6/name)+')'), Descr = "Bijgewerkte kans per Jobs6-sector; zelfde MNL-formule als de statische kaart, met de coefficienten uit dezelfde CSV.";
+
+		Template PerSector_T
+		{
+			parameter<String> Sectorname;
+
+			attribute<Float32> raw (AdminDomain) := ='MakeDefined(
+				/BaseData/Suitabilities/Werken/ProbabilityMap_perSector/'+Sectorname+'/raw
+				+ Deltas/dResidential[AdminDomain/rdc_100m_rel]          * /BaseData/Suitabilities/Werken/ReadCoefficients/'+Sectorname+'/Result/lu_share_residential_2012
+				+ Deltas/dNature[AdminDomain/rdc_100m_rel]               * /BaseData/Suitabilities/Werken/ReadCoefficients/'+Sectorname+'/Result/lu_share_nature_2012
+				+ Deltas/dWater[AdminDomain/rdc_100m_rel]                * /BaseData/Suitabilities/Werken/ReadCoefficients/'+Sectorname+'/Result/lu_share_unavailable_2012
+				+ Deltas/dOtherBuiltup_ngh1000[AdminDomain/rdc_100m_rel] * /BaseData/Suitabilities/Werken/ReadCoefficients/'+Sectorname+'/Result/avgshr_LU12_ngh_1000r_otherbu
+				, -1e9f)', Descr = "Statische raw plus de coefficient maal de toename van elk aandeel sinds het basisjaar. Nodata blijft -1e9 (kans 0, #599).";
+			attribute<Float32> noemer        (AdminDomain) := ='1f + ' + asList('exp(PerSector/'+Jobs6/name+'/raw)', ' + ');
+			attribute<Float32> exponentiated (AdminDomain) := exp(raw) / noemer;
+			attribute<Float32> raw_ordinaal  (AdminDomain) := raw <= -1e8f ? null_f : raw, Descr = "Nodata wordt null zodat die cellen nooit in de kandidaatset komen (#599), conform de statische raw_ordinaal.";
+
+			parameter<bool> GebruikStatisch := IsEersteZichtjaar, Descr = "In het eerste zichtjaar zijn de mutaties per definitie leeg en hoeft de dynamische berekening niet te draaien.";
+
+			attribute<Float32> Totaal (CompactedAdminDomain) := = GebruikStatisch
+				? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Werken/ProbabilityMap_perSector/'+Sectorname+'/exponentiated)'
+				: 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, exponentiated)', Descr = "MNL-kans: statisch of per zichtjaar bijgewerkt. Gebruikt voor de keuze tussen subsectoren; de allocatie-input is Totaal_raw.";
+			attribute<Float32> Totaal_raw (CompactedAdminDomain) := = GebruikStatisch
+				? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Werken/ProbabilityMap_perSector/'+Sectorname+'/raw_ordinaal)'
+				: 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, raw_ordinaal)', Descr = "Raw-nut met null voor nodata: statisch of per zichtjaar bijgewerkt. De allocatie-input, want binnen een subsector telt alleen de rangorde en de MNL-noemer verstoort die.";
+		}
+	}
+
+	parameter<bool> IsEersteZichtjaar_Vormtoets := first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
+	, Descr = "In het eerste zichtjaar bestaat SubSector_rel op de ingangsstand nog niet, dus dan mag die kant niet aangeroepen worden.";
+
+	attribute<Bool> AlGealloceerdVoorDitZichtjaar (AdminDomain) := =IsEersteZichtjaar_Vormtoets
+		? 'const(FALSE, AdminDomain)'
+		: 'recollect_by_cond(AdminDomain/IsCompactedDomain, /Classifications/Actor/Sector/xSubsector/LegtCelVast[StateVoorAllocatie/SubSector_rel])'
+	, Descr = "Wat er bij de start van dit zichtjaar al gealloceerd was, dus in eerdere zichtjaren. De vormtoetsen in Iter_Allocatie trekken dit eraf, zodat clusters wel binnen een zichtjaar kunnen aangroeien maar niet over zichtjaren heen. Staat hier en niet in de iteratie zelf, want binnen een zichtjaar is dit constant en anders wordt het per iteratie per sector-allocregio opnieuw uitgerekend.";
+
 	container Context
 	{
 		container ThisZichtjaar := ..;
@@ -180,13 +450,26 @@ Template Zichtjaar_T
 	
 	container Impl := Impl0
 	{
-		parameter<String>  Generate   := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+Extra_str", Descr = "Generate parameter to trigger generation of the stand files for this zichtjaar";
+		parameter<String>  Generate   := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+';WriteStand/Legenda'+Extra_str+Extra_prev", Descr = "Generate-parameter die het wegschrijven van de standbestanden van dit zichtjaar aanstuurt. WriteStand/Legenda staat er onvoorwaardelijk bij en niet in Extra_str, want die is voor het
+					voorwaardelijke geval en de legenda hangt niet aan een sector; het pad wijst naar het kind zelf en niet naar de container, want ExplicitSuppliers op een container lift niet mee wanneer je
+					een los kind opvraagt. Zonder deze regel wordt het zijbestand nooit geschreven, en de leeskant weigert een stand zonder kloppend zijbestand (#721).";
 		
-		parameter<string>  Extra_str  := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';WriteStand/wonen/Footprint' : '';
+		parameter<string> Extra_str          := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';WriteStand/wonen/Footprint' : '';
+		parameter<Bool>   IsEersteZichtjaar  := first(lowercase(Time/Zichtjaar/name)) == lowercase(name);
+		parameter<String> PrevZichtjaar_name := rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevName);
+		parameter<string> Extra_prev         := Ontkoppeld || IsEersteZichtjaar ? '' : ';'+PrevZichtjaar_name+'/Impl/Generate'
+		, Descr = "Trekt in de gekoppelde stand het Generate van het vorige zichtjaar mee, en daarmee diens WriteStand/Legenda. Zonder deze term krijgt alleen het zichtjaar dat werkelijk wordt opgevraagd een
+					legenda: de eerdere zichtjaren komen langs de dataketen voorbij en hun stand-tifs worden geschreven, maar ExplicitSuppliers vuurt daar niet, want die hangt aan Generate en niet aan de
+					tif-items, en de leeskant weigert zo'n stand (#721, #732). Het pad staat ongekwalificeerd en niet met ..-stappen, want een ExplicitSupplier wordt omhoog gezocht vanaf de container van het
+					item; de ketting is transitief. Ontkoppeld blijft de term leeg: de zichtjaren lezen elkaars stand dan van schijf, en wie in die stand alle zichtjaren wil roept ze per jaar aan, zoals
+					batch/Run2120.ps1 doet.";
 		parameter<Bool>    Ontkoppeld := ='ModelParameters/StandAllocatieOntkoppeld', Descr = "Of de stand allocatie ontkoppeld is van de sector allocatie. Als dat zo is, worden de stand bestanden eerst ingelezen, gecompacteerd, en na de sector allocatie weer teruggeschreven. Als dat niet zo is, worden de stand bestanden direct overschreven.";
 		
 		unit<UInt8>       StandVar          := ='ThisVariantClassifications/StandVar';
 		parameter<string> AllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', Casus_name, '@JAAR@', name, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
+		parameter<string> LegendaFileName   := replace(AllocatieFileName, '@STANDPATH@', 'OP_rel') + '.params.txt', Descr = "Het zijbestand naast de OP_rel-tif met de legenda van de positionele standkolommen, zie WriteStand/Legenda.";
+		parameter<String> LegendaVerwacht   := 'op_set=' + AsList(ThisVariantClassifications/Vastgoed/OP/name, ',') + ';subsector_set=' + AsList(/Classifications/Actor/Sector/xSubsector/name, ',') + ';landgebruik_set=' + AsList(/Classifications/Grondgebruik/LandgebruikType/name, ',')
+		, Descr = "De legenda van de twee positionele standkolommen (#721): welke namen er achter de nummers van OP_rel en SubSector_rel zitten, in setvolgorde. Wordt naast de OP_rel-tif geschreven en bij het inlezen vergeleken met de dan geldende sets, zodat een stand met een andere setindeling hard faalt in plaats van stil naar de verkeerde pakketten te wijzen.";
 		
 		container ReadStand_UNCHECKED :=
 			for_each_ndvna(
@@ -207,12 +490,35 @@ Template Zichtjaar_T
 			for_each_neidvn(
 				 StandVar/path
 				, 'ReadStand_UNCHECKED/'+StandVar/path
-				, StandVar/IsLandbouw || (NOT(/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
+				, StandVar/IsLandbouw || (NOT(/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'OP_rel' || StandVar/name == 'SubSector_rel' || StandVar/name == 'Landgebruik_Type' ? ' && LegendaKlopt' : '') + (StandVar/name == 'SubSector_rel' && /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector ? ' && LandbouwStandKlopt' : '')
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
-			), StorageReadOnly = "True"
+			), StorageReadOnly = "True", Descr = "De gecontroleerde leeskant. Elke standkaart moet minstens een gevulde en niet-nulle cel dragen, en de twee positionele kolommen moeten een kloppende legenda naast zich hebben (#721). De
+					landbouwstandkaarten zijn van de toets per kaart vrijgesteld, want een gewas mag in een zichtjaar legitiem op nul uitkomen; de landbouwkant wordt als geheel getoetst met LandbouwStandKlopt
+					hieronder, gehangen aan SubSector_rel, omdat een toets die naar label of stand apart kijkt het geval van #803 (labelkaart vol, standkaarten leeg) niet ziet. Dezelfde toets staat aan de
+					schrijfkant, zie WriteStand."
 		{
+			parameter<String> LegendaGelezen: StorageName = "=ExistingFile('%projDir%/cfg/no_fingerprint.txt', LegendaFileName)", StorageType = "str", StorageReadOnly = "True"
+			, Descr = "De legenda zoals die naast de ingelezen OP_rel-tif staat. Ontbreekt het zijbestand, dan valt dit terug op cfg/no_fingerprint.txt en klopt de vergelijking nooit; een stand van voor #721 faalt dus hard in plaats van stil verkeerd te wijzen.";
+			parameter<Bool>   LegendaKlopt := LegendaGelezen == LegendaVerwacht
+			, Descr = "Wijzen de nummers in de ingelezen stand naar dezelfde sets als de lopende configuratie? Getoetst via de IntegrityCheck op OP_rel en SubSector_rel hierboven.";
+
+			parameter<Float32> LandbouwStand_ha := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector
+				? 'add('+AsList('sum(MakeDefined(ReadStand_UNCHECKED/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'[float32], 0f))', ',')+')'
+				: '0f'
+			, Descr = "De landbouwstandkaarten van deze stand bij elkaar opgeteld, dimensieloos in hectare gerekend.";
+
+			parameter<Float32> LandbouwLabel_ha := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector
+				? 'sum(/Classifications/Actor/Sector/xSubsector/IsLandbouw[ReadStand_UNCHECKED/SubSector_rel] ? AdminDomain/NrHaPerCell[float32] : 0f)'
+				: '0f'
+			, Descr = "Het areaal dat SubSector_rel in diezelfde stand als landbouw aanwijst.";
+
+			parameter<Bool> LandbouwStandKlopt := LandbouwStand_ha >= 0.99f * LandbouwLabel_ha
+			, Descr = "Draagt elke cel met een landbouwlabel ook hectares in de standkaarten? De invariant die #803 brak. Label en hoeveelheid komen uit dezelfde allocatiestap, dus de som van de standkaarten hoort
+						minstens gelijk te zijn aan het gelabelde areaal; groter mag, want exogeen opgelegde landbouw krijgt wel hectares maar geen label. De ondergrens staat op 99 procent en niet op gelijk, omdat
+						beide sommen over tientallen miljoenen cellen in float32 worden opgeteld en een paar promille uit elkaar kunnen lopen; het gat dat de toets moet vangen is van een andere orde.";
+
 			container wonen
 			{
 				attribute<Woning>          Aantal_Woningen_Totaal (AdminDomain) := = 'add('+asItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
@@ -236,14 +542,149 @@ Template Zichtjaar_T
 			}
 		}
 		
-		container CalcStand_Compacted := 
+		container FootprintEindejaars
+		: Descr = "Einde-jaars afleiding van de footprints, ter vervanging van de keten door alle iteratielagen heen. De iteratie-updates in Allocatie_T/Impl worden tijdens de allocatie nooit opgevraagd; pas
+						bij het wegschrijven van de stand zou die keten van circa 135 lagen over het hele domein worden uitgerekend. Omdat een cel binnen een zichtjaar hoogstens een keer gealloceerd wordt, is de
+						eindfootprint direct af te leiden: niet dit jaar gealloceerd geeft de beginstand van het zichtjaar (inclusief de sloopleging in het eerste zichtjaar), wel gealloceerd geeft voor werken de
+						footprint-per-baan van dit zichtjaar maal de eindstand van de winnende subsector (nul voor de andere subsectoren, de verdringing), en voor wonen de gebouwvoetafdruk van het gealloceerde
+						ontwikkelpakket. Bewijs hieronder toetst de equivalentie met de iteratieketen (#716). CalcStand_Compacted leest voor werken deze afleiding en voor wonen nog de iteratieketen."
+		{
+			attribute<Bool> GealloceerdDitZichtjaar (CompactedAdminDomain) := IsDefined(Sequences/LastSequence/StateNaAllocatie/SubSector_rel) && !/Classifications/Actor/Sector/xSubsector/LegtCelVast[StateVoorAllocatie/SubSector_rel]
+			, Descr = "Cellen waar de allocatie van dit zichtjaar heeft toegeslagen: aan het eind gevuld, aan het begin nog niet. Op alle andere cellen dragen de footprints de beginstand door.";
+
+			container PandFootprint :=
+				for_each_nedv(
+					Jobs6/name
+					, replace(
+						  replace('!GealloceerdDitZichtjaar ? StateVoorAllocatie/PandFootprint/@SS@ : Sequences/LastSequence/StateNaAllocatie/SubSector_rel == Sector/xSubsector/v/Werken_@SS@ ? min_elem(MakeDefined(ThisVariantData/Density/Per_CompactedAllocDomain/@Y@/src/Werken/PandFootprint_perJob/Subsectoren/@SS@[CompactedAdminDomain/CompactedAllocDomain_rel], 0[m2PandFootprint_job]) * Sequences/LastSequence/StateNaAllocatie/Werken/@SS@, AdminDomain/NrMeter2PerCell[m2PandFootprint]) : @REST@', '@REST@', Jobs6/IsVerzorgend
+							? 'Wonen/WonenWonDitZichtjaar ? StateVoorAllocatie/PandFootprint/@SS@ : 0[m2PandFootprint]'
+							: '0[m2PandFootprint]')
+						, '@Y@', Context/ThisZichtjaar_name
+						, '@SS@', Jobs6/name)
+					, CompactedAdminDomain
+					, m2PandFootprint
+				), Descr = "Zelfde termen als Update_PandFootprint_Expr, maar dan een keer op de eindstand, in drie gevallen. Niet dit zichtjaar gealloceerd: de beginstand blijft staan. Deze werksubsector wint de cel:
+						de footprint-per-baan van dit zichtjaar maal de eindstand banen, geklemd op het celoppervlak, exact wat de allocatie er in de winnende iteratie neerzette; de MakeDefined om de
+						dichtheidsopzoeking heen spiegelt die in Update_PandFootprint_Expr, want de dichtheid is buiten de CBS-buurtkaart null. De klem op AdminDomain/NrMeter2PerCell staat er omdat de startstand
+						ook op het celoppervlak klemt en de omgevingsdichtheid in vierkante meter per baan op een cel met een groot pand veel ruimer is dan de werkelijkheid daar, zodat verdikking anders in de
+						breedte gaat in plaats van in de hoogte (#716); de klem staat per subsector en niet op de celsom, net als in de startstand. Een ander wint de cel: nul, want de allocatie is celexclusief,
+						behalve voor een verzorgende subsector op een cel die wonen wint; daar blijft de beginstand staan, zoals Iter_T met Behoud_Expr doet (#710).";
+
+			container Wonen
+			{
+				attribute<Bool> WonenWonDitZichtjaar (CompactedAdminDomain) := GealloceerdDitZichtjaar && lowercase(Sector/xSubsector/Sector_name[Sequences/LastSequence/StateNaAllocatie/SubSector_rel]) == lowercase('Wonen')
+				, Descr = "Heeft wonen deze cel dit zichtjaar gewonnen? GealloceerdDitZichtjaar alleen is niet genoeg, want die is sectorneutraal.";
+
+				attribute<m2PandFootprint> Footprint (CompactedAdminDomain) := !GealloceerdDitZichtjaar
+					? StateVoorAllocatie/Wonen/Footprint
+					: WonenWonDitZichtjaar
+						? MakeDefined(ThisVariantClassifications/Vastgoed/OP_buurt/Terreinoppervlakte/Uitgeefbaar/GebouwVoetafdruk[Sequences/LastSequence/StateNaAllocatie/OP_rel] /  1[Terreinoppervlak] * AdminDomain/NrHaPerCell /  1[ha] * 1[m2PandFootprint], 0[m2PandFootprint])
+						: 0[m2PandFootprint]
+				, Descr = "Zelfde term als Update_WoonFootprint_Expr op de eindstand: op een cel die wonen dit zichtjaar wint is OP_rel het pakket van dit zichtjaar; wint een andere sector, dan gaat de voetafdruk
+						expliciet naar nul, de verdringing; anders blijft de beginstand staan. De tak hangt aan WonenWonDitZichtjaar en niet aan het sectorneutrale GealloceerdDitZichtjaar, want OP_rel is in Iter_T
+						eerste-wint en een cel die aan het begin van het zichtjaar wel een pakket draagt maar geen subsector houdt bij een werkallocatie het oude pakket; een sectorneutrale vlag zou daar een
+						woonvoetafdruk op een vers werkterrein zetten. Op zo'n cel die wonen wint rekent deze term met het oude pakket en de iteratieketen met het nieuwe; zie Bewijs.";
+			}
+
+			container Bewijs
+			: Descr = "Eenmalige equivalentietoets van de einde-jaars afleiding tegen de iteratieketen: per werksubsector en voor wonen het maximale absolute verschil. Vraag Schrijf op; de vergelijking dwingt beide ketens af binnen een proces. Zolang deze toets niet exact nul heeft opgeleverd, blijft CalcStand_Compacted op de iteratieketen staan."
+			{
+				container PerSubsector :=
+					for_each_nedv(
+						Jobs6/name
+						, 'max(abs(MakeDefined(PandFootprint/'+Jobs6/name+', -999999f[m2PandFootprint]) - MakeDefined(Sequences/LastSequence/StateNaAllocatie/PandFootprint/'+Jobs6/name+', -999999f[m2PandFootprint])))'
+						, void
+						, m2PandFootprint
+					);
+				parameter<m2PandFootprint> MaxVerschil_Wonen  := max(abs(MakeDefined(Wonen/Footprint, -999999f[m2PandFootprint]) - MakeDefined(Sequences/LastSequence/StateNaAllocatie/Wonen/Footprint, -999999f[m2PandFootprint])));
+				container                  OmvangPerSubsector :=
+					for_each_nedv(
+						Jobs6/name
+						, 'sum(abs(MakeDefined(PandFootprint/'+Jobs6/name+', 0[m2PandFootprint]) - MakeDefined(Sequences/LastSequence/StateNaAllocatie/PandFootprint/'+Jobs6/name+', 0[m2PandFootprint])))'
+						, void
+						, m2PandFootprint
+					), Descr = "De som van het absolute verschil over alle cellen, naast het maximum hierboven. Het maximum zegt hoe erg het op de ergste cel is, deze som zegt hoeveel vierkante meter er in totaal verkeerd wordt weggeschreven. Nodig om te kunnen beoordelen of een run overgedaan moet worden.";
+
+				container CellenPerSubsector :=
+					for_each_nedv(
+						Jobs6/name
+						, 'sum(uint32(abs(MakeDefined(PandFootprint/'+Jobs6/name+', 0[m2PandFootprint]) - MakeDefined(Sequences/LastSequence/StateNaAllocatie/PandFootprint/'+Jobs6/name+', 0[m2PandFootprint])) > 0.01[m2PandFootprint]))'
+						, void
+						, uint32
+					), Descr = "Op hoeveel cellen de twee ketens meer dan een honderdste vierkante meter uit elkaar lopen. De drempel houdt float32-ruis buiten de telling.";
+
+				parameter<m2PandFootprint> TotaalFootprint_Keten := =asList('sum(MakeDefined(Sequences/LastSequence/StateNaAllocatie/PandFootprint/'+Jobs6/name+', 0[m2PandFootprint]))', ' + '), Descr = "De totale weggeschreven werkvoetafdruk volgens de iteratieketen, als noemer bij de som hierboven.";
+
+
+				container SplitsPerSubsector :=
+					for_each_nedv(
+						Jobs6/name
+						, replace(
+							  'string(sum(uint32(Verschil/D_@SS@ >  0.01[m2PandFootprint])))'
+							+ '+ '';'' + string(sum(uint32(Verschil/D_@SS@ < -0.01[m2PandFootprint])))'
+							+ '+ '';'' + string(sum(max_elem(Verschil/D_@SS@,  0[m2PandFootprint])))'
+							+ '+ '';'' + string(sum(max_elem(-Verschil/D_@SS@, 0[m2PandFootprint])))'
+							+ '+ '';'' + string(sum(uint32(abs(Verschil/D_@SS@) > 0.01[m2PandFootprint] && Wonen/WonenWonDitZichtjaar)))'
+							+ '+ '';'' + string(sum(uint32(abs(Verschil/D_@SS@) > 0.01[m2PandFootprint] && GealloceerdDitZichtjaar && !Wonen/WonenWonDitZichtjaar)))'
+							+ '+ '';'' + string(sum(uint32(abs(Verschil/D_@SS@) > 0.01[m2PandFootprint] && !GealloceerdDitZichtjaar)))'
+							, '@SS@', Jobs6/name)
+						, void
+						, String
+					);
+
+				container Verschil :=
+					for_each_nedv(
+						'D_'+Jobs6/name
+						, replace('MakeDefined(PandFootprint/@SS@, 0[m2PandFootprint]) - MakeDefined(Sequences/LastSequence/StateNaAllocatie/PandFootprint/@SS@, 0[m2PandFootprint])'
+							, '@SS@', Jobs6/name)
+						, CompactedAdminDomain
+						, m2PandFootprint
+					);
+
+				parameter<String> SchrijfSplits :=
+					= quote('subsector;cellen_afleiding_hoger;cellen_afleiding_lager;som_hoger_m2;som_lager_m2;cellen_wonen_won;cellen_anders_gealloceerd;cellen_niet_gealloceerd')
+					+ ' + ' + asList(quote('|'+Jobs6/name+';')+' + SplitsPerSubsector/'+Jobs6/name, ' + ')
+				, StorageName = "='%LocalDataProjDir%/Diagnose/FootprintEindejaars_Splits_'+Casus_name+'_'+Context/ThisZichtjaar_name+'.txt'"
+				, StorageType = "str"
+				, Descr = "Waar een restverschil tussen de twee ketens vandaan komt: het verschil gesplitst naar teken, zodat blijkt of de afleiding te hoog of te laag zit, en naar wie de cel dit zichtjaar heeft
+						gewonnen. Zit het op cellen die wonen won, dan is er nog een geval van de familie van #716; zit het op cellen die niet dit zichtjaar zijn gealloceerd, dan gaat het om de doorgedragen
+						beginstand en de klem op het celoppervlak.";
+
+				parameter<String> Schrijf := = asList('string(PerSubsector/'+Jobs6/name+')', ' + '';'' + ') + ' + '';'' + string(MaxVerschil_Wonen)'
+				, StorageName = "='%LocalDataProjDir%/Diagnose/FootprintEindejaars_Bewijs_'+Casus_name+'_'+Context/ThisZichtjaar_name+'.txt'"
+				, StorageType = "str"
+				;
+
+				parameter<String> SchrijfOmvang :=
+					= quote('subsector;max_m2;som_m2;cellen|')
+					+ ' + ' + asList('string('+quote(Jobs6/name+';')+' + string(PerSubsector/'+Jobs6/name+') + '+quote(';')+' + string(OmvangPerSubsector/'+Jobs6/name+') + '+quote(';')+' + string(CellenPerSubsector/'+Jobs6/name+'))', ' + '+quote('|')+' + ')
+					+ ' + ' + quote('|totaal_keten_m2;') + ' + string(TotaalFootprint_Keten)'
+				, StorageName = "='%LocalDataProjDir%/Diagnose/FootprintEindejaars_Omvang_'+Casus_name+'_'+Context/ThisZichtjaar_name+'.txt'"
+				, StorageType = "str"
+				, Descr = "Per subsector het maximum, de som van de absolute verschillen en het aantal afwijkende cellen, plus de totale weggeschreven werkvoetafdruk als noemer. Schrijf hierboven zegt of de twee
+						ketens uit elkaar lopen, deze uitdraai zegt hoeveel. Lees hem als een toename per zichtjaar en niet als een opgelopen fout: beide ketens dragen op een cel die dit zichtjaar niet is
+						gealloceerd dezelfde StateVoorAllocatie door, dus een verschil uit een eerder zichtjaar valt hier weg, en een zichtjaar waarin niets meer wordt gealloceerd geeft nul. Meet in een zichtjaar
+						waarin wonen nog bouwt."
+				, Descr = "Zeven getallen, allemaal exact nul als de afleiding klopt: het maximale absolute verschil tussen FootprintEindejaars en de iteratieketen per werksubsector en voor wonen. De twee oorzaken die
+						deze toets heeft gevonden staan in #716: een nullek in Update_PandFootprint_Expr (float32(FALSE) maal null geeft null en geen nul) en een woontak die aan het sectorneutrale
+						GealloceerdDitZichtjaar hing. Voor wonen blijft een verschil van precies een pakketwisseling mogelijk op cellen die aan het begin van het zichtjaar een pakket dragen zonder subsector, want
+						OP_rel is eerste-wint en de keten leest per_OP; zie de Descr van WoonFootprint.";
+			}
+		}
+
+		container CalcStand_Compacted :=
 			for_each_nedvn(
 				StandVar/path
-				, 'Sequences/LastSequence/StateNaAllocatie/'+StandVar/path
+				, substr(StandVar/path, 0, 14) == 'PandFootprint/'
+					? 'FootprintEindejaars/'+StandVar/path
+					: 'Sequences/LastSequence/StateNaAllocatie/'+StandVar/path
 				, CompactedAdminDomain
 				, StandVar
 				, StandVar/unit_name
-			), Descr = "De gealloceerde waarden in het compacted admin domain, na de sector allocatie."
+			), Descr = "De gealloceerde waarden in het compacted admin domain, na de sectorallocatie. De zes pandvoetafdrukken van werken lopen langs FootprintEindejaars in plaats van langs de iteratieketen; dat
+				scheelt het leeuwendeel van de schrijfstaart, want die ketens van circa 135 lagen werden tijdens de allocatie nooit opgevraagd en pas hier over het hele domein uitgerekend, en de
+				equivalentie is met Bewijs aangetoond (#716). De woonvoetafdruk blijft op de iteratieketen: daar is de afleiding niet aantoonbaar gelijk zolang niet besloten is wat OP_rel hoort te zijn op
+				een cel die opnieuw wordt gealloceerd."
 		{
 			container wonen
 			{
@@ -270,18 +711,38 @@ Template Zichtjaar_T
 			for_each_neidvnat(
 				StandVar/path
 				, 'CalcStand/'+StandVar/path
-				, StandVar/IsLandbouw || (NOT(/Modelparameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))'
+				, StandVar/IsLandbouw || (NOT(/Modelparameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'SubSector_rel' && /Modelparameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector ? ' && LandbouwStandKlopt' : '')
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
 				, replace(AllocatieFileName, '@STANDPATH@', StandVar/path)
 				, 'gdalwrite.grid'
-			), Descr = "Write the calculated stand file back to a tif file, but only if the stand file is not completely empty or undefined."
+			), Descr = "Write the calculated stand file back to a tif file, but only if the stand file is not completely empty or undefined. De landbouwstandkaarten worden niet per kaart getoetst maar als geheel,
+					met LandbouwStandKlopt hieronder, gehangen aan SubSector_rel; zie de Descr van ReadStand: een enkel gewas mag legitiem op nul uitkomen, en #803 was het geval waarin het label vol stond en de
+					stand leeg was."
 		{
+			parameter<String> Legenda := LegendaVerwacht
+			, StorageName = "=LegendaFileName", StorageType = "str"
+			, Descr = "Schrijft de legenda van de positionele standkolommen naast de OP_rel-tif, zie LegendaVerwacht. Hoort bij elke WriteStand-aanroep mee te gaan; de leeskant weigert een stand zonder kloppend zijbestand.";
+
+			parameter<Float32> LandbouwStand_ha := = /Modelparameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector
+				? 'add('+AsList('sum(MakeDefined(CalcStand/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'[float32], 0f))', ',')+')'
+				: '0f'
+			, Descr = "De landbouwstandkaarten die dit zichtjaar wegschrijft, bij elkaar opgeteld en dimensieloos in hectare gerekend.";
+
+			parameter<Float32> LandbouwLabel_ha := = /Modelparameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector
+				? 'sum(/Classifications/Actor/Sector/xSubsector/IsLandbouw[CalcStand/SubSector_rel] ? AdminDomain/NrHaPerCell[float32] : 0f)'
+				: '0f'
+			, Descr = "Het areaal dat SubSector_rel in diezelfde stand als landbouw aanwijst.";
+
+			parameter<Bool> LandbouwStandKlopt := LandbouwStand_ha >= 0.99f * LandbouwLabel_ha
+			, Descr = "Dezelfde invariant als aan de leeskant, maar dan op wat deze run wegschrijft; zie ReadStand/LandbouwStandKlopt voor de onderbouwing en voor de reden dat de ondergrens op 99 procent staat.";
+
 			container wonen
 			{
 				attribute<m2PandFootprint> Footprint  (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? 'CalcStand/Wonen/Footprint' : 'const(null_f, AdminDomain, m2PandFootprint)', StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Wonen/Footprint')", StorageType = "gdalwrite.grid";
 			}
+
 		}
 			
 		container WriteStand_Compacted := 

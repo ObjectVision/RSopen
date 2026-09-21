@@ -27,23 +27,61 @@ container WriteVariantData : using = "Classifications;Geography"
 		parameter<VariantParameters/VariantK> Variant_rel; 
 		//
 		
-		parameter<string> Variant_name  := VariantParameters/VariantK/name[Variant_rel];
-		
-		parameter<String> Generate_Run1 := 
-			 Impl/EvidentBenut_AdminDomain_All
+		parameter<string> Variant_name                    := VariantParameters/VariantK/name[Variant_rel];
+		parameter<Bool>   Variant_HeeftLandschapslevering := VariantParameters/VariantK/HeeftLandschapslevering[Variant_rel]
+		, Descr = "Leest deze variant de landschapsleveringen, en heeft ze dus een veenbouwsteenkaart om weg te schrijven? Zelfde vorm als Variant_LeentStand hierboven: langs de kolom op Variant_rel en niet
+					langs VariantK/V op de naam. Een ExplicitSuppliers is een tekstexpressie, dus een pad met een schuine streep erin dat naast een tekststuk staat wordt daar als een deling gelezen.";
+		parameter<Bool>   Variant_LeentStand := VariantParameters/VariantK/LeentStand[Variant_rel]
+		, Descr = "Leent deze variant haar stand van een andere? Zo ja, dan draait haar allocatie niet en heeft ze geen variantdata nodig: de EvidentBenut van deze variant krijgt geen enkele lezer, en de
+					opbrengstentifs staan onder de setnaam uit Geschiktheden/OpbrengstenSet die ze met de uitlenende variant deelt en die al door die variant geschreven zijn. Wie de allocatie van deze variant
+					weer aanzet, zet StandVanVariant in VariantK terug op de variant zelf; dan valt LeentStand om en komt de variantdata terug. Raakt dat uit de pas, dan is dat niet fataal: vraagt de allocatie
+					een EvidentBenut op zonder geldig bestand, dan rekent en schrijft ze hem alsnog.";
+
+		parameter<String> Generate_Run1 :=
+			 Impl/EvidentBenut + ';' + 
+			 Impl/Veenbouwstenen
+		, Descr = "Maakt de EvidentBenut-tifs voor deze variant. Sinds EvidentBenut per variant staat is dit weer echt variantwerk. Strikt genomen is deze stap optioneel geworden: vraagt de allocatie de EvidentBenut op terwijl er geen geldig bestand ligt, dan rekent en schrijft hij hem alsnog. Je roept dit dus alleen apart aan om de dure stap op een gekozen moment te laten gebeuren en om vroeg te falen.";
+
+		parameter<String> Generate_Run2 :=
+			 Impl/Suitability_Opbrengsten_perOP + ';' +
+			 Impl/OpbrengstenDerving_Dynamisch  + ';' + 
+			 Impl/Ontwikkelpakketten
 		, Descr = "Activeer dit item om alle te ontkoppelen variant data te genereren.";
-		
-		parameter<String> Generate_Run2 := 
-			 Impl/Suitability_Opbrengsten_perOP 
-		, Descr = "Activeer dit item om alle te ontkoppelen variant data te genereren.";
-		
-		container Impl 
+
+		container Impl
 		{
-			parameter<String> Suitability_Opbrengsten_perOP := 'Ready', ExplicitSuppliers = "='VariantData/'+Variant_name+'/Suitability/Src/Wonen/Impl/WriteOpbrengsten_perOP/GenerateAll'";
-			
-			parameter<String> EvidentBenut_AdminDomain_All  := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasZonSector ? 'EvidentBenut_AdminDomain + EvidentBenutZon_AdminDomain' : 'EvidentBenut_AdminDomain', Descr = "Combineert standaard 'evident benut' met een zon-specifieke variant wanneer de zonsector aanwezig is; zorgt dat zonplaatsing rekening houdt met extra benuttingsregels.";
-			parameter<String> EvidentBenut_AdminDomain      := 'Ready', ExplicitSuppliers = "='VariantData/'+Variant_name+'/EvidentBenut/Make_IsEvidentBenut_AdminDomain'";
-			parameter<String> EvidentBenutZon_AdminDomain   := 'Ready', ExplicitSuppliers = "='VariantData/'+Variant_name+'/EvidentBenut/Make_IsEvidentBenutZon_AdminDomain'";
+			parameter<String> OpbrengstenDerving_Dynamisch := 'Ready'
+			, ExplicitSuppliers = "='/SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_Dynamisch/'+Variant_name+'/Generate'";
+		
+			parameter<String> EvidentBenut := 'Ready'
+			, ExplicitSuppliers = "=Variant_LeentStand
+										? ''
+										: (ModelParameters/SectorAllocRegio/Uq_Sectors/HasZonSector
+											? 'VariantData/'+Variant_name+'/EvidentBenut/Make_IsEvidentBenut_AdminDomain;VariantData/'+Variant_name+'/EvidentBenut/Make_IsEvidentBenutZon_AdminDomain'
+											: 'VariantData/'+Variant_name+'/EvidentBenut/Make_IsEvidentBenut_AdminDomain')"
+			, Descr = "De zon-variant komt er alleen bij wanneer de zonsector meedraait, en een variant die haar stand leent maakt niets: zie Variant_LeentStand.";
+
+			parameter<String> Ontwikkelpakketten := 'Ready'
+			, ExplicitSuppliers = "='VariantParameters/Ontwikkelpakketten/NettoBuurt/PerVariant/'+Variant_name+'/OP/Checks/UitgeefbaarBovenVoetafdruk;VariantParameters/Ontwikkelpakketten/NettoBuurt/ControleTuinschuif/UitgeefbaarVolgtDeRekenregel'"
+			, Descr = "Toetst de ontwikkelpakketten van deze variant voordat er opbrengstentifs van worden gemaakt. De assertie zelf staat bij de tabel, in Ontwikkelpakketten/NettoBuurt/OPTabel_T container Checks,
+						en zegt daar wat er misgaat als hij faalt. Ernaast staat NettoBuurt/ControleTuinschuif/UitgeefbaarVolgtDeRekenregel, die bewaakt dat de uitgeefbaarkolommen van NbSGenuanceerder de rekenregel
+						blijven volgen; die gaat over twee OP-sets tegelijk en hangt daarom aan elke variant. Geen uitzondering voor een variant die haar stand leent, anders dan bij de twee items hieronder: die
+						slaan werk over dat de uitlenende variant al doet, terwijl deze toets niets kost en over de eigen OP-set van deze variant gaat, die van de uitlenende kan verschillen.";
+
+			parameter<String> Veenbouwstenen := 'Ready'
+			, ExplicitSuppliers = "=Variant_HeeftLandschapslevering
+									? 'VariantData/'+Variant_name+'/NatuurLevering/Landschap/Veen/Write_Bouwsteenkaart'
+									: ''"
+			, Descr = "Schrijft de kaart met de gealloceerde veenbouwsteen weg, voor team effectbepaling (#764). Alleen een variant met een veenlevering heeft er een, dus voor de andere blijft de lijst leeg. De
+						kaartnaam draagt de variantnaam (Veen_T/Bouwsteenkaart_Pad), dus elke variant met een levering schrijft haar eigen bestand. Hier en niet in een eigen batchstap, omdat een uitlevering die
+						alleen op verzoek ontstaat er in een productierun niet is; de kaart is variantwerk en hoort in dezelfde stap als de andere variantdata.";
+
+			parameter<String> Suitability_Opbrengsten_perOP := 'Ready'
+			, ExplicitSuppliers = "=Variant_LeentStand
+										? ''
+										: 'VariantData/'+Variant_name+'/Suitability/Src/Wonen/Impl/WriteOpbrengsten_perOP/GenerateAll'"
+			, Descr = "De opbrengstentifs per ontwikkelpakket. Een variant die haar stand leent slaat dit over: die deelt haar OpbrengstenSet met de uitlenende variant, dus ze zou dezelfde bestanden een tweede keer schrijven. Zie Variant_LeentStand.";
+
 		}
 	}
 }
