@@ -245,7 +245,17 @@ container Landbouw : using = "Classifications/Landbouw"
 				attribute<uint32>      bodem_code := codes/bodem/code[bodem_rel];
 			}
 
-			unit<spoint> wwl_grid := WWL_relatie_database/dmgtot;   // 301 x 301
+			unit<uint32> wwl_k := range(uint32, 0, 90601)
+			, Descr = "De relatiegrid van 301 bij 301 als platte reeks in rijvolgorde: element k is rij k div 301 en kolom k mod 301. Een union_data over de grid-eenheid levert de banden in de
+						tegelvolgorde van de opslag en niet in rijvolgorde; perm zegt per punt waar zijn waarde in die opslagvolgorde staat, zodat de LUT de waarde bij het juiste punt legt. Zonder die
+						permutatie hoorde de gestapelde waarde bij een ander punt dan de sleutel zei, en kreeg een deel van de cellen de null van de onmogelijke helft (#837)."
+			{
+				attribute<uint32>                   rij := id(.) / 301;
+				attribute<uint32>                   kol := id(.) % 301;
+				attribute<dmgtot> pnt            := point_yx(int16(rij), int16(kol), dmgtot);
+				attribute<dmgtot> opgeslagen_pnt := union_data(., id(dmgtot)), Descr = "Het punt waarvan de waarde op deze positie in de opslagvolgorde staat.";
+				attribute<.>      perm           := rlookup(pnt, opgeslagen_pnt), Descr = "De positie in de opslagvolgorde van het punt op deze rij-major positie.";
+			}
 
 			// alleen de 9 gewassen die in de netcdf-dimensie zitten
 			unit<uint32> WWL_Gewassen := cat_range(0, 9)
@@ -337,14 +347,22 @@ container Landbouw : using = "Classifications/Landbouw"
 				attribute<uint32> band       := org_rel -> combo/band;
 			}
 
-			unit<uint32> LUT := combine(combo_sel, WWL_relatie_database/wwl_grid)   //lookup table
+			unit<uint32> LUT_opslag := combine(combo_sel, WWL_relatie_database/dmgtot)
+			, Descr = "De banden van deze gewas-klimaatcombinatie gestapeld, per combinatie in de opslagvolgorde van de grid (tegels); alleen via LUT/opslag_rel te lezen."
 			{
-				attribute<spoint>  wwl_lin    := second_rel;         
-				attribute<uint32>  wwl_row    := uint32(PointRow(wwl_lin));
-				attribute<uint32>  wwl_col    := uint32(PointCol(wwl_lin));
+				attribute<float32> dmgtot_stack := ='union_data(., ' + AsItemList('WWL_relatie_database/dmgtot_bands/b' + string(combo_sel/band)) + ')';
+			}
+			unit<uint32> LUT := combine(combo_sel, WWL_relatie_database/wwl_k)   //lookup table
+			{
+				attribute<uint32>  wwl_row    := WWL_relatie_database/wwl_k/rij[second_rel];
+				attribute<uint32>  wwl_col    := WWL_relatie_database/wwl_k/kol[second_rel];
 
+				// De netcdf heeft ghg als rij-as en glg als kolom-as, beide van 0 tot 3 meter oplopend. GDAL leest de rij-as gespiegeld
+				// (rij 0 is ghg 3,00 m) en de kolom-as ongespiegeld (kolom 0 is glg 0,00 m). Gemeten in #837: de natste hoek, 99 procent
+				// schade, ligt op rij 300 kolom 0, de droogste op rij 0 kolom 300, en de fysisch onmogelijke helft (GLG ondieper dan GHG)
+				// is null waar de kolom kleiner is dan 300 min de rij.
 				attribute<uint32>  ghg        := 300 - wwl_row;   // rij   = ghg, cm = 300 - index
-				attribute<uint32>  glg        := 300 - wwl_col;   // kolom = glg, cm = 300 - index			
+				attribute<uint32>  glg        := wwl_col;         // kolom = glg, cm = index
 				attribute<uint32>  bodem_code := combo_sel/bodem_code[first_rel];
 				attribute<uint32>  gewas_code := combo_sel/gewas_code[first_rel];
 				attribute<uint32>  beregening := combo_sel/beregening[first_rel];
@@ -352,7 +370,8 @@ container Landbouw : using = "Classifications/Landbouw"
 				// mixed-radix sleutel; slots: beregening<2, bodem_code<8192 (BOFEK EK max 5007), gewas_code<32, ghg<512, glg<512. Zelfde formule per-cel (zie key hieronder).
 				attribute<uint64>  key		  := (((uint64(beregening)*8192u64 + uint64(bodem_code))*32u64 + uint64(gewas_code))*512u64 + uint64(ghg))*512u64 + uint64(glg);
 
-				attribute<float32> dmgtot_stack  := ='union_data(., ' + AsItemList('WWL_relatie_database/dmgtot_bands/b' + string(combo_sel/band)) + ')';
+				attribute<LUT_opslag> opslag_rel  := value(uint32(first_rel) * 90601 + uint32(WWL_relatie_database/wwl_k/perm[second_rel]), LUT_opslag), Descr = "Waar de waarde van deze rij in de gestapelde opslagvolgorde staat.";
+				attribute<float32>    dmgtot_stack := LUT_opslag/dmgtot_stack[opslag_rel];
 			}
 
 			container Input
