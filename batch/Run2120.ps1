@@ -465,4 +465,4 @@ foreach ($v in $Varianten) {
 
 $totaal.Stop()
 Write-Regel "ALLES KLAAR in $([math]::Round($totaal.Elapsed.TotalHours,2)) uur"
-Write-Regel "volgende  : batch\RunIndicatoren.ps1 -Varianten $($Varianten -join ',') -IndicatorRegio Landschap"
+Write-Regel "volgende  : batch\RunIndicatoren.ps1 -Varianten $($Varianten -join ',') -IndicatorRegio Landschappen"

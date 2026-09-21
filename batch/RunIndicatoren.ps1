@@ -12,25 +12,22 @@
    zichtjaar, basisdata, variantdata) en zegt het welke stap ontbrekende invoer maakt.
 
  HOE START JE HET (vanuit een PowerShell-venster in de map batch)
-   De levering: alle varianten, zichtjaar 2120, de vier landschapstabellen en landsdekkend:
+   De levering: alle varianten, zichtjaar 2120, de vier landschapstabellen en landsdekkend. Standaard
+   ontkoppeld (#824): de zichtjaren voor het exportzichtjaar elk in een eigen proces, daarna de export
+   van het exportzichtjaar in twee processen, eerst alle kaarten en dan de tabellen, die die kaarten
+   teruglezen in plaats van de indicatoren opnieuw te rekenen:
        .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerder -IndicatorRegio Landschappen
-   Alleen de vier landschapstabellen, bij een levering die de rest al heeft:
+   Alleen de vier landschapstabellen, op de kaarten van een eerdere export van hetzelfde zichtjaar:
        .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerder -IndicatorRegio Landschappen -AlleenLandschapstabellen
+   Alleen het exportzichtjaar opnieuw (bijvoorbeeld een tabel na een reparatie), met de ketens van
+   een eerdere run:
+       .\RunIndicatoren.ps1 -Varianten BAU -IndicatorRegio Landschappen -AlleenExportZichtjaar
    Een variant op de landelijke indeling:
        .\RunIndicatoren.ps1 -Varianten BAU
    Meerdere zichtjaren:
        .\RunIndicatoren.ps1 -Varianten BAU -Zichtjaren Y2040,Y2120
-   Ontkoppeld (#824): de zichtjaren voor het exportzichtjaar elk in een eigen proces, daarna de
-   export van het exportzichtjaar, die dan alleen dat jaar rekent:
-       .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerder -IndicatorRegio Landschappen -Ontkoppeld
-   Alleen het exportzichtjaar opnieuw (bijvoorbeeld een tabel na een reparatie), met de ketens van
-   een eerdere ontkoppelde run:
-       .\RunIndicatoren.ps1 -Varianten BAU -IndicatorRegio Landschappen -Ontkoppeld -AlleenExportZichtjaar
-   De tabellen uit de geschreven export (#824): eerst alle kaarten, dan in een eigen proces de tabellen,
-   die die kaarten teruglezen in plaats van de indicatoren opnieuw te rekenen:
-       .\RunIndicatoren.ps1 -Varianten BAU,BAU2,NbSGenuanceerder -IndicatorRegio Landschappen -Ontkoppeld -TabellenUitExport
-   Alleen de landschapstabellen opnieuw, op de kaarten van een eerdere export van hetzelfde zichtjaar:
-       .\RunIndicatoren.ps1 -Varianten BAU -IndicatorRegio Landschappen -AlleenLandschapstabellen -TabellenUitExport
+   Gekoppeld, zoals voor #824: alle zichtjaren en de tabellen levend, in een proces per variant:
+       .\RunIndicatoren.ps1 -Varianten BAU -Ontkoppeld:$false -TabellenUitExport:$false
    Daarna de oplevering samenstellen met batch\MaakOplevering.ps1.
 
  INSTELLINGEN
@@ -57,11 +54,11 @@
                             het inlezen van wat de casussen delen. Gebruik dit, en draai NOOIT meerdere
                             processen naast elkaar op dezelfde LocalData: ze botsen op bestanden die
                             ze allebei openen.
-      -Ontkoppeld           De ketens tussen de zichtjaren lopen via tifs (#824). Zonder deze schakelaar
-                            trekt de export van 2120 alle zichtjaren vanaf 2040 in een proces mee, want
-                            de cumulatieve indicatoren (contante waarden, koolstof, methaan, sterfte,
-                            SOMERS) lezen het vorige zichtjaar; elke tabel is dan een run van drie
-                            kwartier. Met de schakelaar draait het script eerst per variant de zichtjaren
+      -Ontkoppeld           De ketens tussen de zichtjaren lopen via tifs (#824); standaard aan, uit met
+                            -Ontkoppeld:$false. Uit trekt de export van 2120 alle zichtjaren vanaf 2040 in
+                            een proces mee, want de cumulatieve indicatoren (contante waarden, koolstof,
+                            methaan, sterfte, SOMERS) lezen het vorige zichtjaar; elke tabel is dan een run
+                            van drie kwartier. Aan draait het script eerst per variant de zichtjaren
                             voor het exportzichtjaar, elk in een eigen proces: het item Zichtjaren/<jaar>/
                             Tijdreeks schrijft de ketentifs (Indicatoren/<casus>/Ketens) en de kaarten
                             van de tijdreeks. De export van het exportzichtjaar leest dan de ketens van
@@ -74,14 +71,17 @@
                             allocatie opnieuw gedaan en hoort de reeks ook opnieuw. -AlleenLandschapstabellen
                             slaat de reeks ook over.
       -TabellenUitExport    De tabellen lezen de kaarten terug die de export van hetzelfde zichtjaar heeft
-                            geschreven (#824), via ModelParameters/TabellenUitExport. De export gaat dan in
-                            twee processen: eerst generates/Generate_Kaarten met de schakelaar uit, daarna
-                            generates/Themas/Tabellen met de schakelaar aan. Elke volgende regio draait alleen
+                            geschreven (#824), via ModelParameters/TabellenUitExport; standaard aan, uit
+                            met -TabellenUitExport:$false. Aan gaat de export in twee processen: eerst
+                            generates/Generate_Kaarten met de schakelaar uit, daarna generates/Themas/
+                            Tabellen met de schakelaar aan. Elke volgende regio draait alleen
                             generates/Indicatoren_PerIndeling met de schakelaar aan, en met
                             -AlleenLandschapstabellen doen alle regio's dat. Een tabelstap eist dat de kaarten
                             van dat zichtjaar er staan: een ontbrekende tif geeft een [E]-regel in het log en
-                            de stap valt om. De bereikbaarheid van groen rekent per regio opnieuw, op
-                            teruggelezen invoer; alleen de landelijke tabel leest de groenkaarten zelf terug.
+                            de stap valt om. Een export van voor #831 mist de kaarten die toen nog niet
+                            werden geschreven; een tabel op zo'n oudere export vraagt -TabellenUitExport:$false.
+                            De bereikbaarheid van groen rekent per regio opnieuw, op teruggelezen invoer;
+                            alleen de landelijke tabel leest de groenkaarten zelf terug.
       -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
 
    B. Omgevingsvariabelen die dit script zelf zet: StandAllocatieOntkoppeld=TRUE (stand uit de tifs),
@@ -93,7 +93,7 @@
    C. Wat dit script NIET regelt en je vooraf moet nalopen:
       - De stand moet er staan voor ELK zichtjaar tot en met het exportzichtjaar, want cumulatieve
         indicatoren (contante waarden, koolstof, sterfte) rekenen alle voorgaande zichtjaren mee,
-        in een proces (zonder -Ontkoppeld) of zichtjaar voor zichtjaar (met).
+        in een proces (-Ontkoppeld:$false) of zichtjaar voor zichtjaar (standaard).
       - De basisdata van WriteBasedata/Generate_Run3 en Generate_Run4_IndicatorenData en de
         variantdata van WriteVariantData. Run2120.ps1 maakt ze allemaal; de toets hieronder meldt
         wat ontbreekt en welk item het maakt.
@@ -121,9 +121,9 @@ param(
     [string]   $IndicatorRegio = 'NL',
     [switch]   $Gebundeld,
     [switch]   $AlleenLandschapstabellen,
-    [switch]   $Ontkoppeld,
+    [switch]   $Ontkoppeld = $true,
     [switch]   $AlleenExportZichtjaar,
-    [switch]   $TabellenUitExport,
+    [switch]   $TabellenUitExport = $true,
     [switch]   $GeenToets
 )
 
