@@ -144,9 +144,13 @@ het besluit vastligt, of loop hem na bij elke reactie van de opdrachtgever.
 en `Home.md` en niet alleen de inhoud met grep; de hedonische prijsfunctie stond maanden als
 subparagraaf onderaan een sectorpagina zonder link vanuit de navigatie.
 
-Begin een controleronde met twee scriptjes: haal alle identifiers tussen backticks uit de pagina en
-zoek ze in alle dms-tekst van `cfg`, en toets elke `[[wikilink]]` tegen de bestandsnamen in de
-kloon. Dat vangt verwijderde items, verzonnen namen en dode links.
+Begin een controleronde met drie scriptjes: haal alle identifiers tussen backticks uit de pagina en
+zoek ze in alle dms-tekst van `cfg`, toets elke `[[wikilink]]` tegen de bestandsnamen in de kloon,
+en grep op tijdmarkeringen (een maand met jaartal, "sinds #", "sindsdien", "voorheen", "inmiddels",
+"bleek", "gecorrigeerd", "vernieuwd", regels die met `> ` beginnen). Dat vangt verwijderde items,
+verzonnen namen, dode links en logboekstijl. De treffers van de derde toets zijn een voorronde: een
+datavintage zoals LGN2024 of een uitkomst met run en datum op een toepassingspagina mag blijven, een
+wijzigingsmoment niet.
 
 Wat het niet vangt: een pagina die met de juiste namen een verouderde formule beschrijft, en een
 mechanisme dat voor deze sector is uitgeschakeld. Zo'n sectie leest gezond terwijl de zeef die zij
