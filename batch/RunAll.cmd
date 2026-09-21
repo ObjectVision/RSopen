@@ -113,7 +113,7 @@ REM call ..\batch\RunVariantData.cmd
 
 :runScenarios
 
-set RSL_SCENARIO_NAME=WLO_Hoog
+set RSL_SCENARIO_NAME=WLO_hoog
 call ..\batch\RunScenarios.cmd
 
 REM set RSL_SCENARIO_NAME=WLO_Laag
