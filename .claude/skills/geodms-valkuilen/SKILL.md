@@ -365,7 +365,9 @@ De zelftoets die dit ving is die uit rs-draaien, trap 2: zet naast een handmatig
 
 ## `float32(x)` houdt de metriek vast, `x[float32]` strijkt hem weg
 
-De twee schrijfwijzen zien er inwisselbaar uit en zijn dat niet. `float32(x)` verandert alleen het waardetype en laat de eenheid staan, `x[float32]` gooit de eenheid weg. Een verhouding die je met `float32()` bouwt draagt dus de eenheden van teller en noemer mee, ook als de declaratie iets anders zegt: de metriek volgt uit de expressie en niet uit het opgegeven waardetype.
+Een cast naar een AFGELEIDE eenheid van dezelfde basis rekent wel om: `a[mton]` op een waarde in `ton`, met `mton := 1000000 * ton`, deelt door een miljoen, en `convert(a, mton)` en `value(a, mton)` doen hetzelfde. Gemeten op 2026-09-21 met GeoDms20.17.0.m op 2.000.000 ton: alle drie geven 2. Zo staat `Methaan_Cumulatief` in `Export.dms` met `[mton]` op een som in ton, en zo kan een kolom in megaton CO2-equivalent (#828) beide kanten met `[mton]` op een noemer brengen zonder een deling met een kaal getal.
+
+De twee schrijfwijzen hieronder zien er inwisselbaar uit en zijn dat niet. `float32(x)` verandert alleen het waardetype en laat de eenheid staan, `x[float32]` gooit de eenheid weg. Een verhouding die je met `float32()` bouwt draagt dus de eenheden van teller en noemer mee, ook als de declaratie iets anders zegt: de metriek volgt uit de expressie en niet uit het opgegeven waardetype.
 
 Meestal merk je dat pas ver stroomafwaarts, waar de vermenigvuldiging met de doeleenheid botst: "Values mismatch between Base Units of first argument (Job per W) and Base Units of cast target (Job)". De melding wijst naar de plek van de botsing en niet naar de deling die de eenheid meebracht, en die twee kunnen in verschillende bestanden staan.
 

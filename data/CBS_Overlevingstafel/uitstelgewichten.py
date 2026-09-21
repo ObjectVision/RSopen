@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-# Uitstelgewichten voor de sterfte-indicator (#484), voor Indicatoren/AdHoc/Rapport_v01/SterfteUitgesteld.
+# Uitstelgewichten voor de sterfte-indicator (#484). Gebruikt door het AdHoc-item SterfteUitgesteld van het resultatenrapport 1.0
+# (#828, uit de configuratie sinds de verhuizing van de AdHoc-items); de structurele opvolger, met de horizon uit ExportZichtjaar, staat
+# als eigen issue op de agenda.
 #
 # Een vermeden sterfgeval is een uitgesteld sterfgeval: wie door meer groen dit jaar niet overlijdt, leeft door met de
 # overlevingskansen van iemand van die leeftijd. Dit script leidt uit de CBS-periode-overlevingstafel (StatLine 37360ned,
