@@ -62,6 +62,33 @@ container Bodem : using = "Classifications/Grondgebruik/Bodem"
 		attribute<bool>    IsMoerig_grid       (AdminDomain) := IsVeenOfMoerig_grid && !IsVeen_grid, Descr = "Alleen de moerige gronden, cluster 20 van BOFEK2020. Apart van de veengronden omdat de emissiefactor die Deltares in #657 heeft aangeleverd voor de twee verschilt. Deze is wel al op FALSE gezet buiten het ruimtebeslag van BOFEK, anders dan de twee hierboven.";
 		attribute<uint32>  BOFEK_CODE          (AdminDomain) := uint32(BOFEK2020)[per_AdminDomain];
 
+		// Vulling van de cellen zonder code (#837): de shapefile heeft 5.771 polygonen zonder BOFEK2020-code, samen een miljoen hectare water, bebouwing en
+		// buitenland, met daarin 35.000 ha landbouw van het basisjaar: kassen die BOFEK als bebouwd ziet, oeverstroken en dorpsranden. Zonder code geen sleutel
+		// in de WWL-relatiedatabase en dus een derving van 100 procent, en dat zegt niets over de bodem. De vulling neemt de code van de dichtstbijzijnde
+		// gecodeerde cel van 250 meter; een cel van 25 meter zonder code in een gecodeerde cel van 250 meter krijgt die code direct.
+		attribute<.>       per_rdc_250m        (rdc_250m)    := poly2grid(geometry, rdc_250m);
+		attribute<uint32>  BOFEK_CODE_250m     (rdc_250m)    := uint32(BOFEK2020)[per_rdc_250m];
+		unit<uint64> Gecodeerd := select_with_org_rel(IsDefined(BOFEK_CODE_250m))
+		{
+			attribute<rdc_meter> geometry := rdc_250m/point[org_rel];
+			attribute<uint32>    code     := BOFEK_CODE_250m[org_rel];
+		}
+		unit<uint64> Ongecodeerd := select_with_org_rel(!IsDefined(BOFEK_CODE_250m))
+		, Descr = "De cellen van 250 meter zonder code, met de dichtstbijzijnde gecodeerde cel als bron. Ook buiten het studiegebied, want de randcellen van 250 meter vallen deels buiten de begrenzing terwijl er op 25 meter nog landbouw in ligt."
+		{
+			attribute<rdc_meter> geometry := rdc_250m/point[org_rel];
+			attribute<Gecodeerd> naaste   := connect(Gecodeerd/geometry, geometry);
+			attribute<uint32>    code     := Gecodeerd/code[naaste];
+			attribute<meter>     afstand  := value(dist(Gecodeerd/geometry[naaste], geometry), meter);
+		}
+		attribute<uint32>  BOFEK_CODE_250m_Gevuld (rdc_250m) := MakeDefined(BOFEK_CODE_250m, recollect_by_cond(!IsDefined(BOFEK_CODE_250m), Ongecodeerd/code));
+		attribute<uint32>  BOFEK_CODE_Gevuld   (AdminDomain) := MakeDefined(BOFEK_CODE, BOFEK_CODE_250m_Gevuld[AdminDomain/rdc_250m_rel])
+		, Descr = "De BOFEK-code met de vulling van de cellen zonder code (#837); wat de opbrengstderving van de landbouw leest. BOFEK_CODE hierboven is de kale kaart.";
+		attribute<bool>    BOFEK_CODE_IsAangevuld (AdminDomain) := !IsDefined(BOFEK_CODE) && IsDefined(BOFEK_CODE_Gevuld), Descr = "Waar de code uit de vulling komt en niet uit de kaart.";
+		parameter<uint64>  n_aangevuld_250m    := #Ongecodeerd, Descr = "Controlegetal: het aantal cellen van 250 meter dat gevuld is.";
+		parameter<meter>   afstand_max         := max(Ongecodeerd/afstand), Descr = "Controlegetal: de grootste afstand waarover een code is overgenomen.";
+
+
 
 	}
 
