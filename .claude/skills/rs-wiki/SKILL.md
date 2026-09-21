@@ -55,9 +55,36 @@ NL2120-toepassing staat die fractie voor NbSGenuanceerd op 0,70; die waarde hoor
 niet bij de indicator". Zonder die formulering leest een volgende gebruiker een projectkeuze als een
 modeleigenschap, en dat is precies wat een naslagwerk niet moet doen.
 
-Dezelfde regel geldt voor meetuitkomsten. Een getal uit een run mag als illustratie op een
-indicatorpagina staan, met de casus, het zichtjaar en de datum of de tag erbij, zodat duidelijk is
-dat het een voorbeeld is en geen eigenschap.
+Dezelfde regel geldt voor meetuitkomsten. Een getal uit een run hoort alleen in een rekenvoorbeeld
+of in een aparte paragraaf die als voorbeeld is aangekondigd, met de casus en het zichtjaar erbij,
+zodat duidelijk is dat het een voorbeeld is en geen eigenschap. Niet in de methodetekst zelf.
+
+## Naslag, geen logboek
+
+Een pagina beschrijft hoe het model nu werkt, in de tegenwoordige tijd. Wie de pagina leest wil de
+methode begrijpen, niet de weg erheen. De landschapsteams en andere onderzoekers die na een
+oplevering meekijken lezen de pagina in een keer van boven naar beneden, en elke zin over hoe het
+vroeger was staat dan tussen hen en de methode in.
+
+Daarom staat er niet op een pagina:
+
+- wanneer iets is veranderd ("sinds #637", "in augustus 2026", "tot 8 september");
+- wat er eerder stond, wat er mis was en hoeveel het scheelde;
+- hoe een fout is gevonden en langs welke weg;
+- kaders met "methodiek vernieuwd" of "gecorrigeerd in", ook niet als citaat.
+
+Wat er wel op staat is de afweging achter een keuze, als redenering bij de methode: "de nieuwbouwterm
+is een verandering en geen niveau, omdat de volle groenpremie geen beleidsalternatief is". Die zin
+klopt ook over een jaar, een datum niet.
+
+De geschiedenis staat in het issue. Onderaan de pagina komt een korte paragraaf `## Verantwoording`
+met een regel per issue dat de methode heeft gevormd: het hekje en in een zin wat het besliste,
+zonder datum en zonder oude waarde. Wie wil weten waarom iets zo is, vindt daar de weg; de rest van
+de pagina blijft schoon.
+
+De toets per zin: staat hier een tijdstip, een vorige versie of een vergelijking met vroeger? Dan
+hoort de zin in het issue en niet op de pagina, of hij moet herschreven worden tot een uitspraak
+over de huidige werking.
 
 ## De PriceIndices-wiki hangt eraan
 
@@ -97,9 +124,11 @@ Verwijs naar issues met een hekje, dus #634, zodat GitHub de koppeling legt.
 
 Dat is de normale toestand, niet de uitzondering. De code verandert dagelijks, de wiki niet.
 
-Bij een verschil is de code leidend voor wat er werkelijk is gerekend. Het verschil zelf is een
-bevinding die op de pagina thuishoort, niet alleen in een chat of een issue. Werk de pagina dus bij
-zodra je het verschil vaststelt; dat is goedkoper dan het onthouden.
+Bij een verschil is de code leidend voor wat er werkelijk is gerekend. Werk de pagina bij zodra je
+het verschil vaststelt; dat is goedkoper dan het onthouden. Maar bijwerken is herschrijven, niet
+aanvullen: de alinea gaat opnieuw alsof de nieuwe werking er altijd was, en het issue dat de
+verandering bracht komt als een regel bij de verantwoording onderaan. Een kader of een zin met
+"sinds" erbij zetten is de vorm die van de wiki een logboek maakt; zie Naslag, geen logboek.
 
 Twee vormen die vaak voorkomen. Een parametertabel die een waarde noemt die inmiddels anders staat,
 en een beschrijving van een mechanisme dat door een issue is vervangen. Bij het tweede is het niet
