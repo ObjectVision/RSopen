@@ -382,7 +382,8 @@ container Diagnose
 
 	container Natuur
 	: Descr = "De natuurleveringen en de natuurallocatie: Zand (zeef en realisatie van #652, op aanvraag), Veen (de bouwsteenallocatie per peilgebied, de vijf uitdraaien voor de terugkoppeling aan
-				team Veen, in GenerateAll) en Overzicht (welke bron waar oplegt en hoeveel de bronnen overlappen, op aanvraag)."
+				team Veen, in GenerateAll), Overzicht (welke bron waar oplegt en hoeveel de bronnen overlappen, op aanvraag) en Rangorde (wat de landbouwstroom van veen en de zandallocatie
+				verliezen doordat zij de voorrang tussen de landschappen niet kennen, #829, op aanvraag)."
 	{
 		container Zand
 		: Descr = "Op aanvraag. Meet de twee dingen die bij de natuurallocatie van het landschapstype Zand mis kunnen gaan: een zeef die te klein is voor de opgave, en een allocatie die de opgave niet haalt. Het eerste is een gegeven van de invoer, het tweede kan ook aan de verdeling over de regio's liggen."
@@ -690,6 +691,74 @@ container Diagnose
 				+ '|zeef_overlap_veen_rivieren;' + string(sum(float32(Zeef_Veen && Zeef_Rivieren) * Cel)) + ';0'
 				+ '|zeef_overlap_veen_kust;' + string(sum(float32(Zeef_Veen && Zeef_Kust) * Cel)) + ';0'
 			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_zeef.txt'", StorageType = "str";
+		}
+
+		container Rangorde
+		: Descr = "Op aanvraag. De voorrang tussen de landschappen in de natuurstroom (kust, zand nat, veen, rivieren, zand droog, onderlaag; Templates/VariantData/Natuur/Natuur_T/Levering) gelegd naast
+					de twee stromen die haar niet kennen (#829): de landbouwstroom van veen, die in ExogeenOpleggen alleen landt waar geen beheertype ligt, ook als dat beheertype van een landschap van lagere
+					rang komt; en de zandallocatie, die haar hectares ook zet op cellen die een levering van hogere rang daarna wint. Per paar de overlap binnen het studiegebied, met ernaast wat er na het
+					opleggingsmasker van overblijft. Water telt hier mee, anders dan in Overzicht, want de voorrang loopt per landschap over natuur en water samen."
+		{
+			parameter</Units/ha> Cel := /Geography/AdminDomain/NrHaPerCell;
+			container NL := /VariantData/NbSGenuanceerd/NatuurLevering, Descr = "De stroom van de variant met landschapsleveringen, voor het masker.";
+
+			attribute<Bool> InStudy     (/Geography/AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain;
+			attribute<Bool> MagOpleggen (/Geography/AdminDomain) := /BaseData/Omgeving/Opleggingsmasker/MagOpleggen;
+
+			attribute<Bool> Kust         (/Geography/AdminDomain) := InStudy && IsDefined(NL/Kust/Type);
+			attribute<Bool> ZandNat      (/Geography/AdminDomain) := InStudy && IsDefined(NL/Zand/Type_Nat);
+			attribute<Bool> VeenNatuur   (/Geography/AdminDomain) := InStudy && IsDefined(NL/Veen/Type);
+			attribute<Bool> VeenLandbouw (/Geography/AdminDomain) := InStudy && IsDefined(NL/Veen/LandbouwType_rel), Descr = "Natte teelt en de twee vernatte graslandtypen; binnen het veen sluiten natuur en landbouw elkaar per cel uit.";
+			attribute<Bool> Rivieren     (/Geography/AdminDomain) := InStudy && IsDefined(NL/Rivieren/Type);
+			attribute<Bool> ZandDroog    (/Geography/AdminDomain) := InStudy && IsDefined(NL/Zand/Type_Droog);
+			attribute<Bool> Onderlaag    (/Geography/AdminDomain) := InStudy && IsDefined(NL/Landelijk/Type_Onderlaag);
+			attribute<Bool> VeenCel      (/Geography/AdminDomain) := InStudy && NL/Landschap/Veen/IsVeenCel, Descr = "Binnen de aangeleverde veenpolygonen, ongeacht wat de allocatie er neerlegt.";
+			attribute<Bool> InLandschapVeen (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsVeen, Descr = "De veenbegrenzing van #760 waarbinnen de onderlaag geblokkeerd is; de veenlevering hoort daarbinnen te liggen.";
+
+			attribute<Bool> BovenVeen (/Geography/AdminDomain) := Kust || ZandNat,                Descr = "De leveringen die volgens de rangorde van veen mogen winnen.";
+			attribute<Bool> OnderVeen (/Geography/AdminDomain) := Rivieren || ZandDroog || Onderlaag, Descr = "De leveringen die volgens de rangorde van veen horen te verliezen.";
+
+			// de landbouwstroom na het masker: waar de veenlandbouw niet in de stand komt, en waar dat komt doordat een ander landschap er een nieuw beheertype neerlegt; het verschil zijn de cellen
+			// waar een landschap van hogere rang bestaande natuur bevestigt en de cel dus blijft wat zij is
+			attribute<Bool> LandbouwVerdrongen            (/Geography/AdminDomain) := VeenLandbouw && MagOpleggen && !IsDefined(/VariantData/NbSGenuanceerd/ExogeenOpleggen/LandbouwType_rel);
+			attribute<Bool> LandbouwVerdrongen_Beheertype (/Geography/AdminDomain) := VeenLandbouw && MagOpleggen &&  IsDefined(/VariantData/NbSGenuanceerd/ExogeenOpleggen/Beheertype);
+
+			parameter<String> rangorde :=
+				  'stroom;maat;levering_ha;na_masker_ha'
+				+ '|landbouw;veen_landbouw;'                   + string(sum(float32(VeenLandbouw) * Cel))                          + ';' + string(sum(float32(VeenLandbouw && MagOpleggen) * Cel))
+				+ '|landbouw;onder_kust;'                      + string(sum(float32(VeenLandbouw && Kust) * Cel))                  + ';' + string(sum(float32(VeenLandbouw && Kust && MagOpleggen) * Cel))
+				+ '|landbouw;onder_zand_nat;'                  + string(sum(float32(VeenLandbouw && ZandNat) * Cel))               + ';' + string(sum(float32(VeenLandbouw && ZandNat && MagOpleggen) * Cel))
+				+ '|landbouw;onder_rivieren;'                  + string(sum(float32(VeenLandbouw && Rivieren) * Cel))              + ';' + string(sum(float32(VeenLandbouw && Rivieren && MagOpleggen) * Cel))
+				+ '|landbouw;onder_zand_droog;'                + string(sum(float32(VeenLandbouw && ZandDroog) * Cel))             + ';' + string(sum(float32(VeenLandbouw && ZandDroog && MagOpleggen) * Cel))
+				+ '|landbouw;onder_onderlaag;'                 + string(sum(float32(VeenLandbouw && Onderlaag) * Cel))             + ';' + string(sum(float32(VeenLandbouw && Onderlaag && MagOpleggen) * Cel))
+				+ '|landbouw;alleen_onder_lagere_rang;'        + string(sum(float32(VeenLandbouw && OnderVeen && !BovenVeen) * Cel)) + ';' + string(sum(float32(VeenLandbouw && OnderVeen && !BovenVeen && MagOpleggen) * Cel))
+				+ '|landbouw;verdrongen;'                      + string(sum(float32(LandbouwVerdrongen) * Cel))                    + ';' + string(sum(float32(LandbouwVerdrongen) * Cel))
+				+ '|landbouw;verdrongen_met_nieuw_beheertype;' + string(sum(float32(LandbouwVerdrongen_Beheertype) * Cel))         + ';' + string(sum(float32(LandbouwVerdrongen_Beheertype) * Cel))
+				+ '|landbouw;verdrongen_door_lagere_rang;'     + string(sum(float32(LandbouwVerdrongen && !BovenVeen) * Cel))      + ';' + string(sum(float32(LandbouwVerdrongen && !BovenVeen) * Cel))
+				+ '|landbouw;toegekend;'                       + string(sum(float32(InStudy && IsDefined(/VariantData/NbSGenuanceerd/ExogeenOpleggen/LandbouwType_rel)) * Cel)) + ';' + string(sum(float32(InStudy && IsDefined(/VariantData/NbSGenuanceerd/ExogeenOpleggen/LandbouwType_rel)) * Cel))
+				+ '|zand;zand_nat;'                            + string(sum(float32(ZandNat) * Cel))                               + ';' + string(sum(float32(ZandNat && MagOpleggen) * Cel))
+				+ '|zand;zand_nat_onder_kust;'                 + string(sum(float32(ZandNat && Kust) * Cel))                       + ';' + string(sum(float32(ZandNat && Kust && MagOpleggen) * Cel))
+				+ '|zand;zand_droog;'                          + string(sum(float32(ZandDroog) * Cel))                             + ';' + string(sum(float32(ZandDroog && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_kust;'               + string(sum(float32(ZandDroog && Kust) * Cel))                     + ';' + string(sum(float32(ZandDroog && Kust && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_veen_natuur;'        + string(sum(float32(ZandDroog && VeenNatuur) * Cel))               + ';' + string(sum(float32(ZandDroog && VeenNatuur && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_veen_landbouw;'      + string(sum(float32(ZandDroog && VeenLandbouw) * Cel))             + ';' + string(sum(float32(ZandDroog && VeenLandbouw && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_rivieren;'           + string(sum(float32(ZandDroog && Rivieren) * Cel))                 + ';' + string(sum(float32(ZandDroog && Rivieren && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_hogere_rang;'        + string(sum(float32(ZandDroog && (Kust || VeenNatuur || Rivieren)) * Cel)) + ';' + string(sum(float32(ZandDroog && (Kust || VeenNatuur || Rivieren) && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_hogere_rang_met_veenlandbouw;' + string(sum(float32(ZandDroog && (Kust || VeenNatuur || VeenLandbouw || Rivieren)) * Cel)) + ';' + string(sum(float32(ZandDroog && (Kust || VeenNatuur || VeenLandbouw || Rivieren) && MagOpleggen) * Cel))
+				+ '|veen;veen_natuur;'                         + string(sum(float32(VeenNatuur) * Cel))                            + ';' + string(sum(float32(VeenNatuur && MagOpleggen) * Cel))
+				+ '|veen;veen_natuur_onder_kust;'              + string(sum(float32(VeenNatuur && Kust) * Cel))                    + ';' + string(sum(float32(VeenNatuur && Kust && MagOpleggen) * Cel))
+				+ '|veen;veen_natuur_onder_zand_nat;'          + string(sum(float32(VeenNatuur && ZandNat) * Cel))                 + ';' + string(sum(float32(VeenNatuur && ZandNat && MagOpleggen) * Cel))
+				+ '|veen;veen_landbouw_onder_kust;'            + string(sum(float32(VeenLandbouw && Kust) * Cel))                  + ';' + string(sum(float32(VeenLandbouw && Kust && MagOpleggen) * Cel))
+				+ '|veen;veen_landbouw_onder_zand_nat;'        + string(sum(float32(VeenLandbouw && ZandNat) * Cel))               + ';' + string(sum(float32(VeenLandbouw && ZandNat && MagOpleggen) * Cel))
+				+ '|veen;veen_cel_buiten_landschapsgebied;'    + string(sum(float32(VeenCel && !InLandschapVeen) * Cel))            + ';' + string(sum(float32(VeenCel && !InLandschapVeen && MagOpleggen) * Cel))
+				+ '|veen;veen_cel_onder_onderlaag;'            + string(sum(float32(VeenCel && Onderlaag) * Cel))                   + ';' + string(sum(float32(VeenCel && Onderlaag && MagOpleggen) * Cel))
+				+ '|veen;veen_cel_onder_onderlaag_zonder_type;'+ string(sum(float32(VeenCel && Onderlaag && !VeenNatuur && !VeenLandbouw) * Cel)) + ';' + string(sum(float32(VeenCel && Onderlaag && !VeenNatuur && !VeenLandbouw && MagOpleggen) * Cel))
+				+ '|landbouw;onder_onderlaag_buiten_landschapsgebied;' + string(sum(float32(VeenLandbouw && Onderlaag && !InLandschapVeen) * Cel)) + ';' + string(sum(float32(VeenLandbouw && Onderlaag && !InLandschapVeen && MagOpleggen) * Cel))
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_rangorde.txt'", StorageType = "str"
+			, Descr = "Drie blokken. Landbouw: de landbouwstroom van veen tegen elke natuurlevering, met onderaan wat er na het masker werkelijk verdrongen wordt, welk deel daarvan door een nieuw beheertype
+					en welk deel door een landschap van lagere rang; toegekend plus verdrongen is de levering na het masker, en verdrongen_door_lagere_rang hoort nul te zijn sinds de landbouwstroom rangbewust
+					is (#829). Zand: de gealloceerde zandnatuur tegen de leveringen van hogere rang, zonder en met de veenlandbouw, die sinds #829 ook van zand droog wint; beide horen nul te zijn zodra de
+					zeef ze overslaat. Veen: wat veen zelf verliest aan kust en zand nat; dat volgt uit de afgesproken volgorde, maar de veenallocatie weet het niet.";
 		}
 	}
 
