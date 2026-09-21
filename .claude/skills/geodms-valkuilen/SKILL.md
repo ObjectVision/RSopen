@@ -553,6 +553,16 @@ Dat is bepalend zodra de rijvolgorde een voorrangsvolgorde is. `Trede_T` kiest m
 
 Wie de volgorde van de argumenten omdraait verandert dus de betekenis van de hele ladder, zonder dat er aan de cardinaliteit of aan de namen iets te zien is.
 
+### `union_data` over een grid stapelt in tegelvolgorde, `combine` telt in rijvolgorde
+
+Een attribuut op een grid-eenheid staat intern in tegels. `union_data(lut, band1, band2, ...)` plakt die tegelvolgorde achter elkaar, terwijl `combine(combo, grid)` de gridpunten in rijvolgorde nummert en `PointRow(second_rel)` en `PointCol(second_rel)` die rijvolgorde teruggeven. Wie de gestapelde waarde via de rij en kolom van de combine adresseert, leest daardoor de waarde van een ander punt. Gemeten in #837 op de WWL-relatiegrid van 301 bij 301: de gestapelde waarde stond op 4.554 van de 90.601 posities op het punt dat de sleutel zei, en de natste hoek van 99 procent schade, die op rij 300 kolom 0 hoort, zat in de stapel op rij 225 kolom 225. Exit 0 en een plausibel ogende kaart, want de waarden zijn glad; alleen de nulls van de onmogelijke helft verraadden het, op een vijfde van de landbouw.
+
+Het recept: maak een platte `unit<uint32>` in rijvolgorde (`k div kolommen`, `k mod kolommen`), leid per punt af waar zijn waarde in de opslagvolgorde staat met `rlookup(punt, union_data(., id(grid)))`, en lees de stapel via die permutatie (`SourceData/Landbouw.dms`, `wwl_k/perm`). Een puntopzoeking per band (`b<n>[punt]`) is korter maar laat GeoDmsRun omvallen zodra tientallen banden uit een netcdf vanuit meerdere threads tegelijk worden gelezen; de enkele `union_data` leest sequentieel.
+
+### GDAL spiegelt van een netcdf alleen de rij-as
+
+Een netcdf met twee oplopende coordinaatassen komt via `gdal.grid` binnen met de rij-as omgekeerd (rij 0 is de hoogste waarde van de eerste as) en de kolom-as ongewijzigd. Leid de betekenis van rij en kolom dus niet af uit een symmetrieaanname maar uit twee hoeken die verschillen. In #837 bleek `glg = 300 - kolom` gespiegeld; de natste hoek (GHG en GLG 0) ligt op rij 300 kolom 0 en de droogste op rij 0 kolom 300. Controleer een geladen grid met een klein harnas dat de vier hoeken en een punt buiten de diagonaal afdrukt, en vergelijk met een rechtstreekse lezing van het bestand (netCDF4 in Python).
+
 ## Een template kan op vier manieren aangeroepen worden
 
 Zoek je uit of een template nog gebruikt wordt, dan zijn letterlijke treffers niet genoeg. Een template kan rechtstreeks worden aangeroepen, via de stringvorm in `for_each_ne`, via een uit stukken opgebouwde naam (`Dairy_T` en `Akkerbouw_T` komen uit `LandbouwKlasses/Templatetype`), en zonder haakjes als `container X : = Vergridding_T { ... }`. Die laatste twee hebben nul letterlijke treffers en draaien wel degelijk.
