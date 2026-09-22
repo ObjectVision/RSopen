@@ -29,8 +29,7 @@ Template Zeef_Wonen_perOP_T
 	container Geschiktheid;
 	//
 	
-	parameter<bool> IsNbSOP := OP_sub/IsNbSOP[OP_sub_rel];
-	parameter<Classifications/Modellering/OverstromingsMaatregel5K> OverstromingsMaatregel := OP_sub/OverstromingsMaatregel[OP_sub_rel];
+	parameter<bool> IsNbSOP            := OP_sub/IsNbSOP[OP_sub_rel];
 	
 	parameter<Bool>      HoogbouwToegestaanInMooiLandschap     := ='VariantParameters/VariantK/HoogbouwToegestaanInMooiLandschap[VariantParameters/VariantK/V/'+Variant_name+']';
 	parameter<Bool>      HoogbouwToegestaanInZeerMooiLandschap := ='VariantParameters/VariantK/HoogbouwToegestaanInZeerMooiLandschap[VariantParameters/VariantK/V/'+Variant_name+']';
@@ -41,34 +40,58 @@ Template Zeef_Wonen_perOP_T
 	parameter<Woning_ha> MaxDichtheidInZeerMooiLandschap       := ='VariantParameters/VariantK/MaxDichtheidInZeerMooiLandschap[VariantParameters/VariantK/V/'+Variant_name+']';
 	parameter<Float32>   MinimumDichtheidToenameWonen          := ='VariantParameters/VariantK/MinimumDichtheidToenameWonen[VariantParameters/VariantK/V/'+Variant_name+']';
 	parameter<Eur>       MinimumExploitatieSaldo               := ='VariantParameters/VariantK/MinimumExploitatieSaldo[VariantParameters/VariantK/V/'+Variant_name+']';
+	parameter<Bool>      BouwwijzeVeenGeldtVoorOPs             := ='VariantParameters/VariantK/BouwwijzeVeenGeldtVoorOPs[VariantParameters/VariantK/V/'+Variant_name+']';
 	
-	attribute<Woning> PotentieleState         (CompactedAllocDomain) := sum(Dichtheid_ha * AdminDomain/NrHaPerCell / float32(Beschikbaar_src), CompactedAdminDomain/CompactedAllocDomain_rel);
-	attribute<Woning> StateBasisjaar          (CompactedAllocDomain) := sum(BaseData/StartState/StateBasisjaar/Src0/Wonen/WP1s/Totaal / float32(Beschikbaar_src), CompactedAdminDomain/CompactedAllocDomain_rel);
+	attribute<Woning> PotentieleState         (CompactedAdminDomain) := const(Dichtheid_ha * AdminDomain/NrHaPerCell, CompactedAdminDomain)
+	, Descr = "Het potentieel van dit pakket op een cel van 25 meter: de pakketdichtheid maal het celoppervlak, dus bij 30 woningen per hectare 1,9 woning per cel (#770). Per cel is de eenheid waarop de allocatie kiest en waarop Allocatie_T/Update_Expr de stand vervangt.";
+	attribute<Woning> StateBasisjaar          (CompactedAdminDomain) := /BaseData/StartState/StateBasisjaar/Src0/Wonen/WP1s/Totaal
+	, Descr = "De woningen die in het basisjaar op deze cel staan (#770). Een onbeschikbare cel is via de basisjaar-zeef al restrictief, dus een deling door de beschikbaarheid is hier niet nodig.";
 	
-	attribute<Bool>   NbSOPToepassingsgebied  (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/NbSOPToepassingsgebied/'+NbSOPToepassingsgebied_ref+')';
+	attribute<Bool>   NbSOPToepassingsgebied  (CompactedAdminDomain) := = 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/NbSOPToepassingsgebied/'+NbSOPToepassingsgebied_ref+')';
+
+	container BouwwijzeInput
+	: Descr = "De invoer voor de bouwwijzekeuze van dit ontwikkelpakket: wat het pakket toelaat als vlag per cel, en wat de plek eist (#723). De veeneisen gelden alleen als de variantschakelaar BouwwijzeVeenGeldtVoorOPs aanstaat."
+	{
+		attribute<meter> Waterdiepte             (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsdiepte);
+		attribute<Bool>  EisBodemdalingbestendig (CompactedAdminDomain) := BouwwijzeVeenGeldtVoorOPs ? BouwwijzeEis/Bodemdalingbestendig : const(FALSE, CompactedAdminDomain);
+		attribute<Bool>  EisDrijvend             (CompactedAdminDomain) := BouwwijzeVeenGeldtVoorOPs ? BouwwijzeEis/Drijvend             : const(FALSE, CompactedAdminDomain);
+
+		container Toegestaan :=
+			for_each_nedv(
+				  /Classifications/Modellering/BouwwijzeK/name
+				, 'const(OP_sub/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[OP_sub_rel], CompactedAdminDomain)'
+				, CompactedAdminDomain
+				, bool
+			);
+	}
+
+	container Bouwwijzekeuze := Templates/Beschikbaarheden/Bouwwijzekeuze_T(
+		  BouwwijzeInput/Toegestaan
+		, BouwwijzeEis/Overstromingsbestendig
+		, BouwwijzeInput/EisBodemdalingbestendig
+		, BouwwijzeInput/EisDrijvend
+		, BouwwijzeInput/Waterdiepte
+	), Descr = "De bouwwijzekeuze per cel voor dit ontwikkelpakket (#723). De zeef leest GeenEnkeleVoldoet; de Gekozen-items staan klaar voor wie wil zien wat er op een beschikbare cel gebouwd zou worden.";
 	attribute<Bool>   AnyWonenPlan            (CompactedAdminDomain) := Plannen/Per_CompactedAdminDomain/Hard/Result/AnyWonen || Plannen/Per_CompactedAdminDomain/Zacht/Result/AnyWonen;
 	
 	container Impl
 	{
 		//Als deze items true zijn, zijn de OPs NIET toegestaan
 		attribute<Bool> HoogbouwInMooiLandschap                (CompactedAdminDomain) := HoogbouwOP && !../HoogbouwToegestaanInMooiLandschap 
-																							? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/BelevingLandschap/IsHoog[AdminDomain/AllocDomain_rel]) 
+																							? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/BelevingLandschap/IsHoog) 
 																							: FALSE, Descr = "Is hoogbouw niet toegestaan in mooi landschap, dan mag je hier niet bouwen"; //hoogbouw in OP? && Is hoogbouw niet toegestaan? && Is mooilandschap?
-		attribute<Bool> HoogbouwInZeerMooiLandschap            (CompactedAdminDomain) := HoogbouwOP && !../HoogbouwToegestaanInZeerMooiLandschap ? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/BelevingLandschap/IsZeerHoog[AdminDomain/AllocDomain_rel]) : FALSE, descr = "Is hoogbouw niet toegestaan in zeer mooi landschap, dan mag je hier niet bouwen";
+		attribute<Bool> HoogbouwInZeerMooiLandschap            (CompactedAdminDomain) := HoogbouwOP && !../HoogbouwToegestaanInZeerMooiLandschap ? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/BelevingLandschap/IsZeerHoog) : FALSE, descr = "Is hoogbouw niet toegestaan in zeer mooi landschap, dan mag je hier niet bouwen";
 		attribute<Bool> TinyHouses                             (CompactedAdminDomain) := const(!../TinyHousesToegestaan && strcount(lowercase(OP_name),lowercase('tinyhouse'))>0, CompactedAdminDomain), Descr = "Als tiny house niet zijn toegestaan worden die OPs voor het hele gebied restrictief.";
 		attribute<Bool> SuperStedelijk                         (CompactedAdminDomain) := const(!../SuperStedelijkToegestaan && strcount(lowercase(OP_name),lowercase('superstedelijk'))>0, CompactedAdminDomain), Descr = "Als superstedelijk niet zijn toegestaan worden die OPs voor het hele gebied restrictief.";
 		attribute<Bool> Dichtheid                              (CompactedAdminDomain) := = 'Dichtheid_ha > collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariant/Density/MaxWoningDichtheid/'+WP2xVSSH_name+'/Result[AdminDomain/AllocDomain_rel])', Descr = "Is de dichtheid hoger dan de maximale dichtheid voor deze WP2xVSSH?";
-		attribute<Bool> DichtheidInMooiLandschap               (CompactedAdminDomain) := Dichtheid_ha > ../MaxDichtheidInMooiLandschap     && collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/BelevingLandschap/IsHoog[AdminDomain/AllocDomain_rel]), Descr = "Is de dichtheid hoger dan de maximale dichtheid in mooi landschap en is het een mooi landschap?";
-		attribute<Bool> DichtheidInZeerMooiLandschap           (CompactedAdminDomain) := Dichtheid_ha > ../MaxDichtheidInZeerMooiLandschap && collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/BelevingLandschap/IsZeerHoog[AdminDomain/AllocDomain_rel]), Descr = "Is de dichtheid hoger dan de maximale dichtheid in zeer mooi landschap en is het een zeer mooi landschap?";
+		attribute<Bool> DichtheidInMooiLandschap               (CompactedAdminDomain) := Dichtheid_ha > ../MaxDichtheidInMooiLandschap     && collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/BelevingLandschap/IsHoog), Descr = "Is de dichtheid hoger dan de maximale dichtheid in mooi landschap en is het een mooi landschap?";
+		attribute<Bool> DichtheidInZeerMooiLandschap           (CompactedAdminDomain) := Dichtheid_ha > ../MaxDichtheidInZeerMooiLandschap && collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/BelevingLandschap/IsZeerHoog), Descr = "Is de dichtheid hoger dan de maximale dichtheid in zeer mooi landschap en is het een zeer mooi landschap?";
 		
-		attribute<Bool> DichtheidToenameWonen                  (CompactedAdminDomain) := (StateBasisjaar[float32] > 0f ? (PotentieleState - StateBasisjaar)[float32] / StateBasisjaar[float32] <= ../MinimumDichtheidToenameWonen : FALSE)[CompactedAdminDomain/CompactedAllocDomain_rel], Descr = "Is de dichtheidstoename van wonen ten opzichte van de basisjaarstate lager dan de minimum dichtheidstoename voor wonen? Op greenfield (StateBasisjaar 0) expliciet FALSE: relatieve toename is daar oneindig, dus nooit restrictief; voorheen hing dit op null-naar-false-gedrag van de 0-deling (#604).";
-		// attribute<Bool> MinimumExploitatieSaldo             (CompactedAdminDomain) := = '(Geschiktheid/'+Zichtjaar_name+'/Wonen/'+Subsector_name+'/perOP/'+OP_name+'/Totaal < ../MinimumExploitatieSaldo[float32])[CompactedAdminDomain/CompactedAllocDomain_rel]', Descr = "Is het exploitatie saldo lager dan de minimum exploitatie saldo?";
+		attribute<Bool> DichtheidToenameWonen                  (CompactedAdminDomain) := StateBasisjaar[float32] > 0f ? (PotentieleState - StateBasisjaar)[float32] / StateBasisjaar[float32] <= ../MinimumDichtheidToenameWonen : FALSE, Descr = "Is de dichtheidstoename van wonen ten opzichte van de basisjaarstate lager dan de minimum dichtheidstoename voor wonen? Per cel van 25 meter, zoals de werken-toets in Zeef_T (#770). Op greenfield (StateBasisjaar 0) expliciet FALSE: de relatieve toename is daar oneindig, dus nooit restrictief (#604).";
 		attribute<Bool> ExploitatieSaldo                       (CompactedAdminDomain) := = '(Geschiktheid/'+Zichtjaar_name+'/Wonen/'+Subsector_name+'/perOP/'+OP_name+'/Totaal < ../MinimumExploitatieSaldo[float32])', Descr = "Is het exploitatie saldo lager dan de minimum exploitatie saldo?";
-		attribute<Bool> IsNbSOPEnGeenNbSVariant                (CompactedAdminDomain) := const(IsNbSOP && !IsNbSVariant, CompactedAdminDomain);
 		attribute<Bool> IsNbSOPEnGeenNbSOPToepassingsgebied    (CompactedAdminDomain) := const(IsNbSOP, CompactedAdminDomain) && !NbSOPToepassingsgebied;
 		attribute<Bool> IsGeenNbSOPEnNbSVariantEnGeenWonenPlan (CompactedAdminDomain) := const(!IsNbSOP && IsNbSVariant, CompactedAdminDomain) && !AnyWonenPlan; // Dus in NbSVarianten alleen BAU OPs binnen plancapaciteit wonen 
-		// attribute<Bool> IsNbSOPEnBBG                           (CompactedAdminDomain) := const(IsNbSOP, CompactedAdminDomain) && collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/BBGSamengesteld);
-		attribute<Bool> OnvoldoendeOverstromingsMaatregel      (CompactedAdminDomain) := BouwenMetMaatregelen/Overstromingsgevaarzones/Totaal && collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, BaseData/Omgeving/Overstromingsdiepte) > Classifications/Modellering/OverstromingsMaatregel5K/MaxOverstromingsdiepte[OverstromingsMaatregel];
+		attribute<Bool> GeenToegestaneBouwwijzeVoldoet         (CompactedAdminDomain) := ../Bouwwijzekeuze/GeenEnkeleVoldoet, Descr = "Geen van de bouwwijzen die dit pakket toelaat kan op deze cel: de waterdiepte gaat boven het dieptevermogen van elke toegestane bouwwijze uit, of de bebouwingstypekaart veen eist bodemdalingbestendig of drijvend en geen toegestane bouwwijze is dat. De keuzeregel staat een keer, in Templates/Beschikbaarheden/Bouwwijzekeuze_T (#723, #505).";
 	}
 	
 	attribute<Bool> MoetenWordenWeggezeefd (CompactedAdminDomain) := //fka Result
@@ -82,11 +105,9 @@ Template Zeef_Wonen_perOP_T
 			Impl/DichtheidInZeerMooiLandschap,
 			Impl/DichtheidToenameWonen,
 			Impl/ExploitatieSaldo,
-			Impl/IsNbSOPEnGeenNbSVariant,
 			Impl/IsNbSOPEnGeenNbSOPToepassingsgebied,
 			Impl/IsGeenNbSOPEnNbSVariantEnGeenWonenPlan,
-			// Impl/IsNbSOPEnBBG,
-			Impl/OnvoldoendeOverstromingsMaatregel
+			Impl/GeenToegestaneBouwwijzeVoldoet
 		), Descr = "Moet de locatie worden weggezeefd voor deze OP?";
 	
 	attribute<Bool> Beschikbaar_voorOP (CompactedAdminDomain) := !MoetenWordenWeggezeefd && Beschikbaar_src, Descr = "Is de locatie beschikbaar voor deze OP?";

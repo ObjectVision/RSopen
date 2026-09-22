@@ -216,10 +216,29 @@ Template SectorAllocRegio_T
 																				? 'Buffer_Logistiek/proximity_res'
 																				: 'const(FALSE, CompactedAdminDomain)';
 	
-		container Buffer_Nijverheid := Templates/Buffer_gridcel_T(Gealloceerd_Nijverheid,  /ModelParameters/Wonen/MilieuCat/Buffer_rond_Nijverheid[float64]);
-		container Buffer_Logistiek  := Templates/Buffer_gridcel_T(Gealloceerd_Logistiek, /ModelParameters/Wonen/MilieuCat/Buffer_rond_Logistiek[float64]);
-		
+		container Buffer_Nijverheid := Templates/Allocatie/Buffer_gridcel_T(Gealloceerd_Nijverheid,  /ModelParameters/Wonen/MilieuCat/Buffer_rond_Nijverheid[float64]);
+		container Buffer_Logistiek  := Templates/Allocatie/Buffer_gridcel_T(Gealloceerd_Logistiek, /ModelParameters/Wonen/MilieuCat/Buffer_rond_Logistiek[float64]);
+
 		attribute<Bool> IsNietToegestaan              (CompactedAdminDomain) := Gealloceerd_Nijverheid_buffer || Gealloceerd_Logistiek_buffer;
+
+		//Omgekeerde toets (symmetrie): nieuw vervuilend werk moet zelf ook afstand houden tot wonen. Bron: de woningvoorraad aan het begin van het zichtjaar plus wat er in eerdere stappen van dit zichtjaar aan wonen is gealloceerd (SubSector_rel). Zonder deze toets kon het model, doordat wonen binnen het zichtjaar voor werken gaat, nieuwe nijverheid direct naast net gealloceerde woningen zetten.
+		attribute<Bool> IsWonenSubsector_perX (Sector/xSubsector)    := lowercase(Sector/xSubsector/Sector_name) == lowercase('Wonen');
+		attribute<Bool> HeeftWonen            (CompactedAdminDomain) := (Context/ThisZichtjaar/StateVoorAllocatie/Wonen/Totaal > 0[Woning]) || IsWonenSubsector_perX[StateVoorAllocatie/SubSector_rel];
+
+		//Aaneengesloten woongebied (#669): een enkele woning in het buitengebied legde dezelfde buffer op als een woonwijk, waarmee de toets meer dan de helft van het studiegebied afsloot voor nieuwe nijverheid. Een wooncel telt nu pas mee als het aandeel wooncellen in de omgeving boven de drempel ligt. De uitkomst is altijd een deelverzameling van HeeftWonen, dus de toets kan hier alleen soepeler van worden.
+		container       WoonAandeel     := Templates/Allocatie/Buurtaandeel_gridcel_T(HeeftWonen, /ModelParameters/Werken/OmgekeerdeMilieuzonering/WoongebiedStraal[float64]);
+		attribute<Bool> HeeftWoongebied (CompactedAdminDomain) := HeeftWonen && WoonAandeel/aandeel_res >= /ModelParameters/Werken/OmgekeerdeMilieuzonering/WoongebiedAandeel;
+		container Buffer_Wonen_Nijverheid := Templates/Allocatie/Buffer_gridcel_T(HeeftWoongebied, /ModelParameters/Wonen/MilieuCat/Buffer_omgekeerd_Nijverheid[float64]);
+		container Buffer_Wonen_Logistiek  := Templates/Allocatie/Buffer_gridcel_T(HeeftWoongebied, /ModelParameters/Wonen/MilieuCat/Buffer_omgekeerd_Logistiek[float64]);
+
+		//Bestaand werkterrein (#669): de VNG-richtafstanden gelden niet tegen bestaande vergunde bedrijvigheid, dus verdichting en herstructurering van een bestaand terrein blijven mogelijk ook al ligt het terrein in de woonbuffer. Naast de IBIS-terreinen telt een cel mee die zelf al banen in de betreffende subsector heeft, want IBIS registreert alleen terreinen vanaf een hectare.
+		attribute<Bool> OpBestaandWerkterrein  (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Grondgebruik/IBIS/Result/IsBedrijfsmatigTerrein);
+		attribute<Bool> Vrijgesteld_Nijverheid (CompactedAdminDomain) := OpBestaandWerkterrein || (StateVoorAllocatie/Werken/Nijverheid > 0[Job]);
+		attribute<Bool> Vrijgesteld_Logistiek  (CompactedAdminDomain) := OpBestaandWerkterrein || (StateVoorAllocatie/Werken/Logistiek > 0[Job]);
+
+		attribute<Bool> NietToegestaanVoorNijverheid  (CompactedAdminDomain) := = ExtraRestrictieDoorWerkAllocatieNodig ? 'Buffer_Wonen_Nijverheid/proximity_res && !Vrijgesteld_Nijverheid' : 'const(FALSE, CompactedAdminDomain)';
+		attribute<Bool> NietToegestaanVoorLogistiek   (CompactedAdminDomain) := = ExtraRestrictieDoorWerkAllocatieNodig ? 'Buffer_Wonen_Logistiek/proximity_res && !Vrijgesteld_Logistiek'   : 'const(FALSE, CompactedAdminDomain)';
+
 	}
 	
 	container StateNaAllocatie0 := ='Iters/LastIter/StateNaAllocatie', IntegrityCheck = "Iters/HasEnoughIteraties"
@@ -229,9 +248,27 @@ Template SectorAllocRegio_T
 		parameter<float32> TotalOverFlow := sum(Iters/LastIter/OverflowNaLastIter/All);
 	}
 	
+	parameter<Bool> SlaatSkeletonDezeOver := Context/ThisZichtjaar/IsSkeletonZichtjaar && NOT(SectorAllocRegio/DoetMeeNaXZichtjaar[id])
+	, Descr = "Slaat de verkorte opzet deze sectorallocregio in dit zichtjaar over? Waar is dat vanaf ModelParameters/Skeleton/VanafZichtjaar voor de regels met kolomwaarde DoetNietMee, in de regel Wonen en Werken op COROP en Provincie. Zie ModelParameters/Skeleton.";
+
+	parameter<Bool> WaterbergingClaimActief := ='VariantParameters/VariantK/WaterbergingClaimActief[VariantParameters/VariantK/V/'+Variant_name+']'
+	, Descr = "Alloceert deze variant waterberging? Zelfde uitlezing als in Templates/Claims/ZichtjaarXScenarioxAllocRegios, waar deze schakelaar de opgave voor alle regio's op 0 zet.";
+
+	parameter<Bool> SlaatLegeClaimDezeOver := lowercase(Sector_name) == lowercase('Waterberging') && NOT(WaterbergingClaimActief)
+	, Descr = "Slaat deze sectorallocregio over omdat er per constructie niets te alloceren valt: staat VariantK/WaterbergingClaimActief op FALSE, dan is de opgave voor alle waterbergingsregio's en alle
+				zichtjaren nul en zou deze regel vijftien iteraties voor een lege claim draaien. Getoetst op de configuratieschakelaar en niet op de claimsom zelf, want een voorwaarde die eerst gerekend
+				moet worden maakt het uitklappen van de treeview in de GUI even duur als een run (dezelfde reden dat het dynamische stopcriterium in Iter_T uitstaat). Anders dan de skeleton-tak hangt deze
+				niet aan een zichtjaar.";
+
 	container StateNaAllocatie_IfAlloc := ='Iters/LastIter/StateNaAllocatie', IntegrityCheck = "Iters/HasEnoughIteraties";
 	container StateNaAllocatie_NoAlloc := ='StateVoorAllocatie';
-	container StateNaAllocatie         := = Sector_name != 'Landbouw' && ModelParameters/OntkoppelStedelijkeKlasses 
+	container StateNaAllocatie         := = (Sector_name != 'Landbouw' && ModelParameters/OntkoppelStedelijkeKlasses)
+											|| SlaatSkeletonDezeOver
+											|| SlaatLegeClaimDezeOver
 											? 'StateNaAllocatie_NoAlloc'
-											: 'StateNaAllocatie_IfAlloc';
+											: 'StateNaAllocatie_IfAlloc'
+	, Descr = "Alloceert deze sectorallocregio, of geeft hij zijn ingangsstand ongewijzigd door? De NoAlloc-tak is op de datagraaf gratis: kiest de expressie hem, dan verwijst niets in de levende keten
+				meer naar de container Iters, rekent GeoDMS de iteraties nooit uit en vuren ook de storages eronder niet. De boomvorm blijft in elk zichtjaar gelijk, dus paden die een sectorallocregio bij
+				naam noemen blijven oplossen. Drie redenen om over te slaan, elk met een eigen parameter hierboven: OntkoppelStedelijkeKlasses (debugknop voor landbouw), SlaatSkeletonDezeOver (de verkorte
+				opzet voor de late zichtjaren) en SlaatLegeClaimDezeOver (een sector waarvan de claim per configuratie nul is).";
 }

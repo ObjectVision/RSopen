@@ -1,0 +1,102 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het Natuurbeheerplan (NBP) van de twaalf provincies, subsidiejaar 2026, als beheertypenkaart van het basisjaar (#776).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container NBP
+: Descr = "Het Natuurbeheerplan van de twaalf provincies voor subsidiejaar 2026, landelijk samengevoegd door RVO en gepubliceerd door BIJ12: per vlak het natuurbeheertype uit de Index Natuur en
+			Landschap waarvoor de provincie beheersubsidie openstelt, en daarmee de kaart van de natuur zoals die er nu ligt (#776). De officiele bron waar de MNP-kaart (planpotentieel,
+			Bron/Landelijk_BAU in Natuur.dms) en de NVK-kaart (een afgeleide op 2,5 meter die team effectbepaling niet geschikt vond) van afstammen; hij wordt elk jaar vastgesteld, dus een nieuwe
+			jaargang is het nieuwe bestand ernaast zetten en Jaargang en Bronbestand aanpassen. Gelezen wordt de laag BeheerGebied, op 25 meter gerasterd en ontkoppeld als tif; de N-codes vertalen een
+			op een naar INL_Beheertype, de L-codes (landschapselementen) kent die classificatie niet, zie Controle. De ambitiekaart en de drie zoekgebiedlagen worden niet gelezen. Het studiegebied is
+			land zonder Waddenzee, IJsselmeer en Noordzeekustzone, dus een groot deel van het NBP-areaal (zee en wad, afgesloten zeearm) valt erbuiten.", Source = "Natuurbeheerplan 2026, BIJ12 via RVO, ESRI-geodatabase"
+{
+	parameter<String> Jaargang    := '2026', Descr = "Het subsidiejaar van het plan; gaat in de naam van de tif.";
+	parameter<String> Bronbestand := '20251119_NBP_RVO_subsidiejaar' + Jaargang + '.gdb', Descr = "De bestandsnaam zoals BIJ12 hem levert, met de datum van RVO ervoor. Volgend jaar: de nieuwe datum en Jaargang.";
+
+	container Bron
+	: StorageName     = "='%RSo_DataDir%/Beleid/Overigen/Natuur/' + Bronbestand"
+	, StorageType     = "gdal.vect"
+	, StorageReadOnly = "TRUE"
+	, DialogData      = "rdc_meter"
+	, Source          = "BIJ12, https://www.bij12.nl/onderwerp/natuursubsidies/snl/inhoud/natuurbeheerplan/, knop Vastgesteld NBP 2026 (ESRI gdb-formaat). Bestand van RVO gedateerd 19 november 2025, op 5 september 2026 op E:/SourceData gezet. Dezelfde pagina biedt de plannen van 2023, 2024 en 2025; volgend jaar staat daar 2027."
+	, Descr = "De ESRI-geodatabase zoals BIJ12 hem levert: zes vlakkenlagen (BeheerGebied, BeheerGebiedAmbitie, ZoekGebiedKlimaat, ZoekGebiedAgrarisch, ZoekGebiedWater, Provinciegrenzen) en de tabel NatuurbeheerPlan met per provincie de vaststellingsdatum. GDAL leest hem met de OpenFileGDB-driver; alles in RD."
+	{
+		unit<uint32> BeheerGebied
+		: SqlString = "select * from BeheerGebied order by Shape_Area desc"
+		, Descr = "De beheertypenkaart: multipolygonen met per vlak een beheertype (N-codes en L-codes), de provincie, of het vlak subsidiabel is, en de geldigheidsperiode. Gesorteerd op oppervlak, groot
+					eerst, zodat bij het rasteren een klein vlak binnen een groot vlak wint (#613). De velden beginTijd en eindTijd zijn de geldigheid van het plan en niet van het vlak, dus voor subsidiejaar
+					2026 valt er niets te filteren. subsidiabel zegt of de provincie voor het vlak SNL-beheersubsidie openstelt, niet of de natuur er ligt (de Waddenzee is niet subsidiabel in Groningen en wel
+					in Friesland); de kaart zegt daar evengoed welk beheertype er ligt, dus die vlakken tellen mee."
+		{
+			attribute<rdc_meter> geometry (poly);
+			attribute<String>    beheerType;
+			attribute<String>    provincie;
+			attribute<Int32>     subsidiabel;
+			attribute<Float64>   Shape_Area;
+
+			attribute<Bool>           IsLandschapselement := substr(beheerType, 0, 1) == 'L', Descr = "L-codes: de landschapselementen van de Index Natuur en Landschap, L01 groene en blauwe elementen (houtwal, laan, bossingel, poel, hoogstamboomgaard, heggen, knotbomen), L02 historische
+			elementen en L03.01 aardwerk en groeve, die naast de N-vlakken liggen en niet erin. Geen natuurbeheertype in INL_Beheertype: een houtwal is geen hakhout en een poel geen zoete plas, en de
+			LGN-route van de stand-administratie geeft die cellen al bos, struweel, gras of water.";
+			attribute<INL_Beheertype> INL_Beheertype_rel  := rlookup(beheerType, INL_Beheertype/code)
+			, IntegrityCheck = "all(IsLandschapselement || IsDefined(INL_Beheertype_rel))"
+			, Descr = "De vertaling naar de classificatie, op de code. De IntegrityCheck faalt zodra een nieuwe jaargang een N-code bevat die INL_Beheertype niet kent; dan hoort die rij in de classificatie erbij, en niet stil op null.";
+			attribute<Ha>             Opp                 := Shape_Area[float32] / 10000f * 1[Ha], Descr = "Het polygoonoppervlak uit de bron, voor de controle op het rasteren.";
+
+			attribute<.> Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
+		}
+	}
+
+	attribute<INL_Beheertype> Calc_INL_Beheertype_AD (AdminDomain) := Bron/BeheerGebied/INL_Beheertype_rel[Bron/BeheerGebied/Per_AdminDomain]
+	, Descr = "Het beheertype per cel, rechtstreeks uit de vlakken. Null buiten de kaart en op de landschapselementen. Dit is het rekenwerk dat de ontkoppelde tif hieronder eenmalig vastlegt.";
+
+	parameter<String> FileName_INL_Beheertype_AD    := '%LocalDataProjDir%/BaseData/Grondgebruik/NBP/nbp' + Jaargang + '_INL_Beheertype_' + /ModelParameters/StudyArea + '_' + /ModelParameters/Advanced/AdminDomain_ref + '.tif'
+	, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+	parameter<String> Fingerprint_INL_Beheertype_AD :=
+		  'bron='               + PropValue(Bron, 'StorageName')
+		+ ';laag=BeheerGebied;sql=' + PropValue(Bron/BeheerGebied, 'SqlString') + ';landschapselementen=null'
+		+ ';beheertypen='       + asList(INL_Beheertype/code, ',')
+		+ ';study_area='        + /ModelParameters/StudyArea
+		+ ';admin_domain='      + /ModelParameters/Advanced/AdminDomain_ref
+	, Descr = "Wat de tif bepaalt: het bronbestand (met de jaargang in de naam), de laag en de SqlString (dus ook de rastervolgorde en een eventueel filter), de nummering van INL_Beheertype (de tif draagt rijnummers), het studiegebied en de resolutie. Een nieuwe jaargang of een extra rij in de classificatie maakt de tif ongeldig en laat hem opnieuw schrijven.";
+
+	container Decoupling_INL_Beheertype_AD := /Templates/DecoupledFile_T(FileName_INL_Beheertype_AD, Fingerprint_INL_Beheertype_AD);
+
+	attribute<INL_Beheertype> Make_INL_Beheertype_AD (AdminDomain) := Calc_INL_Beheertype_AD, StorageName = "=FileName_INL_Beheertype_AD", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_INL_Beheertype_AD/Write_Fingerprint"
+	, Descr = "Schrijft de kaart eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+	attribute<INL_Beheertype> Read_INL_Beheertype_AD (AdminDomain) : StorageName = "=FileName_INL_Beheertype_AD", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	attribute<INL_Beheertype> INL_Beheertype_AD      (AdminDomain) := = Decoupling_INL_Beheertype_AD/MayReuse ? 'Read_INL_Beheertype_AD' : 'Make_INL_Beheertype_AD'
+	, Descr = "Het natuurbeheertype volgens het Natuurbeheerplan 2026 op 25 meter, ontkoppeld. De bron van BaseData/StartState/Landgebruik/Beheertype zolang ModelParameters/Natuur/Beheertype_Basisjaar_Bron op NBP staat. Vraag Decoupling_INL_Beheertype_AD/Explanation op om te zien waarom de tif wel of niet opnieuw wordt gemaakt.";
+
+	container Controle
+	: Descr = "Vergelijkt het gerasterde areaal per beheertype met het polygoonareaal uit de bron, en telt wat er buiten de classificatie valt; twee rasterkolommen, over de hele kaart (meet het rasteren)
+			en binnen het studiegebied (meet het masker). De getallen rekenen de levende poly2grid opnieuw, ook als de tif wordt hergebruikt."
+	{
+		attribute<Bool> SA (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain;
+
+		unit<UInt8> PerType := INL_Beheertype
+		{
+			attribute<String>  code             := INL_Beheertype/code;
+			attribute<Ha>      Vector           := sum(Bron/BeheerGebied/Opp, Bron/BeheerGebied/INL_Beheertype_rel), Descr = "Polygoonareaal per beheertype uit de bron, alle provincies samen.";
+			attribute<Ha>      Raster_HeleKaart := sum(IsDefined(INL_Beheertype_AD) ? AdminDomain/NrHaPerCell : 0[Ha], INL_Beheertype_AD), Descr = "Hetzelfde areaal zoals het model het op 25 meter rastert, over de hele kaart.";
+			attribute<Ha>      Raster           := sum(SA ? AdminDomain/NrHaPerCell : 0[Ha], INL_Beheertype_AD), Descr = "Daarvan binnen het studiegebied: de unie van de gegeneraliseerde CBS-provinciegrenzen plus IJburg, dus land zonder Waddenzee, IJsselmeer en Noordzeekustzone. Dit is wat het model gebruikt.";
+			attribute<Float32> Ratio            := Vector > 0[Ha] ? Raster_HeleKaart / Vector : 1f, Descr = "Raster over de hele kaart gedeeld door het polygoonareaal: meet alleen het rasteren en hoort per type op een procent na 1 te zijn, ook al is een kwart van de vlakken kleiner dan een cel. Het
+			verschil tussen Raster en Raster_HeleKaart is het studiegebied: zee en wad en afgesloten zeearm houden daarbinnen bijna niets over, strand, schor en kwelder verliezen een deel.";
+		}
+
+		parameter<Ha> Areaal_Vector_N               := sum(!Bron/BeheerGebied/IsLandschapselement ? Bron/BeheerGebied/Opp : 0[Ha]), Descr = "Polygoonareaal van alle N-typen.";
+		parameter<Ha> Areaal_Vector_L               := sum( Bron/BeheerGebied/IsLandschapselement ? Bron/BeheerGebied/Opp : 0[Ha]), Descr = "Polygoonareaal van de landschapselementen, dat zonder type blijft.";
+		parameter<Ha> Areaal_Raster_HeleKaart       := sum(IsDefined(INL_Beheertype_AD) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen met een beheertype over de hele kaart; hoort gelijk te zijn aan Areaal_Vector_N.";
+		parameter<Ha> Areaal_Raster                 := sum(SA && IsDefined(INL_Beheertype_AD) ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Cellen met een beheertype binnen het studiegebied.";
+		parameter<Ha> Areaal_Raster_NietSubsidiabel := sum(SA && IsDefined(INL_Beheertype_AD) && Bron/BeheerGebied/subsidiabel[Bron/BeheerGebied/Per_AdminDomain] == 0i ? AdminDomain/NrHaPerCell : 0[Ha]), Descr = "Waarvan op vlakken die niet subsidiabel zijn.";
+
+	}
+}

@@ -33,12 +33,22 @@ Template IterSubsector_T_Wind
 	parameter<String> Zichtjaar_name     := Context/ThisZichtjaar/name;
 	parameter<String> AllocRegio_name    := Context/ThisSectorAllocRegio/AllocRegio_name;
 	
-	unit<UInt32> TredeK := = 'ThisVariantData/Trede/SectorxSubsectoren/'+Subsector_pathname+'/impl/Klasse';
+	parameter<Bool>   IsPlancapaciteitNogGeldig := ='uint32('+substr(Zichtjaar_name, 1, 4)+') <= uint32(/ModelParameters/Advanced/PlancapaciteitGeldigTotEnMet)', Descr = "Dezelfde vervaldatum als in Templates/Beschikbaarheden/Zeef_T en in IterSubsector_T, hier voor de windtrede (#739).";
+	parameter<String> TredeWortel               := 'Context/ThisZichtjaar/TredeDynamischeUrbanContour', Descr = "Waar de trede-opbouw van dit zichtjaar staat (#749), zoals in IterSubsector_T.";
+	parameter<Bool>   IsEigendomNogGeldig       := ='uint32('+substr(Zichtjaar_name, 1, 4)+') <= uint32(/ModelParameters/Advanced/EigendomGeldigTotEnMet)', Descr = "De vervaldatum van de eigendom-as (#749).";
+	parameter<Bool>   PlancapaciteitVervallen   := !IsPlancapaciteitNogGeldig;
+	parameter<Bool>   EigendomVervallen         := !IsEigendomNogGeldig;
+	parameter<String> TredeContainer            := PlancapaciteitVervallen
+													? (EigendomVervallen ? 'SectorxSubsectoren_ZonderPlancapaciteitEnEigendom' : 'SectorxSubsectoren_ZonderPlancapaciteit')
+													: (EigendomVervallen ? 'SectorxSubsectoren_ZonderEigendom'                : 'SectorxSubsectoren')
+	, Descr = "Welke van de vier trede-opbouwen dit zichtjaar gebruikt (#739 en #749), dezelfde keuze als in IterSubsector_T.";
+	
+	unit<UInt32> TredeK := = TredeWortel+'/'+TredeContainer+'/'+Subsector_pathname+'/impl/Klasse';
 	
 	unit<uint64> CompactedAdminDomain := Geography/CompactedAdminDomain
 	, Descr = "Op AdminDomain niveau wordt de geschiktheid en beschikbaarheid opgehaald/bepaald."
 	{
-		attribute<Bool> Beschikbaar_src                                  := = 'ThisVariantData/PotentieleState/'+Zichtjaar_name+'/per_SectorxSubsectoren/'+Subsector_pathname+'/IsBeschikbaar_zichtjaar && !(IsDefined(StateVoorAllocatie/SubSector_rel))', Descr = "Is de cel potentieel beschikbaar voor deze subsector in dit zichtjaar, en is er nog niets gealloceerd in een eerdere iteratie?";
+		attribute<Bool> Beschikbaar_src                                  := = 'ThisVariantData/PotentieleState/'+Zichtjaar_name+'/per_SectorxSubsectoren/'+Subsector_pathname+'/IsBeschikbaar_zichtjaar && !/Classifications/Actor/Sector/xSubsector/LegtCelVast[StateVoorAllocatie/SubSector_rel]', Descr = "Is de cel potentieel beschikbaar voor deze subsector in dit zichtjaar, en ligt zij nog niet vast door een eerdere allocatie? Een landbouwlabel legt niet vast, zie de vlag LegtCelVast en #803.";
 		attribute<Bool> IsNietToegestaan_Dynamisch_PrevSectorAllocRegios := =Context/ThisSectorAllocRegio/name+'/Restricties_Dynamisch_Wind/IsNietToegestaan_Dynamisch', Descr = "Is er in een voorgaande sector alloc regio iets gealloceerd waardoor er nu geen wind meer toegestaan is?";
 		attribute<Bool> IsNietToegestaan_Dynamisch_PrevIter              := Restricties_Dynamisch/Bestaande_turbines/IsNietToegestaan, Descr = "Is er in een voorgaande iteratie iets gealloceerd waardoor er nu geen wind meer toegestaan is?";
 		attribute<Bool> Beschikbaar                                      := Beschikbaar_src && !IsNietToegestaan_Dynamisch_PrevSectorAllocRegios && !IsNietToegestaan_Dynamisch_PrevIter, Descr = "Is de cel beschikbaar voor allocatie in deze iteratie?";
@@ -79,15 +89,16 @@ Template IterSubsector_T_Wind
 		attribute<MW> PotentieleStateNaAllocatie_AdminDomain (AdminDomain) := =Results/PotentieleStateNaAllocatieExpr;
 		attribute<MW> PotentieleStateNaAllocatie    (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, PotentieleStateNaAllocatie_AdminDomain), Descr = "Wat is de potentiele state na allocatie in MW per CompactedAdminDomain.";
 		
-		attribute<Float32> Geschiktheid_Desaggr       := = 'ThisVariantData/Suitability/'+Context/ThisZichtjaar/name+'/'+Subsector_pathname+'[CompactedAdminDomain/CompactedAllocDomain_rel]', Descr = "De geschiktheid voor deze subsector in dit zichtjaar, op CompactedAllocDomain niveau.";
+		attribute<Float32> Geschiktheid_Desaggr       := = 'ThisVariantData/Suitability/'+Context/ThisZichtjaar/name+'/'+Subsector_pathname, Descr = "De geschiktheid voor deze subsector in dit zichtjaar, op CompactedAllocDomain niveau.";
 		attribute<Float32> Geschiktheid_Cleaned       := PotentieleStateNaAllocatie > 0[MW] ? Geschiktheid_Desaggr : null_f, Descr = "Als de geschiktheid 0 is, willen we dit undefined hebben.";
+		attribute<Float32> Geschiktheid_VoorSubsectorKeuze := Geschiktheid_Cleaned, Descr = "Score voor de keuze tussen subsectoren in Iter_Allocatie; voor wind ongewijzigd de kale geschiktheid.";
 		attribute<UInt32>  Geschiktheid_Ordered       := invert(index(Geschiktheid_Cleaned))[uint32], Descr = "In het allocatie proces moet de geschiktheid gesorteerd worden, zodat er greedy vanaf de meest geschikte locatie gealloceerd wordt.";
-		parameter<UInt32>  Geschiktheid_Ordered_range := max(Geschiktheid_Ordered)+100, Descr = "Wat is de maximale geschiktheid, plus een getal wat er voor zorgt dat er later geen dubbele waarden kunnen voorkomen.";
+		parameter<Uint64>  Geschiktheid_Ordered_range := Uint64(max(Geschiktheid_Ordered)+100), Descr = "Wat is de maximale geschiktheid, plus een getal wat er voor zorgt dat er later geen dubbele waarden kunnen voorkomen.";
 		
 		attribute<UInt32>  TredeScore                 := (#TredeK -1) - collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TredeK/Per_AdminDomain)
 															, Descr = "Tredes introduceren een volgordelijkheid in groepen cellen. Zodat onafhankelijk van de geschiktheid sommige groepen cellen boven andere geplaatst moeten worden.
-																		Bijvoorbeeld dichtbij een OV-knooppunt. Hier wordt deze volgordelijkheid voorbereid. Met een check of de maximale waarde van een trede wel kleiner of gelijk is aan de cardinaliteit van de tredes. Is dit niet het geval, dan moet je meer onderzoek uitvoeren.", IntegrityCheck = "max(collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain)) < #TredeK";
-		attribute<Float32> Geschiktheid               := (float32(TredeScore) * float32(Geschiktheid_Ordered_range) + float32(Geschiktheid_Ordered)), Descr = "Hier wordt de sorteerde geschiktheid gecombineerd met de tredescores tot een aangepaste geschiktheid in groepen per trede.";
+																		Bijvoorbeeld dichtbij een OV-knooppunt. Hier wordt deze volgordelijkheid voorbereid. Met een check of de maximale waarde van een trede wel kleiner of gelijk is aan de cardinaliteit van de tredes. Is dit niet het geval, dan moet je meer onderzoek uitvoeren.", IntegrityCheck = "max(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TredeK/Per_AdminDomain)) < #TredeK";
+		attribute<Uint64>  Geschiktheid               := Uint64(Beschikbaar) * (Uint64(TredeScore) * Geschiktheid_Ordered_range + Uint64(Geschiktheid_Ordered)), Descr = "Hier wordt de sorteerde geschiktheid gecombineerd met de tredescores tot een aangepaste geschiktheid in groepen per trede.";
 	}
 	
 	unit<UInt32> AllocRegio := Context/ThisSectorAllocRegio/AllocRegio

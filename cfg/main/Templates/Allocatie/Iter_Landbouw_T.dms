@@ -33,7 +33,7 @@ Template Iter_Landbouw_T
 	}	
 	
 	container StateVoorAllocatie := =ModelParameters/OntkoppelStedelijkeKlasses 
-										? 'ThisCasus/Zichtjaren/'+Context/ThisZichtjaar_name+'/Impl/ReadStand_Compacted'
+										? 'Context/ThisZichtjaar/Impl/ReadStand_Compacted'
 										: 'StateVoorAllocatie0'
 	, Descr = "Om ontkoppelde stedelijke functies te gebruiken wanneer dit zo ingesteld wordt.";
 	
@@ -52,22 +52,100 @@ Template Iter_Landbouw_T
 		}
 		
 		container ExogeenOpleggen
-		: Descr = "Hierin staat per AdminDomain of er exogeen areaal wordt opgelegd, en zo ja, hoeveel."
+		: Descr = "Wat er exogeen wordt opgelegd, en wat daarvan landbouw is. De veenlevering van NbSGenuanceerd legt naast natuur en water ook landbouw op, natte teelt en vernat grasland (#684). Voor natuur
+					en water is een oplegging onbeschikbaar gebied; de landbouwcellen worden landbouw met een vastliggende klasse. Daarom twee dingen naast elkaar: Beschikbaar houdt de cel uit de allocatie,
+					want er valt niets te kiezen, en per_SectorxSubsector zegt welke landbouwklasse de cel wordt, zodat de stand en de claimrealisatie hem meetellen."
 		{
-			attribute<LU_ModelType> Totaal          (AdminDomain) := ThisVariantData/ExogeenOpleggen/Totaal;
-			attribute<Bool>         Beschikbaar     (AdminDomain) := IsNull(Totaal);
+			attribute<Bool>         Beschikbaar     (AdminDomain) := !/Geography/rdc_meter/IsStudyArea_AdminDomain || (!IsDefined(ThisVariantData/ExogeenOpleggen/Beheertype_Kaart) && !IsDefined(ThisVariantData/ExogeenOpleggen/LandbouwType_rel))
+			, Descr = "Valt er op deze cel nog iets te kiezen, of ligt er al iets opgelegd? Leest de twee stromen rechtstreeks, natuur en water langs Beheertype_Kaart en landbouw langs LandbouwType_rel, en niet de
+						samengevoegde as Totaal (#803): die vertaalstap liet een gat vallen voor een beheertype zonder tegenhanger in LU_ModelType, en de IntegrityCheck houdt beide routes gelijk zolang de oude er
+						nog is. De studiegebiedterm staat er omdat Totaal hem ook draagt: buiten het studiegebied legt de variant niets op en is elke cel beschikbaar, terwijl de twee stromen daar wel gevuld kunnen
+						zijn.";
+
+			attribute<LandbouwKlasses> LandbouwK_rel (AdminDomain) := /Classifications/Grondgebruik/LandbouwType/LandbouwK_rel[ThisVariantData/ExogeenOpleggen/LandbouwType_rel]
+			, Descr = "De landbouwklasse van de oplegging, null waar de oplegging natuur of water is. Leest de landbouwstroom van ExogeenOpleggen rechtstreeks als LandbouwType en niet de samengevoegde as Totaal
+						(#803); LandbouwType_rel draagt hetzelfde masker als Totaal, alleen waar de natuur- en waterstroom niets geeft. De IntegrityCheck eist dat beide routes hetzelfde zeggen en hoort weg samen
+						met LU_ModelType; in BAU bewijst hij niets, want die variant legt geen landbouw op. De volle LandbouwKlasses en niet de subsectorlijst Actief: de oplegging komt uit de landgebruikskaart, die
+						alle klassen kent, en per_SectorxSubsector zoekt hem op tegen Sector/xSubsector/LandbouwK_rel op de volle unit. Legt een levering een klasse op die deze run niet alloceert, dan blijft de cel
+						leeg: opleggen is geen alloceren.";
+
+			attribute<Sector/xSubsector> per_SectorxSubsector (CompactedAdminDomain) :=
+				rlookup(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, LandbouwK_rel), Sector/xSubsector/LandbouwK_rel)
+			, Descr = "Dezelfde vorm als Allocatie/per_SectorxSubsector, maar dan voor de opgelegde landbouw in plaats van de gealloceerde. Null waar niets landbouws is opgelegd.";
+
+			container Ha_PerAllocRegio :=
+				for_each_nedv(
+					Subsector/name
+					, IsDefined(Subsector/LandbouwK_rel)   // NIET '!= null' schrijven: een vergelijking met null geeft altijd FALSE, ook !=, en dan valt elke klasse in de else-tak
+						? 'sum(per_SectorxSubsector == Sector/xSubsector/V/Landbouw_'+Subsector/name+' ? CompactedAdminDomain/NrHaPerCell : 0[Ha], AllocRegio/Per_CompactedAdminDomain)'
+						: 'const(0[Ha], AllocRegio, Ha)'
+					, AllocRegio
+					, Ha
+				)
+			, Descr = "Hoeveel hectare van deze klasse er per allocatieregio al vastligt door de oplegging. De claims trekken dit eraf voordat zij de allocator in gaan, want die hectares zijn al gerealiseerd en de allocator kan ze niet meer plaatsen.";
 		}
+
+		attribute<Bool> WasLandbouwInBasisjaar (AdminDomain) :=
+			='add('+asItemList('MakeDefined(float32(/BaseData/StartState/StateBasisjaar/State/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'), 0f)')+') > 0f'
+		, Descr = "Droeg deze cel in het basisjaar landbouw, over alle vijftien klassen opgeteld?";
+
+		attribute<Bool> MagLandbouwWorden (CompactedAdminDomain) :=
+			collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, WasLandbouwInBasisjaar)
+		, Descr = "Mag de landbouwallocatie deze cel aanraken? Alleen op grond die in het basisjaar al landbouw was: landbouw komt er niet bij maar verliest alleen aan stedelijke functies en natuur. Binnen dat
+					areaal blijft alles kunnen, want de bovengrens per klasse ligt op of boven honderd procent van het basisjaar en de restcategorie NonLandbouw kan een cel vrijgeven. Zonder deze toets is het
+					landbouwareaal alleen begrensd door de som van de bovengrenzen per klasse en kan landbouw uitbreiden op cellen die geen andere sector opeist. De toets geldt ook voor NonLandbouw: buiten het
+					landbouwareaal raakt deze allocatie niets aan. Een besluit en geen schakelaar (#605); de versmalde evident-benut-lijst in VariantParameters/EvidentBenut/Landbouw leunt erop.";
+
+		attribute<Float32> Stand_Landbouw_max (CompactedAdminDomain) :=
+			='max_elem('+asItemList('MakeDefined(float32(StateVoorAllocatie/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'), 0f)')+')'
+		, Descr = "De grootste landbouwstand per cel aan het begin van dit zichtjaar, over de vijftien klassen. Nul waar de cel geen landbouw draagt.";
+
+		parameter<Bool> IsEersteZichtjaar := lowercase(Context/ThisZichtjaar/name) == lowercase(first(Time/Zichtjaar/name));
+
+		// De HERKOMST is een klasse uit de volle LandbouwKlasses en niet uit de subsectorlijst Actief. Een cel kan
+		// in het basisjaar een gewas dragen dat deze run niet alloceert, bijvoorbeeld cranberry uit de BRP met
+		// ExotenActief uit, en daar hoort nog steeds een transitie vandaan gerekend te worden. De transitiematrix
+		// in ModelParameters/Landbouw/Transitiekosten heeft de volle unit dan ook als domein: herkomst in de rijen,
+		// bestemming in de kolommen. Alleen de BESTEMMING is beperkt tot wat er gealloceerd mag worden.
+		attribute<LandbouwKlasses> HuidigeKlasse_Basisjaar (CompactedAdminDomain) :=
+			collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/StartState/Landgebruik/LandbouwK_rel)
+		, Descr = "De landbouwklasse van het basisjaar uit de landgebruikskaart, dezelfde bron als gg_LandbouwK in Templates/Landbouw.dms. In het eerste zichtjaar is dit de herkomst, want de compacte allocatiestand draagt in dat zichtjaar geen landbouwstanden (zie de vrijstelling voor StandVar/IsLandbouw in Zichtjaar_T/Impl).";
+
+		attribute<LandbouwKlasses> HuidigeKlasse_Stand (CompactedAdminDomain) :=
+			='LandbouwKlasses/Actief/org_rel[(ArgMax('+asItemList('MakeDefined(float32(StateVoorAllocatie/Landbouw/'+/Classifications/Actor/LandbouwKlasses/Actief/name+'), 0f)')+') / uint32(Stand_Landbouw_max > 0f))[LandbouwKlasses/Actief]]'
+		, Descr = "De landbouwklasse uit de stand die dit zichtjaar binnenkrijgt, dus de uitkomst van het vorige zichtjaar inclusief wat daar exogeen is opgelegd; null waar geen klasse staat (de deling door
+					nul is de gangbare constructie, zie Allocatie_T/SubSector_rel_dominant_landuse). De ArgMax loopt over de standvariabelen, die alleen voor de subsectoren bestaan, dus zijn uitkomst is een rij
+					van Actief; LandbouwKlasses/Actief/org_rel zet die om naar de volle unit, zodat deze klasse dezelfde betekenis heeft als HuidigeKlasse_Basisjaar en in de transitiematrix als herkomst kan
+					dienen.";
+
+		attribute<LandbouwKlasses> HuidigeKlasse (CompactedAdminDomain) := =IsEersteZichtjaar ? 'HuidigeKlasse_Basisjaar' : 'HuidigeKlasse_Stand'
+		, Descr = "De landbouwklasse die de cel aan het begin van dit zichtjaar draagt: in het eerste zichtjaar uit de basisjaarkaart, daarna uit de stand van het vorige zichtjaar. De herkomst voor de
+					transitiekosten (#262). De Suitability in VariantData trekt de transitiekosten af ten opzichte van het basisjaargebruik, in elk zichtjaar opnieuw, en kent de vorige zichtjaarstand niet;
+					daarom bouwt de allocator haar hieronder opnieuw op uit Net_revenues, de kapitalisatiefactor en deze herkomst, en blijft de Suitability in VariantData bestaan voor de indicatoren.";
+
+		container Conversiekosten :=
+			for_each_nedv(
+				  Subsector/name
+				, IsDefined(Subsector/LandbouwK_rel)   // NIET '!= null' schrijven: een vergelijking met null geeft altijd FALSE
+					? 'MakeDefined(/ModelParameters/Landbouw/Transitiekosten/'+Subsector/name+'[HuidigeKlasse], /ModelParameters/Landbouw/Transitiekosten_src/Overigen__'+Subsector/name+')[Eur_m2] * (1f + /ModelParameters/Landbouw/ConversionCostPremium_'+/ModelParameters/Landbouw/Boervariant_name+')'
+					: 'const(0[Eur_m2], CompactedAdminDomain)'
+				, CompactedAdminDomain
+				, Eur_m2
+			), Descr = "Transitiekosten per kandidaatklasse per cel, in euro per m2, van de klasse die de cel aan het begin van dit zichtjaar draagt (HuidigeKlasse) naar de kandidaat, uit ModelParameters/Landbouw/Transitiekosten (herkomst in rijen, bestemming in kolommen), met de rij Overigen waar de cel geen landbouwklasse draagt, maal een plus de opslag van de boervariant. Dezelfde formule als Economic_performance/Conversion_costs in Dairy_T en Akkerbouw_T, alleen met de herkomst van dit zichtjaar in plaats van het basisjaar (#262). NonLandbouw heeft geen transitiekosten.";
 
 		container Suitabilities :=
 			for_each_nedv(
 				Subsector/name
 				, 'Subsectoren/'+Subsector/name+'/CompactedAdminDomain/Beschikbaar 
+					&& MagLandbouwWorden
 					&& collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ExogeenOpleggen/Beschikbaar) 
-						? value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_ModelType/'+Subsector/name+'/Suitability) * 100f, int32) 
+						? '+(IsDefined(Subsector/LandbouwK_rel)
+							? 'value(value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_LandbouwKlasse/'+Subsector/name+'/Economic_performance/Net_revenues) * ThisVariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_LandbouwKlasse/'+Subsector/name+'/Kapitalisatie/factor - Conversiekosten/'+Subsector/name+', Float32) * 100f, int32)'
+							: 'value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariantData/Suitability/'+Context/ThisZichtjaar_name+'/Landbouw/per_LandbouwKlasse/'+Subsector/name+'/Suitability) * 100f, int32)')+' 
 						: null_i'
 				, CompactedAdminDomain
 				, int32
-			), Descr = "Suitability maps voor alle subsectoren, met 100 vermenigvuldigd. Dit is nodig omdat discr_alloc alleen met integers kan werken. Omdat de suitability tussen 0 en 1 ligt, en we precisie willen behouden, vermenigvuldigen we met 100. Dus een suitability van 0.75 wordt 75 in de int map."
+			), Descr = "Suitability maps voor alle subsectoren, met 100 vermenigvuldigd. Voor de vijftien landbouwklassen wordt de suitability hier opnieuw opgebouwd als Net_revenues maal de kapitalisatiefactor van de boervariant min Conversiekosten met de herkomst van dit zichtjaar (#262); alleen NonLandbouw leest nog de Suitability uit VariantData, die daar nul is. Dit is nodig omdat discr_alloc alleen met integers kan werken. De suitability is een contante waarde in Eur_m2, sinds #780 op landbouwgrond in de orde van 0,5 tot 9; maal 100 en afgerond op int32 houdt zij een resolutie van een cent per m2, en de omschakeldrempel van circa 1 Eur_m2 tussen de akkerbouwklassen blijft daarmee scherp."
 		{
 			attribute<Subsector> ArgMax  (CompactedAdminDomain) := ='ArgMax_ifdefined('+asItemList(Subsector/name)+')[Subsector]', Descr = "Deze attribute geeft per cel aan welke subsector de hoogste suitability heeft. Enkel voor debug purposes.";
 			attribute<int32>     MaxElem (CompactedAdminDomain) := ='max_elem_ifdefined('+asItemList(Subsector/name)+')', Descr = "Deze attribute geeft per cel aan welke subsector de hoogste suitability heeft. Enkel voor debug purposes.";
@@ -83,28 +161,110 @@ Template Iter_Landbouw_T
 		container Claims
 		{
 			parameter<Ha> AreaalStudyGebied := area(rdc_meter/geometry[0], meter2_f64)[meter2][ha];
-			
-			container MaxClaims := 
+
+			container Gevraagd_Min :=
 				for_each_nedv(
 					  Subsector/name
-					, replace('uint32(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MaxClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' / AdminDomain/NrHaPerCell)'
+					, replace('max_elem(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MinClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' - ExogeenOpleggen/Ha_PerAllocRegio/'+Subsector/name+', 0[Ha])'
 							,'@Z@' , Context/ThisZichtjaar/name
 							,'@SC@', Scenario_name
 							,'@AS@', Context/ThisSectorAllocRegio/name)
 					, AllocRegio
-					, uint32
-				), Descr = "MaxClaims per subsector per allocatieregio. Dit is het maximum areaal dat geclaimd kan worden in de allocatieregio, verdeeld over de cells in de allocatieregio. Dit is dus een absolute bovengrens, die niet overschreden kan worden. Het kan dus zijn dat er minder wordt geclaimd, maar nooit meer. Dit is een harde grens.";
-			
-			container MinClaims := 
+					, Ha
+				), Descr = "De ondergrens per klasse per allocatieregio in hectare, zoals hij uit de claimcontainer komt, met de exogeen opgelegde hectares eraf. Die zijn immers al gerealiseerd en de allocator kan ze niet meer plaatsen. Dit is de vraag; Restclaim hieronder toetst hem aan het aanbod.";
+
+			container Gevraagd_Max :=
 				for_each_nedv(
 					  Subsector/name
-					, replace('uint32(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MinClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' / AdminDomain/NrHaPerCell)'
+					, replace('max_elem(ThisVariantData/Claims/@SC@/Zichtjaren/@Z@/SectorAllocRegios/@AS@/MaxClaims/'+Subsector/name+AllocRegio_StudyArea_orgrel+' - ExogeenOpleggen/Ha_PerAllocRegio/'+Subsector/name+', 0[Ha])'
 							,'@Z@' , Context/ThisZichtjaar/name
 							,'@SC@', Scenario_name
 							,'@AS@', Context/ThisSectorAllocRegio/name)
 					, AllocRegio
+					, Ha
+				), Descr = "Idem voor de bovengrens.";
+
+			container Restclaim
+			: Descr = "De landbouwclaim beweegt mee met de ruimte die er in deze variant en dit zichtjaar nog voor landbouw is. Landbouw als geheel is een restclaim: elke gridcel moet in 2120 gevuld zijn, en de
+						LGN-stand van het basisjaar is de gewasverdeling waarop wordt teruggevallen zolang een regio geen gebiedspecifieke opgave levert (antwoord van Deltares in #780). De claim uit
+						ModelParameters/Landbouw/claims_conservatief geeft die verdeling; deze container schaalt het totaal naar wat er over is en laat de onderlinge verhouding staan. Zonder deze schaling loopt een
+						variant die veel landbouwgrond een andere bestemming geeft vast op de IntegrityCheck van discrete_alloc_sp, want de allocator rekent per allocatieregio en landelijk optellen verbergt een
+						regionaal tekort. De toets is noodzakelijk en niet voldoende: dat elke klasse en alle klassen samen hun ondergrenzen kwijt kunnen betekent niet dat er een toewijzing bestaat die aan beide
+						voldoet (de voorwaarde van Hall); daarvoor staat ModelParameters/Landbouw/Krimpmarge, en daarom staat die niet op 1."
+			{
+				attribute<Bool> HeeftRuimteVoorLandbouw (CompactedAdminDomain) :=
+					='('+AsList('IsDefined(Suitabilities/'+/Classifications/Actor/LandbouwKlasses/Actief/name+')', ' || ')+')'
+				, Descr = "Mag hier minstens een van de vijftien landbouwklassen landen? De restcategorie NonLandbouw telt met opzet niet mee: die is ruimer beschikbaar en heeft geen ondergrens, dus meetellen zou de ruimte kunstmatig groot maken.";
+
+				attribute<Ha> Ruimte_Totaal (AllocRegio) :=
+					sum(HeeftRuimteVoorLandbouw ? CompactedAdminDomain/NrHaPerCell : 0[Ha], AllocRegio/Per_CompactedAdminDomain)
+				, Descr = "Wat de allocator in deze regio aan landbouw kwijt kan. Dit is de beschikbaarheid zoals de allocator hem zelf ziet, dus inclusief de zeef van dit zichtjaar, de exogene oplegging, de schijftoets MinimalLandAvailability_Landbouw en wat eerdere sectoren in dit zichtjaar al hebben genomen.";
+
+				container Ruimte :=
+					for_each_nedv(
+						  Subsector/name
+						, 'sum(IsDefined(Suitabilities/'+Subsector/name+') ? CompactedAdminDomain/NrHaPerCell : 0[Ha], AllocRegio/Per_CompactedAdminDomain)'
+						, AllocRegio
+						, Ha
+					), Descr = "Hetzelfde per klasse, want elke klasse heeft haar eigen beschikbaarheid.";
+
+				attribute<Ha> Gevraagd_Totaal (AllocRegio) :=
+					='add('+AsItemList('Gevraagd_Min/'+/Classifications/Actor/LandbouwKlasses/Actief/name)+')'
+				, Descr = "De ondergrenzen van de vijftien landbouwklassen samen. NonLandbouw telt niet mee, want die heeft geen ondergrens en vult juist de rest.";
+
+				attribute<Float32> Krimp_Totaal (AllocRegio) :=
+					Gevraagd_Totaal > Ruimte_Totaal
+						? (Ruimte_Totaal * Krimpmarge) / Gevraagd_Totaal
+						: 1f
+				, Descr = "Past de som van de ondergrenzen nog in de regio? Zo ja, dan verandert er niets en is deze factor 1. Zo nee, dan schaalt hij alle ondergrenzen samen terug tot ze passen. De factor is nooit groter dan 1: landbouw komt er niet bij, zie MagLandbouwWorden hierboven.";
+
+				container Krimp_Klasse :=
+					for_each_nedv(
+						  Subsector/name
+						, IsDefined(Subsector/LandbouwK_rel)
+							? 'Gevraagd_Min/'+Subsector/name+' > Ruimte/'+Subsector/name+' ? (Ruimte/'+Subsector/name+' * Krimpmarge) / Gevraagd_Min/'+Subsector/name+' : 1f'
+							: 'const(1f, AllocRegio, Float32)'
+						, AllocRegio
+						, Float32
+					), Descr = "Idem per klasse. In de praktijk staat dit vrijwel altijd op 1, want de landbouwzeef verschilt nauwelijks per klasse en de ondergrens van een enkele klasse is klein tegenover de ruimte in de hele regio. De regel staat er voor het geval een klasse wel een eigen beperking krijgt.";
+
+				container Krimpfactor :=
+					for_each_nedv(
+						  Subsector/name
+						, IsDefined(Subsector/LandbouwK_rel)   // NIET '!= null' schrijven: een vergelijking met null geeft altijd FALSE, ook !=
+							? 'min_elem(Krimp_Totaal, Krimp_Klasse/'+Subsector/name+')'
+							: 'const(1f, AllocRegio, Float32)'
+						, AllocRegio
+						, Float32
+					), Descr = "De factor die op onder- en bovengrens van deze klasse wordt losgelaten: de strengste van de twee toetsen hierboven. NonLandbouw houdt 1, want die restcategorie moet juist kunnen opvangen wat de landbouwklassen laten liggen.";
+
+				parameter<Float32> Krimpmarge := /ModelParameters/Landbouw/Krimpmarge;
+
+				parameter<Float32> Krimp_Minimum := min(Krimp_Totaal)
+				, Descr = "De sterkst geknepen regio, als kengetal. Staat dit op 1, dan paste de claim overal en heeft deze container niets gedaan.";
+			}
+
+			container MaxClaims :=
+				for_each_nedv(
+					  Subsector/name
+					, 'uint32(Gevraagd_Max/'+Subsector/name+' / AdminDomain/NrHaPerCell * '+ToegepasteFactor+'/'+Subsector/name+')'
+					, AllocRegio
 					, uint32
-				), Descr = "MinClaims per subsector per allocatieregio. Dit is het minimum areaal dat geclaimd moet worden in de allocatieregio, verdeeld over de cells in de allocatieregio. Dit is dus een absolute ondergrens, die niet onderschreden kan worden. Het kan dus zijn dat er meer wordt geclaimd, maar nooit minder. Dit is een harde grens.";
+				), Descr = "MaxClaims per subsector per allocatieregio, in cellen: het maximum areaal dat in de allocatieregio geclaimd kan worden, een harde grens. De krimpfactor van Restclaim geldt ook hier: onder-
+							en bovengrens zijn samen een bandbreedte rond de basisjaarverdeling, en schaal je alleen de ondergrens, dan mag een enkele klasse in een regio waar nog maar de helft van de landbouwgrond
+							over is nog naar 105 procent van haar basisjaarareaal groeien en verdringt zij de rest. Door beide te schalen blijft de verhouding tussen de gewassen staan en krimpt alleen het totaal.";
+
+			container MinClaims :=
+				for_each_nedv(
+					  Subsector/name
+					, 'uint32(Gevraagd_Min/'+Subsector/name+' / AdminDomain/NrHaPerCell * '+ToegepasteFactor+'/'+Subsector/name+')'
+					, AllocRegio
+					, uint32
+				), Descr = "MinClaims per subsector per allocatieregio, in cellen. Dit is het minimum areaal dat in de allocatieregio geclaimd moet worden. Er kan dus meer worden geclaimd, maar nooit minder. Dit is een harde grens.";
+
+			parameter<String> ToegepasteFactor := 'Restclaim/Krimpfactor'
+			, Descr = "Welke factor de claims dragen: de krimpfactor, zodat de landbouwclaim meebeweegt met de ruimte die er in deze variant nog voor is (#780). Zonder die factor is de claim een bandbreedte rond
+						het basisjaar die zich niets aantrekt van de ruimte, en haalt een variant die veel landbouwgrond herbestemt de allocatie niet.";
 		}
 		
 		parameter<Int32> threshold := -999999i, Descr = "Threshold voor suitability maps in discr_alloc. Omdat de suitability maps met 100 vermenigvuldigd zijn, is deze threshold ook met 100 vermenigvuldigd. Dus een threshold van 50 betekent dat alleen cells met een suitability van 0.50 of hoger in aanmerking komen voor allocatie. Een threshold van -999999 betekent dat alle cells in aanmerking komen.";
@@ -122,9 +282,12 @@ Template Iter_Landbouw_T
 			, Allocatie_Prep/threshold											// 10 int32		parameter	Threshold
 		), Descr = "Discret allocation algorithm, adapted for Landbouw. Allocates areaal to subsectoren based on suitability maps and claims. The output is an attribute per cell with the allocated subsector."
 	{
-		parameter<Bool> IsConversatieveBoer := rlookup(/Boervariant_name, BoervariantK/name) == BoervariantK/V/ConservatieveBoer;
-	
-		attribute<Subsector>                        Alloc_Result         (CompactedAdminDomain) := =IsConversatieveBoer ? 'const(null_b, CompactedAdminDomain, Subsector)' : 'Allocatie_Prep/Subsector/LandbouwK_rel[landuse]', Descr = "Resultaat van de allocatie, per cell de gealloceerde subsector. Bij de conversatieve boer wordt er niets gealloceerd, dus dan is het resultaat overal null. Dus dan blijft huidig landgebruiks staan.";
+		attribute<LandbouwKlasses>                  Alloc_Result         (CompactedAdminDomain) := Allocatie_Prep/Subsector/LandbouwK_rel[landuse]
+		, Descr = "Resultaat van de allocatie: per cel de gealloceerde klasse, null waar de restcategorie NonLandbouw wint. Op de volle LandbouwKlasses en niet de subsectorunit: LandbouwK_rel levert een klasse
+					van de volle unit en per_SectorxSubsector zoekt hem op tegen Sector/xSubsector/LandbouwK_rel op diezelfde unit; alleen de kandidaten van de allocator zijn beperkt tot de subsectoren. Alle
+					drie de boervarianten lopen door dezelfde mechaniek: het huidige gewas draagt op de diagonaal van de transitiekostenmatrix nul omschakelkosten, dus een alternatief moet eerst zijn eigen
+					omschakelkosten goedmaken; de boervariant schaalt die drempel met de disconteringsvoet in Kapitalisatie_T en de opslag in ConversionCostPremium. Wil je een variant waarin het landgebruik
+					vastligt, zet dan in ModelParameters/SectorAllocRegio de kolom RolNaXZichtjaar op Niet.";
 		attribute<Sector/xSubsector>                per_SectorxSubsector (CompactedAdminDomain) := rlookup(Alloc_Result, Sector/xSubsector/LandbouwK_rel), IntegrityCheck = "statusFlag";
 	}
 
@@ -133,8 +296,11 @@ Template Iter_Landbouw_T
 	container Impl := Impl0
 	{
 		parameter<Bool> StopCriterium       := StaticStopCriterium;
-		parameter<Bool> StaticStopCriterium := IsEnkelIter ? TRUE : id == (ModelParameters/Default_NrOfIters - 1b)[Iter];
+		parameter<Bool> StaticStopCriterium := IsEnkelIter ? TRUE : uint8(id) == uint8(#Iter) - 1b, Descr = "Is dit de laatste iteratie van het eigen blok? Op #Iter en niet op Default_NrOfIters, net als in Iter_T, zodat een rij met minder iteraties het criterium ook haalt.";
 	}
+	
+	parameter<Bool> BehoudVerzorgendBijWonen := lowercase(Sector_name) == lowercase('Wonen')
+	, Descr = "Wint wonen deze cellen, en blijft de verzorgende werkgelegenheid dan staan in plaats van gesloopt te worden? Stuurt de pandvoetafdruk langs Behoud_Expr in plaats van Verdring_Expr, zodat die de stand volgt die StatePrep_T/VerdringingsTak laat staan (#710).";
 	
 	container StateNaAllocatie0 := 
 		for_each_ne(
@@ -156,7 +322,7 @@ Template Iter_Landbouw_T
 		container PandFootprint :=
 			for_each_nedv(
 				Jobs6/name
-				, lowercase(Sector_name) == lowercase('Werken') ? replace(Impl/Update_PandFootprint_Expr,'@Y@', Context/ThisZichtjaar/name, '@SS@', Jobs6/name): replace(Impl/Verdring_Expr, '@S@', 'PandFootprint', '@SS@', Jobs6/name)
+				, lowercase(Sector_name) == lowercase('Werken') ? replace(Impl/Update_PandFootprint_Expr,'@Y@', Context/ThisZichtjaar/name, '@SS@', Jobs6/name): replace(BehoudVerzorgendBijWonen && Jobs6/IsVerzorgend ? Impl/Behoud_Expr : Impl/Verdring_Expr, '@S@', 'PandFootprint', '@SS@', Jobs6/name)
 				, CompactedAdminDomain
 				, m2PandFootprint
 			);
@@ -174,8 +340,12 @@ Template Iter_Landbouw_T
 		attribute<Sector/XSubsector> Subsector_rel0 (CompactedAdminDomain) := switch(
 																				case(Sector/XSubsector/IsLandbouw[StateVoorAllocatie/Subsector_rel], null_b)
 																				, StateVoorAllocatie/Subsector_rel
-																				); 
-		attribute<Sector/XSubsector> Subsector_rel (CompactedAdminDomain) := =ModelParameters/OntkoppelStedelijkeKlasses ? 'MakeDefined(Subsector_rel0, Allocatie/per_SectorXSubSector)' : 'MakeDefined(StateVoorAllocatie/Subsector_rel, Allocatie/per_SectorXSubSector)';
+																				)
+		, Descr = "De labels waarmee dit zichtjaar de landbouwallocatie in gaat, met de landbouwlabels eruit gewist. Een stedelijk, natuur- of waterbergingslabel blijft staan en houdt de cel bezet; een landbouwlabel van een vorig zichtjaar hoort te wijken voor de klasse die deze allocatie kiest.";
+		attribute<Sector/XSubsector> Subsector_rel (CompactedAdminDomain) := MakeDefined(Subsector_rel0, MakeDefined(Allocatie/per_SectorXSubSector, Allocatie_Prep/ExogeenOpleggen/per_SectorxSubsector))
+		, Descr = "Het label na deze iteratie: wat er stond wint, behalve waar er landbouw stond, want daar wint de uitkomst van deze allocatie (#803), en waar die niets koos de opgelegde landbouwklasse
+					(#828): die telde al mee in de hectarestand maar droeg geen label, zodat de export haar niet als landbouw las. Het wissen van het landbouwlabel zit in Subsector_rel0 hierboven en de
+					beschikbaarheidskant in IterSubsector_T_Landbouw; die twee horen bij elkaar.";
 		attribute<OP>                OP_rel        (CompactedAdminDomain) := StateVoorAllocatie/OP_rel;
 		
 		container Wonen
@@ -197,6 +367,12 @@ Template Iter_Landbouw_T
 			attribute<Meter> Ashoogte              (CompactedAdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector ? 'Allocatie/per_SectorxSubsector == Sector/xSubsector/V/Wind_Totaal ? ThisVariantClassifications/WindTurbineType/Ashoogte : StateVoorAllocatie/Wind/Ashoogte' : 'StateVoorAllocatie/Wind/Ashoogte';
 			attribute<Meter> Rotordiameter         (CompactedAdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector ? 'Allocatie/per_SectorxSubsector == Sector/xSubsector/V/Wind_Totaal ? ThisVariantClassifications/WindTurbineType/Rotordiameter : StateVoorAllocatie/Wind/Rotordiameter' : 'StateVoorAllocatie/Wind/Rotordiameter';
 			attribute<Meter> MaxWerpAfstandNom     (CompactedAdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWindSector ? 'Allocatie/per_SectorxSubsector == Sector/xSubsector/V/Wind_Totaal ? ThisVariantClassifications/WindTurbineType/MaxWerpAfstandNom : StateVoorAllocatie/Wind/MaxWerpAfstandNom' : 'StateVoorAllocatie/Wind/MaxWerpAfstandNom';
+		}
+
+		container Landgebruik
+		{
+			attribute</Classifications/Grondgebruik/LandgebruikType> Type            (CompactedAdminDomain) := StateVoorAllocatie/Landgebruik/Type;
+			attribute<Yr>                                            JaarVerandering (CompactedAdminDomain) := IsDefined(Allocatie/per_SectorxSubsector) && !IsDefined(StateVoorAllocatie/Subsector_rel) ? UInt16(right(Context/ThisZichtjaar/name,4))[Yr] : StateVoorAllocatie/Landgebruik/JaarVerandering;
 		}
 	}
 

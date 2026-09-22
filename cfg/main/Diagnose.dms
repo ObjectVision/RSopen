@@ -1,0 +1,1005 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het controleharnas van RSopen. De tabel Checks maakt per regel een parameter die zijn waarde naar een
+// tekstbestand schrijft, per casus en zichtjaar; ChecksBasisjaar doet hetzelfde voor grootheden van het
+// basisjaar, een keer per casus. De thematische containers eronder schrijven de uitdraaien die niet in een
+// getal passen. Casus en zichtjaar komen uit de omgevingsvariabelen DiagCasus en DiagJaar. Aanroep:
+// GenerateAll per zichtjaar en GenerateBasisjaar per casus, allebei vanuit batch/Run2120.ps1; het oordeel
+// velt batch/ToetsOplevering.ps1, die de bestanden leest.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Diagnose
+: Descr = "Het controleharnas: schrijft per casus en zichtjaar een set controlewaarden naar losse tekstbestanden onder %LocalDataProjDir%/Diagnose, en daarnaast de thematische uitdraaien die niet
+			in een getal passen. Alles wat hier staat draait mee in GenerateAll of GenerateBasisjaar, behalve wat de Descr van zijn container als op aanvraag aanmerkt; wie zo'n uitdraai leest
+			controleert de mtime tegen de eigen run, want een oude uitdraai blijft staan. Een harnas dat een vraag uit een issue beantwoordt is tijdelijk en gaat weg zodra het issue dicht is,
+			de meting staat dan in het issue; wat blijft heeft een thematische naam en, waar het een controlewaarde is, een norm in batch/ToetsOplevering.ps1."
+{
+	parameter<String> Casus   := replace_value(expand(., '%env:DiagCasus%'), 'env:DiagCasus', 'WLO_hoog_BAU');
+	parameter<String> Jaar    := =replace_value(expand(., '%env:DiagJaar%'),  'env:DiagJaar',  quote('Y'+string(ModelParameters/Model_FirstZichtjaar)))
+	, Descr = "Het zichtjaar waarover de controlewaarden gaan. Zonder de omgevingsvariabele DiagJaar valt hij terug op het eerste zichtjaar van de allocatie. Als string met aanhalingstekens, want hij komt in een meta-expressie terecht: DiagJaar is dan 'Y2040' en niet Y2040.";
+	parameter<String> Variant := replace(Casus, 'WLO_hoog_', '');
+
+	parameter<String> Pad_Z := '/Indicatoren/'+Casus+'/Zichtjaren/'+Jaar+'/';
+	parameter<String> Pad_V := '/VariantData/'+Variant+'/';
+	parameter<String> Pad_A := '/Allocatie/'+Casus+'/Zichtjaren/'+Jaar+'/';
+	parameter<String> Pad_B := '/Diagnose/Basisjaar/', Descr = "De container Basisjaar hieronder, het pad van de rijen in ChecksBasisjaar.";
+	parameter<String> Pad_D := '/Diagnose/', Descr = "Dit harnas zelf, voor rijen in Checks die een parameter uit een thematische container lezen.";
+
+	// De vier kolommen hieronder en nrofrows moeten met de hand in de pas blijven. Een lijst die LANGER is
+	// dan het domein valt luid om (DoArrayAssignment: Index N out of range); een lijst die KORTER is wordt
+	// stil met nulls aangevuld en de uitdraai ziet er dan normaal uit. De IntegrityCheck op elke lijst vangt
+	// dat tweede geval. Hij staat inline op de data, want een check op een aparte parameter geeft Invalid
+	// Recursion in UpdateMetaInfo; zie de skill geodms-valkuilen.
+	unit<uint32> Checks : nrofrows = 46
+	{
+		//                        pad, aggregatie, item
+		//   pad: Z = onder het zichtjaar van de indicatoren, V = variantdata, A = allocatie, D = een parameter in dit harnas
+		//   aggr: p = parameter, s = som over grid, b = aantal cellen waar waar, c = aantal gevulde cellen, l = lijst per regio, m = maximum
+		attribute<String> name :
+		[
+			 'stand_woningen', 'stand_banen'
+			,'claimreal_NL_woningen', 'claimreal_NL_banen'
+			,'claimreal_NVM_woningen', 'claimreal_Provincie_banen', 'claimreal_Waterberging'
+			,'verstedelijking_ha', 'verstedelijking_vruchtbaar_ha'
+			,'nieuwenatuur_ha', 'nieuwenatuur_vruchtbaar_ha', 'verdwenennatuur_ha'
+			,'waterbergingveen_ha', 'waterbergingveen_vruchtbaar_ha'
+			,'inbreiding_fractie', 'verharding_som', 'lu2120_areaal_natuur'
+			,'woningwaarde_nieuwbouw', 'groenwaarde_woningen'
+			,'uitkoop_nieuwenatuur', 'sloop_nieuwenatuur'
+			,'uitkoop_waterberging', 'sloop_waterberging'
+			,'mortaliteit', 'carbon_flow', 'carbon_ongedekt', 'somers_mediaan'
+			,'nietbouwen_landschap_cellen', 'sloop_opslot_geen_natuur_woningen', 'exogeen_cellen'
+			// groenopslag_max en groenopslag_min lezen de prijsopslag door veranderde groen- en waternabijheid
+			// op de allocatiekant. Die staat in het eerste zichtjaar per definitie op nul, zie de Descr van
+			// Prijsopslag_perWP4 in Templates/Allocatie/Zichtjaar_T, dus een nul op Y2040 is geen kapotte controle.
+			,'groenopslag_max', 'groenopslag_min'
+			,'sloop_natuur_niet_opslot_woningen', 'sloop_opslot_geen_natuur_ha', 'sloop_natuur_niet_opslot_ha'
+			,'sloop_opslot_zonder_sloopbedoeling', 'sloop_zonder_masker'
+			,'sloop_zondermasker_veen', 'sloop_zondermasker_buiten'
+			,'sloop_opslot_geen_natuur_veen', 'sloop_opslot_geen_natuur_kust', 'sloop_opslot_geen_natuur_rivieren'
+			,'waterberging_regios_met_tekort', 'groenwaarde_lek_eur', 'verharding_cellen_gedaald', 'ijburg2_woningen_groei'
+		], IntegrityCheck = "all(IsDefined(this))";
+
+		attribute<String> pad :
+		[
+			 'Z','Z'
+			,'Z','Z'
+			,'Z','Z','Z'
+			,'Z','Z'
+			,'Z','Z','Z'
+			,'Z','Z'
+			,'Z','Z','Z'
+			,'Z','Z'
+			,'Z','Z'
+			,'Z','Z'
+			,'Z','Z','Z','Z'
+			,'V','V','V'
+			,'A','A'
+			,'V','V','V'
+			,'V','V'
+			,'V','V'
+			,'V','V','V'
+			,'D','D','D','D'
+		], IntegrityCheck = "all(IsDefined(this))";
+
+		attribute<String> aggr :
+		[
+			 's','s'
+			,'s','s'
+			,'l','l','l'
+			,'p','p'
+			,'p','p','p'
+			,'p','p'
+			,'p','s','p'
+			,'s','s'
+			,'s','s'
+			,'s','s'
+			,'p','s','s','s'
+			,'b','p','b'
+			,'m','n'
+			,'p','p','p'
+			,'p','p'
+			,'p','p'
+			,'p','p','p'
+			,'p','p','p','p'
+		], IntegrityCheck = "all(IsDefined(this))";
+
+		attribute<String> item :
+		[
+			 'Stand/Aantal_Woningen_Totaal', 'Stand/Aantal_Banen_Totaal'
+			,'ClaimRealisatie/Per_AllocRegio/Nederland/InDezeStudie/Aantal_Woningen_Totaal', 'ClaimRealisatie/Per_AllocRegio/Nederland/InDezeStudie/Banen_Totaal'
+			,'ClaimRealisatie/Per_AllocRegio/NVM/InDezeStudie/Aantal_Woningen_Totaal', 'ClaimRealisatie/Per_AllocRegio/Provincie/InDezeStudie/Banen_Totaal', 'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/InDezeStudie/meter3_Waterberging'
+			,'Grondgebruik/Verandering/Verstedelijking/Per_NL', 'Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden/Per_NL'
+			,'Grondgebruik/Verandering/NieuweNatuur/Per_NL', 'Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden/Per_NL', 'Grondgebruik/Verandering/VerdwenenNatuur/Per_NL'
+			,'Grondgebruik/Verandering/WaterbergingVeen/Per_NL', 'Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden/Per_NL'
+			,'Inbreiding/FractieWoningenErbijInBestaandBebouwdGebied', 'Verharding/Result', 'LandgebruikskaartNL2120/Areaal_Natuur'
+			,'Woningwaarde/Nieuwbouw', 'WaardeNabijheidGroen/WaardeVeranderingDoorGroenVerandering_Woningen'
+			,'SloopAlsGevolgVanNieuweNatuur/Uitkoopkosten', 'SloopAlsGevolgVanNieuweNatuur/Sloopkosten'
+			,'SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten', 'SloopAlsGevolgVanWaterbergingVeen/Sloopkosten'
+			,'SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief_Totaal', 'CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar', 'CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief', 'SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA'
+			,'Bouwregime/OpSlotDoorLandschap', 'Sloop/Verschil/Woningen_OpSlotMaarGeenNatuur', 'ExogeenOpleggen/IsOpgelegd'
+			,'GroenNabijheid/Prijsopslag_perWP4/vrijstaand', 'GroenNabijheid/Prijsopslag_perWP4/vrijstaand'
+			,'Sloop/Verschil/Woningen_NatuurMaarNietOpSlot', 'Sloop/Verschil/Opp_OpSlotMaarGeenNatuur', 'Sloop/Verschil/Opp_NatuurMaarNietOpSlot'
+			,'Sloop/Verschil/Woningen_OpSlotZonderSloopbedoeling', 'Sloop/Verschil/Woningen_ZonderMasker'
+			,'Sloop/Verschil/Woningen_ZonderMasker_InVeenlevering', 'Sloop/Verschil/Woningen_ZonderMasker_Buiten'
+			,'Sloop/Verschil/Woningen_Veen', 'Sloop/Verschil/Woningen_Kust', 'Sloop/Verschil/Woningen_Rivieren'
+			,'Waterberging/Volume/RegiosMetTekort', 'Groen/Groenwaarde/LekBedrag_eur', 'Verharding/Cellen_Gedaald', 'Wonen/IJburg2_WoningenGroei'
+		], IntegrityCheck = "all(IsDefined(this))";
+	}
+
+	unit<uint32> ChecksBasisjaar : nrofrows = 6
+	, Descr = "Controlewaarden van het basisjaar, een keer per casus via GenerateBasisjaar en niet per zichtjaar: ze veranderen niet met het zichtjaar en kosten samen ruim een minuut. Dezelfde
+				kolommen als Checks; pad B is de container Basisjaar hieronder, waar de rekenregel per rij staat."
+	{
+		attribute<String> name : ['basisjaar_woningen', 'basisjaar_banen', 'hogegronden_ha', 'bouwperiode_term', 'verwerving_nietwoon_mld', 'verblijfsrecreatie_stand_tov_trend'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> pad  : ['B', 'B', 'B', 'B', 'B', 'B'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> aggr : ['p', 'p', 'p', 'p', 'p', 'p'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> item : ['Woningen', 'Banen', 'HogeGronden_ha', 'BouwperiodeTerm', 'Verwervingskosten_NietWoon_mld', 'Verblijfsrecreatie_StandTovTrend'], IntegrityCheck = "all(IsDefined(this))";
+	}
+
+	container Resultaten :=
+		for_each_ne(
+			Checks/name
+			, 'Check_T('+quote(Checks/name)+', '+quote(Checks/pad)+', '+quote(Checks/aggr)+', '+quote(Checks/item)+')'
+		);
+
+	container ResultatenBasisjaar :=
+		for_each_ne(
+			ChecksBasisjaar/name
+			, 'Check_T('+quote(ChecksBasisjaar/name)+', '+quote(ChecksBasisjaar/pad)+', '+quote(ChecksBasisjaar/aggr)+', '+quote(ChecksBasisjaar/item)+')'
+		);
+
+	parameter<String> GenerateAll := 'Klaar'
+	, ExplicitSuppliers = "=AsList('Resultaten/'+Checks/name+'/Waarde', ';')+';/Diagnose/grondbalans_bestemmingen;/Diagnose/Piekbuiberging/Dekking;/Diagnose/Waterberging/PerRegio;/Diagnose/Natuur/Veen/realisatie;/Diagnose/Natuur/Veen/terugkoppeling;/Diagnose/Natuur/Veen/perdeelgebied;/Diagnose/Natuur/Veen/perbouwsteen;/Diagnose/Natuur/Veen/waterkaart;/Diagnose/Claims/Wonen;/Diagnose/Claims/Werken'"
+	, Descr = "Rekent in een aanroep alle controlewaarden van het zichtjaar uit en schrijft ze weg: de tabel Checks, plus de uitdraaien die een reeks gelabelde waarden uit verschillende items in
+				een regel zetten en daarom niet als rij in die tabel passen. De paden staan volledig gekwalificeerd, want een ongekwalificeerde naam zou stil naar een gelijknamig item hogerop
+				oplossen zodra dit item wordt hernoemd of verplaatst. batch/Run2120.ps1 draait per zichtjaar uitsluitend dit item en batch/ToetsOplevering.ps1 leest de bestanden (#729). De vijf
+				uitdraaien van Natuur/Veen staan erbij omdat de onderrealisatie van de veenopgave aan team Veen wordt teruggekoppeld (#761); in een run zonder veenlevering kosten ze niets, want
+				IsVanToepassing zet ze dan op een regel tekst.";
+
+	parameter<String> GenerateBasisjaar := 'Klaar'
+	, ExplicitSuppliers = "=AsList('ResultatenBasisjaar/'+ChecksBasisjaar/name+'/Waarde', ';')"
+	, Descr = "De tegenhanger van GenerateAll voor de tabel ChecksBasisjaar: een keer per casus, voor de zichtjaren, vanuit batch/Run2120.ps1. De bestanden dragen Basisjaar in plaats van het zichtjaar in
+				de naam.";
+
+	Template Check_T
+	{
+		parameter<String> naam;
+		parameter<String> pad;
+		parameter<String> aggr;
+		parameter<String> item;
+		//
+
+		parameter<String> VolPad := (pad == 'Z' ? /Diagnose/Pad_Z : pad == 'V' ? /Diagnose/Pad_V : pad == 'A' ? /Diagnose/Pad_A : pad == 'B' ? /Diagnose/Pad_B : /Diagnose/Pad_D) + item;
+		parameter<String> JaarLabel := pad == 'B' ? 'Basisjaar' : /Diagnose/Jaar, Descr = "Basisjaarcontroles dragen geen zichtjaar in de bestandsnaam, want ze gelden voor de hele reeks.";
+
+		parameter<String> Expr :=
+			  aggr == 'p' ? 'string(value('+VolPad+', float32))'
+			: aggr == 's' ? 'string(sum(value('+VolPad+', float32)))'
+			: aggr == 'b' ? 'string(sum(uint32('+VolPad+')))'
+			: aggr == 'c' ? 'string(sum(uint32(IsDefined('+VolPad+'))))'
+			: aggr == 'm' ? 'string(max(value('+VolPad+', float32)))'
+			: aggr == 'n' ? 'string(min(value('+VolPad+', float32)))'
+			: 'AsList(string(value('+VolPad+', float32)), ('+quote(';')+'))';
+
+		parameter<String> Waarde := =Expr
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+JaarLabel+'_'+naam+'.txt'"
+		, StorageType = "str";
+	}
+	parameter<String> NVM_namen := AsList(/SourceData/RegioIndelingen/NVM/name, ';')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/NVM_namen.txt'"
+	, StorageType = "str";
+
+	parameter<String> waterbergingsregio_namen := AsList(/SourceData/RegioIndelingen/Waterbergingsregio/label + ';' + string(/SourceData/RegioIndelingen/Waterbergingsregio/IsRestRegio), '|')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/waterbergingsregio_namen.txt'"
+	, StorageType = "str"
+	, Descr = "De negen waterbergingsregio's in de volgorde van de unit, dus de volgorde van de shapefile met de restregio erachter, plus de vlag die zegt welke de restregio is. Nodig om claimreal_Waterberging te kunnen lezen: die uitdraai gebruikt AsList en dat slaat de null-waarden over, dus een regio zonder opgave verschijnt er niet in en de posities schuiven op. Zonder deze lijst is niet te zeggen welke regio bij welk getal hoort.";
+
+	parameter<String> grondbalans_bestemmingen := =('
+		  '+quote('verdwenen_vruchtbaar_ha;')+'      + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/VerdwenenVruchtbareLandbouw)) * float32(/Geography/AdminDomain/NrHaPerCell))
+		+ '+quote(';verstedelijking_vruchtbaar_ha;')+' + string('+Pad_Z+'Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden/Per_NL)
+		+ '+quote(';nieuwenatuur_vruchtbaar_ha;')+'    + string('+Pad_Z+'Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden/Per_NL)
+		+ '+quote(';waterberging_vruchtbaar_ha;')+'    + string('+Pad_Z+'Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden/Per_NL)
+		+ '+quote(';overlap_verst_natuur_ha;')+'      + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden && '+Pad_Z+'Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden)) * float32(/Geography/AdminDomain/NrHaPerCell))
+		+ '+quote(';overlap_verst_wb_ha;')+'          + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden && '+Pad_Z+'Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden)) * float32(/Geography/AdminDomain/NrHaPerCell))
+		+ '+quote(';overlap_natuur_wb_ha;')+'         + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden && '+Pad_Z+'Grondgebruik/Verandering/WaterbergingVeenOpVruchtbareLandbouwgronden)) * float32(/Geography/AdminDomain/NrHaPerCell))
+	')
+	, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_grondbalans_bestemmingen.txt'", StorageType = "str"
+	, Descr = "Sluit de verdwenen vruchtbare landbouw op de drie bestemmingen? Met de oude definitie (klasse A, ongeacht vorig gebruik) telden de bestemmingen samen op tot meer dan het verlies. Zie #634.";
+
+	container Claims
+	: Descr = "De claimrealisatietoets van de indicatorenkant uitgelezen, wonen en werken; al_gehaald wijst de regio's aan waar de claim al voor de allocatie was gehaald en de realisatie dus niet
+				anders dan boven 1 kan uitkomen. In GenerateAll."
+	{
+		parameter<String> Wonen := =('
+			  '+quote('regios;')+'      + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_Regios)
+			+ '+quote(';al_gehaald;')+'  + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_AlGehaald)
+			+ '+quote(';telt_mee;')+'    + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_TeltMee)
+			+ '+quote(';op_norm;')+'     + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_OpNorm)
+			+ '+quote(';onder_norm;')+'  + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_OnderNorm)
+			+ '+quote(';boven_norm;')+'  + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_BovenNorm)
+			+ '+quote(';tekort;')+'      + string('+Pad_Z+'ClaimRealisatie_Toets/Tekort_woningen)
+			+ '+quote(';overschot;')+'   + string('+Pad_Z+'ClaimRealisatie_Toets/Overschot_woningen)
+			+ '+quote(';saldo;')+'       + string('+Pad_Z+'ClaimRealisatie_Toets/Saldo_woningen)
+			+ '+quote(';saldo_algehaald;')+' + string('+Pad_Z+'ClaimRealisatie_Toets/Saldo_AlGehaald)
+			+ '+quote(';saldo_alles;')+'     + string('+Pad_Z+'ClaimRealisatie_Toets/Saldo_Alles)
+		')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_claimtoets.txt'", StorageType = "str";
+
+		parameter<String> Werken := =('string('+Pad_Z+'ClaimRealisatie_Toets_Werken/Samenvatting)')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_claimtoets_werken.txt'", StorageType = "str";
+	}
+
+	container Waterberging
+	: Descr = "De sector waterberging: wat de veenbouwstenen aan berging bieden naast de opgave (Veenwater en PerRegio, in GenerateAll), of de opgave in het beschikbare volume past (Volume, waarvan
+				RegiosMetTekort in Checks) en of de gerealiseerde berging in cellen ligt die diep genoeg zijn (Diepte, op aanvraag)."
+	{
+		container Veenwater
+		: Descr = "Het bergingsvolume dat op de cellen ligt die de veenlevering als open water aanwijst, de bouwstenen 9a en 9b (#761): wat de bouwstenen zelf aan berging opleveren naast de opgave die team
+					Stad per deelgebied aanlevert. Geen tweede claim en niet op te tellen bij het gerealiseerde volume: de veenallocatie bepaalt waar dat open water komt en de sector waterberging gebruikt
+					diezelfde cellen als voorkeurslocatie (#664), zodat de aangeleverde opgave daar landt in plaats van er bovenop te komen. Dit is de bovengrens van wat de veenlevering op die plekken kan
+					bergen, en de vergelijking met de opgave zegt hoeveel van die opgave alleen al uit de bouwstenen kan komen. Zonder veenlevering staan de kolommen op nul."
+		{
+			unit<UInt32> R := /SourceData/RegioIndelingen/Waterbergingsregio;
+
+			container Veen := /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen;
+
+			attribute<Bool> IsWaterBouwsteen (Veen/BouwsteenType) := Veen/BouwsteenType/deelstrategie == 'waterbuffering'
+			, IntegrityCheck = "sum(uint32(this)) == 2"
+			, Descr = "De twee bouwstenen die open water opleggen, 9a nieuw open water voor waterbuffering en 9b bestaand open water met extra buffercapaciteit. Herkend aan de kolom deelstrategie en niet aan de code, zodat de hernummering uit #762 hem niet stil uitschakelt.";
+
+			attribute<Bool> IsNieuwWater (Veen/BouwsteenType) := Veen/BouwsteenType/code == '9a'
+			, IntegrityCheck = "sum(uint32(this)) == 1"
+			, Descr = "Bouwsteen 9a, nieuw open water voor waterbuffering. Dit is de bouwsteen die extra bergingscapaciteit oplevert, en de enige die naast de opgave gelegd mag worden.";
+
+			attribute<Bool> IsBestaandWater (Veen/BouwsteenType) := Veen/BouwsteenType/code == '9b'
+			, IntegrityCheck = "sum(uint32(this)) == 1"
+			, Descr = "Bouwsteen 9b, bestaand open water met extra buffercapaciteit, dus de peilopzet van 15 cm. Wat die oplevert zit al in de opgave verwerkt en mag er niet nog eens naast worden gelegd; zie de toelichting bij de uitdraai.";
+
+			attribute<Bool> Klopt_Waterbouwstenen (Veen/BouwsteenType) := IsWaterBouwsteen == (IsNieuwWater || IsBestaandWater)
+			, IntegrityCheck = "all(this)"
+			, Descr = "Kanarie op de twee codes hierboven. De splitsing naar nieuw en bestaand water kan alleen op de code 9a en 9b, want geen enkele kolom in de brontabel scheidt die twee. Deze toets bindt die codes aan de kolom deelstrategie: verschuift de nummering, zoals #762 aankondigt, dan valt hij om in plaats van stil de verkeerde bouwsteen te tellen.";
+
+			attribute<Bool> IsCel_9a (/Geography/AdminDomain) := IsNieuwWater[Veen/Bouwsteen_rel] && all(Klopt_Waterbouwstenen);
+			attribute<Bool> IsCel_9b (/Geography/AdminDomain) := IsBestaandWater[Veen/Bouwsteen_rel];
+
+			attribute<float32> Volume_Cel (/Geography/AdminDomain) := MakeDefined(float32(/BaseData/Suitabilities/Waterberging/Diepte), 0f) * float32(/Geography/AdminDomain/NrMeter2PerCell)
+			, Descr = "De bergbare waterschijf maal het celoppervlak, dus m3 per cel. Leest hetzelfde item als de bergingscapaciteit per cel in Templates/PotentieleStates/PerSectorxSubsector_T (#770), de capaciteit per hectare in Templates/Densities/DichtheidZichtjaar_T en de geschiktheid, inclusief de bovengrens Maximum_Waterschijf; cellen daarboven tellen als nul.";
+
+			parameter<Bool> HeeftVeenlevering := /VariantParameters/VariantK/HeeftLandschapslevering[rlookup(/Diagnose/Variant, /VariantParameters/VariantK/name)]
+			, Descr = "Draait deze casus de veenbouwstenen? Uit VariantK/Landschap_Levering en niet uit de casusnaam, zodat een tweede variant met dezelfde levering vanzelf meetelt.";
+
+			attribute<float32> Calc_Volume_9a (R) := sum(IsCel_9a ? Volume_Cel : 0f, R/Per_AdminDomain);
+			attribute<float32> Calc_Areaal_9a (R) := sum(float32(IsCel_9a), R/Per_AdminDomain) * float32(/Geography/AdminDomain/NrHaPerCell);
+			attribute<float32> Calc_Volume_9b (R) := sum(IsCel_9b ? Volume_Cel : 0f, R/Per_AdminDomain);
+			attribute<float32> Calc_Areaal_9b (R) := sum(float32(IsCel_9b), R/Per_AdminDomain) * float32(/Geography/AdminDomain/NrHaPerCell);
+
+			attribute<float32> Volume_9a (R) := =HeeftVeenlevering ? 'Calc_Volume_9a' : 'const(0f, R)';
+			attribute<float32> Areaal_9a (R) := =HeeftVeenlevering ? 'Calc_Areaal_9a' : 'const(0f, R)';
+			attribute<float32> Volume_9b (R) := =HeeftVeenlevering ? 'Calc_Volume_9b' : 'const(0f, R)';
+			attribute<float32> Areaal_9b (R) := =HeeftVeenlevering ? 'Calc_Areaal_9b' : 'const(0f, R)';
+		}
+
+		parameter<String> PerRegio := =('
+			  '+quote('waterbergingsregio;benodigde_berging_m3;berging_uit_nieuw_water_9a_m3;nieuw_water_9a_min_benodigd_m3;areaal_nieuw_water_9a_ha;aangewezen_berging_m3;aangewezen_min_benodigd_m3;berging_uit_bestaand_water_9b_m3;areaal_bestaand_water_9b_ha|')+' + AsList(
+				/SourceData/RegioIndelingen/Waterbergingsregio/label + '+quote(';')+'
+				+ string('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging) + '+quote(';')+'
+				+ string(Veenwater/Volume_9a) + '+quote(';')+'
+				+ string(Veenwater/Volume_9a - float32('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging)) + '+quote(';')+'
+				+ string(Veenwater/Areaal_9a) + '+quote(';')+'
+				+ string('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/Stand_PerAllocRegio/meter3_Waterberging) + '+quote(';')+'
+				+ string(float32('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/Stand_PerAllocRegio/meter3_Waterberging) - float32('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging)) + '+quote(';')+'
+				+ string(Veenwater/Volume_9b) + '+quote(';')+'
+				+ string(Veenwater/Areaal_9b), '+quote('|')+')
+		')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_waterberging_perregio.txt'"
+		, StorageType = "str"
+		, Descr = "Wat er per waterbergingsregio aan berging nodig is, wat het model daarvoor aanwijst, en wat de waterbouwstenen van de veenlevering daar aan berging bieden: het antwoord op #761 aan de
+					allocatiekant. waterbergingsregio is een van de acht veen-deelgebieden waarvoor Deltares een opgave levert, plus de restregio met opgave nul. benodigde_berging_m3 is de aangeleverde opgave
+					voor de maand juli, opgebouwd tot en met dit zichtjaar (welke reeks een variant leest bepalen VariantK/WaterbergingClaimBron en WaterbergingOpBestaandWater, en of zij waterberging alloceert
+					WaterbergingClaimActief). aangewezen_berging_m3 is het bergingsvolume van de cellen die het model aan de sector waterberging heeft toegewezen, per cel de bergbare waterschijf maal het
+					celoppervlak. aangewezen_min_benodigd_m3 is het verschil met het teken erin, negatief is onderrealisatie; het model brengt een overschot niet terug, en de opgave is cumulatief per zichtjaar,
+					dus lees dit als een stand en niet als een jaarsaldo. berging_uit_nieuw_water_9a_m3 is het bergingspotentieel van bouwsteen 9a, nieuw open water: de bergbare waterschijf maal het
+					celoppervlak op het hele voetspoor van 9a, dus ruwweg zeven procent te hoog omdat een deel van dat voetspoor geen water wordt; nieuw_water_9a_min_benodigd_m3 zegt of 9a alleen al genoeg zou
+					zijn. Bouwsteen 9b staat er apart bij en mag niet bij 9a worden opgeteld: dat is bestaand open water met peilopzet, en die peilopzet zit al aan de vraagkant verwerkt via de kolommen
+					OokBestaand_*, dus optellen telt hem twee keer. Beide bouwsteenkolommen gaan over de veenlevering en niet over de sector en mogen ook niet bij aangewezen_berging_m3 worden opgeteld; zie
+					Veenwater. claimreal_Waterberging uit de tabel Checks geeft alleen de verhouding tussen stand en opgave en laat via AsList de regio's zonder opgave weg; deze uitdraai loopt mee
+					in GenerateAll.";
+
+		container Volume
+		: Descr = "Per waterbergingsregio de opgave in m3 naast het bergingsvolume dat in alle beschikbare cellen samen zit. Dat volume is precies het gewicht waarmee IterSubsector_T de zaaglijn bepaalt: nth_element_weighted telt cellen op in volgorde van geschiktheid tot het gewicht de restclaim haalt. Is de som over alle beschikbare cellen kleiner dan de opgave, dan wordt de zaaglijn undefined, valt hij terug op 0, wordt alles gealloceerd en blijft de realisatie per definitie onder 1. Meer iteraties helpen dan niet. Deze container rekent de allocatie niet mee."
+		{
+			unit<uint32> Regio := /SourceData/RegioIndelingen/Waterbergingsregio;
+
+			parameter<String> Scenario := replace(/Diagnose/Casus, '_'+/Diagnose/Variant, '')
+			, Descr = "De casusnaam zonder de variantnaam, dus het scenario waaronder de claims hangen.";
+
+			attribute<float32> Volume_perCel (/Geography/CompactedAdminDomain) :=
+				=/Diagnose/Pad_V+'PotentieleState/'+/Diagnose/Jaar+'/per_SectorxSubsectoren/Waterberging/Totaal/Zichtjaar'
+			, Descr = "Bergingsvolume in m3 per cel, al vermenigvuldigd met de beschikbaarheid in dit zichtjaar.";
+
+			attribute<bool> IsDiepGenoeg (/Geography/CompactedAdminDomain) :=
+				collect_by_cond(/Geography/CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/IsDiepGenoeg)
+			, Descr = "Haalt de cel de Minimum_Waterschijf? Zo niet, dan sluit de zeef de cel uit (Zeef_T/TeOndiepVoorWaterberging) en is de geschiktheid 0.";
+
+			attribute<Regio> Regio_rel (/Geography/CompactedAdminDomain) := /SourceData/RegioIndelingen/Waterbergingsregio/Per_CompactedAdminDomain;
+
+			attribute<float32> Claim_m3       (Regio) := =/Diagnose/Pad_V+'Claims/'+/Diagnose/Waterberging/Volume/Scenario+'/Zichtjaren/'+/Diagnose/Jaar+'/SectorAllocRegios/Waterbergingsregio_Waterberging/Totaal';
+			attribute<float32> Volume_m3      (Regio) := sum(Volume_perCel, Regio_rel);
+			attribute<float32> Volume_diep_m3 (Regio) := sum(Volume_perCel * float32(IsDiepGenoeg), Regio_rel)
+			, Descr = "Alleen de cellen met een waterschijf vanaf Minimum_Waterschijf, dus de cellen met een geschiktheid boven nul.";
+			attribute<float32> Cellen         (Regio) := sum(float32(Volume_perCel > 0f), Regio_rel);
+			attribute<float32> Dekking        (Regio) := Volume_m3 / Claim_m3;
+			attribute<float32> Dekking_diep   (Regio) := Volume_diep_m3 / Claim_m3;
+
+			attribute<float32> Cellen_totaal (Regio) := sum(float32(IsDefined(Regio_rel)), Regio_rel)
+			, Descr = "Alle cellen in de regio, ongeacht beschikbaarheid, zodat een lege regio te onderscheiden is van een regio zonder beschikbare cellen.";
+
+			attribute<String> Regel (Regio) :=
+				MakeDefined(Regio/label, 'null') + ';' + string(MakeDefined(Claim_m3, -1f)) + ';' + string(MakeDefined(Volume_m3, -1f)) + ';' + string(MakeDefined(Volume_diep_m3, -1f))
+				+ ';' + string(MakeDefined(Cellen, -1f)) + ';' + string(MakeDefined(Cellen_totaal, -1f)) + ';' + string(MakeDefined(Dekking, -1f));
+
+			parameter<Bool>   ClaimActief := /VariantParameters/VariantK/WaterbergingClaimActief[rlookup(/Diagnose/Variant, /VariantParameters/VariantK/name)]
+			, Descr = "Alloceert deze variant waterberging op een opgave? Zonder opgave is er geen tekort te meten en blijft het volume ongerekend.";
+			parameter<UInt32> Calc_RegiosMetTekort := sum(uint32(Claim_m3 > 0f && Volume_m3 < Claim_m3));
+			parameter<UInt32> RegiosMetTekort := =ClaimActief ? 'Calc_RegiosMetTekort' : 'uint32(0)'
+			, Descr = "Het aantal waterbergingsregio's waar de opgave niet in het bergingsvolume van alle beschikbare cellen samen past: de regel waterberging_regios_met_tekort in Checks, en die hoort nul te
+						zijn, want een opgave die niet past kan geen enkele allocatie halen. De Samenvatting ernaast is op aanvraag.";
+
+			parameter<String> Samenvatting :=
+				'regio;claim_m3;volume_m3;volume_diep_m3;cellen_beschikbaar;cellen_totaal;dekking|' + AsList(Regel, '|')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_wb_volume.txt'", StorageType = "str";
+		}
+
+		container Diepte
+		: Descr = "Op aanvraag. Splitst de gerealiseerde berging naar cellen die de Minimum_Waterschijf wel en niet halen. Cellen die hem niet halen sluit de zeef uit (Zeef_T/TeOndiepVoorWaterberging); wat hier bij te_ondiep staat hoort dus nul te zijn, en is anders berging die op papier meetelt maar er fysiek niet in past."
+		{
+			parameter<String> PadLaatste := '/Allocatie/'+/Diagnose/Casus+'/Zichtjaren/'+/Diagnose/Jaar+'/Sequences/Seq_0/SectorAllocRegios/Waterbergingsregio_Waterberging/Iters_Normaal/Iter_'+string(/ModelParameters/Default_NrOfIters - 1b)+'/';
+
+			attribute<float32> Stand        (/Geography/CompactedAdminDomain) := =PadLaatste+'StateNaAllocatie/Waterberging/Totaal';
+			attribute<bool>    IsDiepGenoeg (/Geography/CompactedAdminDomain) :=
+				collect_by_cond(/Geography/CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/IsDiepGenoeg);
+
+			parameter<float32> HaPerCel := float32(/Geography/AdminDomain/NrHaPerCell);
+
+			parameter<String> Samenvatting :=
+				  'totaal_m3;'      + string(sum(Stand))
+				+ ';diep_genoeg_m3;'+ string(sum(Stand * float32(IsDiepGenoeg)))
+				+ ';te_ondiep_m3;'  + string(sum(Stand * float32(!IsDiepGenoeg)))
+				+ ';totaal_ha;'     + string(sum(float32(Stand > 0f)) * HaPerCel)
+				+ ';te_ondiep_ha;'  + string(sum(float32(Stand > 0f && !IsDiepGenoeg)) * HaPerCel)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_wb_diepte.txt'", StorageType = "str";
+		}
+	}
+
+	container Natuur
+	: Descr = "De natuurleveringen en de natuurallocatie: Zand (zeef en realisatie van #652, op aanvraag), Veen (de bouwsteenallocatie per peilgebied, de vijf uitdraaien voor de terugkoppeling aan
+				team Veen, in GenerateAll), Overzicht (welke bron waar oplegt en hoeveel de bronnen overlappen, op aanvraag) en Rangorde (wat de landbouwstroom van veen en de zandallocatie
+				verliezen doordat zij de voorrang tussen de landschappen niet kennen, #829, op aanvraag)."
+	{
+		container Zand
+		: Descr = "Op aanvraag. Meet de twee dingen die bij de natuurallocatie van het landschapstype Zand mis kunnen gaan: een zeef die te klein is voor de opgave, en een allocatie die de opgave niet haalt. Het eerste is een gegeven van de invoer, het tweede kan ook aan de verdeling over de regio's liggen."
+		{
+			parameter<String> Pad := '/SourceData/Grondgebruik/Natuur/';
+
+			parameter<String> zeven :=
+				  'claimregios_ha;'   + string(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Controle/Areaal_Claimregios)
+				+ ';zeef_nat_ha;'     + string(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Controle/Areaal_Zeef_Nat)
+				+ ';zeef_droog_ha;'   + string(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Controle/Areaal_Zeef_Droog)
+				+ ';droogbkn_ha;'     + string(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Controle/Areaal_DroogBKN)
+				+ ';nnn_ha;'          + string(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Controle/Areaal_NNN)
+				+ ';beekdal_ha;'      + string(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Controle/Areaal_Beekdal_Totaal)
+				+ ';beekdal_landbouw_ha;' + string(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Controle/Areaal_Beekdal_AlleLandbouw)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_zandnatuur_zeven.txt'", StorageType = "str";
+
+			parameter<String> realisatie_NbSGenuanceerd :=
+				  'claim_ha;'         + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Claim_NL)
+				+ ';gerealiseerd_ha;' + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Gerealiseerd_NL)
+				+ ';tekort_ha;'       + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Tekort_NL)
+				+ ';nat_claim_ha;'    + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Claim_NL)
+				+ ';nat_gereal_ha;'   + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Gerealiseerd_NL)
+				+ ';droog_claim_ha;'  + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Claim_NL)
+				+ ';droog_gereal_ha;' + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Gerealiseerd_NL)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_zandnatuur_realisatie.txt'", StorageType = "str";
+
+			parameter<String> vorm :=
+				  'nat_aaneengesloten;'      + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Aaneengeslotenheid)
+				+ ';nat_aselect;'            + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Aaneengeslotenheid_Aselect)
+				+ ';nat_zelfde_type;'        + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Aaneengeslotenheid_Type)
+				+ ';nat_vulgraad;'           + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Vulgraad)
+				+ ';droog_aaneengesloten;'   + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Aaneengeslotenheid)
+				+ ';droog_aselect;'          + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Aaneengeslotenheid_Aselect)
+				+ ';droog_zelfde_type;'      + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Aaneengeslotenheid_Type)
+				+ ';droog_vulgraad;'         + string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Vulgraad)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_zandnatuur_vorm.txt'", StorageType = "str"
+			, Descr = "Het spikkelpatroon uit #652 in een getal. Aaneengesloten is het aandeel van de dertien cellen binnen 50 meter dat ook natuur wordt, gemiddeld over de cellen die natuur worden; aselect is wat datzelfde getal zou zijn als de opgave willekeurig over de zeef was gestrooid. De verhouding tussen die twee is de toets.";
+
+			parameter<String> krapte_droog := 'regio;claim_ha;kandidaat_ha;krapte_ha;verlies_panden_ha|' + AsList(
+				/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Claimregio_Droog/Label + ';'
+				+ string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Claim_Totaal) + ';'
+				+ string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Areaal_Kandidaat) + ';'
+				+ string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Krapte) + ';'
+				+ string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Droog/Controle/Areaal_Verlies_Pandentoets), '|')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_zandnatuur_krapte_droog.txt'", StorageType = "str";
+
+			parameter<String> krapte_nat := 'regio;claim_ha;kandidaat_ha;krapte_ha;verlies_panden_ha|' + AsList(
+				/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Claimregio_Nat/Label + ';'
+				+ string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Claim_Totaal) + ';'
+				+ string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Areaal_Kandidaat) + ';'
+				+ string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Krapte) + ';'
+				+ string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Zand/Alloc/Alloc_Nat/Controle/Areaal_Verlies_Pandentoets), '|')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_zandnatuur_krapte_nat.txt'", StorageType = "str";
+		}
+
+		container Veen
+		: Descr = "De opgave, de realisatie en de onderrealisatie van de route die bepaalt wat er in het veen wordt opgelegd: de bouwsteenallocatie per peilgebied, gevolgd door de samenstelling binnen de
+					bouwsteen (#684). De getallen voor de terugkoppeling van de onderrealisatie aan team Veen (#761); de veenketen zelf staat in Templates/VariantData/Natuur/Veen_T. Omdat de opgave op de
+					kandidaatruimte is gebaseerd (#761) en de pandentoets is vervallen (#768) past zij per constructie, en is wat er aan tekort overblijft afrondingsgruis op hele cellen; loopt tekort_ha toch
+					op, dan is er iets veranderd aan de zeef of aan dat oppervlak en niet aan de levering."
+		{
+			container Levering := /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen;
+			container Bsn  := Levering/Alloc_Bouwsteen;
+
+			unit<uint8> BS := Levering/BouwsteenType;
+
+			attribute<Bool> IsWaterBouwsteen (BS) := BS/deelstrategie == 'waterbuffering'
+			, IntegrityCheck = "sum(uint32(this)) == 2"
+			, Descr = "De twee bouwstenen die open water opleggen, in de brontabel 9a nieuw open water voor waterbuffering en 9b bestaand open water met extra buffercapaciteit. Herkend aan de kolom deelstrategie en niet aan de code, zodat de hernummering uit #762 hem niet stil uitschakelt; de IntegrityCheck telt dat het er precies twee zijn.";
+
+			parameter<Bool> IsVanToepassing := /VariantParameters/VariantK/HeeftLandschapslevering[rlookup(/Diagnose/Variant, /VariantParameters/VariantK/name)]
+			, Descr = "Draait deze casus de bouwsteenallocatie? Uit VariantK/Landschap_Levering, dus elke variant met een veenlevering. Staat hij op onwaar, dan schrijven de drie uitdraaien een regel die dat zegt, in plaats van een allocatie af te dwingen die deze casus niet gebruikt. Dat is nodig omdat GenerateAll deze items ook in een BAU-run opvraagt.";
+
+			parameter<String> NietVanToepassing := 'niet_van_toepassing;deze casus draait de bouwsteenallocatie niet';
+
+			unit<uint32> P := Levering/Peilvak;
+			unit<uint32> D := Levering/Deelgebied;
+
+			parameter<float32> HaPerCel := float32(/Geography/AdminDomain/NrHaPerCell);
+
+			attribute<float32> Opgave       (P) := float32(Bsn/Controle/Claim_Totaal);
+			attribute<float32> Ruimte       (P) := float32(Bsn/Controle/Areaal_Kandidaat), Descr = "Wat het peilgebied na de zeef nog biedt: het gerasterde gebied min bestaand bebouwd gebied en min exogeen grondgebruik. Sinds #768 is dat ook het oppervlak waarover de aangeleverde fracties gelden, dus Opgave hoort hier onder te blijven.";
+			attribute<float32> Gerealiseerd (P) := float32(Bsn/Controle/Gerealiseerd_Totaal);
+			attribute<float32> Tekort       (P) := float32(Bsn/Controle/Tekort_Totaal_Regio);
+			attribute<float32> Krapte       (P) := float32(Bsn/Controle/Krapte), Descr = "Opgave min kandidaatruimte. Positief betekent dat de opgave niet in het eigen peilgebied past, ongeacht hoe de allocator kiest. Hoort sinds #761 nergens meer positief te zijn, op afronding na.";
+			attribute<float32> Opp          (P) := float32(Levering/Opp_Peilvak);
+
+			attribute<Bool>    IsVrij (/Geography/AdminDomain) := Bsn/IsKandidaat && !Levering/HeeftBouwsteen
+			, Descr = "Kandidaatcellen die geen bouwsteen hebben gekregen. Dat is het deel van de levering dat niet is aangeleverd, dus bouwsteen 0a, 0b, 1 en 10b, en die cellen houden hun huidige grondgebruik.";
+
+			attribute<float32> Vrij_D (D) := sum(float32(IsVrij && IsDefined(D/Per_AdminDomain)), D/Per_AdminDomain) * HaPerCel;
+
+			attribute<float32> Opgave_D       (D) := sum(Opgave,       D/Per_Peilvak);
+			attribute<float32> Gerealiseerd_D (D) := sum(Gerealiseerd, D/Per_Peilvak);
+			attribute<float32> Tekort_D       (D) := sum(Tekort,       D/Per_Peilvak);
+
+			parameter<float32> Opp_BestaandWaterOnderAndereBouwsteen :=
+				sum(float32(Levering/HeeftBouwsteen && !IsWaterBouwsteen[Levering/Bouwsteen_rel] && /SourceData/Grondgebruik/Natuur/Basisjaar/IsWater)) * HaPerCel
+			, Descr = "Hoeveel hectare bestaand open water een bouwsteen krijgt die geen water oplegt. De zeef van de bouwsteenallocatie is het hele veengebied, dus bestaand water doet gewoon mee. Of dat zo hoort is een vraag aan Deltares, zie #761: als bestaand water alleen door 9a of 9b vervangen mag worden hoort die regel in Geschiktheid_Bouwsteen thuis.";
+
+			parameter<String> Regel_Realisatie :=
+				  'claim_ha;'               + string(float32(Bsn/Controle/Claim_NL))
+				+ ';gerealiseerd_ha;'       + string(float32(Bsn/Controle/Gerealiseerd_NL))
+				+ ';tekort_ha;'             + string(float32(Bsn/Controle/Tekort_NL))
+				+ ';afgedwongen_tekort_ha;' + string(sum(max_elem(Krapte, 0f)))
+				+ ';n_peilvak;'             + string(float32(#P))
+				+ ';n_krap;'                + string(sum(float32(Krapte > 0f)))
+				+ ';veengebied_ha;'         + string(float32(Levering/Controle/Areaal_Veengebied))
+				+ ';kandidaatruimte_ha;'    + string(sum(Ruimte))
+				+ ';verlies_panden_ha;'     + string(float32(Bsn/Controle/Verlies_Pandentoets_NL))
+				+ ';vrije_ruimte_ha;'       + string(sum(float32(IsVrij)) * HaPerCel)
+				+ ';op_bestaand_water_ha;'  + string(Opp_BestaandWaterOnderAndereBouwsteen)
+				+ ';bs9a_ha;'               + string(float32(Levering/Controle_Bouwsteen/Opp_NieuwWater))
+				+ ';bs9a_op_landbouw_ha;'   + string(float32(Levering/Controle_Bouwsteen/Opp_NieuwWater_OpLandbouw))
+				+ ';natuur_ha;'             + string(float32(Levering/Controle_Uitkomst/Opp_Natuur))
+				+ ';natuur_op_bestaande_natuur_ha;'         + string(float32(Levering/Controle_Uitkomst/Opp_Natuur_OpBestaandeNatuur))
+				+ ';bestaande_natuur_onder_bouwsteen_ha;'   + string(float32(Levering/Controle_Uitkomst/Opp_BestaandeNatuur_OnderBouwsteen))
+				+ ';bebouwd_ha;'            + string(float32(Levering/Controle_Uitkomst/Opp_Bebouwd))
+				+ ';bebouwd_op_bestaande_bebouwing_ha;'     + string(float32(Levering/Controle_Uitkomst/Opp_Bebouwd_OpBestaandeBebouwing))
+				+ ';bestaande_natuur_onder_natuurbouwsteen_ha;'      + string(float32(Levering/Controle_Uitkomst/Opp_BestaandeNatuur_OnderNatuurBouwsteen))
+				+ ';bestaande_bebouwing_onder_bouwsteen_ha;'          + string(float32(Levering/Controle_Uitkomst/Opp_BestaandeBebouwing_OnderBouwsteen))
+				+ ';bestaande_bebouwing_onder_bebouwdbouwsteen_ha;'   + string(float32(Levering/Controle_Uitkomst/Opp_BestaandeBebouwing_OnderBebouwdBouwsteen));
+
+			parameter<String> realisatie := =IsVanToepassing ? 'Regel_Realisatie' : 'NietVanToepassing'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_realisatie.txt'", StorageType = "str"
+			, Descr = "De opgave van de bouwstenen en wat de allocatie ervan haalt, landelijk. Tekort_ha is het getal dat na een run aan team Veen wordt gemeld; het hoort klein te zijn en van afronding te komen,
+						want MaxClaims kapt elke opgave per peilgebied per bouwsteen af op hele cellen, en er is bewust geen tweede trap die dat opruimt (zie Bouwsteen_rel over het besluit dat overhevelen tussen
+						peilgebieden niet mag). Claim_ha hoort onder kandidaatruimte_ha te blijven, want die kandidaatruimte is het oppervlak waarover de aangeleverde fracties gelden (#761); vrije_ruimte_ha is wat
+						er daarna aan kandidaatcellen over is, het niet aangeleverde deel van de levering. Verlies_panden_ha hoort nul te zijn en staat er als kanarie: loopt hij op, dan is de pandentoets ergens
+						weer aangezet (#768). Afgedwongen_tekort_ha is de som van de positieve krapte per peilgebied; op_bestaand_water_ha staat er als openstaand punt, zie Opp_BestaandWaterOnderAndereBouwsteen. De
+						velden daarachter meten de herkomstvoorkeur uit #660: bs9a_op_landbouw_ha hoort dicht bij bs9a_ha te liggen, en natuur_op_bestaande_natuur_ha en bebouwd_op_bestaande_bebouwing_ha lees je
+						naast het beschikbare areaal dat erachter staat, want de teller wordt door de opgave begrensd en niet door het aanbod; blijft een van beide ver onder dat beschikbare areaal, dan doet de
+						voorkeur haar werk niet.";
+
+			parameter<String> Regel_Terugkoppeling := 'sleutel;deelgebied;opp_ha;opgave_ha;ruimte_ha;gerealiseerd_ha;tekort_ha|' + AsList(
+				  Levering/Peilvak/Sleutel + ';'
+				+ Levering/Peilvak/Deelgebied_Naam + ';'
+				+ string(Opp) + ';'
+				+ string(Opgave) + ';'
+				+ string(Ruimte) + ';'
+				+ string(Gerealiseerd) + ';'
+				+ string(Tekort), '|');
+
+			parameter<String> terugkoppeling := =IsVanToepassing ? 'Regel_Terugkoppeling' : 'NietVanToepassing'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_terugkoppeling.txt'", StorageType = "str"
+			, Descr = "De onderrealisatie per peilgebied van de route die de kaart maakt, de tabel die in #660 als actie voor team RS staat en in #761 op de bouwsteenroute is gezet. Alles gaat over de eigen opgave
+						van het gebied; wat er niet past blijft in dat gebied liggen en schuift niet naar een buurgebied. De sleutel is GPGIDENT voor de peilvakkenlaag en de deelgebiednaam voor de laag zonder
+						peilvak. Rijen gescheiden door een verticale streep; filter op tekort_ha groter dan nul voor de gebieden waar de opgave niet paste.";
+
+			parameter<String> Regel_PerDeelgebied := 'deelgebied;opgave_ha;gerealiseerd_ha;tekort_ha;vrije_ruimte_ha|' + AsList(
+				  D/Label + ';'
+				+ string(Opgave_D) + ';'
+				+ string(Gerealiseerd_D) + ';'
+				+ string(Tekort_D) + ';'
+				+ string(Vrij_D), '|');
+
+			parameter<String> Regel_PerBouwsteen := 'bouwsteen;claim_ha;gerealiseerd_ha;tekort_ha|' + AsList(
+				  BS/code + ';'
+				+ string(float32(Levering/Controle_Bouwsteen/Claim_BS)) + ';'
+				+ string(float32(Levering/Controle_Bouwsteen/Gerealiseerd_BS)) + ';'
+				+ string(float32(Levering/Controle_Bouwsteen/Tekort_BS)), '|');
+
+			parameter<String> perbouwsteen := =IsVanToepassing ? 'Regel_PerBouwsteen' : 'NietVanToepassing'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_perbouwsteen.txt'", StorageType = "str"
+			, Descr = "De opgave en de realisatie per bouwsteen, landelijk: de derde uitdraai naast die per peilgebied en die per deelgebied, en de enige die zegt welke bouwsteen het tekort veroorzaakt. Dat
+						onderscheid is nodig omdat de bouwstenen drie verschillende watertoetsen dragen: een tekort bij 9b betekent dat de levering in dat peilgebied meer bestaand open water vraagt dan er ligt, een
+						tekort bij de tien terrestrische bouwstenen dat hun opgave over een peilgebiedoppervlak geldt waar water in zit waar zij met WaterMagLandWorden uit niet op mogen, en wat daarnaast overblijft
+						is de afkap op hele cellen.";
+
+			parameter<String> perdeelgebied := =IsVanToepassing ? 'Regel_PerDeelgebied' : 'NietVanToepassing'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_perdeelgebied.txt'", StorageType = "str"
+			, Descr = "Hetzelfde per deelgebied. Het deelgebied is geen eigen allocatieniveau (#761), dus deze tabel is een optelling van de peilgebieden. Vrije_ruimte_ha zegt hoeveel kandidaatruimte er in het deelgebied onbenut blijft, het niet aangeleverde deel van de levering.";
+			parameter<String> Regel_Waterkaart :=
+				  'water_in_model_ha;'      + string(float32(Levering/Controle/Areaal_AlWater))
+				+ '|claim_9b_ha;'           + string(float32(sum(Levering/Controle/Claim_BestaandWater_PerPeilvak)))
+				+ '|water_te_weinig_voor_9b_ha;' + string(float32(Levering/Controle/Water_TeWeinigVoor9b))
+				+ '|water_meer_dan_9b_ha;'  + string(float32(Levering/Controle/Water_MeerDan9b));
+
+			parameter<String> waterkaart := =IsVanToepassing ? 'Regel_Waterkaart' : 'NietVanToepassing'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_waterkaart.txt'", StorageType = "str"
+			, Descr = "De twee kanten van het verschil tussen de waterkaart van het model en de 9b-fractie van de levering, voor de terugkoppeling aan team Veen (#660): waar de levering meer bestaand open
+						water vraagt dan er ligt en waar er meer ligt dan zij vraagt. Meet de twee altijd samen, ze heffen elkaar landelijk grotendeels op; het is een verschil in ligging tussen twee
+						waterkaarten en geen wateroppervlak. Welke kaart en welk peiljaar onder de 9b-fractie zit is de openstaande vraag in #660.";
+		}
+
+		container Overzicht
+		: Descr = "Op aanvraag. Zet de natuurbronnen naast elkaar en meet de overlap, op AdminDomain binnen het studiegebied. Twee stromen die uit elkaar gehouden moeten worden: opleggen betekent dat de cel van
+					grondgebruik verandert en de indicatoren voor landgebruik, NDVI, koolstof en de sloop- en uitkoopkosten erop afrekenen; op slot betekent alleen dat er geen nieuwbouw meer bij komt. Een
+					gebied kan het een zijn, het ander, of allebei."
+		{
+			parameter</Units/ha> Cel := /Geography/AdminDomain/NrHaPerCell;
+
+			attribute<Bool> InStudy     (/Geography/AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain;
+			attribute<Bool> MagOpleggen (/Geography/AdminDomain) := /BaseData/Omgeving/Opleggingsmasker/MagOpleggen
+			, Descr = "Het gedeelde opleggingsmasker, hetzelfde item dat VariantData/ExogeenOpleggen en de natuurallocatie lezen (#661), zodat de kolom die zegt hoeveel er na het masker overblijft dezelfde afbakening heeft als het model.";
+
+			// de terrestrische natuur per landschap, zoals NatuurLevering die in NbSGenuanceerd levert; water blijft hier buiten zodat de vergelijking met MNP dezelfde grootheid houdt
+			attribute<Bool> Veen     (/Geography/AdminDomain) := InStudy && IsDefined(/VariantData/NbSGenuanceerd/NatuurLevering/Veen/Type)     && !/VariantData/NbSGenuanceerd/NatuurLevering/Veen/IsWater;
+			attribute<Bool> Kust     (/Geography/AdminDomain) := InStudy && IsDefined(/VariantData/NbSGenuanceerd/NatuurLevering/Kust/Type)     && !/VariantData/NbSGenuanceerd/NatuurLevering/Kust/IsWater;
+			attribute<Bool> Rivieren (/Geography/AdminDomain) := InStudy && IsDefined(/VariantData/NbSGenuanceerd/NatuurLevering/Rivieren/Type) && !/VariantData/NbSGenuanceerd/NatuurLevering/Rivieren/IsWater;
+			attribute<Bool> Zand     (/Geography/AdminDomain) := InStudy && (IsDefined(/VariantData/NbSGenuanceerd/NatuurLevering/Zand/Type_Nat) || IsDefined(/VariantData/NbSGenuanceerd/NatuurLevering/Zand/Type_Droog));
+			attribute<Bool> MNP      (/Geography/AdminDomain) := InStudy && IsDefined(/SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/INL_Beheertype_rel_AD) && !/Classifications/Grondgebruik/INL_Beheertype/IsWater[/SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/INL_Beheertype_rel_AD];
+
+			attribute<Bool> VierBeelden (/Geography/AdminDomain) := Veen || Kust || Rivieren || Zand;
+			attribute<Bool> MetMNP      (/Geography/AdminDomain) := VierBeelden || MNP;
+
+			parameter<String> opleggen :=
+				  'bron;levering_ha;na_masker_ha'
+				+ '|veen;'      + string(sum(float32(Veen)     * Cel)) + ';' + string(sum(float32(Veen     && MagOpleggen) * Cel))
+				+ '|kust;'      + string(sum(float32(Kust)     * Cel)) + ';' + string(sum(float32(Kust     && MagOpleggen) * Cel))
+				+ '|rivieren;'  + string(sum(float32(Rivieren) * Cel)) + ';' + string(sum(float32(Rivieren && MagOpleggen) * Cel))
+				+ '|zand;'      + string(sum(float32(Zand)     * Cel)) + ';' + string(sum(float32(Zand     && MagOpleggen) * Cel))
+				+ '|mnp_bau;'   + string(sum(float32(MNP)      * Cel)) + ';' + string(sum(float32(MNP      && MagOpleggen) * Cel))
+				+ '|vier_beelden_unie;' + string(sum(float32(VierBeelden) * Cel)) + ';' + string(sum(float32(VierBeelden && MagOpleggen) * Cel))
+				+ '|met_mnp_unie;'      + string(sum(float32(MetMNP)      * Cel)) + ';' + string(sum(float32(MetMNP      && MagOpleggen) * Cel))
+				+ '|mnp_bovenop_beelden;' + string(sum(float32(MNP && !VierBeelden) * Cel)) + ';' + string(sum(float32(MNP && !VierBeelden && MagOpleggen) * Cel))
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_opleggen.txt'", StorageType = "str";
+
+			parameter<String> basisjaarnatuur :=
+				  'maat;ha'
+				+ '|natuur_basisjaar;'      + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_Natuur)
+				+ '|met_beheertype;'        + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_MetBeheertype)
+				+ '|zonder_beheertype;'     + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_ZonderBeheertype)
+				+ '|mnp_plandeel;'          + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_MNP_Plandeel)
+				+ '|bt_uit_nbp;'            + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_BT_uit_NBP)
+				+ '|bt_uit_mnp;'            + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_BT_uit_MNP)
+				+ '|bt_alleen_nbp;'         + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_BT_alleen_NBP)
+				+ '|bt_beide;'              + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_BT_Beide)
+				+ '|bt_eens;'               + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_BT_Eens)
+				+ '|nt_eens;'               + string(/SourceData/Grondgebruik/Natuur/Basisjaar/Controle/Areaal_NT_Eens)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_basisjaar.txt'", StorageType = "str";
+
+			parameter<String> oplegging_per_variant :=
+				  'variant;opgelegd_ha'
+				+ '|BAU;'             + string(sum(float32(/VariantData/BAU/ExogeenOpleggen/IsOpgelegd)             * Cel))
+				+ '|NbSGenuanceerd;'  + string(sum(float32(/VariantData/NbSGenuanceerd/ExogeenOpleggen/IsOpgelegd)  * Cel))
+				+ '|NbSGenuanceerder;'+ string(sum(float32(/VariantData/NbSGenuanceerder/ExogeenOpleggen/IsOpgelegd) * Cel))
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_oplegging_per_variant.txt'", StorageType = "str";
+
+			// #511 liet een toets open: overlapt de BAU-rivierenkaart van Deltares met de MNP-kaart van WUR?
+			attribute<Bool> RivierBAU  (/Geography/AdminDomain) := InStudy && IsDefined(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_BAU/INL_Beheertype_rel_AD);
+			attribute<Bool> MNP_Natuur (/Geography/AdminDomain) := MNP;
+
+			parameter<String> rivierbau_vs_mnp :=
+				  'maat;ha'
+				+ '|rivierbau_totaal;'        + string(sum(float32(RivierBAU) * Cel))
+				+ '|ook_in_mnp;'              + string(sum(float32(RivierBAU && MNP_Natuur) * Cel))
+				+ '|niet_in_mnp;'             + string(sum(float32(RivierBAU && !MNP_Natuur) * Cel))
+				+ '|niet_in_mnp_en_nu_geen_natuur;' + string(sum(float32(RivierBAU && !MNP_Natuur && !/SourceData/Grondgebruik/Natuur/Basisjaar/IsNatuur) * Cel))
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_rivierbau_vs_mnp.txt'", StorageType = "str";
+
+			parameter<String> rivieren_ecotopen := 'ecotoop;levering_ha;raster_ha;ratio|' + AsList(
+				/Classifications/Grondgebruik/NbSRivieren/RivierEcotoop/name + ';'
+				+ string(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Controle/PerEcotoop/Vector) + ';'
+				+ string(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Controle/PerEcotoop/Raster) + ';'
+				+ string(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Controle/PerEcotoop/Ratio), '|')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_rivieren_ecotopen.txt'", StorageType = "str";
+
+			// klopt de zonering: loopt de diepte af langs de gradient, en landt het zomerbed op bestaand water
+			unit<uint8> GradientK := /Classifications/Grondgebruik/NbSRivieren/Gradient
+			{
+				attribute<string>  Naam         := /Classifications/Grondgebruik/NbSRivieren/Gradient/name;
+				attribute<float32> Diepte_Gem   := mean(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Diepte_Cel[float32], /SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Gradient_rel_Cel);
+				attribute<float32> Fr_OpWater   := mean(float32(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/IsWater_Cel), /SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Gradient_rel_Cel);
+				attribute<uint32>  Aantal       := pcount(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Gradient_rel_Cel)[uint32];
+				attribute<float32> Kern_Gem     := mean(/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Waterkern_AD[/SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/RivierCel/AdminDomain_rel], /SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Gradient_rel_Cel);
+				attribute<string>  Regel        := Naam + ';' + string(Aantal) + ';' + string(Diepte_Gem) + ';' + string(Fr_OpWater) + ';' + string(Kern_Gem);
+			}
+
+			parameter<String> rivieren_zonering := 'ecotoop;cellen;diepte_gem_m;aandeel_op_bestaand_water;waterkern_gem|' + AsList(GradientK/Regel, '|')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_rivieren_zonering.txt'", StorageType = "str";
+
+			parameter<String> opleg_overlap :=
+				  'paar;overlap_ha'
+				+ '|veen_kust;'         + string(sum(float32(Veen && Kust) * Cel))
+				+ '|veen_rivieren;'     + string(sum(float32(Veen && Rivieren) * Cel))
+				+ '|veen_zand;'         + string(sum(float32(Veen && Zand) * Cel))
+				+ '|kust_rivieren;'     + string(sum(float32(Kust && Rivieren) * Cel))
+				+ '|kust_zand;'         + string(sum(float32(Kust && Zand) * Cel))
+				+ '|rivieren_zand;'     + string(sum(float32(Rivieren && Zand) * Cel))
+				+ '|mnp_veen;'          + string(sum(float32(MNP && Veen) * Cel))
+				+ '|mnp_kust;'          + string(sum(float32(MNP && Kust) * Cel))
+				+ '|mnp_rivieren;'      + string(sum(float32(MNP && Rivieren) * Cel))
+				+ '|mnp_zand;'          + string(sum(float32(MNP && Zand) * Cel))
+				+ '|som_vier_los;'      + string(sum(float32(Veen) * Cel) + sum(float32(Kust) * Cel) + sum(float32(Rivieren) * Cel) + sum(float32(Zand) * Cel))
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_opleg_overlap.txt'", StorageType = "str";
+
+			// de zeefkant: waar gaat het gebied op slot voor nieuwbouw
+			attribute<Bool> Zeef_Veen     (/Geography/AdminDomain) := InStudy && /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/SlopenEnOpSlot;
+			attribute<Bool> Zeef_Kust     (/Geography/AdminDomain) := InStudy && /SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd/IsKustIngreep;
+			attribute<Bool> Zeef_Zand     (/Geography/AdminDomain) := InStudy && /SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/NietBouwen;
+			attribute<Bool> Zeef_Rivieren (/Geography/AdminDomain) := InStudy && /SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/NietBouwen;
+			attribute<Bool> Zeef_Unie     (/Geography/AdminDomain) := Zeef_Veen || Zeef_Kust || Zeef_Zand || Zeef_Rivieren;
+
+			parameter<String> zeef :=
+				  'bron;op_slot_ha;waarvan_ook_opgelegd_ha'
+				+ '|veen;'     + string(sum(float32(Zeef_Veen)     * Cel)) + ';' + string(sum(float32(Zeef_Veen     && VierBeelden && MagOpleggen) * Cel))
+				+ '|kust;'     + string(sum(float32(Zeef_Kust)     * Cel)) + ';' + string(sum(float32(Zeef_Kust     && VierBeelden && MagOpleggen) * Cel))
+				+ '|zand;'     + string(sum(float32(Zeef_Zand)     * Cel)) + ';' + string(sum(float32(Zeef_Zand     && VierBeelden && MagOpleggen) * Cel))
+				+ '|rivieren;' + string(sum(float32(Zeef_Rivieren) * Cel)) + ';' + string(sum(float32(Zeef_Rivieren && VierBeelden && MagOpleggen) * Cel))
+				+ '|unie;'     + string(sum(float32(Zeef_Unie)     * Cel)) + ';' + string(sum(float32(Zeef_Unie     && VierBeelden && MagOpleggen) * Cel))
+				+ '|opgelegd_zonder_zeef;' + string(sum(float32(VierBeelden && MagOpleggen && !Zeef_Unie) * Cel)) + ';0'
+				+ '|zeef_overlap_veen_zand;' + string(sum(float32(Zeef_Veen && Zeef_Zand) * Cel)) + ';0'
+				+ '|zeef_overlap_zand_rivieren;' + string(sum(float32(Zeef_Zand && Zeef_Rivieren) * Cel)) + ';0'
+				+ '|zeef_overlap_veen_rivieren;' + string(sum(float32(Zeef_Veen && Zeef_Rivieren) * Cel)) + ';0'
+				+ '|zeef_overlap_veen_kust;' + string(sum(float32(Zeef_Veen && Zeef_Kust) * Cel)) + ';0'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_zeef.txt'", StorageType = "str";
+		}
+
+		container Rangorde
+		: Descr = "Op aanvraag. De voorrang tussen de landschappen in de natuurstroom (kust, zand nat, veen, rivieren, zand droog, onderlaag; Templates/VariantData/Natuur/Natuur_T/Levering) gelegd naast
+					de twee stromen die haar niet kennen (#829): de landbouwstroom van veen, die in ExogeenOpleggen alleen landt waar geen beheertype ligt, ook als dat beheertype van een landschap van lagere
+					rang komt; en de zandallocatie, die haar hectares ook zet op cellen die een levering van hogere rang daarna wint. Per paar de overlap binnen het studiegebied, met ernaast wat er na het
+					opleggingsmasker van overblijft. Water telt hier mee, anders dan in Overzicht, want de voorrang loopt per landschap over natuur en water samen."
+		{
+			parameter</Units/ha> Cel := /Geography/AdminDomain/NrHaPerCell;
+			container NL := /VariantData/NbSGenuanceerd/NatuurLevering, Descr = "De stroom van de variant met landschapsleveringen, voor het masker.";
+
+			attribute<Bool> InStudy     (/Geography/AdminDomain) := /Geography/rdc_meter/IsStudyArea_AdminDomain;
+			attribute<Bool> MagOpleggen (/Geography/AdminDomain) := /BaseData/Omgeving/Opleggingsmasker/MagOpleggen;
+
+			attribute<Bool> Kust         (/Geography/AdminDomain) := InStudy && IsDefined(NL/Kust/Type);
+			attribute<Bool> ZandNat      (/Geography/AdminDomain) := InStudy && IsDefined(NL/Zand/Type_Nat);
+			attribute<Bool> VeenNatuur   (/Geography/AdminDomain) := InStudy && IsDefined(NL/Veen/Type);
+			attribute<Bool> VeenLandbouw (/Geography/AdminDomain) := InStudy && IsDefined(NL/Veen/LandbouwType_rel), Descr = "Natte teelt en de twee vernatte graslandtypen; binnen het veen sluiten natuur en landbouw elkaar per cel uit.";
+			attribute<Bool> Rivieren     (/Geography/AdminDomain) := InStudy && IsDefined(NL/Rivieren/Type);
+			attribute<Bool> ZandDroog    (/Geography/AdminDomain) := InStudy && IsDefined(NL/Zand/Type_Droog);
+			attribute<Bool> Onderlaag    (/Geography/AdminDomain) := InStudy && IsDefined(NL/Landelijk/Type_Onderlaag);
+			attribute<Bool> VeenCel      (/Geography/AdminDomain) := InStudy && NL/Landschap/Veen/IsVeenCel, Descr = "Binnen de aangeleverde veenpolygonen, ongeacht wat de allocatie er neerlegt.";
+			attribute<Bool> InLandschapVeen (/Geography/AdminDomain) := /SourceData/Landschap/Landschapsgebieden/Impl/IsVeen, Descr = "De veenbegrenzing van #760 waarbinnen de onderlaag geblokkeerd is; de veenlevering hoort daarbinnen te liggen.";
+
+			attribute<Bool> BovenVeen (/Geography/AdminDomain) := Kust || ZandNat,                Descr = "De leveringen die volgens de rangorde van veen mogen winnen.";
+			attribute<Bool> OnderVeen (/Geography/AdminDomain) := Rivieren || ZandDroog || Onderlaag, Descr = "De leveringen die volgens de rangorde van veen horen te verliezen.";
+
+			// de landbouwstroom na het masker: waar de veenlandbouw niet in de stand komt, en waar dat komt doordat een ander landschap er een nieuw beheertype neerlegt; het verschil zijn de cellen
+			// waar een landschap van hogere rang bestaande natuur bevestigt en de cel dus blijft wat zij is
+			attribute<Bool> LandbouwVerdrongen            (/Geography/AdminDomain) := VeenLandbouw && MagOpleggen && !IsDefined(/VariantData/NbSGenuanceerd/ExogeenOpleggen/LandbouwType_rel);
+			attribute<Bool> LandbouwVerdrongen_Beheertype (/Geography/AdminDomain) := VeenLandbouw && MagOpleggen &&  IsDefined(/VariantData/NbSGenuanceerd/ExogeenOpleggen/Beheertype);
+
+			parameter<String> rangorde :=
+				  'stroom;maat;levering_ha;na_masker_ha'
+				+ '|landbouw;veen_landbouw;'                   + string(sum(float32(VeenLandbouw) * Cel))                          + ';' + string(sum(float32(VeenLandbouw && MagOpleggen) * Cel))
+				+ '|landbouw;onder_kust;'                      + string(sum(float32(VeenLandbouw && Kust) * Cel))                  + ';' + string(sum(float32(VeenLandbouw && Kust && MagOpleggen) * Cel))
+				+ '|landbouw;onder_zand_nat;'                  + string(sum(float32(VeenLandbouw && ZandNat) * Cel))               + ';' + string(sum(float32(VeenLandbouw && ZandNat && MagOpleggen) * Cel))
+				+ '|landbouw;onder_rivieren;'                  + string(sum(float32(VeenLandbouw && Rivieren) * Cel))              + ';' + string(sum(float32(VeenLandbouw && Rivieren && MagOpleggen) * Cel))
+				+ '|landbouw;onder_zand_droog;'                + string(sum(float32(VeenLandbouw && ZandDroog) * Cel))             + ';' + string(sum(float32(VeenLandbouw && ZandDroog && MagOpleggen) * Cel))
+				+ '|landbouw;onder_onderlaag;'                 + string(sum(float32(VeenLandbouw && Onderlaag) * Cel))             + ';' + string(sum(float32(VeenLandbouw && Onderlaag && MagOpleggen) * Cel))
+				+ '|landbouw;alleen_onder_lagere_rang;'        + string(sum(float32(VeenLandbouw && OnderVeen && !BovenVeen) * Cel)) + ';' + string(sum(float32(VeenLandbouw && OnderVeen && !BovenVeen && MagOpleggen) * Cel))
+				+ '|landbouw;verdrongen;'                      + string(sum(float32(LandbouwVerdrongen) * Cel))                    + ';' + string(sum(float32(LandbouwVerdrongen) * Cel))
+				+ '|landbouw;verdrongen_met_nieuw_beheertype;' + string(sum(float32(LandbouwVerdrongen_Beheertype) * Cel))         + ';' + string(sum(float32(LandbouwVerdrongen_Beheertype) * Cel))
+				+ '|landbouw;verdrongen_door_lagere_rang;'     + string(sum(float32(LandbouwVerdrongen && !BovenVeen) * Cel))      + ';' + string(sum(float32(LandbouwVerdrongen && !BovenVeen) * Cel))
+				+ '|landbouw;toegekend;'                       + string(sum(float32(InStudy && IsDefined(/VariantData/NbSGenuanceerd/ExogeenOpleggen/LandbouwType_rel)) * Cel)) + ';' + string(sum(float32(InStudy && IsDefined(/VariantData/NbSGenuanceerd/ExogeenOpleggen/LandbouwType_rel)) * Cel))
+				+ '|zand;zand_nat;'                            + string(sum(float32(ZandNat) * Cel))                               + ';' + string(sum(float32(ZandNat && MagOpleggen) * Cel))
+				+ '|zand;zand_nat_onder_kust;'                 + string(sum(float32(ZandNat && Kust) * Cel))                       + ';' + string(sum(float32(ZandNat && Kust && MagOpleggen) * Cel))
+				+ '|zand;zand_droog;'                          + string(sum(float32(ZandDroog) * Cel))                             + ';' + string(sum(float32(ZandDroog && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_kust;'               + string(sum(float32(ZandDroog && Kust) * Cel))                     + ';' + string(sum(float32(ZandDroog && Kust && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_veen_natuur;'        + string(sum(float32(ZandDroog && VeenNatuur) * Cel))               + ';' + string(sum(float32(ZandDroog && VeenNatuur && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_veen_landbouw;'      + string(sum(float32(ZandDroog && VeenLandbouw) * Cel))             + ';' + string(sum(float32(ZandDroog && VeenLandbouw && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_rivieren;'           + string(sum(float32(ZandDroog && Rivieren) * Cel))                 + ';' + string(sum(float32(ZandDroog && Rivieren && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_hogere_rang;'        + string(sum(float32(ZandDroog && (Kust || VeenNatuur || Rivieren)) * Cel)) + ';' + string(sum(float32(ZandDroog && (Kust || VeenNatuur || Rivieren) && MagOpleggen) * Cel))
+				+ '|zand;zand_droog_onder_hogere_rang_met_veenlandbouw;' + string(sum(float32(ZandDroog && (Kust || VeenNatuur || VeenLandbouw || Rivieren)) * Cel)) + ';' + string(sum(float32(ZandDroog && (Kust || VeenNatuur || VeenLandbouw || Rivieren) && MagOpleggen) * Cel))
+				+ '|veen;veen_natuur;'                         + string(sum(float32(VeenNatuur) * Cel))                            + ';' + string(sum(float32(VeenNatuur && MagOpleggen) * Cel))
+				+ '|veen;veen_natuur_onder_kust;'              + string(sum(float32(VeenNatuur && Kust) * Cel))                    + ';' + string(sum(float32(VeenNatuur && Kust && MagOpleggen) * Cel))
+				+ '|veen;veen_natuur_onder_zand_nat;'          + string(sum(float32(VeenNatuur && ZandNat) * Cel))                 + ';' + string(sum(float32(VeenNatuur && ZandNat && MagOpleggen) * Cel))
+				+ '|veen;veen_landbouw_onder_kust;'            + string(sum(float32(VeenLandbouw && Kust) * Cel))                  + ';' + string(sum(float32(VeenLandbouw && Kust && MagOpleggen) * Cel))
+				+ '|veen;veen_landbouw_onder_zand_nat;'        + string(sum(float32(VeenLandbouw && ZandNat) * Cel))               + ';' + string(sum(float32(VeenLandbouw && ZandNat && MagOpleggen) * Cel))
+				+ '|veen;veen_cel_buiten_landschapsgebied;'    + string(sum(float32(VeenCel && !InLandschapVeen) * Cel))            + ';' + string(sum(float32(VeenCel && !InLandschapVeen && MagOpleggen) * Cel))
+				+ '|veen;veen_cel_onder_onderlaag;'            + string(sum(float32(VeenCel && Onderlaag) * Cel))                   + ';' + string(sum(float32(VeenCel && Onderlaag && MagOpleggen) * Cel))
+				+ '|veen;veen_cel_onder_onderlaag_zonder_type;'+ string(sum(float32(VeenCel && Onderlaag && !VeenNatuur && !VeenLandbouw) * Cel)) + ';' + string(sum(float32(VeenCel && Onderlaag && !VeenNatuur && !VeenLandbouw && MagOpleggen) * Cel))
+				+ '|landbouw;onder_onderlaag_buiten_landschapsgebied;' + string(sum(float32(VeenLandbouw && Onderlaag && !InLandschapVeen) * Cel)) + ';' + string(sum(float32(VeenLandbouw && Onderlaag && !InLandschapVeen && MagOpleggen) * Cel))
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_natuur_rangorde.txt'", StorageType = "str"
+			, Descr = "Drie blokken. Landbouw: de landbouwstroom van veen tegen elke natuurlevering, met onderaan wat er na het masker werkelijk verdrongen wordt, welk deel daarvan door een nieuw beheertype
+					en welk deel door een landschap van lagere rang; toegekend plus verdrongen is de levering na het masker, en verdrongen_door_lagere_rang hoort nul te zijn sinds de landbouwstroom rangbewust
+					is (#829). Zand: de gealloceerde zandnatuur tegen de leveringen van hogere rang, zonder en met de veenlandbouw, die sinds #829 ook van zand droog wint; beide horen nul te zijn zodra de
+					zeef ze overslaat. Veen: wat veen zelf verliest aan kust en zand nat; dat volgt uit de afgesproken volgorde, maar de veenallocatie weet het niet.";
+		}
+	}
+
+	container Piekbuiberging
+	: Descr = "Waar de dekkingsgraad van de piekbuiberging vandaan komt, uitgesplitst naar de mechanismen die er samen in zitten (#720, #741, #746, #757). Dekking hangt aan GenerateAll en
+				batch/ToetsOplevering.ps1 leest het bestand piekbuiberging_<casus>_<jaar>.txt."
+	{
+		attribute<Bool>   IsWbCel (/Geography/AdminDomain) := =''+/Diagnose/Pad_Z+'Stand/Sector_rel == /Classifications/Actor/Sector/V/Waterberging';
+
+		parameter<String> Pad_A_Aanbod := /Diagnose/Pad_Z+'Piekbuiberging/Aanbod/WaarAllocatieHeeftPlaatsgevonden/';
+		parameter<String> Pad_G_Aanbod := /Diagnose/Pad_Z+'Piekbuiberging/Aanbod/WaarGeenAllocatieHeeftPlaatsgevonden/';
+
+		unit<UInt8> MaatregelTerm : NrOfRows = 7
+		, Descr = "De zeven maatregeltermen die Wonen/Totaal optelt. Als tabel en niet als uitgeschreven lijst, zodat de kanarie hieronder meebeweegt wanneer er een term bij komt."
+		{
+			attribute<String> pad: ['OpDaken/Resultaat','OpOverigVerhardUitgeefbaar/Resultaat','OpVerhardOpenbaar/Resultaat','OpGrasUitgeefbaar/Resultaat','OpGrasOpenbaar/Resultaat','OpOverigGroen/Resultaat','OpWater/Resultaat'], IntegrityCheck = "all(IsDefined(this))";
+		}
+		parameter<String> AlleZevenGedefinieerd := AsList('IsDefined('+Pad_A_Aanbod+'Wonen/'+MaatregelTerm/pad+')', ' && ');
+
+		parameter<String> Dekking := =(
+			  quote('maat;mln_m3')
+			+ ' + ' + quote('|opgave;')                 + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/Opgave)) / 1e6)'
+			+ ' + ' + quote('|aanbod_totaal;')          + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/Aanbod/Totaal)) / 1e6)'
+			+ ' + ' + quote('|aanbod_op_wbcellen;')     + ' + string(sum(IsWbCel ? float64('+/Diagnose/Pad_Z+'Piekbuiberging/Aanbod/Totaal) : 0d) / 1e6)'
+			+ ' + ' + quote('|aanbod;')                 + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/Aanbod)) / 1e6)'
+			+ ' + ' + quote('|aanbod_buiten_bbg;')      + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/AanbodBuitenUrbanContour)) / 1e6)'
+			+ ' + ' + quote('|gedekt;')                 + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/Gedekt)) / 1e6)'
+			+ ' + ' + quote('|aanbod_zonder_opgave;')   + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/AanbodZonderOpgave)) / 1e6)'
+			+ ' + ' + quote('|restopgave_ongeklemd;')   + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/Restopgave)) / 1e6)'
+			+ ' + ' + quote('|restopgave_geklemd;')     + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/Ongedekt)) / 1e6)'
+			+ ' + ' + quote('|wbcellen_ha;')            + ' + string(sum(float64(IsWbCel) * 0.0625d))'
+			// Het aanbod per maatregel. De vraag erachter is welke maatregelen capaciteit tellen die de bronkaart
+			// van de opgave al veronderstelt: oppervlaktewater bergt daar onbeperkt, bodeminfiltratie zit erin, en
+			// de verharde buitenruimte is er optimaal op het riool aangesloten. Zonder deze uitsplitsing was de
+			// omvang daarvan nergens af te lezen. Wonen en werken, want verblijfsrecreatie is een schakelbare
+			// sector en een ongeguarde verwijzing breekt zodra hij uit staat; nb_totaal sluit de rekening.
+			+ ' + ' + quote('|nb_totaal;')             + ' + string(sum(float64('+Pad_A_Aanbod+'Totaal)) / 1e6)'
+			+ ' + ' + quote('|nb_bergingopwater;')     + ' + string(sum(float64('+Pad_A_Aanbod+'Wonen/OpWater/Resultaat)) / 1e6)'
+			+ ' + ' + quote('|nb_doorlatendgroen;')    + ' + string((sum(float64('+Pad_A_Aanbod+'Wonen/OpGrasUitgeefbaar/ResultaatDoorlatendGroen)) + sum(float64('+Pad_A_Aanbod+'Wonen/OpGrasOpenbaar/ResultaatDoorlatendGroen)) + sum(float64('+Pad_A_Aanbod+'Wonen/OpOverigGroen/Resultaat))) / 1e6)'
+			+ ' + ' + quote('|nb_wadi;')               + ' + string((sum(float64('+Pad_A_Aanbod+'Wonen/OpGrasUitgeefbaar/ResultaatWadi)) + sum(float64('+Pad_A_Aanbod+'Wonen/OpGrasOpenbaar/ResultaatWadi)) + sum(float64('+Pad_A_Aanbod+'Werken/OpGrasUitgeefbaar/Resultaat)) + sum(float64('+Pad_A_Aanbod+'Werken/OpGrasOpenbaar/Resultaat))) / 1e6)'
+			+ ' + ' + quote('|nb_halfverharding;')     + ' + string((sum(float64('+Pad_A_Aanbod+'Wonen/OpOverigVerhardUitgeefbaar/Resultaat)) + sum(float64('+Pad_A_Aanbod+'Wonen/OpVerhardOpenbaar/ResultaatHalfverharding)) + sum(float64('+Pad_A_Aanbod+'Werken/OpOverigVerhardUitgeefbaar/Resultaat)) + sum(float64('+Pad_A_Aanbod+'Werken/OpVerhardOpenbaar/ResultaatHalfverharding))) / 1e6)'
+			+ ' + ' + quote('|nb_daken;')              + ' + string((sum(float64('+Pad_A_Aanbod+'Wonen/OpDaken/Resultaat)) + sum(float64('+Pad_A_Aanbod+'Werken/OpDaken/Resultaat))) / 1e6)'
+			+ ' + ' + quote('|best_totaal;')           + ' + string(sum(float64('+Pad_G_Aanbod+'Totaal)) / 1e6)'
+			+ ' + ' + quote('|best_daken;')            + ' + string(sum(float64('+Pad_G_Aanbod+'OpDaken/Resultaat)) / 1e6)'
+			+ ' + ' + quote('|best_overig;')           + ' + string(sum(float64('+Pad_G_Aanbod+'OpOverigePlekken/Totaal)) / 1e6)'
+			// Het bestaand-gebiedaanbod per maatregel, landelijk en binnen bestaand bebouwd gebied (#757). best_overig stond hier
+			// als een klomp, dus of de holle weg meetelde en hoeveel hij opbrengt was uit deze uitdraai niet af te lezen. De _bbg-regels
+			// zijn het deel dat de dekkingsgraad haalt, en dat aandeel verschilt sterk per maatregel: daken liggen vrijwel geheel in de
+			// stad, wadi's en halfverharding voor een groot deel erbuiten. DoorlatendGroen en BergingOpWater hebben in bestaand gebied
+			// nog geen velddata en staan daarom niet in deze lijst; zie DoorlatendGroenCapaciteit_AdminDomain in SourceData.
+			+ ' + ' + quote('|best_halfverharding;')    + ' + string(sum(MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/Halfverharding), 0d)) / 1e6)'
+			+ ' + ' + quote('|best_halfverharding_bbg;') + ' + string(sum(/BaseData/Omgeving/UrbanContour ? MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/Halfverharding), 0d) : 0d) / 1e6)'
+			+ ' + ' + quote('|best_wadi;')              + ' + string(sum(MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/Wadi), 0d)) / 1e6)'
+			+ ' + ' + quote('|best_wadi_bbg;')          + ' + string(sum(/BaseData/Omgeving/UrbanContour ? MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/Wadi), 0d) : 0d) / 1e6)'
+			+ ' + ' + quote('|best_holleweg;')          + ' + string(sum(MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/HolleWeg), 0d)) / 1e6)'
+			+ ' + ' + quote('|best_holleweg_bbg;')      + ' + string(sum(/BaseData/Omgeving/UrbanContour ? MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/HolleWeg), 0d) : 0d) / 1e6)'
+			// De drie klassegroepen die #757 uit de uitspraken van team Stad heeft afgeleid: wijkweg, woonerf en inrit dragen
+			// hetzelfde kental als de halfverharding hierboven maar een eigen aandeel per variant, en de wijkweg draagt daarnaast
+			// de holle weg. Los uitgedraaid, want anders is niet te zien welke van de drie het verschil maakt.
+			+ ' + ' + quote('|best_hv_wijkweg;')        + ' + string(sum(MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/HalfverhardingWijkweg), 0d)) / 1e6)'
+			+ ' + ' + quote('|best_hv_wijkweg_bbg;')    + ' + string(sum(/BaseData/Omgeving/UrbanContour ? MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/HalfverhardingWijkweg), 0d) : 0d) / 1e6)'
+			+ ' + ' + quote('|best_hv_woonerf;')        + ' + string(sum(MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/HalfverhardingWoonerf), 0d)) / 1e6)'
+			+ ' + ' + quote('|best_hv_woonerf_bbg;')    + ' + string(sum(/BaseData/Omgeving/UrbanContour ? MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/HalfverhardingWoonerf), 0d) : 0d) / 1e6)'
+			+ ' + ' + quote('|best_hv_inrit;')          + ' + string(sum(MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/HalfverhardingInrit), 0d)) / 1e6)'
+			+ ' + ' + quote('|best_hv_inrit_bbg;')      + ' + string(sum(/BaseData/Omgeving/UrbanContour ? MakeDefined(float64('+Pad_G_Aanbod+'OpOverigePlekken/PerWaterrententieK/HalfverhardingInrit), 0d) : 0d) / 1e6)'
+			+ ' + ' + quote('|best_daken_bbg;')     + ' + string(sum(/BaseData/Omgeving/UrbanContour ? MakeDefined(float64('+Pad_G_Aanbod+'OpDaken/Resultaat), 0d) : 0d) / 1e6)'
+			+ ' + ' + quote('|nb_holleweg;')        + ' + string((sum(float64('+Pad_A_Aanbod+'Wonen/OpVerhardOpenbaar/ResultaatHolleWeg)) + sum(float64('+Pad_A_Aanbod+'Werken/OpVerhardOpenbaar/ResultaatHolleWeg))) / 1e6)'
+			// Dakvorm (#746): het platte en schuine dakoppervlak in mln m2, bestaand en nieuwbouw (wonen plus werken),
+			// en het dakenaanbod van nieuwe werkpanden apart, want dat kreeg met #746 voor het eerst een blauwe term.
+			+ ' + ' + quote('|best_dak_plat_mlnm2;')   + ' + string(sum(float64('+Pad_G_Aanbod+'OpDaken/DakoppervlakPlat)) / 1e6)'
+			+ ' + ' + quote('|best_dak_schuin_mlnm2;') + ' + string(sum(float64('+Pad_G_Aanbod+'OpDaken/DakoppervlakSchuin)) / 1e6)'
+			+ ' + ' + quote('|nb_dak_plat_mlnm2;')     + ' + string((sum(float64('+Pad_A_Aanbod+'Wonen/OpDaken/DakoppervlakPlat)) + sum(float64('+Pad_A_Aanbod+'Werken/OpDaken/DakoppervlakPlat))) / 1e6)'
+			+ ' + ' + quote('|nb_dak_schuin_mlnm2;')   + ' + string((sum(float64('+Pad_A_Aanbod+'Wonen/OpDaken/DakoppervlakSchuin)) + sum(float64('+Pad_A_Aanbod+'Werken/OpDaken/DakoppervlakSchuin))) / 1e6)'
+			+ ' + ' + quote('|nb_daken_werken;')       + ' + string(sum(float64('+Pad_A_Aanbod+'Werken/OpDaken/Resultaat)) / 1e6)'
+			// Kanarie op de nullpropagatie die #741 heeft gerepareerd: wonencellen waar een van de zeven
+			// maatregeltermen geen waarde heeft. Sinds die reparatie kost dat alleen die ene term; daarvoor
+			// kostte het de hele cel. Loopt dit getal op, dan is er bovenstrooms iets veranderd aan de
+			// ontwikkelpakketten of aan het toepassingsgebied van doorlatend groen.
+			+ ' + ' + quote('|nb_cellen_termnull;')    + ' + string(sum(uint32('+Pad_A_Aanbod+'Wonen/AllocatieHeeftPlaatsgevonden && !('+AlleZevenGedefinieerd+'))))'
+		)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/piekbuiberging_'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'.txt'"
+		, StorageType = "str"
+		, Descr = "Waar de dekkingsgraad van de piekbuiberging vandaan komt, uitgesplitst naar de mechanismen die er samen in zitten (#720, #741). opgave is de landelijke piekbuiopgave: de waterschijf bij
+					hevige neerslag maal het celoppervlak, gemaskeerd op bestaand bebouwd gebied; aanbod_totaal is wat de indicator aan bergingscapaciteit telt; gedekt gedeeld door opgave is de dekkingsgraad
+					die naar buiten gaat. aanbod_op_wbcellen toetst of de door de sector Waterberging gealloceerde cellen meetellen: een waterbergingscel valt in geen van de takken van Aanbod, dus dit getal
+					hoort nul te zijn. aanbod is de som die de dekkingsgraad gebruikt, gemaskeerd op bestaand bebouwd gebied net als de opgave; aanbod_buiten_bbg is wat door die maskering afvalt, en
+					aanbod_totaal is de twee bij elkaar; die drie horen op te tellen, en wijken ze af, dan is er iets met de begrenzing. restopgave_ongeklemd tegen restopgave_geklemd meet wat de klemming op
+					blokken kost: het verschil is aanbodoverschot in blokken met minder opgave dan aanbod, dat niet naar een ander blok kan, en staat ook rechtstreeks als aanbod_zonder_opgave uit
+					PerGrid/AanbodZonderOpgave.";
+	}
+
+	container Groen
+	: Descr = "Groen in de indicatoren: de twee telwijzen van de bereikbaarheid van groen naast elkaar (KlasseTegenFractie en TweeTelwijzen, #696 en #717, op aanvraag; de keuze ligt bij Deltares)
+				en de toets of de groenwaarde van nieuwbouw een verandering meet (Groenwaarde, waarvan LekBedrag_eur in Checks)."
+	{
+		attribute<Bool>   NieuweNatuur696 (/Geography/AdminDomain) := =/Diagnose/Pad_Z+'Grondgebruik/Verandering/NieuweNatuur';
+		parameter<String> PadK696         := /Diagnose/Pad_Z+'BereikbaarheidGroen/obv_BBG/PerRegios/Nationaal/Afstanden/Tot300m/AggrGroenKlassen/';
+
+		parameter<String> KlasseTegenFractie := =(
+			  quote('maat;waarde')
+			+ ' + ' + quote('|nieuwenatuur_ha;')          + ' + string(sum(float64(NieuweNatuur696) * 0.0625d))'
+			+ ' + ' + quote('|klasse_ha_op_nieuwenatuur;')+ ' + string(sum(NieuweNatuur696 ? float64('+PadK696+'TotaalExAgrarisch/RelevantGroen) : 0d) / 10000d)'
+			+ ' + ' + quote('|fractie_ha_op_nieuwenatuur;')+' + string(sum(NieuweNatuur696 ? float64('+PadK696+'Fractie/RelevantGroen) : 0d) / 10000d)'
+			+ ' + ' + quote('|klasse_cellen_groen_daar;') + ' + string(sum(uint32(NieuweNatuur696 && float32('+PadK696+'TotaalExAgrarisch/RelevantGroen) > 0f)))'
+			+ ' + ' + quote('|fractie_cellen_groen_daar;')+ ' + string(sum(uint32(NieuweNatuur696 && float32('+PadK696+'Fractie/RelevantGroen) > 0f)))'
+		)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_groen_klasse_tegen_fractie.txt'"
+		, StorageType = "str"
+		, Descr = "De directe toets op #696: ziet de bereikbaarheidsindicator de nieuwe natuur van dit zichtjaar? De klassebenadering registreert nieuwe natuur niet als groen, want gealloceerde natuur draagt
+					een subsector en valt daardoor uit GroenInZichtjaar, en exogeen opgelegde natuur houdt haar basisjaarklasse, op omgezette landbouwgrond precies de klasse die TotaalExAgrarisch uitsluit. Deze
+					uitdraai legt beide benaderingen naast elkaar op uitsluitend de cellen waar dit zichtjaar nieuwe natuur is ontstaan: telt de klassekolom daar nul of bijna nul hectare terwijl de fractiekolom
+					het volledige areaal geeft, dan is #696 bevestigd voor de klassebenadering en opgelost door de fractiebenadering, die het landgebruik van het zichtjaar leest via LU_Mutatie.";
+
+		parameter<String> Pad717 := /Diagnose/Pad_Z+'BereikbaarheidGroen/obv_BBG/PerRegios/Nationaal/Afstanden/Tot300m/AggrGroenKlassen/';
+
+		parameter<String> TweeTelwijzen := =(
+			  quote('maat;klasse;fractie')
+			+ ' + ' + quote('|groen_per_woning_m2;')  + ' + string(sum(float64('+Pad717+'TotaalExAgrarisch/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator_Aggregated)))'
+			+ ' + ' + quote(';')                      + ' + string(sum(float64('+Pad717+'Fractie/Indicatoren/Drukte_gecorrigeerd_groenaanbod_per_woning/Indicator_Aggregated)))'
+			+ ' + ' + quote('|groenaanbod_m2;')       + ' + string(sum(float64('+Pad717+'TotaalExAgrarisch/Indicatoren/Groenaanbod/Indicator_Aggregated)))'
+			+ ' + ' + quote(';')                      + ' + string(sum(float64('+Pad717+'Fractie/Indicatoren/Groenaanbod/Indicator_Aggregated)))'
+			+ ' + ' + quote('|relevantgroen_ha;')     + ' + string(sum(float64('+Pad717+'TotaalExAgrarisch/RelevantGroen)) / 10000d)'
+			+ ' + ' + quote(';')                      + ' + string(sum(float64('+Pad717+'Fractie/RelevantGroen)) / 10000d)'
+		)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_groen_twee_telwijzen.txt'"
+		, StorageType = "str"
+		, Descr = "De twee manieren waarop groen wordt geteld, naast elkaar op hetzelfde zichtjaar en dezelfde straal van 300 meter, de vergelijking waar #717 om vraagt. De klassekolom telt een cel helemaal
+					mee of helemaal niet en houdt de eisen van vijf woningen per hectare en een hectare aaneengesloten; de fractiekolom telt het groene deel van elke cel en laat die eisen vallen, en alleen
+					daarin is het groen binnen een ontwikkelpakket zichtbaar. relevantgroen_ha is de bron van het verschil: hoeveel hectare er in beide benaderingen als groen de potentiaal in gaat; loopt dat in
+					de klassekolom terug terwijl het in de fractiekolom stijgt, dan is dat het artefact dat de indicator het NbS-verhaal liet tegenspreken.";
+
+		container Groenwaarde
+		: Descr = "Of de groenwaarde van nieuwbouw werkelijk een verandering meet en geen niveau (#678). LekBedrag_eur is de toets, de regel groenwaarde_lek_eur in Checks: de waardeverandering op
+					cellen met nieuwbouw waar het groen niet veranderd is. Een handvol cellen met samen een paar euro is afrondingsruis in dGroenTerm, terwijl een niveau de volle premie zou geven op
+					elke cel met onveranderd groen. LekNiveau telt die cellen, en Tabel (op aanvraag) zet de bedragen erbij."
+		{
+			parameter<String>  P := /Diagnose/Pad_Z+'WaardeNabijheidGroen/Nieuwbouw/';
+			parameter<UInt32>  LekNiveau     := =('sum(uint32(float32('+P+'n_nieuwbouw_cumulatief) > 0f && abs('+P+'dGroenTerm) < 0.000001f && abs(float32('+P+'dWaarde)) >= 0.01f))');
+			parameter<Float64> LekBedrag_eur := =('sum(float64(float32('+P+'n_nieuwbouw_cumulatief) > 0f && abs('+P+'dGroenTerm) < 0.000001f ? abs(float32('+P+'dWaarde)) : 0f))');
+
+			parameter<String> Tabel := =(
+				  quote('maat;waarde')
+				+ ' + ' + quote('|nieuwbouw_mld;')            + ' + string(sum(float64(MakeDefined(float32('+P+'dWaarde), 0f))) / 1e9)'
+				+ ' + ' + quote('|bestaand_mld;')             + ' + string(sum(float64(MakeDefined(float32('+/Diagnose/Pad_Z+'WaardeNabijheidGroen/Bestaand/dWaarde), 0f))) / 1e9)'
+				+ ' + ' + quote('|cellen_nieuwbouw;')         + ' + string(sum(uint32(float32('+P+'n_nieuwbouw_cumulatief) > 0f)))'
+				+ ' + ' + quote('|cellen_groen_onveranderd;') + ' + string(sum(uint32(float32('+P+'n_nieuwbouw_cumulatief) > 0f && abs('+P+'dGroenTerm) < 0.000001f)))'
+				+ ' + ' + quote('|lek_niveau_ipv_verandering;')+ ' + string(LekNiveau)'
+				+ ' + ' + quote('|lek_bedrag_eur;')           + ' + string(LekBedrag_eur)'
+			)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_groenwaarde_lek.txt'"
+			, StorageType = "str"
+			, Descr = "De bedragen en de celtelling naast de toets.";
+		}
+	}
+
+	container Verharding
+	: Descr = "Of de verharding werkelijk kan dalen (#697), en hoeveel. Cellen_Gedaald is de regel verharding_cellen_gedaald in Checks en hoort groter dan nul te zijn; is hij nul, dan is de daling niet
+				aangesloten. Tabel (op aanvraag) zet daling en stijging naast elkaar; 0,0625 is het aantal hectare per cel van 25 meter, Result en Basisjaarverharding zijn fracties."
+	{
+		parameter<String> P := /Diagnose/Pad_Z+'Verharding/';
+		parameter<UInt32> Cellen_Gedaald := =('sum(uint32('+P+'Result < '+P+'Basisjaarverharding - 0.001f))');
+
+		parameter<String> Tabel := =(
+			  quote('maat;waarde')
+			+ ' + ' + quote('|cellen_beide_bekend;') + ' + string(sum(uint32(IsDefined('+P+'Result) && IsDefined('+P+'Basisjaarverharding))))'
+			+ ' + ' + quote('|cellen_gedaald;')      + ' + string(Cellen_Gedaald)'
+			+ ' + ' + quote('|cellen_gestegen;')     + ' + string(sum(uint32('+P+'Result > '+P+'Basisjaarverharding + 0.001f)))'
+			+ ' + ' + quote('|daling_ha;')           + ' + string(sum(float64(max_elem('+P+'Basisjaarverharding - '+P+'Result, 0f)) * 0.0625d))'
+			+ ' + ' + quote('|stijging_ha;')         + ' + string(sum(float64(max_elem('+P+'Result - '+P+'Basisjaarverharding, 0f)) * 0.0625d))'
+			+ ' + ' + quote('|verhard_basisjaar_ha;')+ ' + string(sum(float64(IsDefined('+P+'Result) && IsDefined('+P+'Basisjaarverharding) ? '+P+'Basisjaarverharding : 0f) * 0.0625d))'
+			+ ' + ' + quote('|verhard_zichtjaar_ha;')+ ' + string(sum(float64(IsDefined('+P+'Result) && IsDefined('+P+'Basisjaarverharding) ? '+P+'Result : 0f) * 0.0625d))'
+		)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_verharding_verandering.txt'"
+		, StorageType = "str"
+		, Descr = "De richting en de omvang van de verandering naast de toets in Cellen_Gedaald.";
+	}
+
+	container Wonen
+	{
+		parameter<String>  PadB := '/Indicatoren/'+/Diagnose/Casus+'/Basisjaar/Stand/';
+		parameter<Float32> IJburg2_WoningenGroei := =('sum(/SourceData/RegioIndelingen/LMSSubzone/IsIJburg2_AdminDomain ? MakeDefined(float32('+/Diagnose/Pad_Z+'Stand/Aantal_Woningen_Totaal), 0f) - MakeDefined(float32('+PadB+'Aantal_Woningen_Totaal), 0f) : 0f)')
+		, Descr = "Woningen erbij op IJburg2 sinds het basisjaar, de regel ijburg2_woningen_groei in Checks. Nieuw land zonder brondata, waar het exploitatiesaldo een proxy op de mediaan van IJburg1 is;
+					nul of negatief betekent dat er niets is gebouwd, precies het geval dat de tie-break in Suitability_Wonen_perOP_T moest afvangen.";
+	}
+
+	container Basisjaar
+	: Descr = "Grootheden van het basisjaar met een referentiewaarde, de rijen van ChecksBasisjaar; de norm per rij staat in batch/ToetsOplevering.ps1. Ze lezen de basisjaarstand en BaseData en
+				hangen niet aan een zichtjaar."
+	{
+		parameter<String>  PadB := '/Indicatoren/'+/Diagnose/Casus+'/Basisjaar/Stand/';
+		parameter<Float32> Woningen := =('sum(float32('+PadB+'Aantal_Woningen_Totaal))'), Descr = "De woningvoorraad van het basisjaar zoals de stand hem draagt (#703); hoort naast de CBS-voorraad van dat jaar te liggen.";
+		parameter<Float32> Banen    := =('sum(float32('+PadB+'Aantal_Banen_Totaal))'), Descr = "De banen van het basisjaar zoals de stand ze draagt; hoort naast het LISA-totaal van dat jaar te liggen.";
+
+		parameter<Float32> HogeGronden_ha := sum(float32(/BaseData/Omgeving/HogeGronden && /Geography/rdc_meter/IsStudyArea_AdminDomain) * float32(/Geography/AdminDomain/NrHaPerCell))
+		, Descr = "Het areaal hoge gronden binnen het studiegebied (#698). De maskering op het studiegebied is nodig, want de terugval op NietOverstroombaar maakt elke cel buiten de dieptekaart hoog, en
+					dat is de halve Noordzee; wie hier een grootheid bijzet die over AdminDomain sommeert moet zelf op het studiegebied maskeren.";
+
+		parameter<String>  BT := '/BaseData/Suitabilities/Wonen/BouwperiodeTerm/';
+		parameter<Float32> BouwperiodeTerm := =('float32(' + AsList('sum('+BT+/Classifications/Vastgoed/WP4/name+'/Term * '+BT+/Classifications/Vastgoed/WP4/name+'/Aantal)', ' + ') + ') / float32(' + AsList('sum('+BT+/Classifications/Vastgoed/WP4/name+'/Aantal)', ' + ') + ')')
+		, Descr = "Het naar woningaantal gewogen gemiddelde van de bouwperiodecoefficient in de prijs van de bestaande voorraad, over de vier woningtypen (#675). Per constructie nul zolang de term niet
+					in de prijs zit; een nul terwijl hij erin hoort betekent dat de keten niet is aangesloten.";
+
+		parameter<Float64> Verwervingskosten_NietWoon_mld := sum(float64(float32(/BaseData/Suitabilities/Wonen/Verwervingskosten/Niet_Woningen/Calc))) / 1e9
+		, Descr = "De verwervingskosten van het bestaande niet-woon vastgoed in miljard euro (#674). Vraagt Calc op en niet de ontkoppelde tif, zodat de IntegrityCheck bij Niet_Woningen/Calc meevuurt en
+					een verouderd bestand hier niet binnenvalt.";
+
+		parameter<String>  Logies := '/BaseData/StartState/PandFootprint/PerYear_AdminDomain/Y'+string(/ModelParameters/Model_StartYear)+'/pand_met_vbo/PerGebruiksdoel_corr/logies/';
+		parameter<String>  Trend  := '/BaseData/StartState/Verblijfsrecreatie_Trends/DataPrep/ReadData_BAG/Y'+string(/ModelParameters/BAG_RecentYear)+'/PerRegio/Objecten';
+		parameter<Float32> Verblijfsrecreatie_StandTovTrend := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector ? '(sum(float32('+Logies+'count_Per_AdminDomain_inCBSVerblijfsrecreatie)) + sum(value(/BaseData/StartState/BAG_nieuwbouw/Verblijfsrecreatie/Totaal_inCBSVerblijfsrecreatie, float32))) / sum(value('+Trend+', float32))' : 'null_f'
+		, Descr = "De basisjaarstand logies in de CBS-verblijfsrecreatiegebieden plus de BAG-nieuwbouw, gedeeld door het aantal logies van de trendreeks in het recente BAG-jaar (#364): boven 1 staat de
+					stand al boven de claim voordat er iets is gealloceerd. Null zolang de sector verblijfsrecreatie niet alloceert, want dan is er geen claim om de stand tegen af te zetten en kost de
+					telling over de BAG vier minuten voor niets.";
+	}
+
+	container Werken
+	: Descr = "Op aanvraag. De zichtjaarzeef per werksubsector, de zeef waar de omgekeerde milieuzonering en de dichtheidsdrempel op werken (#669, #670, #713)."
+	{
+		container Zeef :=
+			for_each_nedv(
+				/Classifications/Actor/Jobs6/name
+				, '/VariantData/'+/Diagnose/Variant+'/Zeef/'+/Diagnose/Jaar+'/SectorxSubsectoren/Werken/'+/Classifications/Actor/Jobs6/name+'/IsBeschikbaar'
+				, /Geography/CompactedAdminDomain
+				, bool
+			), Descr = "De zichtjaarzeef per werksubsector. Dit is de zeef waar #669, #670 en #713 op werken. De containernamen dragen een schuine streep (Werken/Nijverheid), dus het zijn geneste containers en geen namen met een onderstreping.";
+
+		parameter<String> ZeefPerSubsector := =(
+			  quote('maat;cellen')
+			+ ' + ' + quote('|zeef_nijverheid;') + ' + string(sum(uint32(Zeef/Nijverheid)))'
+			+ ' + ' + quote('|zeef_logistiek;') + ' + string(sum(uint32(Zeef/Logistiek)))'
+			+ ' + ' + quote('|zeef_detailhandel;') + ' + string(sum(uint32(Zeef/Detailhandel)))'
+			+ ' + ' + quote('|zeef_ov_consumentendiensten;') + ' + string(sum(uint32(Zeef/Ov_consumentendiensten)))'
+			+ ' + ' + quote('|zeef_zak_dienstverlening;') + ' + string(sum(uint32(Zeef/Zak_dienstverlening)))'
+			+ ' + ' + quote('|zeef_overheid_kw_diensten;') + ' + string(sum(uint32(Zeef/Overheid_kw_diensten)))'
+		)
+		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_zeef_werken.txt'"
+		, StorageType = "str"
+		, Descr = "Beschikbare cellen op het compacted domain per werksubsector in de zichtjaarzeef. Verschillen tussen de zes zeggen wat de omgekeerde milieuzonering en de dichtheidsdrempel per subsector wegnemen.";
+
+		parameter<String> Combinamen := =('AsList(/CaseClassifications/'+/Diagnose/Variant+'/Actor/VariantXSectorxSubsector/Combi_name, '+quote(';')+')')
+		, StorageName = "='%LocalDataProjDir%/Diagnose/combinamen_'+/Diagnose/Variant+'.txt'"
+		, StorageType = "str"
+		, Descr = "De namen waaronder de zeef per sector en subsector hangt. Nodig omdat het pad /VariantData/<variant>/Zeef/<jaar>/SectorxSubsectoren/<naam> alleen te raden was; deze uitdraai maakt dat een opzoeking.";
+	}
+}

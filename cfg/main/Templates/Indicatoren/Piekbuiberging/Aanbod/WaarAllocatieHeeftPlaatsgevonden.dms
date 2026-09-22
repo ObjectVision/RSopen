@@ -1,0 +1,342 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container WaarAllocatieHeeftPlaatsgevonden
+{
+	container Wonen
+	{
+		attribute<Bool>    AllocatieHeeftPlaatsgevonden                    (AdminDomain) := Stand/sector_rel == Actor/Sector/V/Wonen;
+		attribute<Bool>    IsBAGnieuwbouwWonen                             (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), Descr = "BAG-nieuwbouw wonen-cel, onafhankelijk van OP_rel (issue #550: BAG-cellen hebben nu een gematchte OP_rel, dus IsNull(OP_rel) volstaat niet meer).";
+		attribute<Bool>    BAGNieuwbouwAllocatieHeeftPlaatsgevonden        (AdminDomain) := AllocatieHeeftPlaatsgevonden && (IsNull(Stand/OP_rel) || IsBAGnieuwbouwWonen);
+		attribute<meter2>  StandPandFootprintWaarAllocHeeftPlaatsgevonden  (AdminDomain) := ='min_elem(AdminDomain/NrHaPerCell[meter2], Stand/PandFootprint_Wonen / float32(AllocatieHeeftPlaatsgevonden)) / float32(AllocatieHeeftPlaatsgevonden)';
+		
+		parameter<float32> DefaultFractieUitgeefbaar := ModelParameters/Wonen/DefaultFractieUitgeefbaar, Descr = "De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt";
+		parameter<float32> DefaultFractieGrasInGroen := ModelParameters/Wonen/DefaultFractiesGrasBoomStruikInGroen/Gras;
+		parameter<float32> FractieDoorlatendGroenSrc := VariantParameters/VariantK/FractieDoorlatendGroenNieuwbouw[Variant_rel];
+		
+		attribute<float32> FractieDoorlatendGroen (AdminDomain) := FractieDoorlatendGroenSrc * float32(/BaseData/Omgeving/NbSOPToepassingsgebied/Hoog_NL);
+		
+		parameter<float32> DefaultVerharding      := min_elem(ModelParameters/Wonen/DefaultVerharding * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f); // waarom niet obv deze o.a. /VariantParameters/Ontwikkelpakketten/NettoBuurt/Default/InUitgeefbaarExPandFootprint/Verhard
+		
+		container OpDaken
+		{
+			parameter<float32> FractieGroenDak := /VariantParameters/VariantK/FractieGroenDakNieuwbouw[Variant_rel];
+			parameter<float32> FractieBlauwDak := /VariantParameters/VariantK/FractieBlauwDakNieuwbouw[Variant_rel];
+			parameter<float32> SomDakfracties  := FractieGroenDak + FractieBlauwDak, IntegrityCheck = "this <= 1.001f", Descr = "Dezelfde bewaking als in de bestaand-tak: groen en blauw delen hetzelfde dak. Sinds #746 staat hij ook hier.";
+			
+			attribute<Woning>  WoningenMeergezins       (AdminDomain) := Stand/Aantal_Woningen_meergezins_VrijeSector + Stand/Aantal_Woningen_meergezins_SocialeHuur;
+			attribute<Woning>  WoningenEengezins        (AdminDomain) := Stand/Aantal_Woningen_eengezins_VrijeSector  + Stand/Aantal_Woningen_eengezins_SocialeHuur;
+			attribute<float32> FractiePlatDakUitTelling (AdminDomain) := MakeDefined(
+				  (WoningenMeergezins * /ModelParameters/Piekbuiberging/Dakvorm/FractiePlatDak[Classifications/Vastgoed/WP2/V/meergezins] + WoningenEengezins * /ModelParameters/Piekbuiberging/Dakvorm/FractiePlatDak[Classifications/Vastgoed/WP2/V/eengezins])
+				/ (WoningenMeergezins + WoningenEengezins)
+				, 0f)
+			, Descr = "Het platte aandeel naar woningtelling van de cel, voor BAG-nieuwbouw: die cellen dragen de geobserveerde woningen per type en kunnen gemengd zijn, terwijl het gematchte pakket daar een type kiest. Een telling is een grovere maat dan een footprint, want een appartementenblok zet tientallen woningen op een dak; voor modelnieuwbouw geldt daarom het pakket.";
+			attribute<float32> FractiePlatDakCel (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+				? FractiePlatDakUitTelling
+				: MakeDefined(/ModelParameters/Piekbuiberging/Dakvorm/FractiePlatDak[ThisVariantClassifications/Vastgoed/OP/WP2_rel[Stand/OP_rel]], FractiePlatDakUitTelling)
+			, Descr = "Het platte aandeel van het dak in een nieuwbouwcel (#746). Modelnieuwbouw volgt het woningtype van het ontwikkelpakket van de cel via de proxy in ModelParameters/Piekbuiberging/Dakvorm; zo'n cel is homogeen eengezins of meergezins, want elk pakket hoort bij een WP2xVSSH. BAG-nieuwbouw volgt de woningtelling, dezelfde tak als de zes andere maatregelen in deze container.";
+			
+			attribute<meter2> Dakoppervlak            (AdminDomain) := StandPandFootprintWaarAllocHeeftPlaatsgevonden;
+			attribute<meter2> DakoppervlakPlat        (AdminDomain) := Dakoppervlak * FractiePlatDakCel;
+			attribute<meter2> DakoppervlakSchuin      (AdminDomain) := Dakoppervlak - DakoppervlakPlat;
+			attribute<meter2> DakoppervlakGroenPlat   (AdminDomain) := DakoppervlakPlat   * FractieGroenDak;
+			attribute<meter2> DakoppervlakGroenSchuin (AdminDomain) := DakoppervlakSchuin * FractieGroenDak;
+			attribute<meter2> DakoppervlakGroen       (AdminDomain) := DakoppervlakGroenPlat + DakoppervlakGroenSchuin;
+			attribute<meter2> DakoppervlakBlauw       (AdminDomain) := DakoppervlakPlat * FractieBlauwDak, Descr = "Alleen op het platte deel van het dak (#746), zie de bestaand-tak in Aanbod.dms.";
+			attribute<meter3> Resultaat               (AdminDomain) := add(
+				  DakoppervlakGroenPlat   * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDak]
+				, DakoppervlakGroenSchuin * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDakSchuin]
+				, DakoppervlakBlauw       * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/BlauwDak]
+			)
+			, ExplicitSuppliers = "SomDakfracties";
+		}
+		
+		container OpOverigVerhardUitgeefbaar
+		{
+			parameter<float32> FractieHalfverharding := /VariantParameters/VariantK/FractieHalfverhardingNieuwbouwUitgeefbaar[Variant_rel];
+			
+			attribute<meter2> VerhardOppervlak      (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+																		? (AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * DefaultVerharding * DefaultFractieUitgeefbaar
+																		: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Uitgeefbaar/Buitenruimte/Verhard[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
+																		
+			attribute<meter2> VerhardOppervlakGroen (AdminDomain) := VerhardOppervlak * FractieHalfverharding;
+			attribute<meter3> Resultaat             (AdminDomain) := VerhardOppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Halfverharding];
+		}
+		
+		container OpVerhardOpenbaar
+		{
+			parameter<float32> FractieHalfverharding := /VariantParameters/VariantK/FractieHalfverhardingNieuwbouwOpenbaar[Variant_rel], IntegrityCheck = "this >= 0f && this <= 1f";
+			parameter<float32> FractieHolleWeg       := /VariantParameters/VariantK/FractieHolleWegNieuwbouwWijkweg[Variant_rel] * /ModelParameters/Piekbuiberging/AandeelWijkwegInOpenbareVerharding
+			, IntegrityCheck = "this >= 0f && this <= 1f"
+			, Descr = "De holle weg in nieuwbouw (#757): een nieuwe wijk moet zijn wegprofiel nog kiezen, dus de maatregel is daar goedkoper dan achteraf. Alleen op de openbare verharding, want op uitgeefbaar
+						terrein ligt geen weg. De fractie uit VariantK slaat op de wijkweg, net als in bestaand gebied, en wordt hier omgerekend naar de hele openbare verharding met
+						AandeelWijkwegInOpenbareVerharding, zodat de knop in beide takken hetzelfde betekent.";
+			
+			attribute<meter2> VerhardOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+															? (AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * DefaultVerharding * (1f - DefaultFractieUitgeefbaar) // Er zit dus geen water in BAG_nieuwbouw? Aanpassen.
+															: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Openbaar/Verhard[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
+															
+			attribute<meter2> VerhardOppervlakGroen    (AdminDomain) := VerhardOppervlak * FractieHalfverharding;
+			attribute<meter2> VerhardOppervlakHolleWeg (AdminDomain) := VerhardOppervlak * FractieHolleWeg;
+			attribute<meter3> ResultaatHalfverharding  (AdminDomain) := VerhardOppervlakGroen    * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Halfverharding];
+			attribute<meter3> ResultaatHolleWeg        (AdminDomain) := VerhardOppervlakHolleWeg * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/HolleWeg];
+			attribute<meter3> Resultaat                (AdminDomain) := ResultaatHalfverharding + ResultaatHolleWeg
+			, Descr = "De halfverharding ligt op de hele openbare verharding en de holle weg op het wijkwegdeel ervan. De twee delen dat oppervlak niet maar liggen erop: een wijkweg kan tegelijk doorlatend verhard
+						en hol zijn, en dan tellen de kentallen op, de lezing van team Stad in #757 voor bestaand gebied. Elke fractie op zich ligt tussen nul en een, en dat staat als controle bij de fracties zelf.";
+		}
+		
+		container OpGrasUitgeefbaar
+		{
+			parameter<float32> FractieWadi := /VariantParameters/VariantK/FractieWadiNieuwbouwUitgeefbaarGras[Variant_rel];
+			parameter<float32> FractieRest := 1f - FractieWadi;
+			
+			attribute<float32> FractieDoorlatendGroen (AdminDomain) := min_elem(const(FractieRest, AdminDomain), Wonen/FractieDoorlatendGroen);
+			
+			attribute<meter2> GrasOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+															? DefaultFractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/Wonen/Verhard_NieuweOntwikkeling) * DefaultFractieUitgeefbaar
+															: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Uitgeefbaar/Buitenruimte/Groen/Gras[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
+			
+			attribute<meter2> GrasOppervlakWadi            (AdminDomain) := GrasOppervlak * FractieWadi;
+			attribute<meter2> GrasOppervlakDoorlatendGroen (AdminDomain) := GrasOppervlak * FractieDoorlatendGroen;
+			
+			attribute<meter3> ResultaatWadi            (AdminDomain) := GrasOppervlakWadi            * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
+			attribute<meter3> ResultaatDoorlatendGroen (AdminDomain) := GrasOppervlakDoorlatendGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/DoorlatendGroen];
+			attribute<meter3> Resultaat                (AdminDomain) := ResultaatWadi + ResultaatDoorlatendGroen;
+		}
+		
+		container OpGrasOpenbaar
+		{
+			parameter<float32> FractieWadi := /VariantParameters/VariantK/FractieWadiNieuwbouwOpenbaarGras[Variant_rel];
+			parameter<float32> FractieRest := 1f - FractieWadi;
+			
+			attribute<float32> FractieDoorlatendGroen (AdminDomain) := min_elem(const(FractieRest, AdminDomain), Wonen/FractieDoorlatendGroen);
+			
+			attribute<meter2> GrasOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+																		? DefaultFractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/Wonen/Verhard_NieuweOntwikkeling) * (1f - DefaultFractieUitgeefbaar)
+																		: ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Openbaar/Groen/Gras[Stand/OP_rel] * AdminDomain/NrHaPerCell[float32];
+			
+			attribute<meter2> GrasOppervlakWadi            (AdminDomain) := GrasOppervlak * FractieWadi;
+			attribute<meter2> GrasOppervlakDoorlatendGroen (AdminDomain) := GrasOppervlak * FractieDoorlatendGroen;
+			
+			attribute<meter3> ResultaatWadi            (AdminDomain) := GrasOppervlakWadi            * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
+			attribute<meter3> ResultaatDoorlatendGroen (AdminDomain) := GrasOppervlakDoorlatendGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/DoorlatendGroen];
+			attribute<meter3> Resultaat                (AdminDomain) := ResultaatWadi + ResultaatDoorlatendGroen;
+		}
+		
+		container OpOverigGroen
+		{
+			attribute<meter2> OverigGroenOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+																		? (1f - DefaultFractieGrasInGroen) * (AdminDomain/NrHaPerCell[meter2] - Verharding/Wonen/Verhard_NieuweOntwikkeling)
+																		: AdminDomain/NrHaPerCell[float32] * (
+																			ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Groen[Stand/OP_rel] -
+																			ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Groen/Gras[Stand/OP_rel]
+																		);
+			
+			attribute<meter2> OverigGroenOppervlakDoorlatendGroen (AdminDomain) := OverigGroenOppervlak * FractieDoorlatendGroen;
+			
+			attribute<meter3> Resultaat (AdminDomain) := OverigGroenOppervlakDoorlatendGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/DoorlatendGroen];
+		}
+		
+		container OpWater
+		{
+			parameter<float32> FractieBergingOpWater := /VariantParameters/VariantK/FractieBergingOpWaterNieuwbouw[Variant_rel];
+
+			attribute<meter2> WaterOppervlak (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
+																? 0[meter2]
+																: AdminDomain/NrHaPerCell[float32] * ThisVariantClassifications/Vastgoed/OP_Buurt/Terreinoppervlakte/Totaal/Water[Stand/OP_rel]
+			, Descr = "Nieuw wateroppervlak volgens het ontwikkelpakket van de cel. Op BAG-nieuwbouw ligt geen ontwikkelpakket, dus daar staat nul; dat de standaardnieuwbouw geen water krijgt is een aanname die
+						als vraag bij Deltares ligt (#741). De tak op BAGNieuwbouwAllocatieHeeftPlaatsgevonden is dezelfde als in de zes containers hiernaast, zodat alle zeven maatregelen op een BAG-nieuwbouwcel
+						dezelfde standaardaannames uit ModelParameters/Wonen volgen.";
+			attribute<meter2> WaterOppervlakBergingOpWater (AdminDomain) := WaterOppervlak * FractieBergingOpWater;
+
+			attribute<meter3> Resultaat (AdminDomain) := WaterOppervlakBergingOpWater * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/BergingOpWater]
+			, Descr = "Berging op nieuw oppervlaktewater via peilopzet, met het kental uit Classifications/WaterretentieK; in beide NbS-varianten staat de fractie op 1,00, in BAU en BAU2 op nul. Openstaand punt
+						uit #741: de bronkaart achter de opgave neemt aan dat oppervlaktewater een onbeperkte bergingscapaciteit heeft, dus op oppervlaktewater staat per constructie geen opgave en extra berging
+						daarop kan die opgave niet verkleinen; hij telt hier alleen mee doordat de blokoptelling die capaciteit bij buurcellen legt die wel opgave hebben. Daar staat tegenover dat dit water in het
+						basisjaar nog niet lag, dus de kaart kent het niet. Welke van de twee zwaarder weegt is een vraag aan Deltares; zolang die openstaat blijft de term staan en is hij als nb_bergingopwater in
+						de diagnose-uitdraai af te lezen. Bij het kental hoort een tweede kanttekening: 0,50 m3 per m2 is een halve meter peilstijging, meer dan een wadi, terwijl oppervlaktewater al op streefpeil
+						staat en alleen de vrije ruimte tot maaiveld heeft, en VariantParameters/VariantK zegt bij WaterbergingOpBestaandWater dat het peil in bestaand water 15 cm wordt opgezet.";
+		}
+
+		attribute<meter3> Totaal (AdminDomain) := AllocatieHeeftPlaatsgevonden
+			? add(
+				  MakeDefined(OpDaken/Resultaat,                   0[meter3])
+				, MakeDefined(OpOverigVerhardUitgeefbaar/Resultaat, 0[meter3])
+				, MakeDefined(OpVerhardOpenbaar/Resultaat,          0[meter3])
+				, MakeDefined(OpGrasUitgeefbaar/Resultaat,          0[meter3])
+				, MakeDefined(OpGrasOpenbaar/Resultaat,             0[meter3])
+				, MakeDefined(OpOverigGroen/Resultaat,              0[meter3])
+				, MakeDefined(OpWater/Resultaat,                    0[meter3])
+			  )
+			: 0[meter3] / 0f
+		, Descr = "De zeven bergingsmaatregelen op een nieuwbouwcel. Buiten de nieuwbouwcellen blijft dit item expliciet null, zodat de MakeDefined in de Totaal een laag hoger zijn werk doet en dit item ook
+					als diagnose leesbaar blijft. Elke term telt met MakeDefined voor zichzelf: een ontbrekende term betekent dan alleen dat die maatregel daar nul oplevert, in plaats van dat een null in een
+					van de zeven de hele som en daarmee ook de daken en de halfverharding van de cel wist (#741). De diagnose-uitdraai telt de cellen met een ontbrekende term als nb_cellen_termnull, zodat een
+					toename opvalt.";
+		attribute<Eur> Aanlegkosten (AdminDomain) := AllocatieHeeftPlaatsgevonden
+			? add(
+				  MakeDefined(OpDaken/DakoppervlakGroenPlat,                     0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/GroenDak]
+				, MakeDefined(OpDaken/DakoppervlakGroenSchuin,                   0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/GroenDakSchuin]
+				, MakeDefined(OpDaken/DakoppervlakBlauw,                         0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/BlauwDak]
+				, MakeDefined(OpOverigVerhardUitgeefbaar/VerhardOppervlakGroen,  0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/Halfverharding]
+				, MakeDefined(OpVerhardOpenbaar/VerhardOppervlakGroen,           0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/Halfverharding]
+				, MakeDefined(OpVerhardOpenbaar/VerhardOppervlakHolleWeg,        0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/HolleWeg]
+				, MakeDefined(OpGrasUitgeefbaar/GrasOppervlakWadi,               0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/Wadi]
+				, MakeDefined(OpGrasOpenbaar/GrasOppervlakWadi,                  0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/Wadi]
+				, MakeDefined(OpGrasUitgeefbaar/GrasOppervlakDoorlatendGroen,    0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/DoorlatendGroen]
+				, MakeDefined(OpGrasOpenbaar/GrasOppervlakDoorlatendGroen,       0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/DoorlatendGroen]
+				, MakeDefined(OpOverigGroen/OverigGroenOppervlakDoorlatendGroen, 0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/DoorlatendGroen]
+				, MakeDefined(OpWater/WaterOppervlakBergingOpWater,              0[meter2]) * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/BergingOpWater]
+			  )
+			: 0[Eur] / 0f
+		, Descr = "Wat het aanleggen van de bergingsmaatregelen van dit nieuwbouwpakket kost (#798). Dezelfde twaalf oppervlakken als Totaal hierboven, met het kental in euro per m2 erachter in plaats van dat
+						in m3 per m2. De meting achteraf, op het pakket dat er is komen te liggen; de allocatie heeft dezelfde rekening vooraf gezien via src/Wonen/Piekbuibergingkosten, dat per pakket rekent en in
+						het exploitatiesaldo staat, en lopen die twee uiteen, dan meet de indicator iets anders dan waarvoor de allocatie heeft betaald. Buiten de nieuwbouwcellen blijft dit item null, net als
+						Totaal.";
+		attribute<Eur_jaarlijks> Onderhoudskosten (AdminDomain) := AllocatieHeeftPlaatsgevonden
+			? add(
+				  MakeDefined(OpDaken/DakoppervlakGroenPlat,                     0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/GroenDak]
+				, MakeDefined(OpDaken/DakoppervlakGroenSchuin,                   0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/GroenDakSchuin]
+				, MakeDefined(OpDaken/DakoppervlakBlauw,                         0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/BlauwDak]
+				, MakeDefined(OpOverigVerhardUitgeefbaar/VerhardOppervlakGroen,  0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/Halfverharding]
+				, MakeDefined(OpVerhardOpenbaar/VerhardOppervlakGroen,           0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/Halfverharding]
+				, MakeDefined(OpVerhardOpenbaar/VerhardOppervlakHolleWeg,        0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/HolleWeg]
+				, MakeDefined(OpGrasUitgeefbaar/GrasOppervlakWadi,               0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/Wadi]
+				, MakeDefined(OpGrasOpenbaar/GrasOppervlakWadi,                  0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/Wadi]
+				, MakeDefined(OpGrasUitgeefbaar/GrasOppervlakDoorlatendGroen,    0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/DoorlatendGroen]
+				, MakeDefined(OpGrasOpenbaar/GrasOppervlakDoorlatendGroen,       0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/DoorlatendGroen]
+				, MakeDefined(OpOverigGroen/OverigGroenOppervlakDoorlatendGroen, 0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/DoorlatendGroen]
+				, MakeDefined(OpWater/WaterOppervlakBergingOpWater,              0[meter2]) * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/BergingOpWater]
+			  )
+			: 0[Eur_jaarlijks] / 0f
+		, Descr = "Het jaarlijkse onderhoud aan die maatregelen (#798). Zit niet in het exploitatiesaldo: het valt bij de beheerder en niet bij de ontwikkelaar.";
+	}
+	
+	container Werken             := WerkenEnVerblijfsrecreatie('Werken');
+	container Verblijfsrecreatie := WerkenEnVerblijfsrecreatie('Verblijfsrecreatie');
+	
+	attribute<meter3> Totaal (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector
+												? 'add(MakeDefined(Wonen/Totaal, 0[meter3]), MakeDefined(Werken/Totaal, 0[meter3]), MakeDefined(Verblijfsrecreatie/Totaal, 0[meter3]))'
+												: 'add(MakeDefined(Wonen/Totaal, 0[meter3]), MakeDefined(Werken/Totaal, 0[meter3]))'; 
+	attribute<Eur> Aanlegkosten (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector
+												? 'add(MakeDefined(Wonen/Aanlegkosten, 0[Eur]), MakeDefined(Werken/Aanlegkosten, 0[Eur]), MakeDefined(Verblijfsrecreatie/Aanlegkosten, 0[Eur]))'
+												: 'add(MakeDefined(Wonen/Aanlegkosten, 0[Eur]), MakeDefined(Werken/Aanlegkosten, 0[Eur]))';
+	
+	attribute<Eur_jaarlijks> Onderhoudskosten (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector
+												? 'add(MakeDefined(Wonen/Onderhoudskosten, 0[Eur_jaarlijks]), MakeDefined(Werken/Onderhoudskosten, 0[Eur_jaarlijks]), MakeDefined(Verblijfsrecreatie/Onderhoudskosten, 0[Eur_jaarlijks]))'
+												: 'add(MakeDefined(Wonen/Onderhoudskosten, 0[Eur_jaarlijks]), MakeDefined(Werken/Onderhoudskosten, 0[Eur_jaarlijks]))';
+	
+	Template WerkenEnVerblijfsrecreatie
+	{
+		//
+		parameter<string> Sector_ref;
+		//
+		
+		attribute<Bool>    AllocatieHeeftPlaatsgevonden                    (AdminDomain) := = 'Stand/Sector_rel == /Classifications/Actor/Sector/V/'+Sector_ref;
+		parameter<float32> DefaultFractieUitgeefbaar                                     := = 'ModelParameters/'+Sector_ref+'/DefaultFractieUitgeefbaar', Descr = "De fractie van de terreinoppervlakte die uitgeefbaar wordt gemaakt";
+		parameter<float32> FractieGrasInGroen                                            := = 'VariantParameters/FractiesGroenIn'+Sector_ref+'/DezeVariant/FractieGrasInGroen';
+		
+		attribute<meter2>  StandPandFootprintWaarAllocHeeftPlaatsgevonden  (AdminDomain) := ='min_elem(AdminDomain/NrHaPerCell[meter2], Stand/PandFootprint_'+Sector_ref+' / float32(AllocatieHeeftPlaatsgevonden)) / float32(AllocatieHeeftPlaatsgevonden)';
+		
+		container OpDaken
+		{
+			parameter<float32> FractieGroenDak := /VariantParameters/VariantK/FractieGroenDakNieuwbouw[Variant_rel];
+			parameter<float32> FractieBlauwDak := /VariantParameters/VariantK/FractieBlauwDakNieuwbouw[Variant_rel]
+			, Descr = "Sinds #746. Tot dan kende deze tak alleen een groene fractie, terwijl juist werkpanden onder de dakvormproxy plat zijn en een blauw dak kunnen dragen; in de NbS-varianten, waar de groene fractie nul is, leverden nieuwe werkdaken daardoor niets. Team Stad van Deltares: blauw op platte daken in bestaande en nieuwe stad, met dezelfde percentages.";
+			parameter<float32> SomDakfracties    := FractieGroenDak + FractieBlauwDak, IntegrityCheck = "this <= 1.001f";
+			parameter<float32> FractiePlatDakCel := ='/ModelParameters/Piekbuiberging/Dakvorm/FractiePlatDak'+Sector_ref, Descr = "Het platte aandeel per sector uit ModelParameters/Piekbuiberging/Dakvorm: werkpanden plat, verblijfsrecreatie schuin.";
+			
+			attribute<meter2> Dakoppervlak            (AdminDomain) := StandPandFootprintWaarAllocHeeftPlaatsgevonden;
+			attribute<meter2> DakoppervlakPlat        (AdminDomain) := Dakoppervlak * FractiePlatDakCel;
+			attribute<meter2> DakoppervlakSchuin      (AdminDomain) := Dakoppervlak - DakoppervlakPlat;
+			attribute<meter2> DakoppervlakGroenPlat   (AdminDomain) := DakoppervlakPlat   * FractieGroenDak;
+			attribute<meter2> DakoppervlakGroenSchuin (AdminDomain) := DakoppervlakSchuin * FractieGroenDak;
+			attribute<meter2> DakoppervlakGroen       (AdminDomain) := DakoppervlakGroenPlat + DakoppervlakGroenSchuin;
+			attribute<meter2> DakoppervlakBlauw       (AdminDomain) := DakoppervlakPlat * FractieBlauwDak, Descr = "Alleen op het platte deel van het dak (#746), zie de bestaand-tak in Aanbod.dms.";
+			attribute<meter3> Resultaat               (AdminDomain) := add(
+				  DakoppervlakGroenPlat   * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDak]
+				, DakoppervlakGroenSchuin * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/GroenDakSchuin]
+				, DakoppervlakBlauw       * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/BlauwDak]
+			)
+			, ExplicitSuppliers = "SomDakfracties";
+		}
+		
+		container OpOverigVerhardUitgeefbaar
+		{
+			parameter<float32> FractieHalfverharding := /VariantParameters/VariantK/FractieHalfverhardingNieuwbouwUitgeefbaar[Variant_rel];
+			
+			attribute<meter2> VerhardOppervlak      (AdminDomain) := = '(AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * VariantParameters/FractiesGroenIn'+Sector_ref+'/DezeVariant/Verhard * DefaultFractieUitgeefbaar';
+			attribute<meter2> VerhardOppervlakGroen (AdminDomain) := VerhardOppervlak * FractieHalfverharding;
+			attribute<meter3> Resultaat             (AdminDomain) := VerhardOppervlakGroen * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Halfverharding];
+		}
+		
+		container OpVerhardOpenbaar
+		{
+			parameter<float32> FractieHalfverharding := /VariantParameters/VariantK/FractieHalfverhardingNieuwbouwOpenbaar[Variant_rel], IntegrityCheck = "this >= 0f && this <= 1f";
+			parameter<float32> FractieHolleWeg       := /VariantParameters/VariantK/FractieHolleWegNieuwbouwWijkweg[Variant_rel] * /ModelParameters/Piekbuiberging/AandeelWijkwegInOpenbareVerharding
+			, IntegrityCheck = "this >= 0f && this <= 1f"
+			, Descr = "De holle weg in nieuwbouw (#757): een nieuwe wijk moet zijn wegprofiel nog kiezen, dus de maatregel is daar goedkoper dan achteraf. Alleen op de openbare verharding, want op uitgeefbaar
+						terrein ligt geen weg. De fractie uit VariantK slaat op de wijkweg, net als in bestaand gebied, en wordt hier omgerekend naar de hele openbare verharding met
+						AandeelWijkwegInOpenbareVerharding, zodat de knop in beide takken hetzelfde betekent.";
+			
+			attribute<meter2> VerhardOppervlak         (AdminDomain) := = '(AdminDomain/NrHaPerCell[meter2] - StandPandFootprintWaarAllocHeeftPlaatsgevonden) * VariantParameters/FractiesGroenIn'+Sector_ref+'/DezeVariant/Verhard * (1f - DefaultFractieUitgeefbaar)';
+			attribute<meter2> VerhardOppervlakGroen    (AdminDomain) := VerhardOppervlak * FractieHalfverharding;
+			attribute<meter2> VerhardOppervlakHolleWeg (AdminDomain) := VerhardOppervlak * FractieHolleWeg;
+			attribute<meter3> ResultaatHalfverharding  (AdminDomain) := VerhardOppervlakGroen    * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Halfverharding];
+			attribute<meter3> ResultaatHolleWeg        (AdminDomain) := VerhardOppervlakHolleWeg * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/HolleWeg];
+			attribute<meter3> Resultaat                (AdminDomain) := ResultaatHalfverharding + ResultaatHolleWeg
+			, Descr = "De halfverharding ligt op de hele openbare verharding en de holle weg op het wijkwegdeel ervan. De twee delen dat oppervlak niet maar liggen erop: een wijkweg kan tegelijk doorlatend verhard
+						en hol zijn, en dan tellen de kentallen op, de lezing van team Stad in #757 voor bestaand gebied. Elke fractie op zich ligt tussen nul en een, en dat staat als controle bij de fracties zelf.";
+		}
+		
+		container OpGrasUitgeefbaar
+		{
+			parameter<float32> FractieWadi := /VariantParameters/VariantK/FractieWadiNieuwbouwUitgeefbaarGras[Variant_rel];
+			
+			attribute<meter2> GrasOppervlak     (AdminDomain) := = 'FractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/'+Sector_ref+'/Verhard) * DefaultFractieUitgeefbaar';
+			attribute<meter2> GrasOppervlakWadi (AdminDomain) := GrasOppervlak * FractieWadi;
+			attribute<meter3> Resultaat         (AdminDomain) := GrasOppervlakWadi * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
+		}
+		
+		container OpGrasOpenbaar
+		{
+			parameter<float32> FractieWadi := /VariantParameters/VariantK/FractieWadiNieuwbouwOpenbaarGras[Variant_rel];
+			
+			attribute<meter2> GrasOppervlak     (AdminDomain) := = 'FractieGrasInGroen * (AdminDomain/NrHaPerCell[meter2] - Verharding/'+Sector_ref+'/Verhard) * (1f - DefaultFractieUitgeefbaar)';
+			attribute<meter2> GrasOppervlakWadi (AdminDomain) := GrasOppervlak * FractieWadi;
+			attribute<meter3> Resultaat         (AdminDomain) := GrasOppervlakWadi * Classifications/WaterretentieK/Bergingscapaciteit[Classifications/WaterretentieK/V/Wadi];
+		}
+		
+		attribute<meter3> Totaal       (AdminDomain) := OpDaken/Resultaat + OpOverigVerhardUitgeefbaar/Resultaat + OpVerhardOpenbaar/Resultaat + OpGrasUitgeefbaar/Resultaat + OpGrasOpenbaar/Resultaat;
+		attribute<Eur>    Aanlegkosten (AdminDomain) := add(
+			  OpDaken/DakoppervlakGroenPlat                    * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/GroenDak]
+			, OpDaken/DakoppervlakGroenSchuin                  * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/GroenDakSchuin]
+			, OpDaken/DakoppervlakBlauw                        * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/BlauwDak]
+			, OpOverigVerhardUitgeefbaar/VerhardOppervlakGroen * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/Halfverharding]
+			, OpVerhardOpenbaar/VerhardOppervlakGroen          * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/Halfverharding]
+			, OpVerhardOpenbaar/VerhardOppervlakHolleWeg       * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/HolleWeg]
+			, OpGrasUitgeefbaar/GrasOppervlakWadi              * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/Wadi]
+			, OpGrasOpenbaar/GrasOppervlakWadi                 * Classifications/WaterretentieK/AanlegkostenInclOpslag[Classifications/WaterretentieK/V/Wadi]
+		), Descr = "Wat het aanleggen van de bergingsmaatregelen van deze nieuwbouw kost (#798). Dezelfde vijf termen als Totaal hieronder, met het kental in euro per m2. Werken en verblijfsrecreatie kennen geen exploitatiesaldo, dus anders dan bij wonen is dit de enige plek waar deze kosten meetellen; ze sturen de allocatie van werken niet.";
+		attribute<Eur_jaarlijks> Onderhoudskosten (AdminDomain) := add(
+			  OpDaken/DakoppervlakGroenPlat                    * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/GroenDak]
+			, OpDaken/DakoppervlakGroenSchuin                  * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/GroenDakSchuin]
+			, OpDaken/DakoppervlakBlauw                        * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/BlauwDak]
+			, OpOverigVerhardUitgeefbaar/VerhardOppervlakGroen * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/Halfverharding]
+			, OpVerhardOpenbaar/VerhardOppervlakGroen          * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/Halfverharding]
+			, OpVerhardOpenbaar/VerhardOppervlakHolleWeg       * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/HolleWeg]
+			, OpGrasUitgeefbaar/GrasOppervlakWadi              * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/Wadi]
+			, OpGrasOpenbaar/GrasOppervlakWadi                 * Classifications/WaterretentieK/Onderhoudskosten[Classifications/WaterretentieK/V/Wadi]
+		), Descr = "Het jaarlijkse onderhoud aan die maatregelen (#798).";
+	}
+}

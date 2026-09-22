@@ -22,15 +22,87 @@ container Landbouw : using = "Classifications/Landbouw"
 	,	url         = "https://basisregistratieondergrond.nl/inhoud-bro/registratieobjecten/modellen/geotop-gtm/"
 	,	StorageName = "%RS_Lb_DataDir%/landgebruik/peat_thickness_regridded.tif";
 	
-	attribute<VoederCategorie> Voedergewas_Categorie_2014_Import (rdc_25m)
-	:	Descr       = "gewassen 6 Categorieën"
-	,	Source      = "Aanlevering LEI op 10 april 2015 Bron14"
-					  "BRP en de landbouwtelling van 2014 "
-	,	url         = "%RS_Lb_DataDir%/Landgebruik/voedergew2014.txt"
-	,	StorageName = "%RS_Lb_DataDir%/Landgebruik/voedergew2014_categorie.tif";
-	
-	attribute<VoederCategorie> Voedergewas_Categorie_2014 (rdc_25m):= MakeDefined(voedergewas_Categorie_2014_Import, 4[VoederCategorie]);
-	
+	container BRP
+	: Descr = "De Basisregistratie Gewaspercelen, het gewas per perceel zoals de teler het opgeeft; vervangt sinds #751 de voedergewassenkaart uit 2014, een LEI-aanlevering op basis van de BRP en de
+				landbouwtelling van 2014 waarvan de herkomst niet vastlag en die op een vijfde van haar areaal grasland zei waar de BRP bouwland registreert. De BRP geeft het gewas per perceel, jaarlijks,
+				met een bekende herkomst, maar niet de melkveedichtheid; de driedeling extensief, standaard en intensief is daarom losgelaten, zie Classifications/Landbouw/BRPGewas. Geen vlakdekkende kaart,
+				want alleen percelen die voor subsidie zijn opgegeven, dus zij vervangt CBS niet als poortwachter en LGN niet als achtervang: de volgorde in BaseData/Grondgebruik blijft CBS, dan deze bron,
+				dan LGN. Het bestand staat in de wortel van %sourceDataDir%; verplaatsen naar %RS_Lb_DataDir%/Landgebruik is een bewuste actie van de beheerder, want die schijf is schrijf-eenmaal."
+	{
+		container Bron
+		:	StorageName     = "='%RSo_DataDir%/Grondgebruik/BRP/brpgewaspercelen_definitief_'+/ModelParameters/BRP_Year+'.gpkg'"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "TRUE"
+		,	Source          = "RVO, Basisregistratie Gewaspercelen, definitieve versie"
+		,	url             = "https://www.rvo.nl/onderwerpen/basisregistratie-gewaspercelen-brp"
+		,	DialogData      = "rdc_meter"
+		{
+			unit<uint32> perceel
+			:	SqlString = "select gewascode, geom from brp_gewas where category <> 'Landschapselement' order by ST_Area(geom) desc"
+			,	Descr = "De percelen, zonder de landschapselementen en op volgorde van groot naar klein. De landschapselementen (houtwallen, bomenrijen, slootkanten, bijna de helft van de records) liggen als kleine
+						polygonen binnen de percelen en zijn op 25 meter niet zinvol te rasteren. De volgorde is er tegen de nesting: poly2grid laat de laatst getekende polygoon winnen, dus met groot naar klein
+						wint een klein perceel binnen een groter (skill geodms-valkuilen). Deze string moet letterlijk blijven en mag geen =-expressie worden: de fingerprint van de tif leest zijn tekst met
+						PropValue, en die geeft de expressietekst en niet de uitkomst; moet er iets variabels in, zet die waarde dan als eigen sleutel in Fingerprint_Gewascode.";
+		}
+
+		attribute<Int32> Calc_Gewascode (rdc_25m) := Bron/perceel/gewascode[poly2grid(Bron/perceel/geometry, rdc_25m)]
+		, Descr = "De gewascode per cel, null waar geen perceel ligt. Int32 omdat de kolom als MEDIUMINT binnenkomt.";
+
+		parameter<String> FileName_Gewascode := '%LocalDataProjDir%/BaseData/Landbouw/BRP_Gewascode_25m_'+/ModelParameters/BRP_Year+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+
+		parameter<String> Fingerprint_Gewascode :=
+			  'brp_year='          + /ModelParameters/BRP_Year
+			+ ';sql='              + PropValue(Bron/perceel, 'SqlString')
+			+ ';study_area='       + /ModelParameters/StudyArea
+			+ ';grid_size='        + string(rdc_25m/gridsize)
+		, Descr = "De volledige lijst invoeren die de tif bepaalt. brp_year bepaalt via de bestandsnaam welk gpkg wordt gelezen. De sleutel sql draagt de letterlijke tekst van de SqlString, want die bepaalt
+					welke percelen meedoen en in welke volgorde ze worden gerasterd, en dat laatste beslist bij overlap wie wint; zonder die sleutel zou een aanpassing de uitkomst veranderen zonder remake en
+					zonder dat de areaaltoets hieronder vuurt (#613). De koppeling naar de landbouwklasse staat er bewust niet in: de tif draagt de rauwe gewascode en de vertaling gebeurt na het lezen.";
+
+		container Decoupling_Gewascode := /Templates/DecoupledFile_T(FileName_Gewascode, Fingerprint_Gewascode);
+
+		attribute<Int32> Make_Gewascode (rdc_25m) := Calc_Gewascode, StorageName = "=FileName_Gewascode", StorageType = "gdalwrite.grid", ExplicitSuppliers = "Decoupling_Gewascode/Write_Fingerprint;Controle/Afwijking"
+		, Descr = "Schrijft de gerasterde gewascode eenmalig weg. Het rasteren kost ongeveer een minuut en leest 2,9 GB van de gesynchroniseerde schijf; ontkoppelen scheelt dat bij elke volgende aanroep.";
+
+		attribute<Int32> Read_Gewascode (rdc_25m) : StorageName = "=FileName_Gewascode", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+
+		attribute<BRPGewasType> BRPGewasType_rel (rdc_25m) := = Decoupling_Gewascode/MayReuse ? 'rlookup(Read_Gewascode, BRPGewasType/code)' : 'rlookup(Make_Gewascode, BRPGewasType/code)'
+		, Descr = "Vraag Decoupling_Gewascode/Explanation op als je wilt weten waarom de tif wel of niet opnieuw wordt gemaakt.";
+
+		// 			De vertaling gebeurt hier, na het lezen, en niet in de tif. Dat is bewust: de tif draagt de rauwe
+		// 			gewascode, dus een wijziging in BRPGewas werkt meteen door en hoeft niet in de fingerprint. Zou de
+		// 			tif de vertaalde klasse dragen, dan was die koppeling wel een determinant en leverde een wijziging
+		// 			aan de tabel stil een verouderd bestand.";
+
+		container Controle
+		: Descr = "Areaaltoets op het rasteren, naast de fingerprint. Een fingerprintsleutel vangt een gewijzigde SqlString niet: verandert daar de sorteervolgorde of een filter, dan blijft de sleutel gelijk terwijl het raster verschuift. Bij #613 verdween zo 1.500 van de 12.233 ha met exitcode 0. Deze toets legt het gerasterde areaal naast het polygoonareaal en valt om zodra die twee uit elkaar lopen."
+		{
+			parameter<Ha> Areaal_Vector := sum(area(Bron/perceel/geometry, meter2_f64)[Ha])
+			, Descr = "Het areaal van alle percelen samen, rechtstreeks uit de polygonen.";
+
+			parameter<Ha> Areaal_Raster := sum(IsDefined(Calc_Gewascode) ? rdc_25m/NrHaPerCell : 0[Ha])
+			, Descr = "Hetzelfde areaal zoals het model het op 25 meter gerasterd heeft.";
+
+			parameter<Bool> IsHeelNederland := /ModelParameters/StudyArea == 'Nederland'
+			, Descr = "Draait het model over het hele land? Bepaalt hoe streng de toets hieronder kan zijn.";
+
+			parameter<float32> Ratio := Areaal_Raster / Areaal_Vector
+			, Descr = "De verhouding tussen die twee; het rasteren kost een fractie van een procent, want percelen zijn groot ten opzichte van een cel van 25 meter. De marge van een procent is ruim en toch scherp
+						genoeg voor het soort fout dat hij moet vangen (#613). Hangt via ExplicitSuppliers aan Make_Gewascode en vuurt dus alleen wanneer de tif werkelijk wordt gemaakt, want aan de leeskant zou hij
+						het gpkg bij elke run openen; hij vult de fingerprint aan en vervangt haar niet, vandaar de SqlString in de sleutel.";
+
+			parameter<float32> Afwijking := IsHeelNederland
+				? abs(Ratio - 1f)
+				: (Ratio > 0.01f && Ratio < 1.01f ? 0f : 1f)
+			, IntegrityCheck = "Afwijking < 0.01f"
+			, Descr = "Waar de toets werkelijk op valt: op heel Nederland de afstand van Ratio tot 1, onder de 0,01. Op een kleiner studiegebied kan Ratio nooit 1 worden, want Areaal_Vector telt alle percelen in
+						het gpkg en Areaal_Raster alleen het studiegebied, en een centroide-filter lost dat niet op omdat grenspercelen dan heel meetellen en half gerasterd worden. Buiten het landelijke geval eist
+						de toets daarom alleen dat er iets gerasterd is en niet meer dan de vectorkant, wat de grove faalvormen vangt.";
+
+		}
+	}
+
 
 	container WUR_Kansenkaarten
 	{
@@ -68,7 +140,7 @@ container Landbouw : using = "Classifications/Landbouw"
 			parameter<String> Variant;
 			
 			unit<UInt32> Kansenkaart 
-			: StorageName = "='%RS_Lb_DataDir%/Gewassen/WUR_Kansenkaarten/'+Variant_name+' 2050/'+gewas_name+'.gpkg'"
+			: StorageName = "='%RS_Lb_DataDir%/Gewassen/WUR_Kansenkaarten/'+/VariantParameters/VariantK/Kansenkaart_Levering[rlookup(Variant_name, /VariantParameters/VariantK/name)]+' 2050/'+gewas_name+'.gpkg'"
 			, StorageType = "gdal.vect"
 			, StorageReadOnly = "TRUE"
 			, DialogData = "rdc_meter"
@@ -113,6 +185,8 @@ container Landbouw : using = "Classifications/Landbouw"
 			, StorageReadOnly = "TRUE";
 
 			unit<uint32> banden := cat_range(0, 2844)
+			, Descr = "De 2844 banden van de netcdf, een per rij van combo. Het item bN leest GDAL-band N; de GDAL-optie BANDS is eengebaseerd, dus combo/band is id plus 1 en het geldige bereik loopt van 1 tot en
+						met 2844 (skill geodms-valkuilen). De twee andere banden-containers, dmgwet_bands en dmgdry_bands, hebben dezelfde opbouw en worden op dit moment door niets gelezen."
 			{
 				attribute<uint32> bandnr := id(.) + 1;
 				attribute<string> name := 'b'+string(bandnr);
@@ -123,7 +197,7 @@ container Landbouw : using = "Classifications/Landbouw"
 					banden/name
 					, dmgtot
 					, float32
-					, "BANDS=" + string(id(banden))
+					, "BANDS=" + string(banden/bandnr)
 				) 
 				, StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database_20260610.nc:dmgtot"
 				, StorageType     = "gdal.grid"
@@ -134,7 +208,7 @@ container Landbouw : using = "Classifications/Landbouw"
 					banden/name
 					, dmgwet
 					, float32
-					, "BANDS=" + string(id(banden))
+					, "BANDS=" + string(banden/bandnr)
 				) 
 				, StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database_20260610.nc:dmgwet"
 				, StorageType     = "gdal.grid"
@@ -145,7 +219,7 @@ container Landbouw : using = "Classifications/Landbouw"
 					banden/name
 					, dmgdry
 					, float32
-					, "BANDS=" + string(id(banden))
+					, "BANDS=" + string(banden/bandnr)
 				) 
 				, StorageName = "NETCDF:%RS_Lb_DataDir%/Gewassen/WWL_relatie_database_20260610.nc:dmgdry"
 				, StorageType     = "gdal.grid"
@@ -171,7 +245,17 @@ container Landbouw : using = "Classifications/Landbouw"
 				attribute<uint32>      bodem_code := codes/bodem/code[bodem_rel];
 			}
 
-			unit<spoint> wwl_grid := WWL_relatie_database/dmgtot;   // 301 x 301
+			unit<uint32> wwl_k := range(uint32, 0, 90601)
+			, Descr = "De relatiegrid van 301 bij 301 als platte reeks in rijvolgorde: element k is rij k div 301 en kolom k mod 301. Een union_data over de grid-eenheid levert de banden in de
+						tegelvolgorde van de opslag en niet in rijvolgorde; perm zegt per punt waar zijn waarde in die opslagvolgorde staat, zodat de LUT de waarde bij het juiste punt legt. Zonder die
+						permutatie hoorde de gestapelde waarde bij een ander punt dan de sleutel zei, en kreeg een deel van de cellen de null van de onmogelijke helft (#837)."
+			{
+				attribute<uint32>                   rij := id(.) / 301;
+				attribute<uint32>                   kol := id(.) % 301;
+				attribute<dmgtot> pnt            := point_yx(int16(rij), int16(kol), dmgtot);
+				attribute<dmgtot> opgeslagen_pnt := union_data(., id(dmgtot)), Descr = "Het punt waarvan de waarde op deze positie in de opslagvolgorde staat.";
+				attribute<.>      perm           := rlookup(pnt, opgeslagen_pnt), Descr = "De positie in de opslagvolgorde van het punt op deze rij-major positie.";
+			}
 
 			// alleen de 9 gewassen die in de netcdf-dimensie zitten
 			unit<uint32> WWL_Gewassen := cat_range(0, 9)
@@ -198,7 +282,31 @@ container Landbouw : using = "Classifications/Landbouw"
 				, 'OpbrengstenDerving_T('+string(id(OpbrengstendervingsVarianten))+'[OpbrengstendervingsVarianten])'
 			)
 		{
-			parameter<String> generate := 'Ready', explicitsuppliers = "=AsList(OpbrengstendervingsVarianten/name+'/opbrengstderving', ';')";
+			parameter<String> generate := 'Ready', explicitsuppliers = "=AsList(OpbrengstendervingsVarianten/name+'/Write_opbrengstderving', ';')"
+			, Descr = "Maakt de opbrengstdervingskaarten opnieuw. Noemt met opzet Write_Opbrengstderving en niet Opbrengstderving: dat laatste valt bij OpbrengstdervingOntkoppeld terug op de leeskant, en dan zou deze haak de bestanden lezen die hij hoort te maken.";
+		
+			container NbSGenuanceerder := NbSGenuanceerd;
+			container NbSGenuanceerd
+			{
+				parameter<String> Generate       := 'Ready', explicitsuppliers = "=AsList('Generate_'+WWL_Zichtjaren/label, ';')";
+				parameter<String> Generate_Y2017 := 'Ready', explicitsuppliers = "=AsList('Y2017/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+				parameter<String> Generate_Y2050 := 'Ready', explicitsuppliers = "=AsList('Y2050/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+				parameter<String> Generate_Y2085 := 'Ready', explicitsuppliers = "=AsList('Y2085/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+			}
+			container BAU
+			{
+				parameter<String> Generate       := 'Ready', explicitsuppliers = "=AsList('Generate_'+WWL_Zichtjaren/label, ';')";
+				parameter<String> Generate_Y2017 := 'Ready', explicitsuppliers = "=AsList('Y2017/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+				parameter<String> Generate_Y2050 := 'Ready', explicitsuppliers = "=AsList('Y2050/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+				parameter<String> Generate_Y2085 := 'Ready', explicitsuppliers = "=AsList('Y2085/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+			}
+			container BAU2
+			{
+				parameter<String> Generate       := 'Ready', explicitsuppliers = "=AsList('Generate_'+WWL_Zichtjaren/label, ';')";
+				parameter<String> Generate_Y2017 := 'Ready', explicitsuppliers = "=AsList('Y2017/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+				parameter<String> Generate_Y2050 := 'Ready', explicitsuppliers = "=AsList('Y2050/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+				parameter<String> Generate_Y2085 := 'Ready', explicitsuppliers = "=AsList('Y2085/'+ WWL_relatie_database/WWL_Gewassen/name+'/Write_opbrengstderving', ';')";
+			}
 		}
 
 		unit<uint8> OpbrengstendervingsVarianten := combine_uint8(NL2120_Varianten, WWL_Zichtjaren, WWL_relatie_database/WWL_Gewassen)
@@ -217,7 +325,13 @@ container Landbouw : using = "Classifications/Landbouw"
 
 			parameter<string>  NL2120_Varianten_name := NL2120_Varianten/label[OpbrengstendervingsVarianten/NL2120_Varianten_rel[OpbrengstendervingsVarianten_rel]];
 			parameter<string>  WWL_Zichtjaar         := WWL_Zichtjaren/name[OpbrengstendervingsVarianten/WWL_Zichtjaren_rel[OpbrengstendervingsVarianten_rel]];
-			parameter<uint32>  Zichtjaar_klimaat     := uint32(WWL_Klimaatscenarios/v/WarmHoog);
+			parameter<uint32>  Zichtjaar_klimaat     := WWL_Zichtjaar == '2017'
+																? uint32(/ModelParameters/Landbouw/Scenario/Basisjaar_rel)
+																: uint32(/ModelParameters/Landbouw/Scenario/WarmHoog_rel)
+			, Descr = "Welke klimaatband van de WWL-schaderelatie deze kaart gebruikt: die van het basisjaar of die van het scenario. Het klimaat is volgens Deltares in #782 een scenariokenmerk en geen
+						variantkenmerk, dus de keuze staat in ModelParameters/Landbouw/Scenario en geldt voor alle varianten; BAU2 leest via VariantK/Hydrologie_Levering de referentiestanden en krijgt hier de warme
+						schaderelatie, een bewuste keuze van Deltares (zie de vraag in #782). Het basisjaar houdt de referentieband, want SourceData/Water/Grondwaterstanden zet er voor elke variant REF2017BP18 op.
+						Of de combinatie van W2050-standen en een warme schaderelatie voor zichtjaar 2040 de bedoeling is, is een vraag voor Deltares.";
 			parameter<uint32>  Gewas_code            := WWL_relatie_database/WWL_Gewassen/code[OpbrengstendervingsVarianten/WWL_Gewassen_rel[OpbrengstendervingsVarianten_rel]];
 			parameter<string>  Gewas_name            := WWL_relatie_database/WWL_Gewassen/label[OpbrengstendervingsVarianten/WWL_Gewassen_rel[OpbrengstendervingsVarianten_rel]];
 
@@ -233,14 +347,22 @@ container Landbouw : using = "Classifications/Landbouw"
 				attribute<uint32> band       := org_rel -> combo/band;
 			}
 
-			unit<uint32> LUT := combine(combo_sel, WWL_relatie_database/wwl_grid)   //lookup table
+			unit<uint32> LUT_opslag := combine(combo_sel, WWL_relatie_database/dmgtot)
+			, Descr = "De banden van deze gewas-klimaatcombinatie gestapeld, per combinatie in de opslagvolgorde van de grid (tegels); alleen via LUT/opslag_rel te lezen."
 			{
-				attribute<spoint>  wwl_lin    := second_rel;         
-				attribute<uint32>  wwl_row    := uint32(PointRow(wwl_lin));
-				attribute<uint32>  wwl_col    := uint32(PointCol(wwl_lin));
+				attribute<float32> dmgtot_stack := ='union_data(., ' + AsItemList('WWL_relatie_database/dmgtot_bands/b' + string(combo_sel/band)) + ')';
+			}
+			unit<uint32> LUT := combine(combo_sel, WWL_relatie_database/wwl_k)   //lookup table
+			{
+				attribute<uint32>  wwl_row    := WWL_relatie_database/wwl_k/rij[second_rel];
+				attribute<uint32>  wwl_col    := WWL_relatie_database/wwl_k/kol[second_rel];
 
+				// De netcdf heeft ghg als rij-as en glg als kolom-as, beide van 0 tot 3 meter oplopend. GDAL leest de rij-as gespiegeld
+				// (rij 0 is ghg 3,00 m) en de kolom-as ongespiegeld (kolom 0 is glg 0,00 m). Gemeten in #837: de natste hoek, 99 procent
+				// schade, ligt op rij 300 kolom 0, de droogste op rij 0 kolom 300, en de fysisch onmogelijke helft (GLG ondieper dan GHG)
+				// is null waar de kolom kleiner is dan 300 min de rij.
 				attribute<uint32>  ghg        := 300 - wwl_row;   // rij   = ghg, cm = 300 - index
-				attribute<uint32>  glg        := 300 - wwl_col;   // kolom = glg, cm = 300 - index			
+				attribute<uint32>  glg        := wwl_col;         // kolom = glg, cm = index
 				attribute<uint32>  bodem_code := combo_sel/bodem_code[first_rel];
 				attribute<uint32>  gewas_code := combo_sel/gewas_code[first_rel];
 				attribute<uint32>  beregening := combo_sel/beregening[first_rel];
@@ -248,14 +370,38 @@ container Landbouw : using = "Classifications/Landbouw"
 				// mixed-radix sleutel; slots: beregening<2, bodem_code<8192 (BOFEK EK max 5007), gewas_code<32, ghg<512, glg<512. Zelfde formule per-cel (zie key hieronder).
 				attribute<uint64>  key		  := (((uint64(beregening)*8192u64 + uint64(bodem_code))*32u64 + uint64(gewas_code))*512u64 + uint64(ghg))*512u64 + uint64(glg);
 
-				attribute<float32> dmgtot_stack  := ='union_data(., ' + AsItemList('WWL_relatie_database/dmgtot_bands/b' + string(combo_sel/band)) + ')';
+				attribute<LUT_opslag> opslag_rel  := value(uint32(first_rel) * 90601 + uint32(WWL_relatie_database/wwl_k/perm[second_rel]), LUT_opslag), Descr = "Waar de waarde van deze rij in de gestapelde opslagvolgorde staat.";
+				attribute<float32>    dmgtot_stack := LUT_opslag/dmgtot_stack[opslag_rel];
 			}
 
 			container Input
 			{
-				attribute<uint32>  bodem_code   (AdminDomain) := SourceData/Bodem/BOFEK/BOFEK_CODE;
-				attribute<uint32>  gewas_code   (AdminDomain) := const(../Gewas_code, AdminDomain);
-				attribute<uint32>  beregenings_code (AdminDomain)  := uint32(Beregeningskaart_Basisprognoses_2018/WWL_Beregenings_rel);
+				attribute<uint32> bodem_code         (AdminDomain) := SourceData/Bodem/BOFEK/BOFEK_CODE_Gevuld, Descr = "De BOFEK-code met de vulling van de cellen zonder code (#837).";
+				attribute<uint32> gewas_code         (AdminDomain) := const(../Gewas_code, AdminDomain);
+				attribute<bool>   VernattingOpgelegd (AdminDomain) := =
+						NL2120_Varianten_name == 'NbSGenuanceerd'
+							? 'SourceData/Water/Grondwaterstanden/NbSGenuanceerd/Opgelegd'
+							: 'const(FALSE, AdminDomain)'
+				, Descr = "Legt de veenbouwsteen op deze cel een grondwaterstand op? Alleen in NbSGenuanceerd waar; de andere varianten kennen geen veenlevering en de container met die naam bestaat daar niet, vandaar
+							de tak op de variantnaam. Dezelfde cellen als SourceData/Water/Grondwaterstanden/NbSGenuanceerd/Opgelegd: de bouwstenen 1, 2, 3a, 3b, 4a, 4b en 5 tot en met 8, dus zonder open water, de twee
+							bebouwde bouwstenen en het gebied buiten het veen.";
+
+				attribute<uint32>  beregenings_code_scenario (AdminDomain)  := =
+						/ModelParameters/Landbouw/BeregeningScenario_name == 'A_GeenBeregening'
+							? 'const(uint32(/Classifications/Landbouw/WWL_BeregeningsK/v/GeenBeregening), AdminDomain)'
+							: /ModelParameters/Landbouw/BeregeningScenario_name == 'B1_Beregening_allepercelen_ongelim'
+								? 'const(uint32(/Classifications/Landbouw/WWL_BeregeningsK/v/WelBeregening), AdminDomain)'
+								: 'uint32(Beregeningskaart_Basisprognoses_2018/WWL_Beregenings_rel)'
+				, Descr = "Welke beregeningsvariant de WWL-schaderelatie per cel gebruikt; de relatiedatabase kent GeenBeregening en WelBeregening. Gestuurd door ModelParameters/Landbouw/BeregeningScenario_name: A
+							betekent nergens beregening, B1 overal, en B2 precies wat de Beregeningskaart_Basisprognoses_2018 zegt, alleen de percelen met een installatie in 2018. De opbrengstderving is de dominante
+							term in de netto-opbrengst, dus dit is geen cosmetische keuze.";
+
+				attribute<uint32>  beregenings_code (AdminDomain) := VernattingOpgelegd
+					? const(uint32(/Classifications/Landbouw/WWL_BeregeningsK/v/GeenBeregening), AdminDomain)
+					: beregenings_code_scenario
+				, Descr = "Het scenario hierboven, met een uitzondering: op de cellen waar de veenbouwsteen een grondwaterstand oplegt staat de beregening uit, wat het scenario ook zegt, het antwoord van Deltares op
+							de vraag uit #542 (#793). De uitzondering ligt op Opgelegd en niet alleen op de natte-teeltklassen, want ook de veenvormende bouwstenen zijn nat. Riet en lisdodde raakt dit niet, want die
+							lezen de kansenkaarten; wat deze regel stuurt is de derving van de WWL-gewassen op diezelfde cellen, en daarmee of de allocator daar iets anders dan natte teelt zou willen neerzetten.";
 				attribute<float32> ghg_cm       (AdminDomain) := ='gxg_scale * gxg_sign * SourceData/Water/Grondwaterstanden/'+NL2120_Varianten_name+'/GHG_'+WWL_Zichtjaar+'';
 				attribute<float32> glg_cm       (AdminDomain) := ='gxg_scale * gxg_sign * SourceData/Water/Grondwaterstanden/'+NL2120_Varianten_name+'/GLG_'+WWL_Zichtjaar+'';
 
@@ -267,7 +413,21 @@ container Landbouw : using = "Classifications/Landbouw"
 			attribute<uint32>  match            (AdminDomain) := rlookup(key, lut/key);
 
 			// ----- RESULT
-			attribute<float32> Opbrengstderving (AdminDomain) := lut/dmgtot_stack[match] / 100f, StorageName = "='%RS_Lb_DataDir%/Gewassen/WWL_Opbrengstderving/'+NL2120_Varianten_name+'_'+WWL_Zichtjaar+'_'+Gewas_name+'.tif'", StorageType = "gdalwrite.grid";
+			parameter<String> StorageStr := '%LocalDataProjDir%/BaseData/Landbouw/WWL_Opbrengstderving/'+NL2120_Varianten_name+'_'+WWL_Zichtjaar+'_'+Gewas_name+'_'+/ModelParameters/StudyArea+'.tif'
+			, Descr = "Waar de opbrengstdervingskaart van deze variant, dit zichtjaar en dit gewas komt te staan: onder %LocalDataProjDir%, want dit is modeluitvoer en geen brondata, en de gedeelde brondata op
+						Nextcloud is schrijf-eenmaal. De studiegebied-suffix hoort erbij omdat AdminDomain met het studiegebied meebeweegt; zonder suffix leest een run op een deelgebied het Nederland-bestand in een
+						kleiner domein, met een FileTileArray-fout en een leeg resultaat.";
+
+			attribute<float32> Write_Opbrengstderving (AdminDomain) := lut/dmgtot_stack[match] / 100f, StorageName = "=StorageStr", StorageType = "gdalwrite.grid"
+			, Descr = "De opbrengstderving per gewas, afgeleid uit BOFEK, de WWL-relatiedatabase en de grondwaterstanden van dit zichtjaar. Het item rekent de kaart elke keer opnieuw uit en schrijft hem weg, en de
+						zware kant van de keten zit hier: per gewas worden honderden banden uit WWL_relatie_database gelezen. Vraag daarom Read_Opbrengstderving en niet dit item, tenzij je de kaart bewust opnieuw
+						wilt maken.";
+
+			attribute<float32> Read_Opbrengstderving  (AdminDomain) : StorageName = "=PropValue(Write_Opbrengstderving, 'StorageName')", StorageType = "gdal.grid"
+			, Descr = "De weggeschreven kaart teruglezen, zonder de netcdf aan te raken.";
+
+			attribute<float32> Opbrengstderving       (AdminDomain) := =/ModelParameters/OpbrengstdervingOntkoppeld ? 'Read_Opbrengstderving' : 'Write_Opbrengstderving'
+			, Descr = "Wat de rest van het model leest. Zie ModelParameters/OpbrengstdervingOntkoppeld voor waarom de leeskant de default is.";
 		}
 
 		// ================================================================================================================================================================
@@ -418,7 +578,8 @@ container Landbouw : using = "Classifications/Landbouw"
 		attribute<Float32>                  a                       (rdc_25m) := 1f - ClusterRandomValues;
 		parameter<UInt32>                   n                                 := uint32(sum(float32(TeveelVerzilting) * ModelParameters/Landbouw/Verzilt_Areaal_Fractie));
 		parameter<Float32>                  zaaglijn                          := nth_element(a, n); 
-		attribute<Bool>                     AangetastVerziltGebied  (rdc_25m) := a <= zaaglijn; 
+		attribute<Bool>                     AangetastVerziltGebied  (rdc_25m) := const(FALSE, rdc_25m)
+		, Descr = "Waar de verzilting de opbrengst aantast: sinds #793 nergens, want de verzilting wordt in NL2120 niet meegenomen. De zaaglijn hierboven staat er nog voor wie haar weer wil aansluiten (a <= zaaglijn).";
 	}
 	
 	

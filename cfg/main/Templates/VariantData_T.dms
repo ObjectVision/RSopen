@@ -1,0 +1,478 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het instapsjabloon van de variantdata: hiervan bestaat een instantie per variant. Het wordt aangeroepen vanuit
+// container VariantData in VariantData.dms. Hierin wordt overal de compacted versie van de BaseData genomen en
+// worden variantspecifieke datasets opgeroepen of bewerkt.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template VariantData_T
+{
+	parameter<VariantParameters/VariantK> Variant_rel; 
+	parameter<Bool> HeeftLandschapslevering := VariantParameters/VariantK/HeeftLandschapslevering[Variant_rel]
+	, Descr = "Leest deze variant de landschapsleveringen veen, kust, zand en rivieren? Uit de kolom Landschap_Levering in VariantParameters/VariantK: een eigenschap van de levering en niet van de
+				variantnaam, zodat een tweede variant met dezelfde leveringen ze ook ziet. De bronnamen hieronder houden het achtervoegsel NbSGenuanceerd, want zo heten de aangeleverde bestanden.";
+	///
+	parameter<string> Variant_name               := VariantParameters/VariantK/name[Variant_rel];
+	container         ThisVariant                := .;
+	container         ThisVariantClassifications := ='CaseClassifications/'+Variant_name;
+	
+	container StateBasisjaar := 
+		for_each_nedvn(
+			Classifications/Modellering/StandVar_Prep/path
+			, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/StartState/StateBasisjaar/State/'+Classifications/Modellering/StandVar_Prep/path+')' 
+			, CompactedAdminDomain
+			, Classifications/Modellering/StandVar_Prep
+			, Classifications/Modellering/StandVar_Prep/unit_name
+		), Descr = "In de /BaseData/StartState/StateBasisjaar wordt stand in het basisjaar al bepaald. Echter, in de deze container wordt hiervan alleen de waarden in het compacted domain geselecteerd om te worden gebruikt in de allocatie."
+	{
+		container wonen
+		{
+			attribute<Woning> Totaal     (CompactedAdminDomain) := ='add('+asItemList(Classifications/Vastgoed/WP2xVSSH/name)+')';
+			attribute<meter2> Footprint  (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/StartState/StateBasisjaar/State/Wonen/Footprint);
+		}
+
+	}
+	
+	container Claims :=
+		for_each_ne(
+			Modellering/ScenarioK/name
+			,'Zichtjaren_T('+string(id(Modellering/ScenarioK))+'[uint8])'
+		), Descr = "via dit template wordt per subsector per alloc regio per zichtjaar claims gegenereerd.", using = "Classifications/Time";
+	
+	Template Zichtjaren_T
+	{
+		parameter<Modellering/ScenarioK>      Scenario_rel;
+		///
+		parameter<string> Scenario_name              := Modellering/ScenarioK/name[Scenario_rel];
+		parameter<string> Casus_name                 := Scenario_name+'_'+Variant_name;
+		container         ThisVariantClassifications := ='CaseClassifications/'+Variant_name;
+		
+		container Zichtjaren :=
+			for_each_ne(
+				Time/Zichtjaar/name
+				,'Templates/Claims/Zichtjaar_T('+string(id(Time/Zichtjaar))+'[Time/Zichtjaar], Claims, ThisVariantClassifications)'
+			), Descr = "via dit template wordt per subsector per alloc regio per zichtjaar claims gegenereerd.", using = "Classifications/Time";
+	}
+	#include<Dichtheid.dms>
+	
+	container PotentieleState := 
+		for_each_ne(
+			Time/Zichtjaar/name
+			, 'Templates/PotentieleStates/PerZichtjaar_T('+quote(Time/Zichtjaar/name)+', Density)'
+		), Descr = "De potentiele state bepaalt hoe een cel gevuld zou kunnen woren in de toekomst. Oftewel, met een bepaalde dichtheid, maar ook of het uberhaupt daar mag.";
+	
+	
+	
+	container Zeef := 
+		for_each_ne(
+			Time/Zichtjaar/name
+			, 'Templates/Beschikbaarheden/Zeef_Zichtjaar_T('+quote(Time/Zichtjaar/name)+', ., Density, Suitability)'
+		), Descr = "De zeef filtert locaties weg die op basis van variant parameters af moeten vallen. Dit bouwt voort op de zeef uit de BaseData die niet variant specifiek zijn."
+	{
+		container Basisjaar :=
+			for_each_ne(
+				ThisVariantClassifications/Actor/VariantXSectorxSubsector/combi_name
+				,'Templates/Beschikbaarheden/Zeef_Basisjaar_T(
+					ThisVariantClassifications/Actor/VariantXSectorxSubsector
+					,'+string(id(ThisVariantClassifications/Actor/VariantXSectorxSubsector))+'[ThisVariantClassifications/Actor/VariantXSectorxSubsector]
+					,VariantData
+				)'
+			), Descr = "Basisjaar.";
+			
+		// container CC_Actor := ='ThisVariantClassifications/Actor';
+	
+	}
+	
+	container Suitability := 
+		for_each_ne(
+			Time/Zichtjaar/name
+			, 'Templates/Suitabilities/Suitability_Zichtjaar_T('+quote(Time/Zichtjaar/name)+','+string(Time/Zichtjaar/YearRange_rel)+'[YearRange])'
+		), Descr = "De suitability per subsector wordt hier waarnodig variant specifiek gemaakt (i.e. wonen), of slechts het compacted domain van genomen (i.e. werken)."
+	{
+		#include<Geschiktheden.dms>
+	}
+	
+	#include<Trede.dms>
+	#include<Wind_restricties.dms>
+	
+	// container Bouwen
+	// : Descr = "Extra restricties waar niet gebouwd mag worden."
+	// {
+		// container Overstromingsgevaarzones :=
+			// for_each_nedv(
+				// /Classifications/Overstromingsgevaarzonering/zoneringK/name
+				// , 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsgevaarzonering) == /Classifications/Overstromingsgevaarzonering/zoneringK/V/'+/Classifications/Overstromingsgevaarzonering/zoneringK/name+'
+					// &&'+'VariantParameters/VariantK/GevaarRegimeZone'+string(id(/Classifications/Overstromingsgevaarzonering/zoneringK))+'[VariantParameters/VariantK/V/'+Variant_name+'] == Classifications/Modellering/BouwregimeK/V/Bouwen'
+				// , CompactedAdminDomain
+				// , bool
+			// ), Descr = "In de variant parameters wordt opgegeven in welke overstromingsgevaren zones er wel of niet gebouwd mag worden. Deze worden hier geevalueerd en in een boolean compacted domain kaart verwerkt."
+		// {
+			// attribute<Bool> Totaal (CompactedAdminDomain) := = 'OR('+asItemList(/Classifications/Overstromingsgevaarzonering/zoneringK/name)+')'
+		// }
+	// }
+	
+	container Bouwregime
+	: Descr = "Wat mag er op deze plek met bebouwing gebeuren? De tweede van drie assen; de andere twee zijn ExogeenOpleggen (welk landgebruik komt hier) en Sloop (wijkt de bestaande bebouwing), zie de
+				toelichting bij Sloop. Een enkele geklasseerde kaart in plaats van losse booleans, zodat je hem als kaart op het scherm kunt zetten. De klassen staan in
+				Classifications/Modellering/BouwregimeK en lopen op in strengheid: Bouwen, BouwenMetMaatregelen, NietBouwen, Slopen; raken meerdere bronnen dezelfde cel, dan wint de strengste. Niet hierin:
+				welke bouwwijze-eis er geldt waar het regime BouwenMetMaatregelen is, want die verschilt per aanleiding (container BouwwijzeEis), en de exogene oplegging, die langs een eigen weg ook op slot
+				zet en ook sloopt (Zeef_T/IsRestrictief_DoorExogeenopleggen en Sloop/Totaal)."
+	{
+		container Bron
+		: Descr = "Het regime per aanleiding, voordat de strengste wint. Staat apart zodat in de zeef en in de diagnose te zien blijft waarom een cel dicht zit."
+		{
+			container Overstromingsgevaar
+			{
+				attribute<Classifications/Overstromingsgevaarzonering/zoneringK> Overstromingsgevaarzone_rel (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsgevaarzonering)
+				, Descr = "In welke overstromingsgevaarzone ligt de cel.";
+
+				attribute<Classifications/Modellering/BouwregimeK> RegimePerZone (Classifications/Overstromingsgevaarzonering/zoneringK) :=
+					='union_data(Classifications/Overstromingsgevaarzonering/zoneringK,'
+						+ AsItemList('VariantParameters/VariantK/GevaarRegimeZone'+string(id(Classifications/Overstromingsgevaarzonering/zoneringK))+'[VariantParameters/VariantK/V/'+Variant_name+']')
+						+ ')'
+				, Descr = "Het regime dat deze variant aan elke gevaarzone toekent, uit de zes VariantK-parameters GevaarRegimeZone0 tot en met 5. Die worden op volgnummer aan de zones gekoppeld, dus een zone erbij of eraf verschuift ze stil; daarom staat er bij GevaarRegimeZone0 een IntegrityCheck op het aantal zones. Slopen is daar verboden, zie de toelichting bij diezelfde parameter.";
+
+				attribute<Classifications/Modellering/BouwregimeK> BouwregimeK_rel (CompactedAdminDomain) := MakeDefined(RegimePerZone[Overstromingsgevaarzone_rel], Classifications/Modellering/BouwregimeK/V/Bouwen)
+				, Descr = "Het regime uit de overstromingsgevaarzonering. Buiten elke zone geldt Bouwen."; 
+			}
+			container Landschap
+			: Descr = "Het regime per landschapstype. Alleen gevuld met een landschapslevering; in de andere varianten staat overal Bouwen. Dit is het ruimtebeslag van de niet-bouwen-levering en niet de exogene
+						oplegging, die uit een tweede levering met een eigen begrenzing komt; alleen bij kust vallen die twee samen, bij veen zijn het twee losse kaarten, bij rivieren is het ruimtebeslag groter dan
+						de opgelegde natuur, en bij zand is de oplegging een allocatie die deels binnen en deels buiten dit masker landt. Sloop/Verschil meet hoever de twee uit elkaar lopen."
+			{
+				attribute<Classifications/Modellering/BouwregimeK> Veen (CompactedAdminDomain) :=
+					= HeeftLandschapslevering
+						? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, NatuurLevering/Landschap/Veen/Bouwregime_uitBouwsteen)'
+						: 'const(Classifications/Modellering/BouwregimeK/V/Bouwen, CompactedAdminDomain)'
+				, Descr = "Het bouwregime van het landschapstype veen: uit de gealloceerde bouwsteen (#684). Eerst de bouwstenen alloceren en daarna kolom J van de bouwstenentabel erop toepassen; die kolom is dezelfde
+																				indeling die de bebouwingstypekaart veen (#614) draagt, alleen per cel in plaats van per peilvak, zie Classifications/Grondgebruik/NbSBouwsteen/BouwregimeK_rel. De kaart zelf geeft alleen
+																				nog de bouwwijze-as (BouwwijzeEis). Als meta-expressie en niet als gewone ternair, zodat de bouwsteenallocatie alleen met een landschapslevering meerekent; in de andere varianten bestaat
+																				NatuurLevering/Landschap niet.";
+
+				attribute<Classifications/Modellering/BouwregimeK> Kust (CompactedAdminDomain) :=
+					HeeftLandschapslevering
+						? (collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd/IsKustIngreep) ? Classifications/Modellering/BouwregimeK/V/NietBouwen : Classifications/Modellering/BouwregimeK/V/Bouwen)
+						: const(Classifications/Modellering/BouwregimeK/V/Bouwen, CompactedAdminDomain)
+				, Descr = "Kerven, meegroeilandschappen en voorlanden, met het ruimtebeslag van #654. Regime NietBouwen (#707): geen nieuwbouw, maar de bestaande bebouwing blijft staan, net als bij zand en anders dan
+																				bij veen en het sloopgebied van rivieren. De natuur wordt er wel opgelegd, want die loopt langs ExogeenOpleggen en niet langs dit regime: op een verspreide woning binnen het ruimtebeslag
+																				komt de landgebruiksklasse natuur te staan terwijl de stand de woning houdt, een uitdrukkelijke keuze in #707 die alleen werkt zolang ModelParameters/Natuur/SloopVolgtExogeneOplegging op FALSE
+																				staat (#620). De niet-bouwen-kaart en de natuurkaart vallen hier samen, want beide komen uit IsKustIngreep; wat de omzetting in woningen doet staat in Sloop/Verschil/Kust707.";
+
+				attribute<Classifications/Modellering/BouwregimeK> Zand (CompactedAdminDomain) :=
+					HeeftLandschapslevering
+						? (collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/NietBouwen) ? Classifications/Modellering/BouwregimeK/V/NietBouwen : Classifications/Modellering/BouwregimeK/V/Bouwen)
+						: const(Classifications/Modellering/BouwregimeK/V/Bouwen, CompactedAdminDomain)
+				, Descr = "Het beekdalherstel (#630), NietBouwen en niet Slopen: de levering wil hier geen nieuwbouw maar laat de bestaande bebouwing staan. De zandallocatie zet binnen dit masker natuur neer om het
+																	areaal uit #652 te halen, en die natuur komt over de bestaande bebouwing heen te liggen (#768): de landgebruiksklasse wordt natuur, de stand houdt haar woningen en banen, wat werkt doordat
+																	ModelParameters/Natuur/SloopVolgtExogeneOplegging op FALSE staat (#620), net als bij kust. Sloop/Verschil/Woningen_OpSlotZonderSloopbedoeling telt daarom woningen die blijven staan. Dit masker is
+																	alleen het beekdal, waar de natte natuur landt; de droge natuur landt per definitie erbuiten, heeft geen regime en gaat alleen op slot langs Zeef_T/IsRestrictief_DoorExogeenopleggen.";
+
+				attribute<Classifications/Modellering/BouwregimeK> Rivieren (CompactedAdminDomain) :=
+					HeeftLandschapslevering
+						? (collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Sloopgebied/Slopen)
+								? Classifications/Modellering/BouwregimeK/V/Slopen
+								: collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/NietBouwen)
+									? Classifications/Modellering/BouwregimeK/V/NietBouwen
+									: Classifications/Modellering/BouwregimeK/V/Bouwen)
+						: const(Classifications/Modellering/BouwregimeK/V/Bouwen, CompactedAdminDomain)
+				, Descr = "Riviertrajecten en binnendijkse gebieden (#621), als enige van de vier landschapstypen met twee regimes naast elkaar (#620). Slopen geldt in het sloopgebied: de nieuwe uiterwaarden, dus de
+																		binnendijkse gebieden, min de dijken die behouden blijven en min de bebouwing die maar deels in dat vlak valt. NietBouwen geldt op de rest van het ruimtebeslag, dus op de riviertrajecten en
+																		de behouden dijken: geen nieuwbouw, maar de bestaande bebouwing blijft staan. De afbakening staat in SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd/Sloopgebied, met de
+																		schakelaars erbij. De oplegging volgt een eigen begrenzing: terrestrische natuur en water worden opgelegd (#751), de agrarische ecotopen krijgen niets; met
+																		ModelParameters/Natuur/SloopVolgtExogeneOplegging op FALSE blijft de bebouwing onder de nieuwe uiterwaardnatuur staan, behalve in het sloopgebied. Het verschil tussen dit regime en de oplegging
+																		staat in Sloop/Verschil/OpSlotMaarGeenNatuur.";
+
+				attribute<Classifications/Modellering/BouwregimeK> Totaal (CompactedAdminDomain) := max_elem(uint32(Veen), uint32(Kust), uint32(Zand), uint32(Rivieren))[Classifications/Modellering/BouwregimeK]
+				, Descr = "Strengste regime over de vier landschapstypen. Ze overlappen elkaar, onder meer 9.410 ha beekdal dat ook in het veengebied ligt.";
+			}
+		}
+
+		attribute<Classifications/Modellering/BouwregimeK> BouwregimeK_rel (CompactedAdminDomain) := max_elem(uint32(Bron/Overstromingsgevaar/BouwregimeK_rel), uint32(Bron/Landschap/Totaal))[Classifications/Modellering/BouwregimeK]
+		, Descr = "Het regime van deze cel: de strengste van de overstromingsgevaarzone en de landschapstypen. Dit is de kaart om op het scherm te zetten.";
+
+		attribute<bool> MagNietBouwen  (CompactedAdminDomain) := !Classifications/Modellering/BouwregimeK/MagBouwen[BouwregimeK_rel], Descr = "Waar geen nieuwbouw mag komen, dus regime NietBouwen of Slopen. Dit is wat de zeef leest.";
+		attribute<bool> MoetSlopen     (CompactedAdminDomain) := Classifications/Modellering/BouwregimeK/MoetSlopen[BouwregimeK_rel], Descr = "Waar de bestaande bebouwing wijkt op grond van het regime. Sloop/Totaal voegt daar de sloop door exogene oplegging aan toe.";
+		attribute<bool> MetMaatregelen (CompactedAdminDomain) := BouwregimeK_rel == Classifications/Modellering/BouwregimeK/V/BouwenMetMaatregelen, Descr = "Waar bouwen mag maar alleen met een geschikte bouwwijze. Welke eis dat is staat in BouwwijzeEis.";
+
+		attribute<bool> OpSlotDoorGevaarzone (CompactedAdminDomain) := !Classifications/Modellering/BouwregimeK/MagBouwen[Bron/Overstromingsgevaar/BouwregimeK_rel], Descr = "Alleen de overstromingskant, voor de zeef en de diagnose. Staat vandaag in geen enkele variant aan: GevaarRegimeZone0 en 1 staan overal op Bouwen en 2 tot en met 5 op Bouwen of BouwenMetMaatregelen.";
+		attribute<bool> OpSlotDoorLandschap  (CompactedAdminDomain) := !Classifications/Modellering/BouwregimeK/MagBouwen[Bron/Landschap/Totaal], Descr = "Alleen de landschapskant, voor de zeef en de diagnose.";
+	}
+
+	container BouwwijzeEis
+	: Descr = "Waar het regime BouwenMetMaatregelen is: welke eis stelt de aanleiding dan aan het ontwikkelpakket? De bouwwijze-as, gescheiden van de regime-as (#614), want dezelfde klasse
+				BouwenMetMaatregelen kan uit verschillende aanleidingen komen met verschillende eisen. De eisen zelf staan als vlaggen op Classifications/Modellering/BouwwijzeK, per ontwikkelpakket ingevuld
+				via de OP-kolom Bouwwijze; de zeef per ontwikkelpakket toetst ze in Zeef_Wonen_perOP_T."
+	{
+		attribute<bool> Overstromingsbestendig (CompactedAdminDomain) := Bouwregime/Bron/Overstromingsgevaar/BouwregimeK_rel == Classifications/Modellering/BouwregimeK/V/BouwenMetMaatregelen
+		, Descr = "De overstromingskant: hier moet de bouwwijze van het ontwikkelpakket een MaxOverstromingsdiepte aankunnen die boven de waterdiepte ter plaatse ligt. Welke gevaarzones op BouwenMetMaatregelen
+				staan verschilt per variant en staat in VariantParameters/VariantK/GevaarRegimeZone0 tot en met 5 (#734); in BAU en BAU2 geen enkele, dus daar geldt de eis nergens.";
+
+		attribute<bool> Bodemdalingbestendig (CompactedAdminDomain) := HeeftLandschapslevering ? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/AangepastBouwen) : const(FALSE, CompactedAdminDomain)
+		, Descr = "De categorie aangepast bouwen uit de bebouwingstypekaart veen: alleen ontwikkelpakketten waarvan de bouwwijze IsBodemdalingbestendig is (#505, #614).";
+
+		attribute<bool> Drijvend (CompactedAdminDomain) := HeeftLandschapslevering ? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/WonenOpWater) : const(FALSE, CompactedAdminDomain)
+		, Descr = "De categorie wonen op water uit dezelfde kaart: alleen drijvende ontwikkelpakketten (#505). Deze en de vorige gelden pas als VariantK/BouwwijzeVeenGeldtVoorOPs aanstaat: uit in BAU en BAU2, aan in de NbS-varianten (#680).";
+	}
+	
+	#include<Plannen.dms>
+	
+	container Restricties := 
+		for_each_ne(
+			Actor/Sector/name
+			,'Templates/VariantData/MaakRestrictieCombinaties_T('+quote(Actor/Sector/name)+')'
+		), Descr = "Via deze template wordt voor de relevante variant instelling combinaties van restrictie categorieen gemaakt.";
+	
+	
+	container Stimuli := 
+		for_each_ne(
+			Actor/Sector/name
+			,'Templates/VariantData/MaakStimuliCombinaties_T('+quote(Actor/Sector/name)+')'
+		), Descr = "Via deze template wordt voor de relevante variant instelling combinaties van stimuli categorieen gemaakt.";
+		
+	container NatuurLevering := Templates/VariantData/Natuur/Natuur_T(Variant_rel)
+	, Descr = "De exogene natuuroplegging als een stroom (#751): per cel het aangeleverde beheertype, of het water is en of het nieuw is. Zie de template; ExogeenOpleggen hieronder past het masker toe.";
+
+	container ExogeenOpleggen
+	: Descr = "Hier kan eventueel exogeen bepaald gebied worden opgelegd. Dit is enkel uitgewerkt voor de landbouw varianten. De levering gaat eerst langs het opleggingsmasker uit /BaseData/Omgeving/Opleggingsmasker: binnen bestaand bebouwd gebied (#641) en op exogeen grondgebruik legt het model niets op, in geen enkele variant."
+	{
+		attribute<bool>           IsBestaandBebouwdGebied (AdminDomain) := /BaseData/Omgeving/Opleggingsmasker/IsBestaandBebouwdGebied, Descr = "Bestaand bebouwd gebied volgens de eigen begrenzing, peiljaar uit ModelParameters/BegrenzingBebouwdGebied_jaar. Dat zijn vlakken op volle resolutie, dus dorpen en dorpsranden vallen erbinnen en verspreide bebouwing erbuiten.";
+		attribute<bool>           IsExogeenGrondgebruik   (AdminDomain) := /BaseData/Omgeving/Opleggingsmasker/IsExogeenGrondgebruik, Descr = "Grondgebruik dat het model niet omzet: hoofdwegen, spoorwegen, vliegvelden en begraafplaatsen. Dat is de groep Infra plus Begraafplaats uit de CBS-bodemstatistiek, dezelfde vlag waarmee de landgebruikskaart deze cellen al ongemoeid laat.";
+		attribute<bool>           MagOpleggen             (AdminDomain) := /BaseData/Omgeving/Opleggingsmasker/MagOpleggen, Descr = "Mag de exogene oplegging deze cel raken? Alleen buiten bestaand bebouwd gebied en niet over exogeen grondgebruik, in alle varianten. Twee gronden: bestaand bebouwd gebied (#641), want de
+					NL2120-natuuropgave landt voor een groot deel in bestaande kernen en daar zou het model de bebouwing slopen; en exogeen grondgebruik, op verzoek vanuit Deltares, want de veenlevering legde
+					natuur over Schiphol heen. Valt de oplegging weg, dan blijft die bebouwing staan en gaat het gebied via Bouwregime alleen op slot voor nieuwbouw. De regel zelf staat in
+					/BaseData/Omgeving/Opleggingsmasker (#661), zodat de natuurallocatie en het diagnoseharnas hem delen.";
+		
+		attribute<INL_Beheertype> Beheertype (AdminDomain) := MagOpleggen ? NatuurLevering/Levering_Nieuw : null_b[INL_Beheertype]
+		, Descr = "De ene stroom na het masker, voor de stand-administratie: alles wat de variant aanlevert en dat op de cel het type verandert (#751). Natuur en water samen; welk van de twee het is zegt
+				NatuurLevering/IsWater. Beheertype_Kaart is dezelfde stroom, voor de lezers aan de kaartkant. Alles wat van de oplegging afhangt hangt hieraan: Totaal en daarmee de zeef en de landbouwclaim,
+				de stand-administratie in Zichtjaar_T, en de indicatoren voor landgebruik, NDVI en koolstof. Het veenwater van 9a en 9b zit er per constructie niet in (Natuur_T/Veen), dat gaat naar de
+				sector Waterberging (#664); het rivierwater van #620 zit er wel in.";
+		attribute<INL_Beheertype> Beheertype_Kaart (AdminDomain) := MagOpleggen ? NatuurLevering/Levering_Nieuw : null_b[INL_Beheertype]
+		, Descr = "Dezelfde stroom als Beheertype, voor de lezers aan de kaartkant (Iter_Landbouw_T, Zichtjaar_T/Type_Mutatie en Make_LandgebruikskaartNL2120_T). Kaart en stand delen sinds #803 dezelfde basis, dus de twee zijn gelijk.";
+		attribute</Classifications/Grondgebruik/LandbouwType> LandbouwType_rel (AdminDomain) := MagOpleggen ? NatuurLevering/LandbouwType_Levering : null_b[/Classifications/Grondgebruik/LandbouwType]
+		, Descr = "De landbouwstroom van veen na het masker, voor de stand-administratie in Zichtjaar_T: natte teelt en de twee vernatte graslandtypen. Welke cel landbouw krijgt en welke een beheertype beslist
+				NatuurLevering langs de rangorde van de landschappen (#829); de twee stromen zijn daar per constructie disjunct, dus hier hoeft niets tegen Beheertype te worden afgewogen.";
+		attribute<Bool> IsOpgelegd (AdminDomain) := IsDefined(Beheertype_Kaart) || IsDefined(LandbouwType_rel)
+		, Descr = "Legt de variant op deze cel iets op? De twee stromen rechtstreeks, natuur en water langs Beheertype_Kaart en landbouw langs LandbouwType_rel: de vraag die vrijwel elke lezer aan Totaal stelde, waarvoor die as nooit naar een klasse van de landgebruikskaart vertaald hoefde te worden (#803).";
+
+
+		// parameter<UInt32> CountCellenOplegging := count(Totaal);
+
+		// De gespaard-maten hieronder zijn het getal waarop #641 is afgerekend en hebben lezers in de indicatoren; de
+		// meetharnassen van #751 en #777 die hier stonden zijn weg, hun uitkomsten staan in die issues.
+		
+		attribute<bool>   IsGespaardInBebouwdGebied                    (AdminDomain) := Geography/rdc_meter/IsStudyArea_AdminDomain && IsDefined(NatuurLevering/Levering_Nieuw) && !MagOpleggen, Descr = "Cel waar de levering een nieuw landgebruik oplegt en het model die oplegging laat vallen, omdat de cel in bestaand bebouwd gebied ligt of exogeen grondgebruik draagt (#641).";
+		attribute<bool>   IsGespaardInBebouwdGebied_Comp      (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, IsGespaardInBebouwdGebied);
+		parameter<ha>     Opp_GespaardInBebouwdGebied      := sum(float32(IsGespaardInBebouwdGebied) * AdminDomain/NrHaPerCell), Descr = "Hoeveel oppervlak van de levering vervalt door de toets.";
+		parameter<Woning> Woningen_GespaardInBebouwdGebied := sum(StateBasisjaar/wonen/Totaal * float32(IsGespaardInBebouwdGebied_Comp)), Descr = "Het getal waar het om gaat in #641: hoeveel woningen uit het basisjaar blijven staan doordat de oplegging in bestaand bebouwd gebied vervalt. De vertaling van oplegging naar sloop geldt
+				alleen nog waar een levering de cel ook als sloopgebied aanwijst (#620, ModelParameters/Natuur/SloopVolgtExogeneOplegging); het getal zelf blijft zeggen hoeveel oplegging er in bebouwd gebied
+				vervalt.";
+	}
+
+	container Sloop
+	: Descr = "Wijkt de bestaande bebouwing hier? De derde van drie dingen die een cel kan overkomen, en de enige plek waar die vraag beantwoord wordt. Opleggen (container ExogeenOpleggen): het model
+				schrijft hier een ander landgebruik voor, natuur of water; dat raakt de landgebruikskaart, NDVI, koolstof en de landbouwclaim. Op slot (container NietBouwen): hier mag niet meer gebouwd
+				worden; dat loopt via de zeef en raakt uitsluitend nieuwe allocatie. Slopen, hier: de stand wordt geleegd; dat raakt de voorraad, via de restclaim de vervangende nieuwbouw elders in de
+				allocregio, en de uitkoop- en sloopkosten. De drie mogen overlappen maar vallen niet samen; Templates/Allocatie/Zichtjaar_T en Templates/Indicatoren lezen allebei Totaal hieronder. Twee
+				sloopstromen vallen hier buiten: waterberging in het veen wordt gealloceerd en niet opgelegd, dus dat masker komt uit de allocatie zelf (#636), en sloop bij herontwikkeling volgt uit de
+				sloopleeftijd in de zeef en is een marktbeslissing per ontwikkelpakket. Slopen zonder nieuw landgebruik kan alleen in het sloopgebied van rivieren, waar de sloop uit veiligheidsoverwegingen
+				is gekozen; overal elders vereist de sloop dat de omzetting ook landt (#684, ModelParameters/Natuur/SloopVereistNieuwLandgebruik). Een geleegde cel zonder oplegging houdt op de landgebruikskaart
+				zijn huidige klasse en staat er voortaan met nul woningen in; dat diezelfde regel ook geldt waar wel wordt opgelegd is een aparte kwestie in de landgebruikskaart."
+	{
+		attribute<bool> DoorExogeneOplegging (CompactedAdminDomain) := ModelParameters/Natuur/SloopVolgtExogeneOplegging && collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ExogeenOpleggen/IsOpgelegd)
+		, Descr = "Route een: er wordt gesloopt waar het model een nieuw landgebruik oplegt. Staat uit (#620, zie ModelParameters/Natuur/SloopVolgtExogeneOplegging voor het waarom en wat er per landschapstype aan
+				hing): de sloop volgde dan de natuurkaart en niet de bedoeling van de levering, dus waar de natuur op een bebouwde cel landde werd gesloopt ook als het landschapstype dat niet vroeg.";
+
+		attribute<bool> DoorExogeneOplegging_Ongefilterd (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ExogeenOpleggen/IsOpgelegd)
+		, Descr = "Dezelfde route zonder de schakelaar: waar legt het model een nieuw landgebruik op. Nodig om te blijven zien waar oplegging en sloop elkaar raken nu de route zelf uit staat, en om te meten wat de schakelaar kost. Container Verschil rekent hiermee.";
+
+		attribute<bool> MagOpleggen (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ExogeenOpleggen/MagOpleggen)
+		, Descr = "Dezelfde toets die de oplegging afsnijdt op bestaand bebouwd gebied en exogeen grondgebruik, hier op het compacted domain. Route twee gebruikt hem, zodat #641 en de Schiphol-uitzondering ook gelden wanneer de sloop het landschapstype volgt in plaats van de oplegging.";
+
+		attribute<bool> DoorBouwregime_Ongekoppeld (CompactedAdminDomain) := Bouwregime/MoetSlopen && MagOpleggen
+		, Descr = "Het sloopgebied zoals de leveringen het aanwijzen, voordat de koppeling uit #684 eroverheen gaat: er wordt gesloopt waar het bouwregime Slopen is, dus veen (#614) en het sloopgebied van
+					rivieren (#620); kust sloopt niet (#707) en zand nooit. Zonder landschapslevering is dit masker leeg. Verschil rekent erop: het meet de bedoeling van de niet-bouwen-levering, los van de
+					vraag of de omzetting er ook landt.";
+
+		attribute<bool> MoetSlopen_Rivieren (CompactedAdminDomain) := Bouwregime/Bron/Landschap/Rivieren == Classifications/Modellering/BouwregimeK/V/Slopen
+		, Descr = "Wijst de rivierenlevering deze cel als sloopgebied aan? Dat is het ene landschapstype dat onvoorwaardelijk sloopt, zie ModelParameters/Natuur/SloopVereistNieuwLandgebruik.";
+
+		attribute<bool> VereistNieuwLandgebruik (CompactedAdminDomain) := ModelParameters/Natuur/SloopVereistNieuwLandgebruik && !MoetSlopen_Rivieren
+		, Descr = "Moet er op deze cel ook werkelijk een nieuw landgebruik landen voordat er gesloopt mag worden? Overal waar de schakelaar aanstaat, behalve in het sloopgebied van rivieren. Overlappen veen en rivieren elkaar, dan wint rivieren en wordt er onvoorwaardelijk gesloopt: die levering vraagt de sloop om zichzelf.";
+
+		attribute<bool> DoorBouwregime (CompactedAdminDomain) := DoorBouwregime_Ongekoppeld && (!VereistNieuwLandgebruik || DoorExogeneOplegging_Ongefilterd)
+		, Descr = "Regel twee: er wordt gesloopt waar het bouwregime Slopen is en, waar de koppeling geldt, ook werkelijk een nieuw landgebruik landt (#684, ModelParameters/Natuur/SloopVereistNieuwLandgebruik). De
+					koppeling snijdt op DoorExogeneOplegging_Ongefilterd en dus op wat er op de kaart komt te staan, niet op wat de levering bedoelde, want de vraag is of de cel een ander landgebruik krijgt;
+					het 9a/9b-water van de veenbouwstenen telt daarom niet mee, dat gaat naar de sector Waterberging (#664). De bouwstenen komen over de bestaande bebouwing heen te liggen (#768), dus in het
+					veen sloopt deze regel wel degelijk waar een sloopbouwsteen op een bebouwde cel landt.";
+
+		attribute<bool> Totaal (CompactedAdminDomain) := DoorExogeneOplegging || DoorBouwregime
+		, Descr = "Het antwoord waar de rest van het model op afgaat. Gelezen door Templates/Allocatie/Zichtjaar_T, dat hiermee in het eerste zichtjaar wonen, werken, verblijfsrecreatie, wind, zon en de
+					bijbehorende footprints op nul zet, en door Templates/Indicatoren voor de sloop-, uitkoop- en woningtellingen; na het eerste zichtjaar houdt de zeef deze cellen leeg, dus het legen hoeft
+					maar een keer. Twee routes: er wordt gesloopt waar het bouwregime Slopen is, dus waar een levering de cel als sloopgebied aanwijst en waar de omzetting ook werkelijk landt (#684; alleen het
+					sloopgebied van rivieren sloopt onvoorwaardelijk), en er wordt gesloopt waar het model een nieuw landgebruik oplegt, maar die tweede route staat uit (#620,
+					ModelParameters/Natuur/SloopVolgtExogeneOplegging). Zonder landschapslevering is de opgelegde sloop daarmee leeg. Beide routes lopen door MagOpleggen heen, dus niet in bestaand bebouwd gebied
+					(#641) en niet over exogeen grondgebruik. Container Verschil laat zien hoever de twee uit elkaar liggen.";
+
+		container Verschil
+		: Descr = "Hoever de twee sloopregels uit elkaar liggen. Ze overlappen grotendeels maar niet volledig, en juist de randen zeggen iets: daar spreken de niet-bouwen-levering en de natuurlevering van hetzelfde landschapstype elkaar tegen. Alle tellingen gaan over de woningvoorraad in het basisjaar."
+		{
+			attribute<bool> OpSlotMaarGeenNatuur      (CompactedAdminDomain) := DoorBouwregime_Ongekoppeld && !DoorExogeneOplegging_Ongefilterd, Descr = "Het landschapstype veronderstelt sloop, de oplegging voert hem niet uit. Snijdt op DoorBouwregime_Ongekoppeld en op de ongefilterde oplegging, want dit meet de afstand tussen de twee
+				leveringen en niet wat er na de koppeling nog gesloopt wordt (dat staat in GeleegdZonderNieuwLandgebruik). Drie oorzaken lopen hier samen: op slot en opleggen komen uit verschillende
+				leveringen die elkaar niet volledig dekken; bij rivieren krijgen de agrarische ecotopen binnen het sloopgebied per definitie geen oplegging; en het open water van veenbouwsteen 9a en 9b gaat
+				niet de oplegging in maar naar de sector Waterberging (#664). Het deel dat door #641 in bestaand bebouwd gebied vervalt zit hier niet in, want MagOpleggen snijdt route twee net zo goed af;
+				dat telt ExogeenOpleggen/Woningen_GespaardInBebouwdGebied apart.";
+			attribute<bool> NatuurMaarNietOpSlot (CompactedAdminDomain) := DoorExogeneOplegging_Ongefilterd && !DoorBouwregime, Descr = "De oplegging landt op een cel die het landschapstype niet als sloopgebied aanwijst. Zolang SloopVolgtExogeneOplegging uit staat is dit precies wat die schakelaar spaart: hier komt nieuwe
+				natuur en blijft de bestaande bebouwing staan. Met een landschapslevering is dit vooral zand, dat als AlleenOpSlot te boek staat terwijl de zandallocatie er natuur op legt, plus de
+				riviertrajecten uit #620; zonder landschapslevering is dit per definitie de hele exogene oplegging.";
+
+			parameter<ha>     Opp_OpSlotMaarGeenNatuur      := sum(float32(OpSlotMaarGeenNatuur)      * AdminDomain/NrHaPerCell);
+			parameter<ha>     Opp_NatuurMaarNietOpSlot      := sum(float32(NatuurMaarNietOpSlot) * AdminDomain/NrHaPerCell);
+			parameter<Woning> Woningen_OpSlotMaarGeenNatuur := sum(StateBasisjaar/wonen/Totaal * float32(OpSlotMaarGeenNatuur)),      Descr = "Hoeveel woningen het model leegt zonder dat er een landgebruik voor in de plaats komt (#684). Geen gespaarde bebouwing: de cel wordt geleegd, houdt op de landgebruikskaart zijn huidige klasse en staat er voortaan als woon- of bedrijfsterrein met nul woningen in. De uitsplitsing staat hieronder.";
+			parameter<Woning> Woningen_NatuurMaarNietOpSlot := sum(StateBasisjaar/wonen/Totaal * float32(NatuurMaarNietOpSlot)), Descr = "Hoeveel woningen blijven staan onder de nieuwe natuur doordat SloopVolgtExogeneOplegging uit staat. Op TRUE waren dit er precies evenveel die wel wijken, en dat was de sloop die niemand had gevraagd: het zand-effect uit #630, de riviertrajecten uit #620, en in BAU en BAU2 de volledige opgelegde sloop.";
+
+			parameter<Woning> Woningen_Veen     := sum(StateBasisjaar/wonen/Totaal * float32(OpSlotMaarGeenNatuur && Bouwregime/Bron/Landschap/Veen     == Classifications/Modellering/BouwregimeK/V/Slopen)),     Descr = "Uitsplitsing van OpSlotMaarGeenNatuur naar landschapstype, hier veen (#614). Snijdt op OpSlotMaarGeenNatuur zelf en niet op de losse termen, zodat MagOpleggen meedoet: zonder die toets zou
+				het deel binnen bestaand bebouwd gebied meetellen, en dat is landelijk twee ordes groter; dat deel telt ExogeenOpleggen/Woningen_GespaardInBebouwdGebied apart. De drie kunnen samen iets
+				boven OpSlotMaarGeenNatuur uitkomen, want de landschapstypen overlappen elkaar.";
+			parameter<Woning> Woningen_Kust     := sum(StateBasisjaar/wonen/Totaal * float32(OpSlotMaarGeenNatuur && Bouwregime/Bron/Landschap/Kust     == Classifications/Modellering/BouwregimeK/V/Slopen)),     Descr = "Idem, kust. Staat sinds #707 per constructie op nul: het kustregime is daar van Slopen naar NietBouwen gegaan, dus deze toets kan niet meer aanslaan. Blijft staan om de driedeling volledig te houden; wat de omzetting kostte staat in Kust707 hieronder.";
+			parameter<Woning> Woningen_Rivieren := sum(StateBasisjaar/wonen/Totaal * float32(OpSlotMaarGeenNatuur && Bouwregime/Bron/Landschap/Rivieren == Classifications/Modellering/BouwregimeK/V/Slopen)), Descr = "Idem, rivieren (#621). Snijdt op regime Slopen, dus sinds #620 alleen op het sloopgebied binnen de nieuwe uiterwaarden en niet meer op het hele ruimtebeslag. Wat de aanscherping zelf doet staat in Rivieren620 hieronder.";
+
+			parameter<ha> Opp_Veen     := sum(float32(OpSlotMaarGeenNatuur && Bouwregime/Bron/Landschap/Veen     == Classifications/Modellering/BouwregimeK/V/Slopen) * AdminDomain/NrHaPerCell), Descr = "Het oppervlak naast de woningen hierboven, hier veen.";
+			parameter<ha> Opp_Kust     := sum(float32(OpSlotMaarGeenNatuur && Bouwregime/Bron/Landschap/Kust     == Classifications/Modellering/BouwregimeK/V/Slopen) * AdminDomain/NrHaPerCell), Descr = "Idem kust, per constructie nul sinds #707.";
+			parameter<ha> Opp_Rivieren := sum(float32(OpSlotMaarGeenNatuur && Bouwregime/Bron/Landschap/Rivieren == Classifications/Modellering/BouwregimeK/V/Slopen) * AdminDomain/NrHaPerCell), Descr = "Idem rivieren: het deel van het sloopgebied uit #620 waar de ecotopenkaart agrarisch gebruik geeft.";
+
+			attribute<bool> HeeftPanden (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Opleggingsmasker/HeeftPanden)
+			, Descr = "Staat er een BAG-pand in de cel? De toets waarmee de natuurallocatie de cel uit haar zeef hield voordat #768 die uitzette (NatuurAlloc_T/NatuurNietOpPanden); hier om de sloop ernaast te kunnen leggen.";
+
+			parameter<Woning> Woningen_OpSlotMaarGeenNatuur_MetPand := sum(StateBasisjaar/wonen/Totaal * float32(OpSlotMaarGeenNatuur && HeeftPanden))
+			, Descr = "Hoeveel van de sloop zonder nieuw landgebruik op cellen staat die de natuurallocatie vanwege hun bebouwing zou overslaan: de diagnose van #684, waar de twee regels tegen elkaar in werkten
+				omdat de allocatie uitweek naar een onbebouwde cel en het bouwregime de bebouwde cel toch leegde. Sinds de bouwsteen over de bebouwing heen landt (#768) hoort dit nul te zijn.";
+			parameter<ha> Opp_OpSlotMaarGeenNatuur_MetPand := sum(float32(OpSlotMaarGeenNatuur && HeeftPanden) * AdminDomain/NrHaPerCell)
+			, Descr = "Het oppervlak daarvan. Klein tegenover het totaal, want de bebouwing zit dicht op elkaar: 8.050 ha van de 111.154 ha in het veen draagt bijna alle woningen.";
+
+			attribute<bool> GeleegdZonderNieuwLandgebruik (CompactedAdminDomain) := Totaal && !DoorExogeneOplegging_Ongefilterd
+			, Descr = "Wat het model na de koppeling uit #684 nog leegt zonder dat er een landgebruik voor in de plaats komt. Hoort het sloopgebied van rivieren te zijn en verder niets, want dat is het enige landschapstype dat onvoorwaardelijk sloopt.";
+
+			parameter<Woning> Woningen_GeleegdZonderNieuwLandgebruik := sum(StateBasisjaar/wonen/Totaal * float32(GeleegdZonderNieuwLandgebruik));
+			parameter<ha>     Opp_GeleegdZonderNieuwLandgebruik      := sum(float32(GeleegdZonderNieuwLandgebruik) * AdminDomain/NrHaPerCell);
+
+			attribute<bool> GespaardDoorKoppeling (CompactedAdminDomain) := DoorBouwregime_Ongekoppeld && !DoorBouwregime
+			, Descr = "De cellen die de levering als sloopgebied aanwijst en die het model sinds #684 laat staan, omdat er geen omzetting landt. Het gebied gaat er nog wel op slot voor nieuwbouw, want dat loopt langs het regime en niet langs de sloop.";
+
+			parameter<Woning> Woningen_GespaardDoorKoppeling := sum(StateBasisjaar/wonen/Totaal * float32(GespaardDoorKoppeling));
+			parameter<ha>     Opp_GespaardDoorKoppeling      := sum(float32(GespaardDoorKoppeling) * AdminDomain/NrHaPerCell);
+
+			parameter<Woning> Woningen_OpSlotZonderSloopbedoeling := sum(StateBasisjaar/wonen/Totaal * float32(NatuurMaarNietOpSlot &&  Bouwregime/OpSlotDoorLandschap)), Descr = "Uitsplitsing van NatuurMaarNietOpSlot, het deel waar wel een landschapsmasker ligt: de cel gaat op slot, de levering wil de bebouwing sparen, en de oplegging landt er toch. Dat is de tegenspraak in zand uit #630. Zolang SloopVolgtExogeneOplegging uit staat blijven deze woningen staan; op TRUE wijken ze.";
+			attribute<bool>   ZonderMasker                        (CompactedAdminDomain) := NatuurMaarNietOpSlot && !Bouwregime/OpSlotDoorLandschap, Descr = "De oplegging landt terwijl er geen landschapsmasker op de cel ligt: geen veen, geen kust, geen zand, geen rivieren. Zonder landschapslevering is dat per definitie de hele oplegging. Met SloopVolgtExogeneOplegging op FALSE wordt hier niet gesloopt (#620).";
+			parameter<Woning> Woningen_ZonderMasker               := sum(StateBasisjaar/wonen/Totaal * float32(ZonderMasker)), Descr = "Hoeveel woningen daar staan; met SloopVolgtExogeneOplegging op FALSE blijven die staan (#620). De twee parameters hieronder splitsen het naar de oorzaak.";
+
+			attribute<bool> InVeenlevering (CompactedAdminDomain) := HeeftLandschapslevering ? collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, IsDefined(/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/Per_AdminDomain)) : const(FALSE, CompactedAdminDomain)
+			, Descr = "Ligt de cel in het ruimtebeslag van de bebouwingstypekaart veen, ongeacht de categorie? Dus ook waar die kaart zoals huidig, aangepast bouwen of wonen op water zegt. Nodig om ZonderMasker te splitsen: het landschapstype veen heeft daar wel iets over te zeggen, alleen niet dat het op slot gaat.";
+
+			parameter<Woning> Woningen_ZonderMasker_InVeenlevering := sum(StateBasisjaar/wonen/Totaal * float32(ZonderMasker &&  InVeenlevering)), Descr = "Binnen het veengebied, maar buiten de categorie Slopen_en_op_slot van de bebouwingstypekaart: hier zegt de levering dat er gebouwd mag blijven worden, zoals huidig of aangepast. De oorzaak
+				zit in de bouwstenenkaart, die via ArgMax elke cel met een natuurfractie boven nul volledig natuur maakt, zonder drempel; de twee veenkaarten zijn losse leveringen en dekken elkaar niet.";
+			parameter<Woning> Woningen_ZonderMasker_Buiten         := sum(StateBasisjaar/wonen/Totaal * float32(ZonderMasker && !InVeenlevering)), Descr = "Buiten het veengebied en buiten elk landschapsmasker. Verwacht is hier vooral de droge zandnatuur, die per definitie buiten het beekdal landt en dus buiten het enige zandmasker.";
+
+			parameter<Woning> Woningen_Gesloopt := sum(StateBasisjaar/wonen/Totaal * float32(Totaal)), Descr = "De hele opgelegde sloop van deze variant in woningen uit het basisjaar. Dit is wat de allocatie in het eerste zichtjaar leegt.";
+
+			parameter<ha> Footprint_NatuurMaarNietOpSlot := sum(StateBasisjaar/wonen/Footprint * float32(NatuurMaarNietOpSlot))[ha]
+			, Descr = "Hoeveel pandvoetafdruk er onder de nieuwe natuur blijft staan, in hectare. Alleen de woonvoetafdruk, want dat is wat de stand per cel bijhoudt; bedrijfspanden en schuren komen daar nog bij.
+						Beantwoordt de vraag of het zin heeft om de gebouwvoetafdruk van het natuurareaal af te trekken; zet het naast Opp_NatuurMaarNietOpSlot, het areaal waar deze bebouwing in staat.";
+
+			parameter<String> Uitdraai :=
+				  'woningen_gesloopt;'                 + string(Woningen_Gesloopt)
+				+ '|woningen_gespaard_door_schakelaar;'+ string(Woningen_NatuurMaarNietOpSlot)
+				+ '|gespaard_met_landschapsmasker;'    + string(Woningen_OpSlotZonderSloopbedoeling)
+				+ '|gespaard_zonder_masker;'           + string(Woningen_ZonderMasker)
+				+ '|gespaard_zonder_masker_in_veen;'   + string(Woningen_ZonderMasker_InVeenlevering)
+				+ '|woningen_opslot_maar_geen_natuur;' + string(Woningen_OpSlotMaarGeenNatuur)
+				+ '|opp_opslot_maar_geen_natuur;'      + string(Opp_OpSlotMaarGeenNatuur)
+				+ '|woningen_opslot_geen_natuur_metpand;' + string(Woningen_OpSlotMaarGeenNatuur_MetPand)
+				+ '|opp_opslot_geen_natuur_veen;'      + string(Opp_Veen)
+				+ '|opp_opslot_geen_natuur_rivieren;'  + string(Opp_Rivieren)
+				+ '|woningen_geleegd_zonder_nieuw_lu;' + string(Woningen_GeleegdZonderNieuwLandgebruik)
+				+ '|opp_geleegd_zonder_nieuw_lu;'      + string(Opp_GeleegdZonderNieuwLandgebruik)
+				+ '|woningen_gespaard_door_koppeling;' + string(Woningen_GespaardDoorKoppeling)
+				+ '|opp_gespaard_door_koppeling;'      + string(Opp_GespaardDoorKoppeling)
+				+ '|opp_oplegging_zonder_sloopkaart;'  + string(Opp_NatuurMaarNietOpSlot)
+				+ '|ha_woonvoetafdruk_in_die_natuur;' + string(Footprint_NatuurMaarNietOpSlot)
+			, StorageName = "='%LocalDataProjDir%/Diagnose/Sloop_'+Variant_name+'.txt'"
+			, StorageType = "str"
+			, Descr = "De sloopgetallen van deze variant in een keer, zodat het effect van ModelParameters/Natuur/SloopVolgtExogeneOplegging zonder allocatierun te meten is.";
+		}
+	}
+
+	container EvidentBenut
+	: Descr = "Bepaalt op basis van de BGT welke cellen al evident benut zijn, en valt daarmee af in de zeefanalyse. De uitkomst hangt af van de gekozen BGT-klassenset (VariantParameters/EvidentBenut/BGT)
+				en niet van de variant zelf; toch staat de berekening per variant en dragen de bestanden de variantnaam, zodat twee varianten met dezelfde klassenset twee identieke bestanden opleveren. Een
+				gedeeld bestand per klassenset botst zodra twee varianten in een proces samenkomen en allebei constateren dat het bestand nog niet bestaat, want dan schrijven ze er tegelijk naartoe (#20).
+				In de praktijk wordt per sessie aan een variant gerekend, en dankzij de fingerprint gebeurt het hooguit een keer per variant."
+	{
+		parameter<String> KlassensetNaam := VariantParameters/VariantK/EvidentBenutVariant_BGT[Variant_rel]
+		, Descr = "Welke set BGT-klassen deze variant als evident benut beschouwt.";
+
+		attribute<Bool> Klassenset (VariantParameters/EvidentBenut/BGT) := ='VariantParameters/EvidentBenut/BGT/'+KlassensetNaam
+		, Descr = "De klassenset zelf, als vlag per BGT-klasse. Staat hier apart zodat de inhoud in de fingerprint kan.";
+
+		parameter<String> Fingerprint :=
+			  'bgt_date='      + /ModelParameters/BGT_file_date
+			+ ';study_area='   + /ModelParameters/StudyArea
+			+ ';variant='      + Variant_name
+			+ ';class_set='    + KlassensetNaam
+			+ ';class_count='  + string(#VariantParameters/EvidentBenut/BGT)
+			+ ';class_flags='  + asList(string(uint8(Klassenset)), '')
+			+ ';grid_size='    + string(AdminDomain/gridsize)
+		, Descr = "De volledige lijst invoeren die de uitkomst bepaalt. Let op de laatste twee: class_count vangt het bijkomen of wegvallen van een BGT-klasse, en class_flags is de nullen-en-enen-reeks van de klassenset zelf, zodat een wijziging BINNEN de set Default ook wordt opgemerkt. Zonder die reeks zou je de set kunnen aanpassen zonder dat de bestandsnaam of de fingerprint meebeweegt.";
+
+		parameter<string> StorageStr     := '%LocalDataProjDir%/VariantData/Grondgebruik/BGT/EvidentBenut_'+/ModelParameters/BGT_file_date+'_Modus_Per_AdminDomain_'+/ModelParameters/StudyArea+'_'+Variant_name+'.tif';
+		parameter<string> StorageStr_Zon := '%LocalDataProjDir%/VariantData/Grondgebruik/BGT/EvidentBenutZon_'+/ModelParameters/BGT_file_date+'_Modus_Per_AdminDomain_'+/ModelParameters/StudyArea+'_'+Variant_name+'.tif';
+
+		container Decoupling     := Templates/DecoupledFile_T(StorageStr,     Fingerprint);
+		container Decoupling_Zon := Templates/DecoupledFile_T(StorageStr_Zon, Fingerprint);
+
+		unit<uint32> src := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData
+		{
+			attribute<Bool> EvidentBenut    := Klassenset[visualisatiecode_rel];
+			attribute<Bool> EvidentBenutZon := visualisatiecode_rel == /Classifications/Grondgebruik/BGT/Classes/V/waterdeel_waterloop ? False : EvidentBenut; //ook waterloop EvidentBenut tbv vermijden Zon in havens Amsterdam en Rotterdam, ARK bij Utrecht
+
+			unit<uint64> per_2_5_all := poly2allgrids_uint64(geometry, rdc_2_5m)
+			{
+				attribute<Bool>    IsEvidentBenut                    := ../EvidentBenut[polygon_rel];
+				attribute<Bool>    IsEvidentBenutZon                 := ../EvidentBenutZon[polygon_rel];
+				attribute<Bool>    IsEvidentBenut_2_5m    (rdc_2_5m) := any(IsEvidentBenut, grid_rel);
+				attribute<Bool>    IsEvidentBenutZon_2_5m (rdc_2_5m) := any(IsEvidentBenutZon, grid_rel);
+			}
+		}
+
+		// Rekenen, schrijven en lezen staan bewust als drie aparte items, zoals ook bij Opbrengsten_perOP in
+		// Geschiktheden.dms. Alleen dan valt er iets te schakelen: stonden rekenen en schrijven in een item, dan
+		// moest het bestand er altijd zijn.
+		attribute<Bool> Calc_IsEvidentBenut_AdminDomain    (AdminDomain) := Modus(src/per_2_5_all/IsEvidentBenut_2_5m,    rdc_2_5m/rdc_25m_rel);
+		attribute<Bool> Calc_IsEvidentBenutZon_AdminDomain (AdminDomain) := Modus(src/per_2_5_all/IsEvidentBenutZon_2_5m, rdc_2_5m/rdc_25m_rel);
+
+		attribute<Bool> Make_IsEvidentBenut_AdminDomain    (AdminDomain) := Calc_IsEvidentBenut_AdminDomain,    StorageName = "=StorageStr",     StorageType = "tif", ExplicitSuppliers = "Decoupling/Write_Fingerprint";
+		attribute<Bool> Make_IsEvidentBenutZon_AdminDomain (AdminDomain) := Calc_IsEvidentBenutZon_AdminDomain, StorageName = "=StorageStr_Zon", StorageType = "tif", ExplicitSuppliers = "Decoupling_Zon/Write_Fingerprint";
+
+		attribute<Bool> Read_IsEvidentBenut_AdminDomain    (AdminDomain) : StorageName = "=StorageStr",     StorageReadOnly = "TRUE", StorageType = "tif";
+		attribute<Bool> Read_IsEvidentBenutZon_AdminDomain (AdminDomain) : StorageName = "=StorageStr_Zon", StorageReadOnly = "TRUE", StorageType = "tif";
+
+		attribute<Bool> IsEvidentBenut_AdminDomain (AdminDomain) :=
+			=	!ModelParameters/VariantDataOntkoppeld    ? 'Calc_IsEvidentBenut_AdminDomain'
+			:	 Decoupling/MayReuse                      ? 'Read_IsEvidentBenut_AdminDomain'
+			:	                                            'Make_IsEvidentBenut_AdminDomain'
+		, Descr = "Wat de rest van het model gebruikt, in drie standen. Niet ontkoppeld rekent door zonder tussenbestand. Ontkoppeld met een geldig bestand leest de tif. Ontkoppeld zonder geldig bestand rekent en schrijft in een keer, zodat je er niet apart om hoeft te vragen.";
+
+		attribute<Bool> IsEvidentBenutZon_AdminDomain (AdminDomain) :=
+			=	!ModelParameters/VariantDataOntkoppeld    ? 'Calc_IsEvidentBenutZon_AdminDomain'
+			:	 Decoupling_Zon/MayReuse                  ? 'Read_IsEvidentBenutZon_AdminDomain'
+			:	                                            'Make_IsEvidentBenutZon_AdminDomain';
+	}
+}

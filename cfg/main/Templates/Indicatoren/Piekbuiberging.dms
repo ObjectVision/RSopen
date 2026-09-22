@@ -1,0 +1,172 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Laadt via #include: Aanbod.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Piekbuiberging := Basisjaar/Piekbuiberging
+, Descr = "Welk deel van de piekbuiopgave in bestaand bebouwd gebied wordt gedekt door blauw-groene maatregelen. De opgave ligt vast in het basisjaar; deze container voegt het aanbod van het zichtjaar
+			toe en streept opgave en aanbod per blok tegen elkaar weg. Niet te verwarren met de sector Waterberging, die bergingsgebieden in het landelijk gebied alloceert op een seizoensopgave in m3
+			per maand voor juli (#575, #664, #720): ander water, op een andere plek, op een andere tijdschaal, en nooit bij elkaar op te tellen. Cellen die aan de sector Waterberging zijn toegewezen
+			leveren aan deze indicator per constructie nul; ToetsOplevering.ps1 bewaakt dat als harde toets."
+{
+	#include<Aanbod.dms> // Is extra tov bestaand aanbod (het aanbod achter de restopgave in basisjaar)
+
+	container PerGrid
+	{
+		attribute<meter3> Opgave             (Grid) := Basisjaar/Piekbuiberging/PerGrid/Opgave, StorageName = "=replace(StorageStr_PerGrid, '@V@', 'Opgave')", StorageType = "gdalwrite.grid";
+		attribute<meter3> AanbodOngemaskeerd (Grid) := ='sum(Piekbuiberging/Aanbod/Totaal, AdminDomain/rdc_'+Grid_ref+'_rel)'
+		, Descr = "Alle bergingscapaciteit in het blok, ook die buiten bestaand bebouwd gebied. Staat er alleen om Aanbod en AanbodBuitenUrbanContour te kunnen optellen tot een controleerbaar geheel; de dekkingsgraad rekent met Aanbod.";
+		attribute<meter3> Aanbod             (Grid) := ='sum(Piekbuiberging/Aanbod/Totaal * float32(BestaandBebouwdGebied), AdminDomain/rdc_'+Grid_ref+'_rel)'
+		, StorageName = "=replace(StorageStr_PerGrid, '@V@', 'Aanbod')", StorageType = "gdalwrite.grid"
+		, Descr = "De bergingscapaciteit in het blok die ligt waar ook opgave is, dus binnen bestaand bebouwd gebied (#741). Zonder deze maskering telt het hele blokaanbod mee terwijl de opgave op celniveau op
+					bestaand bebouwd gebied is gemaskeerd, en die asymmetrie loopt in de tijd op, want het model bouwt aan de stadsrand terwijl de begrenzing op het basisjaar bevroren staat. Gevolg: nieuwbouw
+					die net buiten de basisjaarbegrenzing landt is in het zichtjaar wel stad en bergt daar echt water, maar levert in deze indicator noch opgave noch aanbod; de prijs van symmetrie zolang er
+					geen dieptekaart is die met de stad meebeweegt.";
+		attribute<meter3> AanbodBuitenUrbanContour    (Grid) := AanbodOngemaskeerd - Aanbod
+		, StorageName = "=replace(StorageStr_PerGrid, '@V@', 'AanbodBuitenUrbanContour')", StorageType = "gdalwrite.grid"
+		, Descr = "De bergingscapaciteit die door de maskering van #741 uit de dekkingsgraad valt: aangelegd buiten de basisjaarbegrenzing van bebouwd gebied, waar deze indicator geen opgave kent. Als verschil geschreven en niet als eigen som, zodat de twee per constructie optellen tot AanbodOngemaskeerd, ook op cellen waar de begrenzing geen waarde heeft.";
+		attribute<meter3> Restopgave         (Grid) := Opgave - Aanbod;
+		attribute<meter3> Ongedekt           (Grid) := max_elem(Restopgave, 0[meter3]), StorageName = "=replace(StorageStr_PerGrid, '@V@', 'Ongedekt')", StorageType = "gdalwrite.grid";
+		attribute<meter3> AanbodZonderOpgave (Grid) := max_elem(Aanbod - Opgave, 0[meter3])
+		, StorageName = "=replace(StorageStr_PerGrid, '@V@', 'AanbodZonderOpgave')", StorageType = "gdalwrite.grid"
+		, Descr = "Het aanbod dat in zijn eigen blok geen opgave tegenkomt en daarmee uit de dekkingsgraad valt. De klemming op nul een regel hoger laat overschot niet naar een naburig blok stromen, dus dit is
+					bergingscapaciteit die wel wordt aangelegd en niet wordt meegeteld. Met de maskering van #741 is deze post klein: het overschot van #720 was vrijwel geheel aanbod buiten bebouwd gebied dat
+					in een randblok tegen een kleine opgave aanliep.";
+		attribute<meter3> Gedekt             (Grid) := Opgave - Ongedekt;
+
+		attribute<float32> Dekkingsgraad     (Grid) := Gedekt / Opgave;
+
+		attribute<meter3> Opgave_T100        (Grid) := Basisjaar/Piekbuiberging/PerGrid/Opgave_T100, Descr = "De opgave bij de tweede bui (#828), zonder schrijver: een basisjaargrootheid uit de dieptekaart, die de tabelstap even goed levend rekent.";
+	}
+
+	// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+	// PerRegio en PerNL lezen de vijf blokposten en de drie kostenposten via Bron. Gedekt en de dekkingsgraden blijven
+	// afgeleiden van die sommen. Restopgave staat in geen enkele tabel en leest nog PerGrid.
+	parameter<string> StorageStr_PerGrid := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Piekbuiberging_PerGrid_@V@_'+Zichtjaar_name+'_m3_per'+Grid_ref+'_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De blokposten van PerGrid als kaart op de blokmaat Grid_ref (#824); @V@ is de post. De blokmaat staat in de naam om dezelfde reden als bij de exportkaarten van #720.";
+	parameter<string> StorageStr_Kosten := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Piekbuiberging_Kosten_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De drie kostenposten van Kosten als kaart per cel (#824); @V@ is de post.";
+	container Lees
+	: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+	{
+		attribute<meter3> Opgave (Grid) : StorageName = "=replace(StorageStr_PerGrid, '@V@', 'Opgave')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<meter3> Aanbod (Grid) : StorageName = "=replace(StorageStr_PerGrid, '@V@', 'Aanbod')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<meter3> AanbodBuitenUrbanContour (Grid) : StorageName = "=replace(StorageStr_PerGrid, '@V@', 'AanbodBuitenUrbanContour')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<meter3> Ongedekt (Grid) : StorageName = "=replace(StorageStr_PerGrid, '@V@', 'Ongedekt')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<meter3> AanbodZonderOpgave (Grid) : StorageName = "=replace(StorageStr_PerGrid, '@V@', 'AanbodZonderOpgave')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> Aanleg (AdminDomain) : StorageName = "=replace(StorageStr_Kosten, '@V@', 'Aanleg')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur_jaarlijks> OnderhoudPerJaar (AdminDomain) : StorageName = "=replace(StorageStr_Kosten, '@V@', 'OnderhoudPerJaar')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> Onderhoud_NCW (AdminDomain) : StorageName = "=replace(StorageStr_Kosten, '@V@', 'Onderhoud_NCW')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<meter3> Opgave_T100 (Grid) := Basisjaar/Piekbuiberging/PerGrid/Opgave_T100, Descr = "Geen tif: de opgave bij de tweede bui komt in beide routes uit het basisjaar.";
+	}
+	container Live
+	{
+		attribute<meter3>        Opgave                   (Grid)        := PerGrid/Opgave;
+		attribute<meter3>        Opgave_T100              (Grid)        := PerGrid/Opgave_T100;
+		attribute<meter3>        Aanbod                   (Grid)        := PerGrid/Aanbod;
+		attribute<meter3>        AanbodBuitenUrbanContour (Grid)        := PerGrid/AanbodBuitenUrbanContour;
+		attribute<meter3>        Ongedekt                 (Grid)        := PerGrid/Ongedekt;
+		attribute<meter3>        AanbodZonderOpgave       (Grid)        := PerGrid/AanbodZonderOpgave;
+		attribute<Eur>           Aanleg                   (AdminDomain) := Kosten/Aanleg;
+		attribute<Eur_jaarlijks> OnderhoudPerJaar         (AdminDomain) := Kosten/OnderhoudPerJaar;
+		attribute<Eur>           Onderhoud_NCW            (AdminDomain) := Kosten/Onderhoud_NCW;
+	}
+	container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+	, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+
+	container TweedeBui
+	: Descr = "De balans per blok bij de bui van eens per 100 jaar (#828): dezelfde wegstreping als in PerGrid, met de opgave van de tweede bui tegen hetzelfde aanbod. Uit Bron, zodat een tabelrun het aanbod terugleest; de opgave zelf komt uit het basisjaar."
+	{
+		attribute<meter3> Opgave   (Grid) := Bron/Opgave_T100;
+		attribute<meter3> Ongedekt (Grid) := max_elem(Opgave - Bron/Aanbod, 0[meter3]);
+		attribute<meter3> Gedekt   (Grid) := Opgave - Ongedekt;
+	}
+
+	container PerRegio
+	{
+		unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path
+		{
+			attribute<.> Per_Grid (Grid) := ='modus(Regio/Per_AdminDomain_Fijn, AdminDomain/rdc_'+Grid_ref+'_rel)'
+			, Descr = "Regio van het blok, als meest voorkomende regio van de onderliggende cellen, zodat het blok dezelfde kaart volgt als de celaggregaties en ook een indeling zonder geometry meedoet, zoals Landschap (#705).";
+		}
+
+		attribute<Meter3> Opgave                   (Regio) := sum(Bron/Opgave, Regio/Per_Grid);
+		attribute<Meter3> Aanbod                   (Regio) := sum(Bron/Aanbod, Regio/Per_Grid);
+		attribute<Meter3> AanbodBuitenUrbanContour (Regio) := sum(Bron/AanbodBuitenUrbanContour, Regio/Per_Grid);
+		attribute<Meter3> Restopgave               (Regio) := sum(PerGrid/Restopgave, Regio/Per_Grid);
+		attribute<Meter3> Ongedekt                 (Regio) := sum(Bron/Ongedekt, Regio/Per_Grid);
+		attribute<Meter3> AanbodZonderOpgave       (Regio) := sum(Bron/AanbodZonderOpgave, Regio/Per_Grid);
+		attribute<meter3> Gedekt                   (Regio) := Opgave - Ongedekt;
+
+		attribute<Eur>           Aanlegkosten            (Regio) := sum(Bron/Aanleg,           Regio/Per_AdminDomain_Fijn), Descr = "De aanlegkosten van alle bergingsmaatregelen die er in dit zichtjaar liggen (#798). Zie de container Kosten voor wat er wel en niet in zit.";
+		attribute<Eur_jaarlijks> OnderhoudskostenPerJaar (Regio) := sum(Bron/OnderhoudPerJaar, Regio/Per_AdminDomain_Fijn);
+		attribute<Eur>           Onderhoudskosten_NCW    (Regio) := sum(Bron/Onderhoud_NCW,    Regio/Per_AdminDomain_Fijn);
+		
+		// De tweede bui (#828), dezelfde vijf grootheden op de opgave van T100.
+		attribute<Meter3>  Opgave_T100                   (Regio) := sum(TweedeBui/Opgave,   Regio/Per_Grid);
+		attribute<Meter3>  Ongedekt_T100                 (Regio) := sum(TweedeBui/Ongedekt, Regio/Per_Grid);
+		attribute<meter3>  Gedekt_T100                   (Regio) := Opgave_T100 - Ongedekt_T100;
+		attribute<float32> Dekkingsgraad_T100            (Regio) := Gedekt_T100 / Opgave_T100;
+		attribute<float32> Dekkingsgraad_Ongeklemd_T100  (Regio) := min_elem(Aanbod, Opgave_T100) / Opgave_T100;
+
+		attribute<float32> Dekkingsgraad           (Regio) := Gedekt / Opgave;
+		attribute<float32> Dekkingsgraad_Ongeklemd (Regio) := min_elem(Aanbod, Opgave) / Opgave
+		, Descr = "De dekkingsgraad die zou gelden als het aanbod binnen de regio vrij naar de opgave kon stromen, dus zonder de klemming per blok. Samen met Dekkingsgraad spant dit de bandbreedte op die de
+					blokmaat oplevert: Dekkingsgraad is de ondergrens, waarbij berging alleen zijn eigen blok bedient, en Dekkingsgraad_Ongeklemd de bovengrens, waarbij berging de hele regio bedient; de
+					waarheid hangt af van de afstand waarover een voorziening werkelijk water opvangt (#720, #741). De opgave komt uit een kaart met de maximaal opgetreden waterdiepte per cel, en die maxima
+					treden niet op hetzelfde moment op; landelijk maakt dat weinig uit, per blok wel, en hoe kleiner het blok, hoe zwaarder dat weegt. Zie de Descr van Grid_ref in
+					Templates/Indicatoren_T/Basisjaar.dms.";
+	}
+
+	container PerNL
+	{
+		parameter<Meter3> Opgave                   := sum(Bron/Opgave);
+		parameter<Meter3> Aanbod                   := sum(Bron/Aanbod);
+		parameter<Meter3> AanbodBuitenUrbanContour := sum(Bron/AanbodBuitenUrbanContour);
+		parameter<Meter3> Restopgave               := sum(PerGrid/Restopgave);
+		parameter<Meter3> Ongedekt                 := sum(Bron/Ongedekt);
+		parameter<Meter3> AanbodZonderOpgave       := sum(Bron/AanbodZonderOpgave);
+		parameter<meter3> Gedekt                   := Opgave - Ongedekt;
+
+		parameter<Eur>           Aanlegkosten            := sum(Bron/Aanleg);
+		parameter<Eur_jaarlijks> OnderhoudskostenPerJaar := sum(Bron/OnderhoudPerJaar);
+		parameter<Eur>           Onderhoudskosten_NCW    := sum(Bron/Onderhoud_NCW);
+		
+		parameter<float32> Dekkingsgraad           := Gedekt / Opgave;
+		parameter<float32> Dekkingsgraad_Ongeklemd := min_elem(Aanbod, Opgave) / Opgave;
+
+		parameter<Meter3>  Opgave_T100                  := sum(TweedeBui/Opgave);
+		parameter<Meter3>  Ongedekt_T100                := sum(TweedeBui/Ongedekt);
+		parameter<meter3>  Gedekt_T100                  := Opgave_T100 - Ongedekt_T100;
+		parameter<float32> Dekkingsgraad_T100           := Gedekt_T100 / Opgave_T100;
+		parameter<float32> Dekkingsgraad_Ongeklemd_T100 := min_elem(Aanbod, Opgave_T100) / Opgave_T100;
+	}
+	
+	container Kosten
+	: Descr = "Wat de bergingsmaatregelen kosten (#798). Aanleg en onderhoud staan los van elkaar en horen niet bij elkaar opgeteld te worden: aanleg is een eenmalige uitgave, onderhoud een bedrag per
+				jaar. De aanlegkosten zijn een voorraadgrootheid, net als het aanbod hierboven: de kosten van alles wat er in dit zichtjaar ligt; in bestaand gebied loopt dat mee met de opbouwfactor van
+				#746. De aanlegkosten van nieuwbouwwoningen zitten ook in het exploitatiesaldo en sturen de allocatie (#798); wat hier staat is ruimer,
+				want het telt ook bestaand gebied, werken en verblijfsrecreatie mee. Het onderhoud staat alleen hier en in geen enkel saldo, want het valt bij de beheerder van de openbare ruimte en niet bij
+				de ontwikkelaar, dezelfde afweging als bij BeheerEnOnderhoud in Templates/Indicatoren/KostenWoningbouw.dms."
+	{
+		attribute<Eur>           Aanleg           (AdminDomain) := Piekbuiberging/Aanbod/Aanlegkosten, StorageName = "=replace(StorageStr_Kosten, '@V@', 'Aanleg')", StorageType = "gdalwrite.grid";
+		attribute<Eur_jaarlijks> OnderhoudPerJaar (AdminDomain) := Piekbuiberging/Aanbod/Onderhoudskosten, StorageName = "=replace(StorageStr_Kosten, '@V@', 'OnderhoudPerJaar')", StorageType = "gdalwrite.grid";
+		
+		attribute<Eur> Onderhoud_NCW (AdminDomain) := = IsFirstAllocYear
+			? 'MakeDefined(OnderhoudPerJaar, 0[Eur_jaarlijks]) * Verdiscontering/PeriodeFactor'
+			: 'MakeDefined(OnderhoudPerJaar, 0[Eur_jaarlijks]) * Verdiscontering/PeriodeFactor + PrevIndicatoren/Piekbuiberging/Kosten/Onderhoud_NCW'
+		, StorageName = "=replace(StorageStr_Kosten, '@V@', 'Onderhoud_NCW')", StorageType = "gdalwrite.grid"
+		, Descr = "De netto contante waarde van het onderhoud, per periode opgebouwd volgens #651: het bedrag per jaar van dit zichtjaar maal de annuiteitfactor over de periode sinds het vorige zichtjaar,
+					opgeteld bij de NCW van dat vorige zichtjaar. De benadering daarin: het onderhoudsbedrag van dit zichtjaar geldt voor de hele periode ervoor, terwijl de maatregelen ergens in die periode
+					zijn aangelegd; dat overschat het onderhoud van wat er net ligt met hooguit een halve periode. Fijner kan alleen met de aanlegjaren per maatregel, en die kent het model niet.";
+		
+	}
+}

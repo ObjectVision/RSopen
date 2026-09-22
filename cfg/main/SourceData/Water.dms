@@ -8,7 +8,8 @@
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
 // MaximaleWaterdiepteNederland Kaart Grondwaterbeschermingsgebieden rondom bronnen voor drinkwater, bron RIVM,
-// 2025 Waterdiepte in m na hevige regenbui van 70 mm in 2 uur (1:100 jaar). Laadt via #include: WBS, dijkring,
+// 2025. Waterdiepte bij kortdurende hevige neerslag in twee kaarten: 70 mm in 2 uur (1:100 jaar) en 140 mm in
+// 2 uur (1:1000 jaar); zie BuiAannames. Laadt via #include: WBS, dijkring,
 // TeDroog, TeNat, TeZout, TeSlap, TeGevaarlijk, RuimteVoorRivierafvoer.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -16,57 +17,137 @@
 container Water : Source = "Bron19, 2 september 2021, via filesender.surf, GIS Data van de kaarten uit het essay Op Waterbasis"
 {
 	container Grondwaterstanden
+	: Descr = "De GHG- en GLG-kaarten van Deltares per variant en klimaatanker, elk gelezen op het eigen grid van 250 meter en aangevuld waar de levering geen waarde geeft (#837). Wie de kale levering
+				nodig heeft leest Referentie/<kaart>_Bron; de kaarten zonder achtervoegsel zijn aangevuld en zijn wat de opbrengstderving van de landbouw leest."
 	{
+		Template Kaart_T
+		: Descr = "Een GxG-tif van Deltares op zijn eigen grid van 250 meter, met de cellen zonder waarde gevuld met de waarde van de dichtstbijzijnde cel die er wel een heeft. De
+					levering dekt de Waddeneilanden niet en mist aan de randen; zonder vulling krijgt een landbouwcel daar geen sleutel in de WWL-relatiedatabase en dus een derving van 100 procent, en dat is
+					geen uitspraak over de grondwaterstand. De vulling over zee heen, van de Kop van Noord-Holland naar Texel en van de Friese kust naar de andere eilanden, is een tussenoplossing totdat de
+					levering de eilanden dekt; welke cellen gevuld zijn staat in IsAangevuld en de afstand tot de bron in Zonder/afstand (#837)."
+		{
+			parameter<String> Bestand;
+			//
+
+			attribute<float32> Bron (rdc_250m) : StorageName = "=Bestand", StorageType = "gdal.grid", StorageReadOnly = "True"
+			, Descr = "De levering op haar eigen grid; null waar zij niets geeft. De tifs van Deltares liggen op de oorsprong en de celmaat van rdc_250m, dus dit is een lezing zonder herbemonstering.";
+
+			unit<uint64> MetWaarde := select_with_org_rel(IsDefined(Bron))
+			{
+				attribute<rdc_meter> geometry := rdc_250m/point[org_rel];
+				attribute<float32>   waarde   := Bron[org_rel];
+			}
+			unit<uint64> Zonder := select_with_org_rel(!IsDefined(Bron))
+			, Descr = "De cellen zonder waarde, met de dichtstbijzijnde gevulde cel als bron. Ook buiten het studiegebied, want de randcellen van 250 meter vallen deels buiten de begrenzing terwijl er op 25 meter nog landbouw in ligt."
+			{
+				attribute<rdc_meter> geometry := rdc_250m/point[org_rel];
+				attribute<MetWaarde> naaste   := connect(MetWaarde/geometry, geometry);
+				attribute<float32>   waarde   := MetWaarde/waarde[naaste];
+				attribute<meter>     afstand  := value(dist(MetWaarde/geometry[naaste], geometry), meter);
+			}
+			attribute<float32> Gevuld_250m  (rdc_250m) := MakeDefined(Bron, recollect_by_cond(!IsDefined(Bron), Zonder/waarde));
+			attribute<float32> Result       (rdc_25m)  := Gevuld_250m[rdc_25m/rdc_250m_rel], Descr = "De aangevulde kaart op 25 meter, zoals de rest van het model haar leest.";
+			attribute<bool>    IsAangevuld  (rdc_25m)  := !IsDefined(Bron[rdc_25m/rdc_250m_rel]) && IsDefined(Result), Descr = "Waar de waarde uit de vulling komt en niet uit de levering.";
+			parameter<uint64>  n_aangevuld_250m := #Zonder, Descr = "Controlegetal: het aantal cellen van 250 meter dat gevuld is.";
+			parameter<meter>   afstand_max      := max(Zonder/afstand), Descr = "Controlegetal: de grootste afstand waarover een waarde is overgenomen.";
+		}
+
 		container Referentie //basisjaar
 		{
-			attribute<float32> GHG_2017_TR29_11 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/Huidig/GHG_REF2017BP18_tijdreeks1929-2011.tif" 
-			,	StorageType = "gdal.grid";
-			attribute<float32> GLG_2017_TR29_11 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/Huidig/GLG_REF2017BP18_tijdreeks1929-2011.tif"
-			,	StorageType = "gdal.grid";
-			attribute<float32> GHG_2017_TR74_03 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/Huidig/GHG_REF2017BP18_tijdreeks1974-2003.tif"
-			,	StorageType = "gdal.grid";
-			attribute<float32> GLG_2017_TR74_03 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/Huidig/GLG_REF2017BP18_tijdreeks1974-2003.tif"
-			,	StorageType = "gdal.grid";
+			container GHG_2017_TR29_11_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/Huidig/GHG_REF2017BP18_tijdreeks1929-2011.tif');
+			container GLG_2017_TR29_11_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/Huidig/GLG_REF2017BP18_tijdreeks1929-2011.tif');
+			container GHG_2017_TR74_03_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/Huidig/GHG_REF2017BP18_tijdreeks1974-2003.tif');
+			container GLG_2017_TR74_03_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/Huidig/GLG_REF2017BP18_tijdreeks1974-2003.tif');
+
+			attribute<float32> GHG_2017_TR29_11 (rdc_25m) := GHG_2017_TR29_11_src/Result;
+			attribute<float32> GLG_2017_TR29_11 (rdc_25m) := GLG_2017_TR29_11_src/Result;
+			attribute<float32> GHG_2017_TR74_03 (rdc_25m) := GHG_2017_TR74_03_src/Result;
+			attribute<float32> GLG_2017_TR74_03 (rdc_25m) := GLG_2017_TR74_03_src/Result;
+
+			attribute<float32> GLG_2017_TR29_11_Bron (rdc_25m) := GLG_2017_TR29_11_src/Bron[rdc_25m/rdc_250m_rel]
+			, Descr = "De kale levering zonder vulling, voor lezers die null als ontbrekende kennis willen zien, zoals de veenreserve in de koolstofboekhouding.";
 		}
 		container BAU
 		{
+			container GHG_2050_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU1/GHG_W2050BP18_tijdreeks1929-2011.tif');
+			container GLG_2050_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU1/GLG_W2050BP18_tijdreeks1929-2011.tif');
+			container GHG_2085_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU1/GHG_W2085BP18_tijdreeks1974-2003.tif');
+			container GLG_2085_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU1/GLG_W2085BP18_tijdreeks1974-2003.tif');
+
 			attribute<float32> GHG_2017 (rdc_25m) := Referentie/GHG_2017_TR29_11;
 			attribute<float32> GLG_2017 (rdc_25m) := Referentie/GLG_2017_TR29_11;
-			
-			attribute<float32> GHG_2050 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU1/GHG_W2050BP18_tijdreeks1929-2011.tif"
-			,	StorageType = "gdal.grid";
-			attribute<float32> GLG_2050 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU1/GLG_W2050BP18_tijdreeks1929-2011.tif"
-			,	StorageType = "gdal.grid";
-			attribute<float32> GHG_2085 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU1/GHG_W2085BP18_tijdreeks1974-2003.tif"
-			,	StorageType = "gdal.grid";
-			attribute<float32> GLG_2085 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU1/GLG_W2085BP18_tijdreeks1974-2003.tif"
-			,	StorageType = "gdal.grid";
+			attribute<float32> GHG_2050 (rdc_25m) := GHG_2050_src/Result;
+			attribute<float32> GLG_2050 (rdc_25m) := GLG_2050_src/Result;
+			attribute<float32> GHG_2085 (rdc_25m) := GHG_2085_src/Result;
+			attribute<float32> GLG_2085 (rdc_25m) := GLG_2085_src/Result;
 		}
 		container BAU2
 		{
+			container GHG_2050_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GHG_R2050BP18_tijdreeks1929-2011.tif');
+			container GLG_2050_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GLG_R2050BP18_tijdreeks1929-2011.tif');
+			container GHG_2085_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GHG_R2085BP18_tijdreeks1974-2003.tif');
+			container GLG_2085_src := Kaart_T('%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GLG_R2085BP18_tijdreeks1974-2003.tif');
+
 			attribute<float32> GHG_2017 (rdc_25m) := Referentie/GHG_2017_TR29_11;
 			attribute<float32> GLG_2017 (rdc_25m) := Referentie/GLG_2017_TR29_11;
-			
-			attribute<float32> GHG_2050 (rdc_25m) 
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GHG_R2050BP18_tijdreeks1929-2011.tif"
-			,	StorageType = "gdal.grid";
-			attribute<float32> GLG_2050 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GLG_R2050BP18_tijdreeks1929-2011.tif"
-			,	StorageType = "gdal.grid";
-			attribute<float32> GHG_2085 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GHG_R2085BP18_tijdreeks1974-2003.tif"
-			,	StorageType = "gdal.grid";
-			attribute<float32> GLG_2085 (rdc_25m)
-			:	StorageName = "%RS_Lb_DataDir%/Water/Grondwaterstanden/BAU2/GLG_R2085BP18_tijdreeks1974-2003.tif"
-			,	StorageType = "gdal.grid";
+			attribute<float32> GHG_2050 (rdc_25m) := GHG_2050_src/Result;
+			attribute<float32> GLG_2050 (rdc_25m) := GLG_2050_src/Result;
+			attribute<float32> GHG_2085 (rdc_25m) := GHG_2085_src/Result;
+			attribute<float32> GLG_2085 (rdc_25m) := GLG_2085_src/Result;
+		}
+		container NbSGenuanceerd
+		: Descr = "De grondwaterstanden waarmee het gewasmodel in NbSGenuanceerd rekent (#263, #782): geen eigen levering van Deltares maar de BAU-stand met daaroverheen de stand die de veenbouwsteen per cel
+					oplegt, want de vernatting die het punt van die variant is hoort in de opbrengstderving terug te komen. De bron geeft twee getallen per bouwsteen, kolom M en N van de bouwstenentabel,
+					overgenomen in Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/GLG_cm en GHG_cm; kolom N is maar half gevuld, dus op de bouwstenen met een geleverde GHG neemt de cel die over (een vast
+					peil zonder seizoensgang) en op de andere schuift de GHG met de GLG mee, zodat de plaatselijke afstand tussen hoogste en laagste stand overeind blijft; of dat de bedoelde toestand is staat
+					als vraag in #782. Alle drie de kaarten, ook die van 2017, want het zijn klimaatankers en geen beleidsjaren, en de vernatting geldt direct en volledig vanaf het eerste zichtjaar. Dit blok
+					leest de tif die Templates/VariantData/Natuur/Veen_T wegschrijft en niet het item zelf, want SourceData leest nergens uit VariantData; zie Bouwsteenkaart_Pad voor de volgorde van draaien."
+		{
+			// parameter<string> Bouwsteenkaart_Pad := '%LocalDataProjDir%/VariantData/Veenbouwstenen_NbSGenuanceerd_' + /ModelParameters/StudyArea + '.tif'
+			// , Descr = "Waar de gealloceerde veenbouwsteen per cel staat: letterlijk hetzelfde pad als Bouwsteenkaart_Pad in Templates/VariantData/Natuur/Veen_T, dat het bestand schrijft, als tekst herhaald omdat
+						// PropValue op een StorageName de expressietekst teruggeeft. Dit bestand ontstaat niet vanzelf: Write_Bouwsteenkaart staat in geen Generate-lijst, dus vraag er expliciet om (GeoDmsRun ...
+						// /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen/Write_Bouwsteenkaart). Ontbreekt het, dan meldt GeoDMS geen leesfout maar Unknown identifier op een subitem hier beneden. Verandert
+						// de veenlevering of de zeef, dan hoort de kaart opnieuw gemaakt te worden en daarna de opbrengstdervingskaarten; er is geen fingerprint die dat bewaakt.";
+
+			attribute</Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata> Bouwsteen (rdc_25m) := /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen/Bouwsteen_rel
+			// :	StorageName = "=Bouwsteenkaart_Pad"
+			// ,	StorageType = "gdal.grid"
+			// ,	StorageReadOnly = "True"
+			, Descr = "De gealloceerde bouwsteen per cel, null buiten het veengebied en op de cellen die in het type Rest vallen. De klassewaarden zijn de rijnummers van MetBrondata, precies zoals Veen_T ze wegschrijft.";
+
+			attribute<bool>    Opgelegd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/HeeftGLG[Bouwsteen]
+			, Descr = "Legt de bouwsteen op deze cel een grondwaterstand op? Onwaar buiten het veengebied, en ook binnen het veengebied bij open water en bij de twee bebouwde bouwstenen, want daar geeft de bron geen stand. Die cellen houden de BAU-stand.";
+
+			attribute<bool>    GHG_Geleverd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/HeeftGHG[Bouwsteen]
+			, Descr = "Geeft de bron voor de bouwsteen op deze cel een GHG? Waar op de bouwstenen 1, 2, 3a en 4a, onwaar op alle andere, ook op de cellen die wel een GLG opgelegd krijgen. Waar dit onwaar is schuift de GHG mee met de GLG.";
+
+			attribute<float32> GHG_Opgelegd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/GHG_cm[Bouwsteen] / 100f
+			, Descr = "De opgelegde gemiddeld hoogste grondwaterstand in meters onder maaiveld, positief naar beneden. Alleen betekenisvol waar GHG_Geleverd waar is.";
+
+			attribute<float32> GLG_Opgelegd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/GLG_cm[Bouwsteen] / 100f
+			, IntegrityCheck = "/ModelParameters/Advanced/AdminDomain_ref == '25m'"
+			, Descr = "De opgelegde stand in meters onder maaiveld, positief naar beneden, in dezelfde eenheid en met hetzelfde teken als de tifs van Deltares hierboven, zoals
+						SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_T met gxg_scale en gxg_sign verwacht. De IntegrityCheck hangt hier zodat hij in de rekengraaf zit, want dit item is leverancier van de
+						vier standen hieronder; hij bewaakt dat het AdminDomain 25 meter is, omdat de bouwsteenkaart op AdminDomain wordt weggeschreven en hier op rdc_25m op georeferentie wordt teruggelezen.";
+
+			attribute<float32> Verschuiving_2017 (rdc_25m) := Referentie/GLG_2017_TR29_11 - GLG_Opgelegd;
+			attribute<float32> Verschuiving_2050 (rdc_25m) := BAU/GLG_2050 - GLG_Opgelegd, Descr = "Hoeveel meter de stand omhoog moet ten opzichte van de BAU-levering om op de opgelegde GLG uit te komen. Positief is natter.";
+			attribute<float32> Verschuiving_2085 (rdc_25m) := BAU/GLG_2085 - GLG_Opgelegd;
+
+			attribute<float32> GLG_2017 (rdc_25m) := Opgelegd ? GLG_Opgelegd : Referentie/GLG_2017_TR29_11;
+			attribute<float32> GHG_2017 (rdc_25m) := Opgelegd ? (GHG_Geleverd ? GHG_Opgelegd : max_elem(0f, Referentie/GHG_2017_TR29_11 - Verschuiving_2017)) : Referentie/GHG_2017_TR29_11
+			, Descr = "De 2017-kaart draagt dezelfde opgelegde standen als die van 2050 en 2085, want de drie kaarten zijn klimaatankers en geen beleidsjaren: Templates/Landbouw/Suitability_T interpoleert tussen
+						de twee ankers die het zichtjaar omsluiten, en met kale referentiestanden op dit anker zou de vernatting in 2040 voor een deel worden weggemengd, terwijl zij direct en volledig vanaf het
+						eerste zichtjaar geldt. Geen enkel zichtjaar leest deze kaart als enige, dus zij is nooit een basisjaarbeeld.";
+
+			attribute<float32> GLG_2050 (rdc_25m) := Opgelegd ? GLG_Opgelegd : BAU/GLG_2050;
+			attribute<float32> GHG_2050 (rdc_25m) := Opgelegd ? (GHG_Geleverd ? GHG_Opgelegd : max_elem(0f, BAU/GHG_2050 - Verschuiving_2050)) : BAU/GHG_2050
+			, Descr = "Twee regels op een opgelegde cel: geeft de bron een GHG (bouwstenen 1, 2, 3a en 4a), dan staat die er; geeft zij er geen, dan schuift de GHG mee met de GLG en wordt hij geklemd op maaiveld,
+						wat de afstand tussen GHG en GLG kleiner kan maken maar de volgorde nooit omdraait. Het null-gedrag verschilt: de geleverde GHG staat er ook waar de BAU-levering niets geeft, net als bij
+						GLG_Opgelegd, terwijl de meeschuifregel daar null blijft en de opbrengstderving terugvalt op de tak zonder treffer.";
+
+			attribute<float32> GLG_2085 (rdc_25m) := Opgelegd ? GLG_Opgelegd : BAU/GLG_2085;
+			attribute<float32> GHG_2085 (rdc_25m) := Opgelegd ? (GHG_Geleverd ? GHG_Opgelegd : max_elem(0f, BAU/GHG_2085 - Verschuiving_2085)) : BAU/GHG_2085;
 		}
 	}
 
@@ -80,18 +161,45 @@ container Water : Source = "Bron19, 2 september 2021, via filesender.surf, GIS D
 	#include<TeGevaarlijk.dms>
 	#include<RuimteVoorRivierafvoer.dms>
 	
+	container Risicozonering
+	: Descr = "De overstromingsgevaarzonering zoals aangeleverd, en de omzetting daarvan naar het modelraster."
+	{
+		container Bron
+		: Descr = "De aangeleverde tif. Ligt 5 m naast het RD-25m-raster (celoffset -22,2 en -160,2) en heeft tegels van 128x128, dus GeoDMS schuift hem naar de dichtstbijzijnde cel en waarschuwt daarover. Alleen nog nodig om met Maak de tif te genereren."
+		{
+			attribute<Classifications/Overstromingsgevaarzonering/zoneringK> Overstromingsgevaarzonering (rdc_25m)
+			:	StorageType = "gdal.grid"
+			,	Source      = "Bron20, 3 juli 2022 per email"
+			,	url         = "%RSo_DataDir%/Omgeving/Water/Overstromingsgevaarzonering/Overstromingsgevaarzonering_beleidsregimes_en_constraints_voor_ruimtescanner_ks.pdf"
+			,	StorageName = "%RSo_DataDir%/Omgeving/Water/Overstromingsgevaarzonering/Risicozonering_010722.tif";
+		}
+
+		container Maak
+		: Descr = "Zet de bron eenmalig om naar een getegelde, LZW-gecomprimeerde tif op het modelraster, met dezelfde afronding die GeoDMS nu bij het inlezen maakt. Draai dit met StudyArea = Nederland, want de tif beslaat het hele land."
+		{
+			parameter<Bool> IsNederland := lowercase(/ModelParameters/StudyArea) == 'nederland', Descr = "Bewaakt dat de tif niet per ongeluk met een provincie als studiegebied wordt weggeschreven.";
+
+			attribute<Classifications/Overstromingsgevaarzonering/zoneringK> Overstromingsgevaarzonering (rdc_25m) := Bron/Overstromingsgevaarzonering
+			,	StorageName = "%RSo_DataDir%/Omgeving/Water/Overstromingsgevaarzonering/Risicozonering_010722_025m_NL_rdc_uint8.tif"
+			,	StorageType = "gdalwrite.grid"
+			,	IntegrityCheck = "IsNederland";
+
+			parameter<String> Generate := 'Ready', ExplicitSuppliers = "/SourceData/Water/Risicozonering/Maak/Overstromingsgevaarzonering", Descr = "Volledig gekwalificeerd pad met opzet: op ouderniveau staat een gelijknamig leesitem, en een ongekwalificeerde naam zou daar stil naartoe oplossen zodra dit schrijfitem verdwijnt of wordt hernoemd.";
+		}
+	}
+
 	attribute<Classifications/Overstromingsgevaarzonering/zoneringK> Overstromingsgevaarzonering (rdc_25m)
-	:	StorageType = "gdal.grid"
-	,	Source      = "Bron20, 3 juli 2022 per email"
-	,	url         = "%RSo_DataDir%/Omgeving/Water/Overstromingsgevaarzonering/Overstromingsgevaarzonering_beleidsregimes_en_constraints_voor_ruimtescanner_ks.pdf"
-	,	StorageName = "%RSo_DataDir%/Omgeving/Water/Overstromingsgevaarzonering/Risicozonering_010722.tif";
+	:	Source          = "Bron20, 3 juli 2022 per email"
+	,	url             = "%RSo_DataDir%/Omgeving/Water/Overstromingsgevaarzonering/Overstromingsgevaarzonering_beleidsregimes_en_constraints_voor_ruimtescanner_ks.pdf"
+	,	StorageName     = "%RSo_DataDir%/Omgeving/Water/Overstromingsgevaarzonering/Risicozonering_010722_025m_NL_rdc_uint8.tif"
+	,	StorageReadOnly = "true";
 	
 	attribute<Bool> PrimaireWaterkeringen (rdc_100m)
 	:	Label       = "Ontkoppeld bestand Primaire waterkeringen"
 	,	Source      = "berekening van item result 5 februari 2019 GeoDMS 7.188 https://pbl.sliksvn.com/ruimtescanner/PBL/ProjDir/branches/RSL17 5513 https://pbl.sliksvn.com/ruimtescanner/PBLSourceData/Trunk/LUMOS 5508"
 	,	StorageName = "%RSo_DataDir%/Omgeving/Water/Primaire_waterkeringen_ontkoppeld.tif";
 	
-	attribute<meter> MaximaleWaterdiepteNederland_Kaart4 (AdminDomain) // Dit is de diepte vanaf kleine kans (= 1/1000 jaar of hoger). Zie: https://www.klimaateffectatlas.nl/nl/overstromingsdiepte
+	attribute<meter> MaximaleWaterdiepteNederland_Kaart4 (rdc_25m) // Dit is de diepte vanaf kleine kans (= 1/1000 jaar of hoger). Zie: https://www.klimaateffectatlas.nl/nl/overstromingsdiepte
 	: StorageName     = "%RSo_DataDir%/Omgeving/Water/Schade/MaximaleWaterdiepteNederland_Kaart4.tif"
 	, StorageReadOnly = "TRUE"
 	, Source          = "item /LIWO_Basis/MaximaleWaterdiepteNederland_Kaart4.tif. Ontvangen van Karin de Bruin op 30 augustus 2022"
@@ -128,13 +236,32 @@ container Water : Source = "Bron19, 2 september 2021, via filesender.surf, GIS D
 	attribute<Meter> Waterdiepte_A_PrimairOnbeschermd (AdminDomain) : StorageName     = "%RSo_DataDir%/Omgeving/Water/Waterdiepte_LIWO/MaximaleWaterdiepte_A_RegionaalBeschermd_Kaart4_25m.tif", StorageType = "gdal.grid";
 	attribute<Meter> Waterdiepte_B_PrimairBeschermd   (AdminDomain) : StorageName     = "%RSo_DataDir%/Omgeving/Water/Waterdiepte_LIWO/MaximaleWaterdiepte_B_PrimairBeschermd_Kaart5_25m.tif", StorageType = "gdal.grid";
 	attribute<Meter> Waterdiepte_C_RegionaalBeschermd (AdminDomain) : StorageName     = "%RSo_DataDir%/Omgeving/Water/Waterdiepte_LIWO/MaximaleWaterdiepte_C_RegionaalBeschermd_Kaart4_25m.tif", StorageType = "gdal.grid";
+	
+	attribute<Meter> Waterdiepte_A_PrimairOnbeschermd_Plausibel (AdminDomain) := IsDefined(Waterdiepte_A_PrimairOnbeschermd) && Waterdiepte_A_PrimairOnbeschermd > MaxPlausibeleOverstromingsdiepte ? null_f : Waterdiepte_A_PrimairOnbeschermd;
+	attribute<Meter> Waterdiepte_B_PrimairBeschermd_Plausibel   (AdminDomain) := IsDefined(Waterdiepte_B_PrimairBeschermd)   && Waterdiepte_B_PrimairBeschermd   > MaxPlausibeleOverstromingsdiepte ? null_f : Waterdiepte_B_PrimairBeschermd;
+	attribute<Meter> Waterdiepte_C_RegionaalBeschermd_Plausibel (AdminDomain) := IsDefined(Waterdiepte_C_RegionaalBeschermd) && Waterdiepte_C_RegionaalBeschermd > MaxPlausibeleOverstromingsdiepte ? null_f : Waterdiepte_C_RegionaalBeschermd
+	, Descr = "De drie LIWO-kaarten ontdaan van de onzinwaarden, met dezelfde grens als Dieptekaart hieronder; de kaarten waar de overstromingsschade uit leest, in
+				Templates/Indicatoren/SSM2017_Overstromingsschades/Parameters.dms. Alleen de C-kaart heeft onzinwaarden, die in de schadefunctie op het tabelmaximum klemmen en de maximale schadefactor op
+				gewoon land leveren; A en B krijgen dezelfde behandeling zodat de regel dat de schade met plausibele dieptes rekent per constructie geldt.";
 
 	// attribute<Meter> Waterdiepte_A_PrimairOnbeschermd (AdminDomain) := mean(Waterdiepte_A_PrimairOnbeschermd_src == -9999f ? null_f : Waterdiepte_A_PrimairOnbeschermd_src, rdc_5m/AdminDomain_rel);
 	// attribute<Meter> Waterdiepte_B_PrimairBeschermd   (AdminDomain) := mean(Waterdiepte_B_PrimairBeschermd_src == -9999f ? null_f : Waterdiepte_B_PrimairBeschermd_src, rdc_5m/AdminDomain_rel);
 	// attribute<Meter> Waterdiepte_C_RegionaalBeschermd (AdminDomain) := mean(Waterdiepte_C_RegionaalBeschermd_src == -9999f ? null_f : Waterdiepte_C_RegionaalBeschermd_src, rdc_5m/AdminDomain_rel);
 	
-	attribute<Meter> Dieptekaart0 (AdminDomain) := max_elem(Waterdiepte_A_PrimairOnbeschermd, Waterdiepte_B_PrimairBeschermd, Waterdiepte_C_RegionaalBeschermd);
-	attribute<Meter> Dieptekaart  (AdminDomain) := IsDefined(Dieptekaart0) && Dieptekaart0 > 10[meter] ? null_f : Dieptekaart0;
+	parameter<Meter> MaxPlausibeleOverstromingsdiepte := /ModelParameters/Advanced/MaxPlausibeleOverstromingsdiepte
+	, Descr = "Bovengrens waarboven een waarde in deze kaarten geen overstromingsdiepte meer kan zijn maar corrupte brondata; de waarde staat in ModelParameters/Advanced. De C-kaart bevat cellen met
+				waarden tot 147 miljoen meter op gewoon land, terwijl de diepste plausibele waarde ruim onder de honderd meter ligt, dus de precieze grens maakt niet uit. Vervalt zodra Deltares een
+				gecorrigeerde C-kaart levert.";
+
+	attribute<Meter> Dieptekaart0 (AdminDomain) := max_elem(Waterdiepte_A_PrimairOnbeschermd, Waterdiepte_B_PrimairBeschermd, Waterdiepte_C_RegionaalBeschermd)
+	, Descr = "Het elementgewijze maximum van de drie LIWO-kaarten, ongefilterd. Lees dit item niet rechtstreeks: het bevat
+				de onzinwaarden uit de C-kaart. Gebruik Dieptekaart.";
+
+	attribute<Meter> Dieptekaart (AdminDomain) := IsDefined(Dieptekaart0) && Dieptekaart0 > MaxPlausibeleOverstromingsdiepte ? null_f : Dieptekaart0
+	, Descr = "De overstromingsdiepte zoals de zeef en de overstromingsschade hem lezen: het maximum van de drie kaarten, alleen ontdaan van de onzinwaarden. De grens van tien meter met null erboven die
+				hier stond hoorde bij de waterberging, waar diepte de maat is voor het bergbare volume, en staat nu als ModelParameters/Waterberging/Maximum_Waterschijf (#665); hier betekent null iets
+				anders dan een grote diepte, want de zeeftoets diepte > MaxOverstromingsdiepte geeft op null FALSE, zodat op de diepste bebouwing van het land geen pakket afviel terwijl de schade-indicator
+				diezelfde cellen als schadevrij boekte.";
 	
 	attribute<Float32> DieptekaartOud (AdminDomain) // Dit is de diepte vanaf kleine kans (= 1/1000 jaar of hoger). Zie: https://www.klimaateffectatlas.nl/nl/overstromingsdiepte
 	: StorageName     = "%RSo_DataDir%/Omgeving/Water/Schade/MaximaleWaterdiepteNederland_Kaart4.tif"
@@ -168,20 +295,40 @@ container Water : Source = "Bron19, 2 september 2021, via filesender.surf, GIS D
 		// attribute<.>    Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
 	// }
 	
+	// De twee kaarten hieronder komen uit dezelfde reeks van de Klimaateffectatlas. Die reeks is doorgerekend voor drie
+	// bui-intensiteiten, 35, 70 en 140 mm in 2 uur, met herhalingstijden van ongeveer 10, 100 en 1000 jaar. De aannames
+	// staan in de gemeenschappelijke Descr hieronder, want de piekbuiberging-indicator leunt erop; zie #741.
+
+	parameter<String> BuiAannames :=
+		"De simulaties zijn uitgevoerd met de rainfall overlay van Tygron. Vier aannames uit de bijsluiter bepalen wat de kaart wel en niet vertelt.
+
+			Riool. De bergings- en afvoercapaciteit is 20 mm per uur, dus over de twee bui-uren verdwijnt tot 40 mm voordat er iets blijft staan. Aangenomen is daarbij dat de verharde buitenruimte in de bebouwde kom optimaal op het riool is aangesloten. De bijsluiter zegt overal, maar noemt in dezelfde adem die aansluiting van de verharde buitenruimte, en die twee lezingen verschillen: over het hele oppervlak is 40 mm, over alleen het aangesloten verharde deel is binnen bebouwd gebied 21,8 mm. Dat verzet het fysieke plafond onder de opgave van 100 naar 118 mm; zie #741.
+
+			Simulatieduur. De kaart geeft de MAXIMAAL OPGETREDEN waterdiepte over een bui van 2 uur plus 4 droge uren, waarin alleen afstroming over land, afvoer via riool en bodeminfiltratie plaatsvinden. Het maximum treedt per cel op een eigen moment op, dus een som van celmaxima is geen volume dat ergens tegelijk op straat staat. Zie #741 voor wat dat betekent voor de piekbuiberging-indicator.
+
+			Oppervlaktewater. Aangenomen is dat de interactie met het oppervlaktewatersysteem bij deze bui verwaarloosbaar is en dat oppervlaktewater een onbeperkte bergingscapaciteit heeft. Water dat het oppervlaktewater bereikt zit dus al niet in deze kaart, en extra berging op datzelfde oppervlaktewater kan de opgave uit deze kaart daarom niet verkleinen. Dat is aan de kaart zelf te zien: cellen die binnen bebouwd gebied voor minstens 99 procent uit water bestaan staan gemiddeld op 2,4 mm.
+
+			Hoogtemodel. AHN2, ingemeten tussen 2007 en 2012. De bijsluiter zegt expliciet dat de kaart niet bruikbaar is voor bebouwing van na 2012, dus de precieze ligging van een plas is onzeker in alles wat sindsdien is gebouwd. Van de begrenzing bebouwd gebied van 2022 was 56.813 ha in 2012 nog geen bebouwd gebied, 12,3 procent van het gemaskeerde oppervlak en 9,3 procent van de opgave.
+
+			Gemeten op de geleverde rasters, 2026-09-02: beide kaarten zijn aan twee kanten afgekapt. Onderaan op 0,05 m, de klassegrens waaronder de Klimaateffectatlas een locatie als droog toont: er is geen enkele cel met een waarde tussen 0 en 0,05 m, en binnen bebouwd gebied staan 791.483 cellen op exact 0,05 m, samen 24,7 mln m3 van de 497,0. Bovenaan op precies 0,30 m, met 63.986 cellen binnen bebouwd gebied, samen 12,0 mln m3. Daartussen is de kaart continu, ruim vijftien miljoen unieke waarden. Wat er onder de ondergrens is gebeurd, op nul zetten of ophogen naar 0,05, is uit het raster niet te zien en ligt als vraag bij Deltares."
+	, Descr = "Gedeelde toelichting bij de twee dieptekaarten hieronder. Staat als parameter en niet twee keer als tekst, zodat de aannames op een plek staan.";
+
 	attribute<Meter> WaterdiepteBijHevigeNeerslag_T100 (AdminDomain)
 	: StorageName     = "%RSo_DataDir%/Omgeving/Water/WaterdiepteBijHevigeNeerslag_T100_25m.tif"
 	, StorageReadOnly = "TRUE"
-	, Descr           = "Waterdiepte in m na hevige regenbui van 70 mm in 2 uur (1:100 jaar)."
-	, Source          = "Ontvangen van Deltares 2025-12-04"
+	, Descr           = "Waterdiepte in m na een bui van 70 mm in 2 uur, in het huidige klimaat gemiddeld eens per 100 jaar. Zie BuiAannames hierboven voor wat de kaart voorstelt."
+	, Source          = "Ontvangen van Deltares 2025-12-04, met bijsluiter WaterdiepteBijHevigeNeerslag_T100_25m.txt"
 	, URL             = "https://www.klimaateffectatlas.nl/nl/waterdiepte-bij-kortdurende-hevige-neerslag";
 	//attribute<Meter> WaterdiepteBijHevigeNeerslag_T100 (AdminDomain) := value(WaterdiepteBijHevigeNeerslag_T100_src, cm)[meter];
-	
+
 	attribute<Meter> WaterdiepteBijHevigeNeerslag_T1000 (AdminDomain)
 	: StorageName     = "%RSo_DataDir%/Omgeving/Water/WaterdiepteBijHevigeNeerslag_T1000_25m.tif"
 	, StorageReadOnly = "TRUE"
-	, Descr           = "Waterdiepte in m na hevige regenbui van 70 mm in 2 uur (1:1000 jaar)."
-	, Source          = "Ontvangen van Deltares 2026-01-23"
-	, URL             = "https://www.klimaateffectatlas.nl/nl/waterdiepte-bij-kortdurende-hevige-neerslag";
+	, Descr = "Waterdiepte in m na een bui van 140 mm in 2 uur, met een herhalingstijd van ongeveer 1000 jaar; zie BuiAannames hierboven voor wat de kaart voorstelt. De bui volgt uit de bijsluiter van de
+				reeks op het kennisportaal, die 35, 70 en 140 mm in 2 uur noemt voor 10, 100 en 1000 jaar (#741). De kaart die de piekbuiberging-indicator gebruikt, want
+				Templates/Indicatoren_T/Basisjaar.dms zet Kans_ref op 1000."
+	, Source          = "Ontvangen van Deltares 2026-01-23, zonder bijsluiter"
+	, URL             = "https://klimaatadaptatienederland.nl/stresstest/bijsluiter/bepalen-dreigingen/wateroverlast/waterdiepte-kortdurende-hevige-neerslag/";
 
 	attribute<float32> kwel_1996_2003_average0 (AdminDomain)
 	: StorageName     = "%RS_Lb_DataDir%/Water/kwel_1996_2003_average_mmd_l1.tif"

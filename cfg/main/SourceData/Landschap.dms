@@ -32,7 +32,7 @@ container Landschap : using = "Classifications"
 	, 	StorageType     = "gdal.grid"
 	,	StorageReadOnly = "True"
 	,	DialogData      = "rdc_meter"
-	,	Source          = "X:\User\bouwmana\AGP\RV_Gebiedstypen\aggregated_gebiedstypen.gdb Arno Bouwman PBL 20250908 aggregated_gebiedstypen.gdb:" 
+	,	Source          = "X:\\User\\bouwmana\\AGP\\RV_Gebiedstypen\\aggregated_gebiedstypen.gdb Arno Bouwman PBL 20250908 aggregated_gebiedstypen.gdb:" 
 						  "conversie Huidig_GO_BNS_reclass_ZWD naar tif in ArcMap 10.8.1 Export Data, tif, LZW"
 	{
 		attribute<Landschap/Huidig_GO_BNS_reclass_ZWD> gridcode_rel (AdminDomain) := rlookup(., Landschap/Huidig_GO_BNS_reclass_ZWD/code);
@@ -43,10 +43,260 @@ container Landschap : using = "Classifications"
 		attribute<rdc_meter>   geometry                    (poly) := geos_union_polygon(BasiskaartNatuurlijkSysteemNederland/geometry, BasiskaartNatuurlijkSysteemNederland/gridcode_rel);
 		attribute<.>           BNSN_rel                           := id(.);
 		attribute<string>      name                               := Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/name;
-		
+
 		attribute<.>           per_AdminDomain      (AdminDomain) := poly2grid(geometry, AdminDomain);
 		attribute<.>           per_AllocDomain      (AllocDomain) := poly2grid(geometry, AllocDomain);
 		attribute<.>           BNSN_rel_AdminDomain (AdminDomain) := id(.)[per_AdminDomain];
 		attribute<.>           BNSN_rel_AllocDomain (AllocDomain) := id(.)[per_AllocDomain];
+	}
+
+	unit<UInt32> LandschapsRegio : NrOfRows = 5
+	, Descr = "De landsdekkende, niet-overlappende regio-indeling voor de landschappen uit #705: kust, rivieren, veen, zand en overig. De regio's worden bepaald door de gebieden van de vier landschapsteams
+				zelf, met de fysische kaart hooguit als vulling; wat buiten alle vier valt is Overig, bewust een grote klasse (reactie vanuit Deltares bij #705). De schakelaars staan op de gekozen lezing en
+				blijven bestaan om het alternatief te kunnen meten: Basis_ref bepaalt of de fysische kaart meedoet, ZandBegrenzing_ref en VeenBegrenzing_ref welk item de buitengrens van die twee
+				landschappen is; ModelParameters/Natuur/Landschap/VeenGaatVoorZand is de enige die open blijft, omdat Deltares daar twee kaarten van vraagt. De vereenvoudiging tekent de grenzen door de oogharen in plaats van strak om de
+				leveringspolygonen, zie Vereenvoudiging_Straal_m. De indeling staat los van de variant, zodat alle varianten in dezelfde tabelregels optellen; Diagnose705 meet de arealen, en dit is een van
+				de opties van ModelParameters/Advanced/IndicatorRegio_ref."
+	{
+		attribute<String> label      : ['Kust','Rivieren','Veen','Zand','Overig'];
+		attribute<String> name       := AsItemName(label);
+		attribute<UInt32> BrushColor : [rgb(249,225,19), rgb(65,105,242), rgb(148,227,54), rgb(205,137,102), rgb(200,200,200)];
+
+		container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+
+		// ---------------- schakelaars ----------------
+
+		parameter<String> Basis_ref := 'Leveringen'
+		, Descr = "Bepalen de teamgebieden de regio's, of vult de fysische kaart aan waar geen team levert? Leveringen, de gekozen stand: alleen de teamgebieden, al het overige is Overig, de lezing van de
+					reactie vanuit Deltares. FysischPlusLeveringen: het gebiedstypenraster Huidig_GO_BNS_reclass_ZWD als basis met de teamgebieden eroverheen; blijft staan om de twee kaarten tegen elkaar te
+					zetten, Diagnose705 meet ze allebei.";
+
+		parameter<String> ZandBegrenzing_ref := 'Levering'
+		, Descr = "Welk item de buitengrens van het zandlandschap is. Levering, de gekozen stand: Bron/Zand_NbSGenuanceerd/Beekdalherstel, de beekdal- en droogdallevering van #630, het item dat de reactie
+					noemt. Losse dalpolygonen zijn geen landschap, maar met de vereenvoudiging lopen de verspreide dalen in elkaar over tot een aaneengesloten zandlandschap en worden de hoogveenkoppen
+					daartussen als enclave opgeslokt, precies wat de reactie voorspelt; bij welke straal dat omslaat laat de reeks in Diagnose705 zien. Landschapsbegrenzing:
+					RegioIndelingen/Landschappen/Zandgebied, de grove omhullende van ruim 3 miljoen ha, afgevallen omdat die bijna heel Nederland beslaat; blijft staan om het verschil te laten zien.";
+
+		parameter<String> VeenBegrenzing_ref := 'AlleenPeilvakken'
+		, Descr = "Welk item de buitengrens van het veenlandschap is. AlleenPeilvakken, de gekozen stand: Bron/Veen_NbSGenuanceerd/Bron_PerPeilvak, het item dat de reactie noemt; de laag zonder peilvak dekt de
+					Veluwe en de Utrechtse Heuvelrug, hoge zandgrond zonder polderpeil, en die hoort in deze indeling bij zand. BeideLagen: met Bron_ZonderPeilvak erbij, zoals de allocatie de levering leest;
+					blijft staan om het verschil te meten. Stedelijk gebied binnen de veengrens telt als veen, want de leveringspolygonen dekken de bebouwing binnen hun grens.";
+
+		parameter<UInt32> Vereenvoudiging_Straal_m := /ModelParameters/Natuur/Landschap/Vereenvoudiging_Straal_m
+		, Descr = "De straal in meters waarmee de grenzen door de oogharen worden getekend; de waarde staat in ModelParameters/Advanced. Per cel wordt van elk van de vier landschappen het aandeel binnen deze
+					straal bepaald en de cel gaat naar het landschap met het hoogste aandeel, mits boven Vereenvoudiging_Drempel. Groter laat verspreide leveringspolygonen in elkaar overlopen en enclaves
+					verdwijnen; nul houdt de kaart op de leveringen zelf, op 100 in plaats van 25 meter. Toegestane waarden zijn de stralen uit Geography/Matrix; Diagnose705 draait een oplopende reeks en zet de
+					arealen naast elkaar. Op 100 meter en niet op 25, om dezelfde kostenreden als bij de afstandsringen rond het Natuurnetwerk in Natuur.dms.";
+
+		parameter<Float32> Vereenvoudiging_Drempel := /ModelParameters/Natuur/Landschap/Vereenvoudiging_Drempel
+		, Descr = "De waarde staat in ModelParameters/Advanced. Hoeveel van de omgeving moet minstens bij een landschap horen voordat de cel dat landschap krijgt. Onder deze drempel wordt de cel Overig. Op nul zou elk landschap zich over de volle straal uitsmeren, ook waar maar een enkele polygoon ligt.";
+
+		// ---------------- de bouwstenen ----------------
+
+		container Impl
+		: Descr = "De bouwstenen van de toedeling. De Grens-vlaggen mogen elkaar overlappen; de prioriteitsvolgorde in Ruw hakt de knoop door."
+		{
+			container BronKust := /SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd;
+			container BronRiv  := /SourceData/Grondgebruik/Natuur/Bron/Rivieren_NbSGenuanceerd;
+			container BronVeen := /SourceData/Grondgebruik/Natuur/Bron/Veen_NbSGenuanceerd;
+			container BronZand := /SourceData/Grondgebruik/Natuur/Bron/Zand_NbSGenuanceerd;
+
+			// -- buitengrenzen per landschap, zoals gevraagd in de reactie --
+
+			attribute<Bool> Grens_Kust (AdminDomain) :=
+				   IsDefined(BronKust/Duinen/Per_AdminDomain)
+				|| IsDefined(BronKust/Wadden/Per_AdminDomain)
+				|| IsDefined(BronKust/ZWD/Per_AdminDomain)
+			, Descr = "De drie kustleveringen van #654, samen 50.388 ha. Alleen het bereik telt, dus de volgorde waarin poly2grid de polygonen afloopt doet er hier niet toe.";
+
+			attribute<Bool> Grens_Rivieren (AdminDomain) :=
+				   IsDefined(poly2grid(BronRiv/Levering/gebied/geometry, AdminDomain))
+				|| IsDefined(BronRiv/DijkenBehouden/Per_AdminDomain)
+			, Descr = "De ecotopenlevering van #621 plus de behouden dijken van #620, samen 88.480 ha. Dit is de begrenzing waar de reactie om vraagt: het rivierengebied liep in het westen veel verder dan de levering.";
+
+			attribute<Bool> Grens_Veen (AdminDomain) := = VeenBegrenzing_ref == 'AlleenPeilvakken'
+				? 'IsDefined(poly2grid(BronVeen/Bron_PerPeilvak/gebied/geometry, AdminDomain))'
+				: 'IsDefined(poly2grid(BronVeen/Bron_PerPeilvak/gebied/geometry, AdminDomain)) || IsDefined(poly2grid(BronVeen/Bron_ZonderPeilvak/gebied/geometry, AdminDomain))'
+			, Descr = "De veenlevering, met of zonder de tweede laag; zie VeenBegrenzing_ref.";
+
+			attribute<Bool> Grens_Zand_Levering (AdminDomain) := = ZandBegrenzing_ref == 'Levering'
+				? 'IsDefined(BronZand/Beekdalherstel/Per_AdminDomain)'
+				: '/SourceData/RegioIndelingen/Landschappen/Zandgebied/IsGebied'
+			, Descr = "De zandbegrenzing zoals die uit de aanlevering volgt, de dalenlevering of de landschapsomhullende; zie ZandBegrenzing_ref.";
+
+			attribute<Bool> Grens_Zand_Vulling (AdminDomain) := Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/IsZandvulling[BasiskaartNatuurlijkSysteemNederlandK/per_AdminDomain]
+			, Descr = "De vier aanvullende hoofdklassen uit de Basiskaart Natuurlijk Systeem; zie ZandVultUitBNSN. Buiten de basiskaart FALSE, zodat een cel zonder klasse niet stil zand wordt.";
+
+			attribute<Bool> Grens_Zand (AdminDomain) := = /ModelParameters/Natuur/Landschap/ZandVultUitBNSN ? 'Grens_Zand_Levering || Grens_Zand_Vulling' : 'Grens_Zand_Levering'
+			, Descr = "De buitengrens van het zandlandschap: de aanlevering, eventueel aangevuld met de vier hoofdklassen.";
+
+			// -- de fysische kaart, alleen in gebruik als Basis_ref daarom vraagt --
+
+			attribute<..> Regio_perGebiedstype (Classifications/Landschap/Huidig_GO_BNS_reclass_ZWD)             := rlookup(Classifications/Landschap/Huidig_GO_BNS_reclass_ZWD/LandschapsRegio_name, ../name);
+			attribute<..> Regio_perBNSN        (Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK) := rlookup(Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/LandschapsRegio_name, ../name);
+
+			attribute<..> Basis_Gebiedstype (AdminDomain) := Regio_perGebiedstype[Huidig_GO_BNS_reclass_ZWD/gridcode_rel];
+			attribute<..> Basis_BNSN        (AdminDomain) := Regio_perBNSN[BasiskaartNatuurlijkSysteemNederlandK/per_AdminDomain];
+			attribute<..> Basis             (AdminDomain) := = Basis_ref == 'Leveringen'
+				? 'const(null_u, AdminDomain, ..)'
+				: 'MakeDefined(Basis_Gebiedstype, Basis_BNSN)'
+			, Descr = "De fysische vulling onder de teamgebieden. Overal leeg in de leveringslezing, want daar bepalen de teamgebieden alles.";
+
+			// -- groot water en het indelingsgebied --
+
+			attribute<Bool> IsGrootWater (AdminDomain) := /BaseData/StartState/Bodemstatistiek/IsGrootWater
+				|| /BaseData/StartState/Bodemstatistiek/gg_CBS == /Classifications/Grondgebruik/CBSKlasse/V/Oorspronkelijk_NoData
+				|| /BaseData/StartState/Bodemstatistiek/gg_CBS == /Classifications/Grondgebruik/CBSKlasse/V/Buitenland
+			, Descr = "Groot water volgens de CBS-kaart, plus de cellen waar die kaart geen klasse geeft, zodat een randcel zonder klasse niet stil als Overig meetelt. De klassen Oorspronkelijk NoData en Buitenland staan er expliciet bij omdat de bodemstatistiek geen null kent: de kaart dekt het hele domein en zet daarbuiten een klasse.";
+
+			attribute<Bool> IsIndelingsgebied (AdminDomain) := (AdminDomain/IsCompactedDomain && !IsGrootWater) || Grens_Kust || Grens_Rivieren || Grens_Veen || Grens_Zand
+			, Descr = "Waar de indeling een regio geeft: heel Nederland behalve de grote wateren, plus de cellen daarbuiten waar een team iets doet, zoals de buitendijkse stroken langs de Westerschelde.";
+
+			// -- de ruwe toedeling, met de volgorde uit de reactie --
+
+			attribute<Bool> Is_Kust     (AdminDomain) := Grens_Kust     || Basis == V/Kust;
+			attribute<Bool> Is_Rivieren (AdminDomain) := Grens_Rivieren || Basis == V/Rivieren;
+			attribute<Bool> Is_Veen     (AdminDomain) := Grens_Veen     || Basis == V/Veen;
+			attribute<Bool> Is_Zand     (AdminDomain) := Grens_Zand     || Basis == V/Zand;
+
+			attribute<..> Ruw (AdminDomain) := = /ModelParameters/Natuur/Landschap/VeenGaatVoorZand
+				? 'switch(case(Is_Kust, V/Kust), case(Is_Veen, V/Veen), case(Is_Zand, V/Zand), case(Is_Rivieren, V/Rivieren), null_u[..])'
+				: 'switch(case(Is_Kust, V/Kust), case(Is_Zand, V/Zand), case(Is_Veen, V/Veen), case(Is_Rivieren, V/Rivieren), null_u[..])'
+			, Descr = "De toedeling voor de vereenvoudiging, met de volgorde uit de reactie: kust eerst, dan veen en zand in de volgorde die VeenGaatVoorZand kiest, en rivieren als laatste. Rivieren staat achteraan omdat de reactie zowel veen als zand voorrang geeft. Null waar geen enkel landschap iets claimt; dat wordt Overig.";
+
+			// -- de vereenvoudiging, op 100 meter --
+
+			parameter<String> KernelPad := '/Geography/Distmatrices_100m/pot'+string(Vereenvoudiging_Straal_m)+'m';
+
+			attribute<Float32> Aandeel_Kust_100m     (rdc_100m) := sum(float32(Ruw == V/Kust),     AdminDomain/rdc_100m_rel) / 16f;
+			attribute<Float32> Aandeel_Rivieren_100m (rdc_100m) := sum(float32(Ruw == V/Rivieren), AdminDomain/rdc_100m_rel) / 16f;
+			attribute<Float32> Aandeel_Veen_100m     (rdc_100m) := sum(float32(Ruw == V/Veen),     AdminDomain/rdc_100m_rel) / 16f;
+			attribute<Float32> Aandeel_Zand_100m     (rdc_100m) := sum(float32(Ruw == V/Zand),     AdminDomain/rdc_100m_rel) / 16f;
+
+			attribute<Float32> Glad_Kust     (rdc_100m) := ='potential(Aandeel_Kust_100m, '    +KernelPad+'/Flat2) / '+KernelPad+'/oppervlakte';
+			attribute<Float32> Glad_Rivieren (rdc_100m) := ='potential(Aandeel_Rivieren_100m, '+KernelPad+'/Flat2) / '+KernelPad+'/oppervlakte';
+			attribute<Float32> Glad_Veen     (rdc_100m) := ='potential(Aandeel_Veen_100m, '    +KernelPad+'/Flat2) / '+KernelPad+'/oppervlakte';
+			attribute<Float32> Glad_Zand     (rdc_100m) := ='potential(Aandeel_Zand_100m, '    +KernelPad+'/Flat2) / '+KernelPad+'/oppervlakte';
+
+			attribute<Float32> Glad_Max (rdc_100m) := max_elem(Glad_Kust, Glad_Rivieren, Glad_Veen, Glad_Zand);
+
+			attribute<..> Vereenvoudigd_100m (rdc_100m) := = /ModelParameters/Natuur/Landschap/VeenGaatVoorZand
+				? 'Glad_Max < Vereenvoudiging_Drempel ? null_u[..] : Glad_Kust == Glad_Max ? V/Kust : Glad_Veen == Glad_Max ? V/Veen : Glad_Zand == Glad_Max ? V/Zand : V/Rivieren'
+				: 'Glad_Max < Vereenvoudiging_Drempel ? null_u[..] : Glad_Kust == Glad_Max ? V/Kust : Glad_Zand == Glad_Max ? V/Zand : Glad_Veen == Glad_Max ? V/Veen : V/Rivieren'
+			, Descr = "Het landschap met het hoogste aandeel in de omgeving, mits dat boven de drempel ligt. Bij een gelijke stand wint dezelfde volgorde als in Ruw.";
+
+			attribute<..> Vereenvoudigd (AdminDomain) := Vereenvoudigd_100m[AdminDomain/rdc_100m_rel];
+
+			attribute<..> Toegedeeld (AdminDomain) := = /ModelParameters/Natuur/Landschap/Vereenvoudigen ? 'Vereenvoudigd' : 'Ruw';
+		}
+
+		attribute<.> Per_AdminDomain (AdminDomain) := Impl/IsIndelingsgebied ? MakeDefined(Impl/Toegedeeld, V/Overig) : null_u[.]
+		, Descr = "De regio van de cel. Binnen het indelingsgebied altijd gevuld: wat geen landschap claimt wordt Overig. Null op de grote wateren zonder ingreep en buiten Nederland.";
+
+		attribute<.> Per_AdminDomain_Fijn     (AdminDomain)          := Per_AdminDomain
+		, Descr = "De naam die de indicatorensjablonen sinds #748 lezen; deze indeling rekent al op AdminDomain, dus hij is gelijk aan Per_AdminDomain hierboven. Telt de grote wateren zonder ingreep bewust niet mee, dus wie een landelijk totaal uit een tabel op deze indeling leest, leest Nederland zonder die wateren.";
+
+		attribute<.> Per_AllocDomain          (AllocDomain)          := modus(Per_AdminDomain, AdminDomain/AllocDomain_rel)
+		, Descr = "Meest voorkomende regio van de onderliggende cellen. Met modus en niet met een eigen poly2grid, want deze indeling heeft geen vectorgeometrie.";
+		attribute<.> Per_CompactedAdminDomain (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Per_AdminDomain);
+		attribute<.> Per_CompactedAllocDomain (CompactedAllocDomain) := collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, Per_AllocDomain);
+	}
+
+	container Landschapsgebieden
+	: Descr = "De vier landschapsgebieden zoals de landschapsteams ze zelf aanleveren, voor de export van de indicatoren (#760); vervangt LandschapsRegio hierboven als rapportage-indeling. LandschapsRegio
+				is een partitie, deze gebieden overlappen elkaar en kust loopt tot ver op zee; volgens #760 is dat geen bezwaar zolang er niet over de regio's wordt opgeteld, en de teams hebben hun eigen
+				berekeningen op deze grenzen geaggregeerd. Daarom staat elk landschap als een eigen eenheid van een regel met alleen een masker en niet als klasse in een gedeelde indeling, zodat de
+				indicatorentabel per landschap met dezelfde machinerie als voor Nederland wordt uitgedraaid en optellen per constructie onmogelijk is. Kiezen met ModelParameters/Advanced/IndicatorRegio_ref,
+				opties Landschap_Kust en verder."
+	{
+
+		container Bron
+		: Descr = "De vier aangeleverde begrenzingen. Zand wijst naar het bestand dat al op de share stond: de levering van #760 is daar geometrisch identiek aan, tot op de hectare en zelfs dezelfde bestandsgrootte, dus een tweede kopie zou alleen maar uit elkaar kunnen gaan lopen."
+		{
+			unit<uint32> Kust
+			:	StorageName     = "%RSo_DataDir%/RegioIndelingen/Landschapsindelingen/Landschap_Kust_20260903.shp"
+			,	StorageType     = "gdal.vect"
+			,	StorageReadOnly = "True"
+			,	DialogType      = "Map"
+			,	DialogData      = "geometry"
+			,	Source          = "Deltares, kernteam NL2120. Oorspronkelijke bestandsnaam Begrenzing kustgebied.shp, geleverd op 2026-09-03 via SharePoint NL2120, map Toekomstbeelden/Kernteam/Synthese RuimteScanner."
+			,	Descr           = "Een polygoon van 1.836.437 ha. Loopt van x 5.255 tot 291.064 en beslaat dus de Noordzee en de Waddenzee mee; het is een begrenzing van het kustsysteem en niet van de kustzone op land."
+			{
+				attribute<rdc_meter> geometry (poly);
+			}
+
+			unit<uint32> Rivieren
+			:	StorageName     = "%RSo_DataDir%/RegioIndelingen/Landschapsindelingen/Landschap_Rivieren_20260903.shp"
+			,	StorageType     = "gdal.vect"
+			,	StorageReadOnly = "True"
+			,	DialogType      = "Map"
+			,	DialogData      = "geometry"
+			,	Source          = "Deltares, team Rivieren NL2120. Oorspronkelijke bestandsnaam rivieren2120_afbakening.shp, geleverd op 2026-09-03 via SharePoint NL2120, map Toekomstbeelden/Kernteam/Synthese RuimteScanner."
+			,	Descr           = "Een polygoon van 351.655 ha. Overlapt het veengebied met 84.797 ha; volgens #760 mag veen daar bovenop, maar omdat elk landschap hier zijn eigen tabel krijgt hoeft die knoop niet doorgehakt te worden en telt het overlappende deel in beide."
+			{
+				attribute<rdc_meter> geometry (poly);
+			}
+
+			unit<uint32> Veen
+			:	StorageName     = "%RSo_DataDir%/RegioIndelingen/Landschapsindelingen/Landschap_Veen_20260904.gpkg"
+			,	StorageType     = "gdal.vect"
+			,	StorageReadOnly = "True"
+			,	DialogType      = "Map"
+			,	DialogData      = "geometry"
+			,	Source          = "Deltares, team Veen NL2120. Oorspronkelijke bestandsnaam Afbakening_veen_inclzonderpv.gpkg, geleverd op 2026-09-04. Vervangt dg_clip_veen.gpkg van een dag eerder, die alleen de peilvakken bevatte."
+			,	Descr = "De peilvakken met hun bouwsteenpercentages, inclusief de gebieden zonder peilvak, vandaar de bestandsnaam; ruim zeventig procent groter dan de eerdere levering met alleen de peilvakken, en
+						volledig binnen de acht deelgebieden. De losse polygonen overlappen elkaar onderling; voor een masker maakt dat niet uit. De gaten in de laag worden deels gedicht, zie ModelParameters/Natuur/Landschap/Veen_GatenDrempel."
+			{
+				attribute<rdc_meter> geometry (poly);
+			}
+
+			unit<UInt32> Zand := /SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Claimregios_shp
+			, Descr = "259 polygonen van samen 1.668.981 ha. De levering begrenzing_zand.zip van #760 is hieraan geometrisch identiek, dus hier staat geen tweede kopie.";
+		}
+
+		container Impl
+		: Descr = "Het rasteren, en het dichten van de kleine gaten in de veenbegrenzing."
+		{
+			attribute<Bool> IsKust     (AdminDomain) := IsDefined(poly2grid(Bron/Kust/geometry,     AdminDomain));
+			attribute<Bool> IsRivieren (AdminDomain) := IsDefined(poly2grid(Bron/Rivieren/geometry, AdminDomain));
+			attribute<Bool> IsZand     (AdminDomain) := IsDefined(poly2grid(Bron/Zand/geometry,     AdminDomain));
+
+			attribute<Bool> IsVeenRuw  (AdminDomain) := IsDefined(poly2grid(Bron/Veen/geometry,     AdminDomain))
+			, Descr = "De veenbegrenzing zoals geleverd, met de gaten er nog in.";
+
+			unit<uint32> VeenGat := district_8(!IsVeenRuw)
+			, Descr = "De aaneengesloten stukken buiten de veenbegrenzing. Het grootste district is de rest van Nederland en de zee; alle kleine districten zijn de gaten in de laag. Dezelfde district_8-methode als de allocatie gebruikt voor haar clusters."
+			{
+				attribute<Float32> Oppervlakte_ha (AdminDomain) := (pcount(Districts)[Float32] * Float32(AdminDomain/NrHaPerCell))[Districts];
+			}
+
+			attribute<Bool> IsVeen (AdminDomain) := IsVeenRuw || VeenGat/Oppervlakte_ha <= Float32(/ModelParameters/Natuur/Landschap/Veen_GatenDrempel)
+			, Descr = "De veenbegrenzing met de kleine gaten dichtgelegd. Een cel buiten de levering telt mee als het aaneengesloten stuk waar hij in ligt kleiner is dan de drempel; de rest van Nederland is een district van miljoenen hectares en valt daar nooit onder.";
+		}
+
+		template Gebied_T
+		: Descr = "Zet een masker neer als regio-indeling van een regel, met de twee dingen die de indicatorensjablonen nodig hebben: een naam en een toewijzing per cel. Alle cellen binnen het masker wijzen naar regel 0, de rest naar null."
+		{
+			parameter<String> Naam;
+			attribute<Bool>   IsGebied (AdminDomain);
+
+			unit<uint32> Gebied : NrOfRows = 1
+			{
+				attribute<String> name := const(Naam, .);
+
+				attribute<.> Per_AdminDomain_Fijn (AdminDomain) := IsGebied ? const(0, AdminDomain, .) : const(null_u, AdminDomain, .)
+				, Descr = "De toewijzing die de indicatorentabellen sinds #748 lezen, rechtstreeks op 25 meter.";
+
+				attribute<.> Per_AdminDomain     (AdminDomain) := Per_AdminDomain_Fijn;
+				attribute<.> Per_AllocDomain     (AllocDomain) := modus(Per_AdminDomain_Fijn, AdminDomain/AllocDomain_rel);
+
+				parameter<ha> Areaal := sum(IsGebied ? AdminDomain/NrHaPerCell : 0[ha]), Descr = "Controlegetal: het gerasterde oppervlak van dit landschap.";
+			}
+		}
+
+		container Kust     := Gebied_T('Kust',     Impl/IsKust);
+		container Rivieren := Gebied_T('Rivieren', Impl/IsRivieren);
+		container Veen     := Gebied_T('Veen',     Impl/IsVeen);
+		container Zand     := Gebied_T('Zand',     Impl/IsZand);
 	}
 }

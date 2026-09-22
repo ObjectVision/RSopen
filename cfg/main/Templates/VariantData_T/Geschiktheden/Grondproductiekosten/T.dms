@@ -1,0 +1,120 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Templates voor het inlezen van data, berekening van de kosten, statistieken en export van de resultaten.
+// Berekening van de grondproductiekosten voor een combinatie van bouwtype en onzekerheidsscenario. Controleren
+// of de coëfficiënt significant is op basis van de p-waarde en de drempelwaarde.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container T
+: Descr = "Templates voor het inlezen van data, berekening van de kosten, statistieken en export van de resultaten."
+{
+	Template ReadData
+	{
+		parameter<C/GrondproductieModelVarianten> id;
+		//
+		
+		parameter<String> StorageStr := '%RSo_DataDir%/Vastgoed/'+C/GrondproductieModelVarianten/name[id]+'SchattingDec19.csv';
+		
+		unit<UInt32> ModelVariant
+		:  StorageName = "=StorageStr"
+		,  StorageType = "gdal.vect"
+		,  StorageReadOnly = "True"
+		{
+			attribute<C/GrondproductieVariabelen> GrondproductieVariabelen_rel := rlookup(lowercase(./Variabele), lowercase(C/GrondproductieVariabelen/name));
+		}
+	}
+	
+	Template CalculateCosts : using = "ReadData" 
+	, Descr = "Berekening van de grondproductiekosten voor een combinatie van bouwtype en onzekerheidsscenario."
+	{
+		//
+		parameter<C/Combi> id;
+		unit<UInt32> domain;
+		attribute<String> Coefficients (domain);
+		attribute<String> Stderror (domain);
+		attribute<String> Pvalue (domain);
+		parameter<String> CalcStr0;
+		parameter<String> Onzekerheid2_name;
+		//
+		
+		parameter<String> GenericStr := 'MakeDefined(float32(@C@), 0f)';
+		parameter<String> CoefficientStr := replace(GenericStr, '@C@', 'Coefficients');
+		parameter<String> StderrorStr    := replace(GenericStr, '@C@', 'Stderror');
+		parameter<String> CalcStr := = CalcStr0;
+		
+		attribute<Bool> IsSignificant                   (domain) := float32(Pvalue) <= Significatie_threshold, Descr = "Controleren of de coëfficiënt significant is op basis van de p-waarde en de drempelwaarde.";
+		attribute<Bool> IsControleVar                   (domain) := C/GrondproductieVariabelen/IsControleVar[domain/GrondproductieVariabelen_rel], Descr = "Controleren of het een controlevariabele betreft.";
+		attribute<Bool> IsOnzekereControleVar           (domain) := C/GrondproductieVariabelen/IsOnzekereControleVar[domain/GrondproductieVariabelen_rel], Descr = "Controleren of het de bronvariabele betreft, waarvan de waarde uit de dimensie Onzekerheid2 komt.";
+		attribute<Bool> IsIntercept                     (domain) := domain/GrondproductieVariabelen_rel == C/GrondproductieVariabelen/V/Intercept, Descr = "Controleren of het de intercept betreft.";
+
+		attribute<Float32> ParameterValue0          (domain) := = '('+CalcStr+')', Descr = "Bepalen van de initiële waarde van de parameter.";
+		attribute<Float32> ParameterValueSig        (domain) := = 'float32(IsSignificant) * ('+CalcStr+')', Descr = "Indien de parameter significant is, wordt de initiële waarde aangehouden, anders wordt deze op 0 gezet.";
+		attribute<Float32> ParameterValue           (domain) := IsIntercept || IsControleVar ? parameterValue0 : ParameterValueSig, Descr = "Indien het de intercept of een controlevariabele betreft, wordt de initiële waarde aangehouden, anders wordt de gesignificeerde waarde aangehouden.";
+
+		parameter<String> BronFaktonWaarde := C/Onzekerheid2/BronFaktonWaarde[rlookup(lowercase(Onzekerheid2_name), lowercase(C/Onzekerheid2/name))]
+		, IntegrityCheck = "IsDefined(this)"
+		, Descr = "De waarde die de bronvariabele in dit scenario krijgt, opgezocht op de naam van de dimensie. De controle vangt een naam die niet in Onzekerheid2 voorkomt; zonder hem zou de hele regressieterm stil op null komen en de kostenkaart leeg teruggeven.";
+
+		attribute<String> VariableValue_ref (domain) :=
+			IsOnzekereControleVar
+				? BronFaktonWaarde
+				: C/GrondproductieVariabelen/DefaultWaarde[domain/GrondproductieVariabelen_rel]
+		, Descr = "De waarde die per variabele in de regressie wordt ingevuld: de bronvariabele krijgt de waarde van het gekozen scenario, alle andere hun standaardwaarde. Het scenario kiest een bron en niet per component de duurste of goedkoopste kant, zie de Descr bij C/GrondproductieVariabelen/IsOnzekereControleVar.";
+		
+		attribute<String> List (domain) := 'value('+VariableValue_ref+', float32) * '+string(ParameterValue);
+		
+		attribute<Eur_Ha> Kosten0      (AdminDomain) := = 'exp(add('+asItemList(List+'[float32]')+')) + const(0[Eur_ha], AdminDomain)', Descr = "Berekening van de geschatte kosten op basis van de exponentiële functie van de som van de producten van de variabelen en hun coëfficiënten. Indien de uitkomst kleiner is dan 0, wordt deze op 0 gezet.";
+		parameter<Bool>   IsBovenwijks := lowercase(C/Combi/GrondproductieModelVarianten_name[id]) == lowercase('Bovenwijks'), Descr = "De Bovenwijks-component wijkt qua noemer af van de andere twee, zie NoemerCorrectie.";
+
+		attribute<Float32> NoemerCorrectie (AdminDomain) :=
+			= IsBovenwijks
+				? '1000f / Grondproductiekosten/ReadData/LocatieVariabelen/OmvangPlangebied'
+				: 'const(1f, AdminDomain)'
+		,	Descr = "Correctie voor de afwijkende noemer van de Bovenwijks-schatting. De drie componenten worden in RS alle drie als euro per hectare opgeteld, maar dat kan voor Bovenwijks niet kloppen. Twee
+					aanwijzingen: de elasticiteit van OmvangPlangebied is daar +0,886, bijna 1, wat op een noemer per hectare zou betekenen dat de totale kosten met het oppervlak tot de macht 1,886 stijgen, en
+					op een totaal juist kosten zijn die ongeveer evenredig met het oppervlak lopen; en het niveau, exp(4,049) is 57, is als totaalbedrag in duizenden euro voor een plan van 1 ha een normaal
+					kengetal voor bovenwijkse voorzieningen en als euro per hectare onzin. BouwWoonrijp heeft geen omvangterm en PlanProces een negatieve, wat bij beide wel op een noemer per hectare wijst. Een
+					gemotiveerde reconstructie en geen gedocumenteerd gegeven, want de Fakton-schattingen zijn zonder documentatie aangeleverd (#505).";
+
+		attribute<Eur_Ha> Kosten  (AdminDomain) := MakeDefined(Kosten0, max(Kosten0)) * NoemerCorrectie, Descr = "Cellen zonder data krijgen de maximale geschatte kosten: conservatieve keuze, zodat locaties zonder onderbouwing niet als goedkoop bouwbaar meedoen (#595).";
+	}
+	
+	Template Statistics
+	{
+		parameter<String> SrcStr;
+		parameter<C/Onzekerheid> id;
+		//
+		
+		attribute<Eur_Ha> Src          (AdminDomain) := = 'Results/'+SrcStr+'/'+C/Onzekerheid/name[id], Descr = "Ophalen van de geschatte kosten voor een combinatie van bouwtype en onzekerheidsscenario.";
+		attribute<Bool>   UrbanContour (AdminDomain) := /SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Is_BebouwdGebied, Descr = "Begrenzing van het bebouwd gebied, eigen afleiding per peiljaar. Verving het VROM-raster uit 2003 op 100 meter.";
+		
+		container Result := for_each_ne(C/Extent/name, 'UrbanContourT('+C/Extent/CalcStr+')'), Descr = "Berekening van de statistieken van de geschatte kosten binnen het bebouwd gebied voor een combinatie van bouwtype en onzekerheidsscenario.";
+		
+		Template UrbanContourT
+		: Descr = "Berekening van de statistieken van de geschatte kosten binnen het bebouwd gebied voor een combinatie van bouwtype en onzekerheidsscenario."
+		{
+			//
+			attribute<Bool> IsExtent (AdminDomain);
+			//
+			
+			attribute<Eur_ha> InExtent (AdminDomain) := Src / float32(IsExtent);
+			
+			parameter<Eur_ha> mean           := mean(InExtent), Descr = "Gemiddelde waarde";
+			parameter<Eur_ha> sd             := sd(InExtent), Descr = "Standaarddeviatie";
+			
+			parameter<Eur_ha> min            := min(InExtent), Descr = "Minimum waarde";
+			parameter<Eur_ha> rth_element_20 := rth_element(InExtent, 0.20f), Descr = "20ste percentiel";
+			parameter<Eur_ha> rth_element_50 := rth_element(InExtent, 0.50f), Descr = "Mediaan";
+			parameter<Eur_ha> rth_element_80 := rth_element(InExtent, 0.80f), Descr = "80ste percentiel";
+			parameter<Eur_ha> max            := max(InExtent), Descr = "Maximum waarde";
+		}
+	}
+}

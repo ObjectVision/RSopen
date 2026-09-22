@@ -1,0 +1,183 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De meerkosten van bouwen op een bodemdalingsgevoelige ondergrond, per ontwikkelpakket (#505).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Bodemdalingkosten
+: Descr = "De meerkosten van bouwen op een bodemdalingsgevoelige ondergrond, per ontwikkelpakket en per cel (#505). Vervangt de dummy AndersBouwen in de grondproductiekosten, een landsdekkende
+			expert-judgementkaart uit 2019 die het hele bodemeffect droeg; de variantkolom VariantK/BodemdalingkostenInSaldo schakelt beide tegelijk, want met allebei aan wordt de bodem twee keer
+			beprijsd. Niet de kostenkaarten van het rapport zelf, want die liggen vast op een vaste verhouding tussen bebouwing, tuinen, straten, parken en water, terwijl de virtuele ontwikkelaar in
+			RSopen zelf een dichtheid en daarmee een andere verdeling kiest; daarom worden de kengetallen doorgerekend op de grondgebruikfracties van het ontwikkelpakket, wat ook bestaand stedelijk
+			gebied dekt, dat die kaarten open laten. De formules staan in Templates/Suitabilities/Bodemdalingkosten_T en de invoer in BaseData/Suitabilities/Wonen/Bodemdalingkosten; hier staat alleen de
+			vertaling van de OP-tabel naar de acht inrichtingselementen van bijlage E en de aanroep per pakket. Zie de aannamelijst in #505 voor alles wat is ingevuld waar het rapport zwijgt.", Source = "Deltares en Sweco, Landelijk afwegingskader bodemdalingbestendige nieuwbouw, 11211556-001-BGS-0001, 23 maart 2026, bijlage E; hoeveelheidskaarten in SourceData/Bodem/Bodemdalingbestendig", Source = "Deltares en Sweco, Landelijk afwegingskader bodemdalingbestendige nieuwbouw, 11211556-001-BGS-0001, 23 maart 2026, bijlage E; hoeveelheidskaarten in SourceData/Bodem/Bodemdalingbestendig"
+{
+	container Vlak
+	: Descr = "De grondgebruikverdeling per ontwikkelpakket, in m2 per hectare terrein, vertaald naar de inrichtingselementen van bijlage E. RSopen kent zes categorieen en het rapport acht: de voetafdruk
+				van het gebouw is Wonen (E-1), de buitenruimte op het uitgeefbare deel is Tuinen (E-2), het verharde deel van de openbare ruimte is Straten (E-3), het groene deel is Parken en groen (E-6),
+				het overige onverharde deel is Openbare ruimte (E-7) en al het water is Water (E-8). Straten, Wegen en Parkeervakken (E-3, E-4 en E-5) vallen samen: hun tarieven zijn vrijwel gelijk, alleen
+				parkeervakken missen de rioleringspost, en welk deel van de verharde openbare ruimte wat is geeft het rapport niet als getal; alles telt als straat, wat de rioleringspost toepast op de volle
+				verharde openbare ruimte (#505)."
+	{
+		container Src := ThisVariantClassifications/Vastgoed/OP_buurt/Terreinoppervlakte;
+
+		attribute<Terreinoppervlak> Bebouwing      (OP) := Src/Uitgeefbaar/GebouwVoetafdruk;
+		attribute<Terreinoppervlak> Tuin           (OP) := add(Src/Uitgeefbaar/Buitenruimte/Verhard, Src/Uitgeefbaar/Buitenruimte/Groen, Src/Uitgeefbaar/Buitenruimte/Bruin);
+		attribute<Terreinoppervlak> Straat         (OP) := Src/Openbaar/Verhard;
+		attribute<Terreinoppervlak> Park           (OP) := Src/Openbaar/Groen;
+		attribute<Terreinoppervlak> OpenbareRuimte (OP) := Src/Openbaar/Bruin;
+		attribute<Terreinoppervlak> Water          (OP) := add(Src/Uitgeefbaar/Buitenruimte/Water, Src/Openbaar/Water);
+
+		attribute<Terreinoppervlak> Som (OP) := add(Bebouwing, Tuin, Straat, Park, OpenbareRuimte, Water)
+		,	IntegrityCheck = "all(abs(this - Src) < 1[Terreinoppervlak])"
+		,	Descr = "De zes elementen moeten samen het hele terrein beslaan. Faalt zodra iemand een categorie aan de OP-tabel toevoegt zonder hem hier in te delen. Dit item heeft zelf geen afnemer, want Kosten_perOP leest de zes elementen en niet hun som; Sluitend hieronder trekt de toets in de rekengraaf (#772).";
+
+		parameter<Float32> Sluitend := 1f
+		,	ExplicitSuppliers = "Som"
+		,	Descr = "Een factor een die Impl/Actief meevermenigvuldigt, zodat de sluittoets op Som hierboven in de rekengraaf van de kostenpost zit (#772); zonder deze haak hangt die toets ernaast en vuurt hij
+					nooit, want een IntegrityCheck vuurt alleen waar het item waarop hij staat wordt uitgerekend. Zelfde constructie als BedrijvenSamenstelling/Dekking in de overstromingsschade. De haak hangt
+					aan de actieve tak en niet aan Impl/Uit, want in een variant met BodemdalingkostenInSaldo op FALSE wordt de vertaling hierboven niet gebruikt en valt er niets te bewaken.";
+	}
+
+	container Eisen
+	: Descr = "De eisen die de plek aan de bouwwijze stelt, in de vorm die Bouwwijzekeuze_T verwacht. Dezelfde drie die Zeef_Wonen_perOP_T en SSM2017_Overstromingsschades/Grondgebruik/Zichtjaar aanleveren, want het moet per constructie dezelfde keuze opleveren als de zeef maakte bij het alloceren."
+	{
+		attribute<meter> Waterdiepte (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Overstromingsdiepte);
+
+		parameter<Bool> VeenGeldt := VariantParameters/VariantK/BouwwijzeVeenGeldtVoorOPs[Variant_rel];
+
+		attribute<Bool> EisBodemdalingbestendig (CompactedAdminDomain) := VeenGeldt ? BouwwijzeEis/Bodemdalingbestendig : const(FALSE, CompactedAdminDomain);
+		attribute<Bool> EisDrijvend             (CompactedAdminDomain) := VeenGeldt ? BouwwijzeEis/Drijvend             : const(FALSE, CompactedAdminDomain);
+	}
+
+	Template Keuze_T
+	: Descr = "De bouwwijzekeuze voor een enkel ontwikkelpakket, en de schadevrije diepte die daaruit volgt, op AdminDomain zodat de kostenkern hem kan lezen."
+	{
+		//
+		parameter<OP> op_rel;
+		//
+
+		container Toegestaan :=
+			for_each_nedv(
+				  /Classifications/Modellering/BouwwijzeK/name
+				, 'const(OP/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[op_rel], CompactedAdminDomain)'
+				, CompactedAdminDomain
+				, bool
+			);
+
+		container K := Templates/Beschikbaarheden/Bouwwijzekeuze_T(
+			  Toegestaan
+			, BouwwijzeEis/Overstromingsbestendig
+			, Eisen/EisBodemdalingbestendig
+			, Eisen/EisDrijvend
+			, Eisen/Waterdiepte
+		);
+
+		attribute<meter> SchadevrijeDiepte (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, K/GekozenSchadevrijeDiepte, 0[meter])
+		,	Descr = "Hoeveel water houdt de bouwwijze die dit pakket op deze cel zou bouwen buiten de woning? Nul buiten het compacted domain en nul waar geen enkele bouwwijze voldoet; die cellen zeeft de zeef sowieso weg.";
+	}
+
+	container Keuze_perOP := for_each_ne(OP/name, 'Keuze_T(' + string(id(OP)) + '[OP])')
+	,	Descr = "Per ontwikkelpakket de bouwwijze die het op elke cel zou bouwen. Dezelfde keuzeregel en dezelfde invoer als de zeef gebruikt, uit hetzelfde sjabloon, dus kosten en zeef kunnen niet uit elkaar lopen (#723).";
+
+	container Kosten_perOP :=
+		for_each_ne(
+			  OP/name
+			, 'Templates/Suitabilities/Bodemdalingkosten_T('
+				+ 'const(Vlak/Bebouwing['      +string(id(OP))+'[OP]], AdminDomain),'
+				+ 'const(Vlak/Tuin['           +string(id(OP))+'[OP]], AdminDomain),'
+				+ 'const(Vlak/Straat['         +string(id(OP))+'[OP]], AdminDomain),'
+				+ 'const(Vlak/Park['           +string(id(OP))+'[OP]], AdminDomain),'
+				+ 'const(Vlak/OpenbareRuimte[' +string(id(OP))+'[OP]], AdminDomain),'
+				+ 'const(Vlak/Water['          +string(id(OP))+'[OP]], AdminDomain),'
+				+ 'Keuze_perOP/'+OP/name+'/SchadevrijeDiepte'
+			  + ')'
+		)
+	,	Descr = "Per ontwikkelpakket de aanlegkosten van alle zes de alternatieven, de goedkoopste daarvan en de meerkosten ten opzichte van de zandgrondreferentie. Alle 53 staan hier naast elkaar omdat de geschiktheid ze vergelijkt.";
+
+	container Impl
+	: Descr = "De twee standen van de saldoschakelaar, zodat op FALSE letterlijk const(0) in de boom staat en de kostenketen niet wordt uitgerekend. Zelfde constructie als Opbrengsten_perOP_src hierboven."
+	{
+		container Actief :=
+			for_each_nedv(
+				  OP/name
+				, 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Kosten_perOP/'+OP/name+'/Meerkosten) * AdminDomain/NrHaPerCell * Vlak/Sluitend'
+				, CompactedAdminDomain
+				, Eur
+			)
+		,	Descr = "De meerkosten per cel voor elk ontwikkelpakket, in euro. De factor Vlak/Sluitend is een en staat er alleen om de sluittoets op Vlak/Som in de rekengraaf te trekken; lees de toelichting daar voordat je hem weghaalt (#772).";
+
+		container Uit := for_each_nedv(OP/name, 'const(0[Eur], CompactedAdminDomain)', CompactedAdminDomain, Eur);
+	}
+
+	container perOP := = VariantParameters/VariantK/BodemdalingkostenInSaldo[Variant_rel] ? 'Impl/Actief' : 'Impl/Uit'
+	,	Descr = "De post die in het exploitatiesaldo landt, in euro per cel. In een variant met BodemdalingkostenInSaldo op FALSE staat hier overal nul, en draagt de dummy AndersBouwen in de grondproductiekosten het bodemeffect zoals voor #505.";
+
+	container Controle
+	: Descr = "Rekent de kosten door voor een representatief ontwikkelpakket en schrijft de kengetallen naar een tekstbestand. Alleen voor diagnose; niets in de keten hangt eraan."
+	{
+		parameter<String> OP_ref := 'LaagStedelijkEGVS', Descr = "Een gewoon grondgebonden pakket in de middenklasse van de dichtheidsreeks.";
+
+		container      K       := = 'Kosten_perOP/' + OP_ref;
+		attribute<Eur> InSaldo (CompactedAdminDomain) := = 'perOP/' + OP_ref, Descr = "De post zoals hij na de variantschakelaar in het saldo terechtkomt. De som eronder is geen gerealiseerd bedrag maar een potentieel: hij telt alle cellen van het compacted domain alsof dit ene pakket overal zou landen. Alleen bedoeld om te zien of de schakelaar doet wat hij moet doen. Het gerealiseerde bedrag staat in de indicator KostenWoningbouw.";
+		unit<UInt8>    Alt     := /Classifications/Modellering/InrichtingsalternatiefK;
+
+		attribute<Bool> UrbanContour (AdminDomain) := /SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Is_BebouwdGebied;
+
+		parameter<String> Waarden :=
+			  'Variant ' + Variant_name + ', BodemdalingkostenInSaldo = ' + string(VariantParameters/VariantK/BodemdalingkostenInSaldo[Variant_rel]) + '\n'
+			+ 'Ontwikkelpakket ' + OP_ref + ', medianen binnen bebouwd gebied, euro per hectare\n'
+			+ '\n'
+			+ 'ophoging, mediaan binnen UrbanContour, in meter
+'
+			+ '  alleen bodemdaling   ' + string(rth_element(/BaseData/Suitabilities/Wonen/Bodemdalingkosten/Hoeveelheden/Ophoogdikte / float32(UrbanContour), 0.5f)) + '
+'
+			+ '  met overstroming     ' + string(rth_element(K/Ophoging / float32(UrbanContour), 0.5f)) + '
+'
+			+ '  p80 met overstroming ' + string(rth_element(K/Ophoging / float32(UrbanContour), 0.8f)) + '
+'
+			+ '
+'
+			+ 'aanlegkosten per alternatief\n'
+			+ '  A integraal ophogen    ' + string(rth_element(K/Alternatief/A_IntegraalOphogen     / float32(UrbanContour), 0.5f)) + '\n'
+			+ '  B partieel ophogen     ' + string(rth_element(K/Alternatief/B_PartieelOphogen      / float32(UrbanContour), 0.5f)) + '\n'
+			+ '  C 1,20 m zand          ' + string(rth_element(K/Alternatief/C_OphogenMet120cmZand  / float32(UrbanContour), 0.5f)) + '\n'
+			+ '  D licht ophoogmateriaal' + string(rth_element(K/Alternatief/D_LichtOphoogmateriaal / float32(UrbanContour), 0.5f)) + '\n'
+			+ '  E alles funderen       ' + string(rth_element(K/Alternatief/E_AllesFunderen        / float32(UrbanContour), 0.5f)) + '\n'
+			+ '  F drijvend bouwen      ' + string(rth_element(K/Alternatief/F_DrijvendBouwen       / float32(UrbanContour), 0.5f)) + '\n'
+			+ '  goedkoopste            ' + string(rth_element(K/Goedkoopste / float32(UrbanContour), 0.5f)) + '\n'
+			+ '  referentie             ' + string(rth_element(K/Referentie  / float32(UrbanContour), 0.5f)) + '\n'
+			+ '\n'
+			+ 'meerkosten na opslag, binnen UrbanContour\n'
+			+ '  p20    ' + string(rth_element(K/Meerkosten / float32(UrbanContour), 0.20f)) + '\n'
+			+ '  mediaan' + string(rth_element(K/Meerkosten / float32(UrbanContour), 0.50f)) + '\n'
+			+ '  p80    ' + string(rth_element(K/Meerkosten / float32(UrbanContour), 0.80f)) + '\n'
+			+ '  p95    ' + string(rth_element(K/Meerkosten / float32(UrbanContour), 0.95f)) + '\n'
+			+ '  max    ' + string(max(K/Meerkosten / float32(UrbanContour))) + '\n'
+			+ '\n'
+			+ 'som over alle cellen als dit pakket overal zou landen, miljoen euro ' + string(sum(InSaldo) / 1e6[Eur]) + '
+'
+			+ 'beheer en onderhoud 100 jaar NCW, mediaan binnen UrbanContour ' + string(rth_element(K/Onderhoud/Totaal / float32(UrbanContour), 0.5f)) + '\n'
+			+ '\n'
+			+ 'de dummy AndersBouwen die deze post vervangt\n'
+			+ '  gemiddelde waarde       ' + string(mean(Grondproductiekosten/ReadData/LocatieVariabelen/AndersBouwen)) + ' (0 = uit)\n'
+			+ '  grondproductiekosten mediaan binnen UrbanContour ' + string(rth_element(Grondproductiekosten/Results/Totaal/Nominaal_Faktondatabase / float32(UrbanContour), 0.5f)) + '\n'
+			+ '\n'
+			+ 'gekozen alternatief, aantal cellen binnen UrbanContour\n'
+			+ '  A ' + string(sum(uint32(UrbanContour && K/Keuze == Alt/V/A_IntegraalOphogen)))     + '\n'
+			+ '  B ' + string(sum(uint32(UrbanContour && K/Keuze == Alt/V/B_PartieelOphogen)))      + '\n'
+			+ '  C ' + string(sum(uint32(UrbanContour && K/Keuze == Alt/V/C_OphogenMet120cmZand)))  + '\n'
+			+ '  D ' + string(sum(uint32(UrbanContour && K/Keuze == Alt/V/D_LichtOphoogmateriaal))) + '\n'
+			+ '  E ' + string(sum(uint32(UrbanContour && K/Keuze == Alt/V/E_AllesFunderen)))        + '\n'
+			+ '  F ' + string(sum(uint32(UrbanContour && K/Keuze == Alt/V/F_DrijvendBouwen)))       + '\n'
+		,	StorageName = "='%LocalDataProjDir%/Diagnose/Bodemdalingkosten_'+Variant_name+'.txt'"
+		,	StorageType = "str";
+	}
+}

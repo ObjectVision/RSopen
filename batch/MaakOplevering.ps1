@@ -1,0 +1,574 @@
+<#
+.SYNOPSIS
+    Stelt uit de ruwe indicatorenuitvoer in LocalData een opleveringsmap samen.
+
+.DESCRIPTION
+    LocalData blijft ongemoeid: dit script kopieert en hernoemt alleen. De ruwe map is
+    plat en draagt namen die het model nodig heeft (studiegebied, aantal subsectoren,
+    mapnamen als losse jaartallen). De opleveringsmap is ingedeeld naar wat de ontvanger
+    zoekt: tabellen, kaarten van het zichtjaar, de tijdreeks en het basisjaar.
+
+    Elke kaart bestaat uit drie bestanden: de tif, het world file .tfw en een .xml met
+    het GeoDMS-itempad en de buildversie. Die xml is herkomst en gaat bewust mee.
+
+    De LEESMIJ wordt aan het eind afgeleid uit wat er werkelijk in de doelmap staat en uit git,
+    en niet uit vaste tekst. Zie #731: een LEESMIJ die varianten belooft die er niet zijn, is
+    misleidender dan geen LEESMIJ. Wat per levering verandert (issuenummer, verwachte varianten,
+    aantekeningen) staat daarom in de parameters hieronder.
+
+.EXAMPLE
+    .\MaakOplevering.ps1 -Doel D:\Oplevering\Indicatoren -Issue 632
+
+.EXAMPLE
+    Tweede stap van een levering die in delen wordt gevuld. De LEESMIJ wordt opnieuw afgeleid
+    uit de dan complete doelmap.
+
+    .\MaakOplevering.ps1 -Doel D:\Oplevering\Indicatoren -Aanvullen
+#>
+[CmdletBinding()]
+param(
+    [string] $Bron      = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren',
+    # Standaard naar de gedeelde projectmap, zodat de levering meteen bij het team staat.
+    # Let op twee dingen bij het bijwerken van dit pad. De projectmap staat sinds begin
+    # september op E: en niet meer onder de gebruikersmap op C:; het oude pad bestond niet
+    # meer, en omdat het script zijn doelmap met -Force aanmaakt zou een levering daar stil
+    # buiten de cloudmap zijn beland. En de gecureerde levering hoort in Oplevering, naast
+    # de ruwe mappen Allocatie, Indicatoren en VariantData van de betreffende run.
+    [string] $Doel      = 'E:\Objectvision\Object Vision - General\LocalData\RSOpen_NL2120\Productierun_20260903\Oplevering',
+    [string] $Zichtjaar = 'Y2120',
+    # Het issue waaronder deze oplevering valt. Verandert per levering, dus een parameter en geen
+    # regel tekst onderin het script.
+    [string] $Issue     = '632',
+    # De werkkopie die de cijfers heeft gemaakt, en niet de werkkopie waarin dit script staat.
+    # Run2120.ps1 draait op RSopen_NL2120_productie terwijl dit script ergens anders kan liggen;
+    # die twee kunnen los van elkaar uit de pas lopen. Branch, commit en tag komen hier vandaan.
+    [string] $Werkkopie = 'C:\ProjDir\RSopen_NL2120_productie',
+    # Vervangt de uit git afgeleide herkomstregels door eigen tekst. Nodig zodra de varianten niet
+    # allemaal op dezelfde commit zijn doorgerekend.
+    [string[]] $Herkomst = @(),
+    # Welke varianten in deze levering horen. Leeg is alle vier uit de tabel hieronder. Wat verwacht
+    # wordt maar niet in de doelmap staat, komt met naam in de LEESMIJ en op het scherm.
+    [string[]] $Verwacht = @(),
+    # Aantekeningen die alleen voor deze levering gelden, bijvoorbeeld op welke servers is gerekend.
+    # Wat voor elke oplevering geldt hoort in de vaste tekst onderin dit script, want de LEESMIJ in
+    # de doelmap wordt bij elke run overschreven.
+    [string[]] $Notitie  = @(),
+    # Schrijven in een bestaande doelmap. Nodig als een levering in stappen wordt gevuld; de LEESMIJ
+    # wordt dan opnieuw afgeleid uit alles wat er op dat moment staat.
+    [switch]   $Aanvullen
+)
+
+$ErrorActionPreference = 'Stop'
+if (-not (Test-Path $Bron)) { throw "Bronmap niet gevonden: $Bron" }
+if ((Test-Path $Doel) -and (-not $Aanvullen)) {
+    throw "Doelmap bestaat al. Verwijder of hernoem hem, of gebruik -Aanvullen: $Doel"
+}
+
+$varianten = [ordered]@{
+    'WLO_hoog_BAU'            = 'BAU1'
+    'WLO_hoog_BAU2'           = 'BAU2'
+    'WLO_hoog_NbSGenuanceerd' = 'NbSGenuanceerd'
+    'WLO_hoog_NbSGenuanceerder' = 'NbSGenuanceerder'
+}
+if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
+
+# Wat elk geleverd bestand is, in een zin, met de eenheid erbij. De sleutel is de bestandsnaam
+# zonder zichtjaar en zonder extensie; Schoon() haalt de modelstaart er al af. Het derde veld is de
+# classificatie waarvan de kaart de klassenummers draagt, en dat veld stuurt tegelijk welke legenda
+# er als <bestandsnaam>_meta.txt naast komt te liggen. Een naam die hier ontbreekt wordt onderaan de
+# LEESMIJ gemeld, zodat een nieuwe indicator niet ongemerkt zonder beschrijving de deur uit gaat.
+$Beschrijving = [ordered]@{
+    'Landgebruikskaart_bij_tov_PrevYear'                                                             = @('klasse', 'LU_NL2120', 'Welke klasse er in een cel is bijgekomen sinds het vorige zichtjaar')
+    'Landgebruikskaart_af_tov_PrevYear'                                                              = @('klasse', 'LU_NL2120', 'Welke klasse er in een cel is verdwenen sinds het vorige zichtjaar')
+    'LandgebruikskaartHoofdklasse'                                                                   = @('klasse', 'LU_Hoofdklasse', 'Dezelfde kaart in de leesbare indeling van 43 klassen: wonen en werken naar verhardingsgraad, natuur naar beheerhoofdtype, landbouw naar hoofdgroep')
+    'LandgebruikskaartNL2120'                                                                        = @('klasse', 'LU_NL2120', 'Hetzelfde landgebruik in de indeling van 165 klassen, met natuur uitgesplitst naar beheertype')
+    'LandgebruikskaartNL2120_Basisjaar'                                                              = @('klasse', 'LU_NL2120', 'De landgebruikskaart van het basisjaar in dezelfde indeling van 165 klassen')
+    'LandgebruikskaartHoofdklasse_Basisjaar'                                                         = @('klasse', 'LU_Hoofdklasse', 'De landgebruikskaart van het basisjaar in de leesbare indeling van 43 klassen')
+    'BT_Exogeen'                                                                                     = @('klasse', 'INL_Beheertype', 'Het natuurbeheertype dat de landschapsteams hier opleggen, leeg waar niets is opgelegd')
+    'Verstedelijking'                                                                                = @('0 of 1', '', 'Cellen die sinds het basisjaar stedelijk zijn geworden')
+    'VerstedelijkingInABCD'                                                                          = @('klasse', 'ABCD_subK', 'Dezelfde verstedelijking, ingedeeld naar de ABCD-zone waarin zij landt')
+    'VerstedelijkingOpVruchtbareLandbouwgronden'                                                     = @('0 of 1', '', 'Nieuwe verstedelijking op grond die als vruchtbaar landbouwland is aangemerkt')
+    'NieuweNatuur'                                                                                   = @('0 of 1', '', 'Cellen die sinds het basisjaar natuur zijn geworden')
+    'NieuweNatuurOpVruchtbareLandbouwgronden'                                                        = @('0 of 1', '', 'Nieuwe natuur op grond die als vruchtbaar landbouwland is aangemerkt')
+    'VerdwenenNatuur'                                                                                = @('0 of 1', '', 'Cellen die in het basisjaar natuur waren en dat nu niet meer zijn')
+    'VerdwenenLandbouw'                                                                              = @('0 of 1', '', 'Cellen die in het basisjaar landbouw waren en dat nu niet meer zijn')
+    'VerdwenenVruchtbareLandbouw'                                                                    = @('0 of 1', '', 'Idem, beperkt tot de gronden die als vruchtbaar zijn aangemerkt')
+    'WaterbergingVeen'                                                                               = @('0 of 1', '', 'Cellen die zijn ingericht als seizoensbergingsgebied in het veen')
+    'WaterbergingVeenOpVruchtbareLandbouwgronden'                                                    = @('0 of 1', '', 'Diezelfde bergingsgebieden op vruchtbaar landbouwland')
+    'Dichtheid_Wonen'                                                                                = @('woningen per ha', '', 'Woningdichtheid van de bestaande en de nieuwe voorraad samen')
+    'Dichtheid_NieuwWonen_WonHa'                                                                     = @('woningen per ha', '', 'Woningdichtheid van alleen wat er sinds het basisjaar is bijgebouwd')
+    'Dichtheid_NieuwWerken_JobHa'                                                                    = @('banen per ha', '', 'Banendichtheid van alleen de werklocaties die sinds het basisjaar zijn bijgekomen')
+    'Dichtheid_Werken_Banen_m2'                                                                      = @('banen per m2', '', 'Banen per vierkante meter werklocatie')
+    'Dichtheid_Werken_Pandfootprint_ha'                                                              = @('m2 per ha', '', 'Bebouwd grondvlak per hectare werklocatie')
+    'PandFootprint_Wonen'                                                                            = @('m2', '', 'Grondvlak van de woonbebouwing in de cel')
+    'PandFootprint_Werken'                                                                           = @('m2', '', 'Grondvlak van de bebouwing op werklocaties in de cel')
+    'Verharding'                                                                                     = @('aandeel 0 tot 1', '', 'Aandeel van het bebouwde oppervlak dat verhard is')
+    'Verharding_fractie'                                                                             = @('aandeel 0 tot 1', '', 'Dezelfde verharding als fractie van de hele cel')
+    'KostenWoningbouw_Bouwkosten_Eur'                                                                = @('euro', '', 'Bouwkosten van de nieuwbouw in deze cel, niet verdisconteerd')
+    'KostenWoningbouw_Bouwkosten_NCW_Eur'                                                            = @('euro', '', 'Dezelfde bouwkosten als netto contante waarde')
+    'KostenWoningbouw_Regulier_Eur'                                                                  = @('euro', '', 'Grondproductie: bouw- en woonrijp maken, voorzieningen en planproces')
+    'KostenWoningbouw_Alternatief'                                                                   = @('klasse', 'InrichtingsalternatiefK', 'Welk inrichtingsalternatief voor bodemdaling hier is gekozen')
+    'KostenWoningbouw_Bouwwijze'                                                                     = @('klasse', 'BouwwijzeK', 'Welke bouwwijze hier is toegepast, van geen maatregelen tot drijvend bouwen')
+    'KostenWoningbouw_MeerkostenBodemdaling_Eur'                                                     = @('euro', '', 'Extra kosten die aan bodemdaling zijn toe te schrijven')
+    'KostenWoningbouw_MeerkostenBodemdaling_NCW_Eur'                                                 = @('euro', '', 'Diezelfde meerkosten als netto contante waarde')
+    'KostenWoningbouw_MeerkostenBouwwijze_Eur'                                                       = @('euro', '', 'Extra kosten van de gekozen bouwwijze, nul zolang de kentallen ontbreken')
+    'KostenWoningbouw_BeheerEnOnderhoud_Eur'                                                         = @('euro', '', 'Beheer en onderhoud van de nieuwbouw over de periode')
+    'Woningwaarde_Nieuwbouw_Eur'                                                                     = @('euro', '', 'Marktwaarde van de woningen die hier zijn bijgebouwd')
+    'Woningwaarde_Nieuwbouw_NCW_Eur'                                                                 = @('euro', '', 'Diezelfde waarde als netto contante waarde')
+    'Grondexploitatie_Saldo_Eur'                                                                     = @('euro', '', 'Exploitatiesaldo van het ontwikkelpakket dat hier is gebouwd: opbrengst min bouw, grond, verwerving en sloop; negatief is een tekort')
+    'Grondexploitatie_Post_Opbrengsten_Eur'                                                          = @('euro', '', 'De opbrengstterm van datzelfde saldo, netto van btw')
+    'Grondexploitatie_Post_Piekbuiberging_Eur'                                                       = @('euro', '', 'De aanlegkosten van de bergingsmaatregelen in het saldo')
+    'Grondexploitatie_Post_Verwerving_Eur'                                                           = @('euro', '', 'De verwerving van woningen, niet-woningen en grond in het saldo')
+    'Grondexploitatie_Post_Sloop_Eur'                                                                = @('euro', '', 'De sloop van wat er op de bebouwde cel stond, in het saldo')
+    'KostenWerklocaties_MeerkostenBodemdaling_Eur'                                                   = @('euro', '', 'Wat de bodemdaling aan ophoging kost op de gealloceerde werklocaties, alleen het zandpakket')
+    'GesloopteWoningen_NieuweNatuur'                                                                 = @('woningen', '', 'Woningen die wijken voor nieuwe natuur')
+    'GesloopteWoningen_WaterbergingVeen'                                                             = @('woningen', '', 'Woningen die wijken voor seizoensberging in het veen')
+    'GesloopteWoningen_OverigeBouwstenen'                                                            = @('woningen', '', 'Woningen die wijken voor de overige ruimtelijke bouwstenen')
+    'GesloopteBanen_NieuweNatuur'                                                                    = @('banen', '', 'Banen die wijken voor nieuwe natuur')
+    'GesloopteBanen_WaterbergingVeen'                                                                = @('banen', '', 'Banen die wijken voor seizoensberging in het veen')
+    'GesloopteBanen_OverigeBouwstenen'                                                               = @('banen', '', 'Banen die wijken voor de overige ruimtelijke bouwstenen')
+    'Sloopkosten_NieuweNatuur_Eur'                                                                   = @('euro', '', 'Kosten van het slopen van de bebouwing die voor nieuwe natuur wijkt')
+    'Sloopkosten_WaterbergingVeen_Eur'                                                               = @('euro', '', 'Idem voor seizoensberging in het veen')
+    'Sloopkosten_OverigeBouwstenen_Eur'                                                              = @('euro', '', 'Idem voor de overige bouwstenen')
+    'Sloopkosten_NieuweNatuur_NCW_Eur'                                                               = @('euro', '', 'Diezelfde sloopkosten als netto contante waarde')
+    'Sloopkosten_WaterbergingVeen_NCW_Eur'                                                           = @('euro', '', 'Diezelfde sloopkosten als netto contante waarde')
+    'Sloopkosten_OverigeBouwstenen_NCW_Eur'                                                          = @('euro', '', 'Diezelfde sloopkosten als netto contante waarde')
+    'Uitkoopkosten_NieuweNatuur_Eur'                                                                 = @('euro', '', 'Verwerving van het vastgoed dat voor nieuwe natuur wijkt')
+    'Uitkoopkosten_WaterbergingVeen_Eur'                                                             = @('euro', '', 'Idem voor seizoensberging in het veen')
+    'Uitkoopkosten_OverigeBouwstenen_Eur'                                                            = @('euro', '', 'Idem voor de overige bouwstenen')
+    'Uitkoopkosten_NieuweNatuur_NCW_Eur'                                                             = @('euro', '', 'Diezelfde verwervingskosten als netto contante waarde')
+    'Uitkoopkosten_WaterbergingVeen_NCW_Eur'                                                         = @('euro', '', 'Diezelfde verwervingskosten als netto contante waarde')
+    'Uitkoopkosten_OverigeBouwstenen_NCW_Eur'                                                        = @('euro', '', 'Diezelfde verwervingskosten als netto contante waarde')
+    'CarbonStorageSequestration_stock_tonCO2'                                                        = @('ton CO2', '', 'Koolstof die in dit zichtjaar in bodem en begroeiing ligt opgeslagen')
+    'CarbonStorageSequestration_stock_FromBaseYear_tonCO2'                                           = @('ton CO2', '', 'Verandering van die voorraad sinds het basisjaar, positief betekent aangroei')
+    'CarbonStorageSequestration_seq_ThisPeriod_tonCO2'                                               = @('ton CO2', '', 'Vastlegging in deze periode, opgebouwd na een verandering van landgebruik')
+    'CarbonStorageSequestration_ongedekt_Cumulatief_tonCO2'                                          = @('ton CO2', '', 'Veenoxidatie die buiten het koolstofsaldo valt omdat de voorraad daar al leeg is')
+    'SOMERS_CO2_Emissies_kg_Mediaan_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Veenoxidatie sinds het startjaar volgens SOMERS, middenschatting')
+    'Methaan_tonCO2eq_Cumulatief_sindsStartyear'                                                     = @('ton CO2-equivalent', '', 'Methaanuitstoot uit het veen sinds het basisjaar, opgeteld, omgerekend naar CO2-equivalenten; staat naast de CO2-kaarten en zit daar niet in (#758)')
+    'NettoOpbrengst_Landbouw'                                                                        = @('euro per jaar', '', 'Netto landbouwsaldo van dit zichtjaar per cel, over de landbouwklassen van de landgebruikskaart, zonder transitiekosten (#794)')
+    'NPV_Landbouw'                                                                                   = @('euro', '', 'Contante waarde van datzelfde landbouwsaldo per cel, met de omschakelkosten van de landbouwtransitie erin; negatief waar die kosten het saldo overtreffen')
+    'SOMERS_CO2_Emissies_kg_Minimum_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Dezelfde oxidatie, ondergrens van de bandbreedte')
+    'SOMERS_CO2_Emissies_kg_Maximum_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Dezelfde oxidatie, bovengrens van de bandbreedte')
+    'Piekbuiberging_Gedekt_m3_per500m'                                                               = @('m3', '', 'Hoeveel regenwater van een piekbui in dit blok van 500 meter wordt geborgen')
+    'Piekbuiberging_Ongedekt_m3_per500m'                                                             = @('m3', '', 'Hoeveel er in datzelfde blok blijft liggen')
+    'Piekbuiberging_Dekkingsgraad_per500m'                                                           = @('aandeel 0 tot 1', '', 'Het geborgen deel van de opgave in dit blok')
+    'Overstromingsschade_Hoofdwatersysteem_Binnendijks'                                              = @('euro', '', 'Verwachte jaarlijkse schade achter de primaire keringen')
+    'Overstromingsschade_Hoofdwatersysteem_Buitendijks'                                              = @('euro', '', 'Verwachte jaarlijkse schade in het buitendijkse gebied')
+    'Overstromingsschade_Regionaalwatersysteem_Binnendijks'                                          = @('euro', '', 'Verwachte jaarlijkse schade uit het regionale watersysteem')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Binnendijks'                                          = @('euro', '', 'Dezelfde schade, berekend met de schadefuncties van SSM')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Buitendijks'                                          = @('euro', '', 'Dezelfde schade, berekend met de schadefuncties van SSM')
+    'SSM_Overstromingsschade_Regionaalwatersysteem_Binnendijks'                                      = @('euro', '', 'Dezelfde schade, berekend met de schadefuncties van SSM')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Binnendijks_NCW'                                      = @('euro', '', 'Diezelfde schade als netto contante waarde')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Buitendijks_NCW'                                      = @('euro', '', 'Diezelfde schade als netto contante waarde')
+    'SSM_Overstromingsschade_Regionaalwatersysteem_Binnendijks_NCW'                                  = @('euro', '', 'Diezelfde schade als netto contante waarde')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Binnendijks_Basisjaar'                                = @('euro', '', 'De SSM-schade in het basisjaar, als vergelijkingsbasis')
+    'SSM_Overstromingsschade_Hoofdwatersysteem_Buitendijks_Basisjaar'                                = @('euro', '', 'De SSM-schade in het basisjaar, als vergelijkingsbasis')
+    'SSM_Overstromingsschade_Regionaalwatersysteem_Binnendijks_Basisjaar'                            = @('euro', '', 'De SSM-schade in het basisjaar, als vergelijkingsbasis')
+    'BereikbaarheidGroen_Fractie'                                                                    = @('m2', '', 'Groen binnen 300 meter, uitgedrukt per woning')
+    'Bereikbaarheid_Groen_BBG_Nationaal_Tot300m_Fractie_Groenaanbod_meter2'                          = @('m2', '', 'Het groenaanbod zelf binnen 300 meter, zonder deling door woningen')
+    'Bereikbaarheid_Groen_BBG_Nationaal_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2' = @('m2', '', 'Groen binnen 300 meter per woning, landelijk gemeten')
+    'Bereikbaarheid_Groen_BBG_Kust_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'      = @('m2', '', 'Dezelfde maat, alleen voor het landschap Kust')
+    'Bereikbaarheid_Groen_BBG_Rivieren_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'  = @('m2', '', 'Dezelfde maat, alleen voor het landschap Rivieren')
+    'Bereikbaarheid_Groen_BBG_Veen_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'      = @('m2', '', 'Dezelfde maat, alleen voor het landschap Veen')
+    'Bereikbaarheid_Groen_BBG_Zand_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'      = @('m2', '', 'Dezelfde maat, alleen voor het landschap Zand')
+    'Bereikbaarheid_Groen_BBG_Overig_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2'    = @('m2', '', 'Dezelfde maat, voor het gebied buiten de vier landschappen')
+    'Bereikbaarheid_Groen_BBG_Nederland_Tot300m_Fractie_Cumulatief_Groenaanbod_over_woningen_meter2' = @('m2', '', 'Dezelfde maat, gemeten op de landelijke indeling die de landschapstabellen als landsdekkende regel dragen')
+    'Mortaliteit_NDVI_500m'                                                                          = @('index 0 tot 1', '', 'Hoeveel groen er binnen 500 meter staat, gemeten als NDVI')
+    'Mortaliteit_NDVI_VeranderingOpLocatie'                                                          = @('index', '', 'Verandering van dat groen sinds het basisjaar')
+    'Mortaliteit_SterfteAfname_PerPeriode'                                                           = @('sterfgevallen', '', 'Vermeden sterfgevallen in deze periode dankzij meer groen')
+    'Mortaliteit_SterfteAfname_Cumulatief'                                                           = @('sterfgevallen', '', 'Vermeden sterfgevallen opgeteld sinds het basisjaar')
+    'WaardeVeranderingDoorGroenVerandering_Woningen'                                                 = @('euro', '', 'Waardeverandering van de woningen door verandering van het groen in de buurt')
+    'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen'                                        = @('euro', '', 'Datzelfde effect bij woningen die er in het basisjaar al stonden')
+    'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen'                                        = @('euro', '', 'Datzelfde effect bij woningen die er sindsdien zijn bijgekomen')
+    'WaardeVeranderingDoorGroenVerandering_Woningen_NCW'                                             = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
+    'WaardeVeranderingDoorGroenVerandering_BestaandeWoningen_NCW'                                    = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
+    'WaardeVeranderingDoorGroenVerandering_NieuwbouwWoningen_NCW'                                    = @('euro', '', 'Diezelfde waardeverandering als netto contante waarde')
+    'NationaleIndicatoren'                                                                           = @('tabel', '', 'Alle indicatoren op een regel, voor het gekozen schaalniveau')
+    'Indicatoren_Landschap_Kust'                                                                     = @('tabel, ha en euro', '', 'Dezelfde indicatoren voor het kustgebied zoals team kust het aanleverde; de vier landschapsgebieden overlappen elkaar en tellen niet op tot Nederland')
+    'Indicatoren_Landschap_Rivieren'                                                                 = @('tabel, ha en euro', '', 'Dezelfde indicatoren voor het rivierengebied zoals team rivieren het aanleverde; overlapt de andere gebieden')
+    'Indicatoren_Landschap_Veen'                                                                     = @('tabel, ha en euro', '', 'Dezelfde indicatoren voor het veengebied zoals team veen het aanleverde; overlapt de andere gebieden')
+    'Indicatoren_Landschap_Zand'                                                                     = @('tabel, ha en euro', '', 'Dezelfde indicatoren voor het zandgebied zoals team zand het aanleverde; overlapt de andere gebieden')
+    'Landgebruik_Areaal'                                                                             = @('tabel, ha', 'LU_Hoofdklasse', 'Areaal per landgebruiksklasse in basisjaar en zichtjaar, met het verschil')
+    'LandgebruikNL2120_Areaal'                                                                       = @('tabel, ha', 'LU_NL2120', 'Areaal per klasse in de indeling van 165 klassen')
+    'LandgebruikHoofdklasse_Areaal'                                                                  = @('tabel, ha', 'LU_Hoofdklasse', 'Areaal per hoofdklasse, landelijk en per landschap')
+    'BT_Exogeen_Areaal'                                                                              = @('tabel, ha', 'INL_Beheertype', 'Hoeveel hectare de landschapsteams per natuurbeheertype opleggen')
+    'Bouwwijze_Areaal'                                                                               = @('tabel, ha', 'BouwwijzeK', 'Hoeveel hectare nieuwbouw er per bouwwijze staat')
+    'ClaimRealisatie_NL'                                                                             = @('tabel, verhouding', '', 'Gerealiseerde stand gedeeld door de claim, landelijk')
+    'ClaimRealisatie_Provincie'                                                                      = @('tabel, verhouding', '', 'Dezelfde verhouding per provincie')
+    'ClaimRealisatie_COROP'                                                                          = @('tabel, verhouding', '', 'Dezelfde verhouding per COROP-gebied')
+    'ClaimRealisatie_NVM'                                                                            = @('tabel, verhouding', '', 'Dezelfde verhouding per NVM-woningmarktgebied')
+    'ClaimRealisatie_Landbouw'                                                                       = @('tabel, verhouding', '', 'Gerealiseerde stand gedeeld door de claim voor de landbouw, per provincie en per gewasklasse')
+    'ClaimRealisatie_WaterbergingVeen'                                                               = @('tabel, verhouding', '', 'Gerealiseerde seizoensberging in het veen gedeeld door de opgave, per deelgebied')
+    'ClaimRealisatie_WaterbergingVeen_NL'                                                            = @('tabel, verhouding', '', 'Dezelfde verhouding landelijk')
+    'Claims_Reeks'                                                                                   = @('tabel, woningen en banen', '', 'De ruimtevraag van het scenario: de stand van het basisjaar en daarna de claim per zichtjaar, landelijk')
+    'Basisjaar_NationaleIndicatoren'                                                                 = @('tabel', '', 'De indicatoren die in het basisjaar een betekenis hebben, op een regel, ter vergelijking met NationaleIndicatoren')
+    'Basisjaar_Indicatoren_Landschap_Kust'                                                           = @('tabel, ha en euro', '', 'Dezelfde basisjaarindicatoren voor het kustgebied')
+    'Basisjaar_Indicatoren_Landschap_Rivieren'                                                       = @('tabel, ha en euro', '', 'Dezelfde basisjaarindicatoren voor het rivierengebied')
+    'Basisjaar_Indicatoren_Landschap_Veen'                                                           = @('tabel, ha en euro', '', 'Dezelfde basisjaarindicatoren voor het veengebied')
+    'Basisjaar_Indicatoren_Landschap_Zand'                                                           = @('tabel, ha en euro', '', 'Dezelfde basisjaarindicatoren voor het zandgebied')
+    'LandgebruikNatDroog_Areaal'                                                                     = @('tabel, ha', '', 'De natuur uit LandgebruikNL2120_Areaal samengevat tot nat, droog en nog om te vormen')
+    'LandgebruikNL2120_Areaal_Basisjaar'                                                             = @('tabel, ha', 'LU_NL2120', 'Areaal per klasse in de indeling van 165 klassen, in het basisjaar')
+    'LandgebruikHoofdklasse_Areaal_Basisjaar'                                                        = @('tabel, ha', 'LU_Hoofdklasse', 'Areaal per hoofdklasse, landelijk en per landschap, in het basisjaar')
+    'LandgebruikNatDroog_Areaal_Basisjaar'                                                           = @('tabel, ha', '', 'Nat, droog en nog om te vormen in het basisjaar')
+    'Bereikbaarheid_Banen'                                                                           = @('geopackage, banen', '', 'Bereikbare banen per gebied, met de geometrie erbij')
+    'Verharding_Basisjaar_fractie'                                                                 = @('aandeel 0 tot 1', '', 'De verharding in het basisjaar, als fractie van de cel, voor alle varianten gelijk')
+    'Veenbouwstenen_NbSGenuanceerd'                                                                = @('klasse', '', 'De veenbouwstenen zoals team Veen ze heeft aangeleverd, invoer en geen modeluitkomst')
+}
+
+# Waar de legenda's staan die de configuratie schrijft. Ze komen uit Export/Legendas en zijn
+# variantonafhankelijk, dus een enkele GeoDmsRun op /Indicatoren/<casus>/Zichtjaren/Export/Legendas/Schrijf
+# volstaat voor een hele levering.
+$LegendaBron = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren\Legendas'
+$Issue = $Issue.TrimStart('#')
+
+function Schoon([string]$Naam) {
+    # Haalt de modelstaart uit de naam: _Nederland_SS-<n> of _Nederland vlak voor de extensie. Het
+    # getal is het aantal actieve subsectoren en verschuift zodra een sector aan of uit gaat (SS-11
+    # tot begin september 2026, SS-22 sinds landbouw meedraait), dus het staat hier niet vast.
+    $kaal = ($Naam -replace '_Nederland_SS-\d+(?=\.)', '') -replace '_Nederland(?=\.)', ''
+    # De landelijke claimtabel heet ClaimRealisatie_Nederland_Nederland_SS-11 en verliest daardoor
+    # twee keer een Nederland: eerst het studiegebied, dan het schaalniveau. Wat overblijft leest
+    # als de hoofdtabel terwijl het het landelijke totaal is. Geef dat niveau terug.
+    if ($kaal.StartsWith("ClaimRealisatie.")) { $kaal = "ClaimRealisatie_NL." + $kaal.Substring(16) }
+    return $kaal
+}
+
+# Op verzoek van Deltares (#717) blijft de bestaande bereikbaarheid-groen-indicator buiten de
+# levering. Die telt de landgebruiksklasse van een hele cel en kent geen groenfractie, waardoor
+# het groen binnen ontwikkelpakketten er per constructie onzichtbaar voor is; de indicator
+# spreekt het NbS-verhaal daardoor tegen in plaats van het te ondersteunen. Er komt een
+# fractiegebaseerde opvolger. De bestanden blijven wel gewoon in LocalData staan.
+# Ook de losse per-itemkaarten (naamvorm Bereikbaarheid_Groen_...) vallen onder de uitsluiting;
+# op verzoek van Deltares (#717) gaat alleen de niet-druktegecorrigeerde fractiemaat mee.
+$NietUitleveren = @('BereikbaarheidGroen', 'Bereikbaarheid_Groen_')
+$NietUitleverenKolommen = @(
+    'BereikbaarheidGroen_BBG_Tot300m_ExAgr_Groenaanbod_over_woning'
+    'BereikbaarheidGroen_BBG_Tot300m_Groenaanbod_over_woning'
+    'BereikbaarheidGroen_BBG_Tot300m_ExAgr_DrukteCorr_PerWoning'
+    'BereikbaarheidGroen_BBG_Tot300m_DrukteCorr_PerWoning'
+    'BereikbaarheidGroen_Fractie_Tot300m_DrukteCorr_PerWoning'
+)
+
+# De fractiegebaseerde opvolger heet BereikbaarheidGroen_Fractie en bevat dus de string waarop
+# hierboven wordt uitgesloten. Die moet er juist wel in, dus laat alles met _Fractie expliciet door.
+#
+# Let op de volgorde van de namen. Uitgesloten wordt aangeroepen op de RUWE bestandsnaam, dus voor
+# Schoon de modelstaart eraf haalt. Die naam eindigt altijd op _Nederland of _Nederland_SS-11 voor
+# de extensie. Een doorlaatpatroon dat op een punt eindigt, zoals 'BereikbaarheidGroen_Fractie.',
+# matcht daarom nooit; dat patroon was geschreven voor de opgeschoonde naam en liet in de praktijk
+# juist de hoofdkaart van de fractievariant uit de levering vallen. Patronen hier moeten dus tegen
+# de ruwe naam gelezen worden.
+$TochUitleveren = @('_Fractie_Cumulatief', 'BereikbaarheidGroen_Fractie_', '_Tot300m_Fractie_')
+
+# De druktegecorrigeerde fractiemaat gaat op verzoek van Deltares (#717) niet mee, ook niet als kaart.
+# Die staat als kolom al in $NietUitleverenKolommen; deze lijst doet hetzelfde voor de kaarten en gaat
+# voor op de doorlaat hierboven, want de bestandsnaam draagt zowel _Fractie_ als de druktecorrectie.
+$AltijdUitsluiten = @('_Fractie_Drukte_gecorrigeerd_')
+
+function Uitgesloten([string]$Naam) {
+    foreach ($a in $AltijdUitsluiten) { if ($Naam -like "*$a*") { return $true } }
+    foreach ($t in $TochUitleveren)   { if ($Naam -like "*$t*") { return $false } }
+    foreach ($p in $NietUitleveren)   { if ($Naam -like "*$p*") { return $true } }
+    return $false
+}
+
+function Kopieer {
+    # Kopieert een tif plus zijn .tfw en .xml naar de doelmap, onder een opgeschoonde naam.
+    param([System.IO.FileInfo]$Tif, [string]$NaarMap, [string]$Voorvoegsel = '')
+
+    if (Uitgesloten $Tif.Name) { return 0 }
+
+    if (-not (Test-Path $NaarMap)) { New-Item -ItemType Directory -Path $NaarMap -Force | Out-Null }
+    $nieuw = $Voorvoegsel + (Schoon $Tif.Name)
+    foreach ($ext in '.tif', '.tfw', '.xml') {
+        $mee = [IO.Path]::ChangeExtension($Tif.FullName, $ext)
+        if (Test-Path $mee) {
+            Copy-Item $mee (Join-Path $NaarMap ([IO.Path]::ChangeExtension($nieuw, $ext))) -Force
+        }
+    }
+    return 1
+}
+
+function Opsomming([string[]]$Delen) {
+    # Zodat de LEESMIJ een zin wordt en geen lijstje: a, b en c.
+    if ($Delen.Count -le 1) { return ($Delen -join '') }
+    return (($Delen[0..($Delen.Count - 2)] -join ', ') + ' en ' + $Delen[-1])
+}
+
+function Get-Herkomst([string]$Pad) {
+    # Leest branch, commit en tag uit de werkkopie die de cijfers heeft gemaakt. Alles wat hier
+    # misgaat levert een regel op die dat zegt; een ontbrekende herkomstregel is niet te
+    # onderscheiden van een oplevering waarvan de herkomst wel bekend is.
+    if (-not (Test-Path $Pad)) { return @("Configuratie: werkkopie $Pad niet gevonden, herkomst onbekend.") }
+
+    try {
+        $branch = git -C $Pad rev-parse --abbrev-ref HEAD 2>$null
+        $commit = git -C $Pad rev-parse --short HEAD 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $commit) {
+            $global:LASTEXITCODE = 0
+            return @("Configuratie: geen git-informatie te lezen uit $Pad.")
+        }
+
+        # Faalt met exitcode 128 zodra HEAD niet getagd is. Dat is hier geen fout maar een feit dat in
+        # de LEESMIJ hoort, anders leest een ongetagde oplevering als een getagde. De exitcode moet wel
+        # opgeruimd worden, want anders eindigt het script erop en leest een aanroeper dat als mislukt.
+        $tag = git -C $Pad describe --tags --exact-match 2>$null
+        if ($LASTEXITCODE -ne 0) { $tag = '' }
+        $vuil = @(git -C $Pad status --porcelain 2>$null)
+        $global:LASTEXITCODE = 0
+    }
+    catch {
+        $global:LASTEXITCODE = 0
+        return @("Configuratie: git niet aan te roepen, herkomst onbekend.")
+    }
+
+    $r = @()
+    $r += "Configuratie: commit $commit op branch $branch, " + $(if ($tag) { "getagd als $tag." } else { "niet getagd." })
+    $r += "  Gelezen uit werkkopie $Pad."
+    if ($vuil.Count -gt 0) {
+        # Een commithash beschrijft de gebruikte configuratie alleen volledig als er niets openstond.
+        $r += $(if ($vuil.Count -eq 1) { "  Let op: in die werkkopie stond een wijziging open, dus de commit hierboven" }
+                else { "  Let op: in die werkkopie stonden $($vuil.Count) wijzigingen open, dus de commit hierboven" })
+        $r += "  beschrijft niet alles wat er is doorgerekend:"
+        foreach ($v in ($vuil | Select-Object -First 10)) { $r += "    $v" }
+        if ($vuil.Count -gt 10) { $r += "    en nog $($vuil.Count - 10) andere" }
+    }
+    return $r
+}
+
+New-Item -ItemType Directory -Path $Doel -Force | Out-Null
+$telling = [ordered]@{}
+
+foreach ($casus in $varianten.Keys) {
+    $v   = $varianten[$casus]
+    $src = Join-Path $Bron $casus
+    if (-not (Test-Path $src)) { Write-Host "overgeslagen, casus ontbreekt: $casus"; continue }
+
+    $tab  = Join-Path $Doel "$v\tabellen"
+    $jaar = Join-Path $Doel "$v\kaarten_$Zichtjaar"
+    $reeks= Join-Path $Doel "$v\kaarten_tijdreeks"
+    $basis= Join-Path $Doel "$v\kaarten_basisjaar"
+    $n = @{ tabellen = 0; zichtjaar = 0; tijdreeks = 0; basisjaar = 0 }
+
+    # tabellen: de csv's plus hun xml, uit de Stand-map
+    New-Item -ItemType Directory -Path $tab -Force | Out-Null
+    Get-ChildItem "$src\Stand$Zichtjaar" -Filter '*.csv' -ErrorAction SilentlyContinue | ForEach-Object {
+        $uit = Join-Path $tab (Schoon $_.Name)
+        # RegionaleIndicatoren draagt de uitgesloten kolommen. Die worden hier weggelaten en niet
+        # in de configuratie, want dit is een leverkeuze en geen modelwijziging.
+        $kop = Get-Content $_.FullName -TotalCount 1
+        if ($NietUitleverenKolommen | Where-Object { $kop -like "*$_*" }) {
+            Import-Csv $_.FullName | Select-Object -Property * -ExcludeProperty $NietUitleverenKolommen |
+                Export-Csv $uit -NoTypeInformation -Encoding UTF8
+        } else {
+            Copy-Item $_.FullName $uit -Force
+        }
+        $x = [IO.Path]::ChangeExtension($_.FullName, '.xml')
+        if (Test-Path $x) { Copy-Item $x (Join-Path $tab (Schoon ([IO.Path]::GetFileName($x)))) -Force }
+        $n.tabellen++
+    }
+
+    # de gpkg met de bereikbaarheid van banen, per buurt en per provincie; die hoort bij de
+    # tabellen en niet bij de kaarten, want het is een vectorbestand met attribuuttabellen
+    Get-ChildItem $src -File -Filter '*.gpkg' -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $tab (Schoon $_.Name)) -Force
+        $n.tabellen++
+    }
+
+    # de standgrids van het zichtjaar
+    Get-ChildItem "$src\Stand$Zichtjaar" -Filter '*.tif' -ErrorAction SilentlyContinue |
+        ForEach-Object { $n.zichtjaar += Kopieer $_ $jaar }
+
+    # de NL2120-landgebruikskaart: basisjaar apart, zichtjaar apart, de rest in de reeks. Een ontkoppelde
+    # reeks (#824) schrijft die kaart voor elk zichtjaar; daarvoor stonden er alleen het exportzichtjaar
+    # en zijn voorganger.
+    Get-ChildItem "$src\LandgebruikNL2120" -Filter '*.tif' -ErrorAction SilentlyContinue | ForEach-Object {
+        if     ($_.Name -match 'Basisjaar')  { $n.basisjaar += Kopieer $_ $basis 'LandgebruikskaartNL2120_' }
+        elseif ($_.Name -match "^$Zichtjaar"){ $n.zichtjaar += Kopieer $_ $jaar  'LandgebruikskaartNL2120_' }
+        else                                 { $n.tijdreeks += Kopieer $_ $reeks 'LandgebruikskaartNL2120_' }
+    }
+
+    # de kaart in hoofdklassen: basisjaar apart, zichtjaar apart, de rest in de reeks. Stond tot #803
+    # onder Landgebruik en was toen de kaart op LU_ModelType; die map wordt niet meer geschreven.
+    Get-ChildItem "$src\LandgebruikHoofdklasse" -Filter '*.tif' -ErrorAction SilentlyContinue | ForEach-Object {
+        if     ($_.Name -match 'Basisjaar')  { $n.basisjaar += Kopieer $_ $basis 'LandgebruikskaartHoofdklasse_' }
+        elseif ($_.Name -match "^$Zichtjaar"){ $n.zichtjaar += Kopieer $_ $jaar  'LandgebruikskaartHoofdklasse_' }
+        else                                 { $n.tijdreeks += Kopieer $_ $reeks 'LandgebruikskaartHoofdklasse_' }
+    }
+
+    # de losse kaarten in de wortel, gesorteerd op het jaartal in de naam
+    Get-ChildItem $src -File -Filter '*.tif' | ForEach-Object {
+        if     ($_.Name -match "_$Zichtjaar(_|\.)") { $n.zichtjaar += Kopieer $_ $jaar }
+        elseif ($_.Name -match '_Y\d{4}(_|\.)')     { $n.tijdreeks += Kopieer $_ $reeks }
+        else                                        { $n.basisjaar += Kopieer $_ $basis }
+    }
+
+    # Kaarten die niet per casus maar per variant in de wortel van Indicatoren staan, zoals de
+    # veenbouwsteenkaart uit #764. Die hangen aan de levering en niet aan een zichtjaar, dus ze gaan
+    # naar de basisjaarmap van de variant. Zonder deze regel vallen ze buiten de oplevering, want de
+    # lus hierboven kijkt alleen in de casusmap.
+    Get-ChildItem $Bron -File -Filter "*_${v}_*.tif" -ErrorAction SilentlyContinue | ForEach-Object {
+        $n.basisjaar += Kopieer $_ $basis
+    }
+
+    $telling[$v] = $n
+    Write-Host ("{0}: {1} tabellen, {2} kaarten {3}, {4} kaarten tijdreeks, {5} kaarten basisjaar" -f `
+        $v, $n.tabellen, $n.zichtjaar, $Zichtjaar, $n.tijdreeks, $n.basisjaar)
+}
+
+# de losse casus Basisjaar, zoals hij is
+if (Test-Path "$Bron\Basisjaar") {
+    Get-ChildItem "$Bron\Basisjaar" -File -Filter '*.tif' |
+        ForEach-Object { [void](Kopieer $_ (Join-Path $Doel 'Basisjaar')) }
+}
+
+# De legenda's naast de kaarten die klassenummers dragen. Een GeoTIFF draagt alleen het getal, dus
+# zonder deze bestandjes is zo'n kaart bij de ontvanger niet te lezen. Ontbreekt de bron, dan gaat de
+# levering gewoon door en staat de waarschuwing in de LEESMIJ.
+$metaGeschreven = 0
+$metaGemist     = @()
+Get-ChildItem $Doel -Recurse -File -Filter '*.tif' | ForEach-Object {
+    $kaal = $_.BaseName -replace '_Y2[0-9]{3}', ''
+    $d = $Beschrijving[$kaal]
+    if ($d -and $d[1]) {
+        $bron = Join-Path $LegendaBron ($d[1] + '.csv')
+        if (Test-Path $bron) {
+            $uit = Join-Path $_.DirectoryName ($_.BaseName + '_meta.txt')
+            @("Legenda bij $($_.Name)", "Classificatie: $($d[1])", '') +
+                (Get-Content $bron) | Set-Content $uit -Encoding UTF8
+            $metaGeschreven++
+        } elseif ($metaGemist -notcontains $d[1]) {
+            $metaGemist += $d[1]
+        }
+    }
+}
+if ($metaGeschreven) { Write-Host "  $metaGeschreven legendabestanden geschreven" }
+if ($metaGemist) {
+    Write-Warning ("Legenda ontbreekt voor: " + ($metaGemist -join ', ') +
+        ". Draai eerst GeoDmsRun op /Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/Legendas/Schrijf.")
+}
+
+# Wat er in de LEESMIJ komt te staan, komt uit de doelmap zelf en niet uit de variantentabel bovenin.
+# Een levering wordt in stappen gevuld, dus wat deze run heeft gekopieerd is niet hetzelfde als wat de
+# ontvanger straks ziet. Basisjaar is geen variant en staat apart in de indeling.
+$geleverd = [ordered]@{}
+Get-ChildItem $Doel -Directory | Where-Object { $_.Name -ne 'Basisjaar' } | Sort-Object Name | ForEach-Object {
+    $geleverd[$_.Name] = @(Get-ChildItem $_.FullName -Recurse -File).Count
+}
+$ontbreekt = @($Verwacht | Where-Object { $geleverd.Keys -notcontains $_ })
+$onbekend  = @($geleverd.Keys | Where-Object { $Verwacht -notcontains $_ })
+
+$regels = @()
+$regels += "Oplevering RuimteScanner NL2120, issue #$Issue"
+$regels += "Samengesteld op $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+$regels += ""
+if ($geleverd.Count -eq 0) {
+    $regels += "Zichtjaar $Zichtjaar. LET OP: deze map bevat op dit moment geen enkele variant."
+} else {
+    $lijst = Opsomming @($geleverd.Keys | ForEach-Object { "$_ ($($geleverd[$_]) bestanden)" })
+    $regels += "Zichtjaar $Zichtjaar. Deze map bevat $lijst."
+}
+if ($ontbreekt.Count -gt 0) {
+    $regels += "LET OP: deze levering is niet compleet. Verwacht en nog niet aanwezig: $(Opsomming $ontbreekt)."
+}
+$regels += ""
+$regels += $(if ($Herkomst) { $Herkomst } else { Get-Herkomst $Werkkopie })
+if ($Notitie) {
+    $regels += ""
+    $regels += "BIJ DEZE LEVERING"
+    foreach ($r in $Notitie) { $regels += "  $r" }
+}
+$regels += ""
+$regels += "INDELING"
+$regels += "  <variant>/tabellen/            RegionaleIndicatoren (een regel, heel Nederland), de arealen"
+$regels += "                                 per landgebruiksklasse, de claimrealisatie per schaalniveau"
+$regels += "                                 en de bereikbaarheid van banen als gpkg"
+$regels += "  <variant>/kaarten_$Zichtjaar/       de kaarten van het zichtjaar zelf"
+$regels += "  <variant>/kaarten_tijdreeks/   dezelfde indicatoren voor 2040 tot en met 2110, voor"
+$regels += "                                 de indicatoren die hun hele reeks wegschrijven"
+$regels += "  <variant>/kaarten_basisjaar/   referentiekaarten van het basisjaar"
+$regels += "  Basisjaar/                     de losse basisjaarcasus, nu alleen de verhardingskaart"
+$regels += ""
+$regels += "BESTANDEN"
+$regels += "  Elke kaart is een GeoTIFF in RD-coordinaten (EPSG:28992), met een .tfw world file"
+$regels += "  en een .xml met het GeoDMS-itempad en de buildversie waarmee hij is gemaakt."
+$regels += ""
+$regels += "  ClaimRealisatie_<niveau>.csv geeft per regio de gerealiseerde stand gedeeld door de"
+$regels += "  claim. Het verschil tussen de niveaus maakt overflow zichtbaar: staat een regio op NVM"
+$regels += "  boven de 1 terwijl COROP eromheen op 1 uitkomt, dan is de claim binnen die grotere regio"
+$regels += "  verschoven en niet landelijk overschreden."
+$regels += ""
+$regels += "WAT ER IN DE BESTANDEN STAAT"
+$regels += "  De namen hieronder staan zonder zichtjaar. Een kaart heet in de map"
+$regels += "  <naam>_Y2120.tif; dezelfde naam in kaarten_tijdreeks draagt een ander jaartal en"
+$regels += "  betekent hetzelfde. Bij een naam met een classificatie ligt een <bestandsnaam>_meta.txt"
+$regels += "  met de nummers en de bijbehorende klassenamen."
+$regels += ""
+$gevonden = @{}
+Get-ChildItem $Doel -Recurse -File | Where-Object { $_.Extension -in '.tif', '.csv', '.gpkg' } |
+    ForEach-Object { $gevonden[($_.BaseName -replace '_Y2[0-9]{3}', '')] = $true }
+foreach ($k in $Beschrijving.Keys) {
+    if (-not $gevonden.ContainsKey($k)) { continue }
+    $d = $Beschrijving[$k]
+    $eenheid = if ($d[1]) { "$($d[0]), $($d[1])" } else { $d[0] }
+    $regels += "  $k  [$eenheid]"
+    $regels += "      $($d[2])"
+}
+$zonder = @($gevonden.Keys | Where-Object { -not $Beschrijving.Contains($_) } | Sort-Object)
+if ($zonder.Count -gt 0) {
+    $regels += ""
+    $regels += "  LET OP: voor deze bestanden staat geen beschrijving in MaakOplevering.ps1:"
+    foreach ($z in $zonder) { $regels += "    $z" }
+}
+$regels += ""
+$regels += "  De veranderkaarten NieuweNatuur, VerdwenenNatuur, Verstedelijking en WaterbergingVeen"
+$regels += "  dragen per cel een 0 of een 1 en geen oppervlak. Het areaal in hectare staat in de"
+$regels += "  indicatorentabellen; een cel is 25 bij 25 meter, dus 0,0625 ha."
+$regels += ""
+$regels += "LET OP BIJ HET LEZEN"
+$regels += "  De sloopindicatoren zijn geen tijdreeks. Ze worden geteld uit de stand in het"
+$regels += "  basisjaar onder het opleggingsmasker, en dat masker gaat in het eerste zichtjaar in"
+$regels += "  een keer op. De waarde is daardoor in elk zichtjaar gelijk."
+$regels += ""
+$regels += "  Vanaf 2060 staat de TIGRIS-claim voor wonen en werken stil; latere zichtjaren"
+$regels += "  bouwen alleen nog terug wat de exogene opleggingen slopen."
+$regels += ""
+# Deze twee notities gelden voor elke oplevering en horen daarom hier en niet in de doelmap: de
+# LEESMIJ daar wordt bij elke run overschreven, dus met de hand toegevoegde tekst verdwijnt.
+$regels += "  CO2Flow_TovBasisjaar is het verschil tussen twee voorraden die ongeveer tweehonderd keer"
+$regels += "  zo groot zijn als het verschil zelf. Een wijziging van een tiende procent in de"
+$regels += "  zichtjaarvoorraad verandert deze indicator met ruim twintig procent. Lees hem daarom niet"
+$regels += "  als een maat voor de omvang van een effect, en zet er bij een vergelijking tussen runs"
+$regels += "  altijd CO2Stock_Zichtjaar naast, zodat de schaal zichtbaar blijft."
+$regels += ""
+$regels += "  De piekbuiberging en de sector Waterberging zijn twee verschillende grootheden. De kolommen"
+$regels += "  Piekbuiberging_* gaan over de opgave bij een hevige bui in bestaand bebouwd gebied; de"
+$regels += "  kolommen WaterbergingVeen en Sloop_WaterbergingVeen_* gaan over gealloceerde bergings-"
+$regels += "  gebieden in het landelijk gebied, seizoensberging voor het veen. Ze hebben niets met elkaar"
+$regels += "  te maken en horen niet bij elkaar opgeteld te worden. Tot #720 heetten ze allebei"
+$regels += "  waterberging; in oudere leveringen staan de eerste dus als Waterberging_Vraag,"
+$regels += "  Waterberging_RestvraagPositief en Waterberging_Afname."
+$regels += ""
+$regels += "  Lees Piekbuiberging_Dekkingsgraad nooit los van Piekbuiberging_Dekkingsgraad_Ongeklemd."
+$regels += "  Opgave en aanbod worden per blok van 500 meter tegen elkaar weggestreept, en aanbod boven de"
+$regels += "  opgave in datzelfde blok vervalt, zichtbaar in Piekbuiberging_AanbodZonderOpgave_m3. De twee"
+$regels += "  dekkingsgraden zijn de onder- en bovengrens van dezelfde uitkomst. De blokmaat zelf is een"
+$regels += "  keuze zonder onderbouwing: op 100 meter komt de dekkingsgraad lager uit. Zie #720."
+$regels += ""
+$regels += "  Piekbuiberging_Aanbod_m3 is sinds #741 van betekenis veranderd zonder van naam te veranderen."
+$regels += "  Hij telde alle bergingscapaciteit en telt nu alleen die binnen bestaand bebouwd gebied, want"
+$regels += "  daar stond de opgave al op gemaskeerd. Het aanbod wordt daarmee kleiner en de dekkingsgraad"
+$regels += "  ook. Wat eruit valt staat als Piekbuiberging_AanbodBuitenBBG_m3 ernaast, dus de oude kolom is"
+$regels += "  terug te krijgen door die twee op te tellen. Leg een levering van voor en na #741 niet naast"
+$regels += "  elkaar zonder die optelling: het aanbod daalt dan zonder dat er iets aan het model is veranderd."
+$regels | Set-Content (Join-Path $Doel 'LEESMIJ.txt') -Encoding UTF8
+
+$totaal = Get-ChildItem $Doel -Recurse -File | Measure-Object Length -Sum
+Write-Host ("klaar: {0} bestanden, {1} GB in {2}" -f $totaal.Count, [math]::Round($totaal.Sum/1GB,2), $Doel)
+# Het scherm is de enige plek waar dit nog op te merken valt voordat de map wordt doorgestuurd.
+if ($ontbreekt.Count -gt 0) {
+    Write-Host ("LET OP: onvolledige levering, nog niet aanwezig: {0}" -f ($ontbreekt -join ', ')) -ForegroundColor Yellow
+}
+if ($onbekend.Count -gt 0) {
+    Write-Host ("in de doelmap staan varianten die niet verwacht werden: {0}" -f ($onbekend -join ', ')) -ForegroundColor Yellow
+}

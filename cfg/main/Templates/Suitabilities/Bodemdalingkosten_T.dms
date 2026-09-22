@@ -1,0 +1,166 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De rekenkern voor de kosten van bouwen op een bodemdalingsgevoelige ondergrond (#505).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Bodemdalingkosten_T
+: Descr = "De aanlegkosten per inrichtingsalternatief, de goedkoopste daarvan, de meerkosten ten opzichte van de zandgrondreferentie en het bijbehorende onderhoud, in euro per hectare terrein. Het
+			sjabloon krijgt de grondgebruikverdeling binnen als zes attributen op AdminDomain, in m2 per hectare terrein, zodat dezelfde formules twee keer kunnen draaien: per ontwikkelpakket met
+			const-attributen voor het exploitatiesaldo, waar alle pakketten naast elkaar moeten staan omdat de geschiktheid ze vergelijkt, en een keer per cel met de verdeling van het gealloceerde
+			pakket voor de indicator, veel goedkoper dan per pakket rekenen en achteraf selecteren. De kengetallen, de locatiegebonden tarieven en de beschikbaarheid komen uit
+			BaseData/Suitabilities/Wonen/Bodemdalingkosten en staan buiten dit sjabloon, want ze hangen niet van het pakket af en hoeven maar een keer over het domein te worden uitgerekend."
+{
+	//
+	attribute<Terreinoppervlak> m2_Bebouwing      (AdminDomain);
+	attribute<Terreinoppervlak> m2_Tuin           (AdminDomain);
+	attribute<Terreinoppervlak> m2_Straat         (AdminDomain);
+	attribute<Terreinoppervlak> m2_Park           (AdminDomain);
+	attribute<Terreinoppervlak> m2_OpenbareRuimte (AdminDomain);
+	attribute<Terreinoppervlak> m2_Water          (AdminDomain);
+	attribute<meter>            SchadevrijeDiepte_Maatregel (AdminDomain);
+	//
+
+	container   Src := /BaseData/Suitabilities/Wonen/Bodemdalingkosten;
+	unit<UInt8> Alt := /Classifications/Modellering/InrichtingsalternatiefK;
+
+	attribute<meter> Ophoging (AdminDomain) := max_elem(Src/Hoeveelheden/Ophoogdikte, min_elem(Src/Hoeveelheden/Overstromingsdiepte, MakeDefined(SchadevrijeDiepte_Maatregel, 0[meter])))
+	,	Descr = "Hoeveel moet het maaiveld hier omhoog? Het maximum van twee eisen die allebei increments op het huidige maaiveld zijn: wat de bodemdaling vraagt, en wat nodig is om boven het water uit te
+				komen. Het maximum en niet de som, want wie tot de diepste van de twee ophoogt voldoet aan allebei. De overstromingskant is begrensd op wat de bouwwijze van dit ontwikkelpakket aankan
+				(#681): een pakket zonder maatregel draagt schadevrije diepte nul en hoogt alleen voor de bodemdaling op, dus in BAU en BAU2, waar alle pakketten bouwwijze 0 dragen, is deze term gelijk aan
+				de bodemdalingseis. Daarmee hangen de kosten van de maatregel aan dezelfde conditie als de baten: de schadekant,
+				SSM2017_Overstromingsschades/Grondgebruik/Zichtjaar/SchadevrijeDiepte_Nieuwbouw, verschuift de schadefunctie met precies dit getal van precies dit pakket. Zie #681 en #505.";
+
+	attribute<Eur_m2> Tarief_Ophogen (AdminDomain) := Src/Kengetallen/Ophogen_permeter * (Ophoging / 1[meter])
+	,	Descr = "Het ophoogtarief op deze plek voor dit pakket. Staat hier en niet in Src/Tarief, want anders dan de andere locatiegebonden tarieven hangt dit getal wel van het ontwikkelpakket af, via de schadevrije diepte van zijn bouwwijze. Alternatief C en de referentie gebruiken dit niet: die staan op een vaste ophoogdikte.";
+
+	attribute<Terreinoppervlak> m2_WaterDrijvend (AdminDomain) := add(m2_Water, m2_Tuin, m2_Park)
+	,	Descr = "Bij drijvend bouwen worden de tuinen en parken volledig vervangen door water, zie D.2.6 van het rapport.";
+
+	container Alternatief
+	: Descr = "De aanlegkosten per alternatief, in euro per hectare terrein, exclusief de opslag van 19 procent. Elke regel is een inrichtingselement maal zijn tarief; welke posten meedoen volgt de kruisjes in de tabellen E-1 tot en met E-8."
+	{
+		attribute<Eur_Ha> A_IntegraalOphogen (AdminDomain) := (
+			  m2_Bebouwing      * (Tarief_Ophogen + Src/Tarief/Paal)
+			+ m2_Tuin           * (Tarief_Ophogen + Src/Kengetallen/InrichtenGroen)
+			+ m2_Straat         * (Tarief_Ophogen + Src/Kengetallen/Verharding + Src/Kengetallen/Riolering)
+			+ m2_Park           * (Tarief_Ophogen + Src/Kengetallen/InrichtenPark)
+			+ m2_OpenbareRuimte * (Tarief_Ophogen + Src/Kengetallen/InrichtenGroen)
+			+ m2_Water          *  Tarief_Ophogen
+			)[Eur] / 1[Ha];
+
+		attribute<Eur_Ha> B_PartieelOphogen (AdminDomain) := (
+			  m2_Bebouwing      * (Tarief_Ophogen + Src/Tarief/Paal)
+			+ m2_Tuin           *  Src/Kengetallen/InrichtenGroen
+			+ m2_Straat         * (Tarief_Ophogen + Src/Kengetallen/Verharding + Src/Kengetallen/Riolering)
+			+ m2_Park           *  Src/Kengetallen/InrichtenPark
+			+ m2_OpenbareRuimte * (Tarief_Ophogen + Src/Kengetallen/InrichtenGroen)
+			+ m2_Water          *  0[Eur_m2]
+			)[Eur] / 1[Ha]
+		,	Descr = "Partieel ophogen laat tuinen, parken en water op het oorspronkelijke materiaal liggen en hoogt alleen bebouwing, straten en de overige openbare ruimte op. Daarmee is dit alternatief per constructie nooit duurder dan integraal ophogen: het is A min drie posten. Dat het in de praktijk vrijwel altijd wint is dus geen artefact van de implementatie maar van de kengetallen. Zie #505.";
+
+		attribute<Eur_Ha> C_OphogenMet120cmZand (AdminDomain) := (
+			  m2_Bebouwing      * (Src/Tarief/OphogenC + Src/Tarief/Paal)
+			+ m2_Tuin           * (Src/Tarief/OphogenC + Src/Kengetallen/InrichtenGroen)
+			+ m2_Straat         * (Src/Tarief/OphogenC + Src/Kengetallen/Verharding + Src/Kengetallen/Riolering)
+			+ m2_Park           * (Src/Tarief/OphogenC + Src/Kengetallen/InrichtenPark)
+			+ m2_OpenbareRuimte * (Src/Tarief/OphogenC + Src/Kengetallen/InrichtenGroen)
+			+ m2_Water          *  Src/Tarief/OphogenC
+			)[Eur] / 1[Ha];
+
+		attribute<Eur_Ha> D_LichtOphoogmateriaal (AdminDomain) := (
+			  m2_Bebouwing      * (Src/Tarief/EPS + Src/Tarief/Paal)
+			+ m2_Tuin           * (Src/Tarief/EPS + Src/Kengetallen/InrichtenGroen)
+			+ m2_Straat         * (Src/Tarief/EPS + Src/Kengetallen/Verharding + Src/Kengetallen/Riolering)
+			+ m2_Park           * (Src/Tarief/EPS + Src/Kengetallen/InrichtenPark)
+			+ m2_OpenbareRuimte * (Src/Tarief/EPS + Src/Kengetallen/InrichtenGroen)
+			+ m2_Water          *  0[Eur_m2]
+			)[Eur] / 1[Ha];
+
+		attribute<Eur_Ha> E_AllesFunderen (AdminDomain) := (
+			  m2_Bebouwing      *  Src/Tarief/Paal
+			+ m2_Tuin           * (Src/Kengetallen/Betonconstructie + Src/Kengetallen/InrichtenGroen)
+			+ m2_Straat         * (Src/Kengetallen/BetonEnVerharding + Src/Tarief/VerhardingE + Src/Kengetallen/Riolering + Src/Tarief/Paal)
+			+ m2_Park           * (Src/Kengetallen/Betonconstructie + Src/Kengetallen/InrichtenPark + Src/Tarief/Paal)
+			+ m2_OpenbareRuimte * (Src/Kengetallen/Betonconstructie + Src/Kengetallen/InrichtenGroen + Src/Tarief/Paal)
+			+ m2_Water          *  0[Eur_m2]
+			)[Eur] / 1[Ha]
+		,	Descr = "Uitzondering op het funderen is het water in de openbare ruimte, zie D.2.5 van het rapport.";
+
+		attribute<Eur_Ha> F_DrijvendBouwen (AdminDomain) := (
+			  m2_Bebouwing      * (Src/Kengetallen/Afgraven_vast + Src/Kengetallen/Drijfconstructie)
+			+ m2_Straat         * (Src/Kengetallen/Verharding + Src/Kengetallen/Riolering + Src/Kengetallen/Steigers)
+			+ m2_OpenbareRuimte *  Src/Kengetallen/InrichtenGroen
+			+ m2_WaterDrijvend  *  Src/Tarief/AfgravenD
+			)[Eur] / 1[Ha]
+		,	Descr = "Bij drijvend bouwen worden tuinen en parken vervangen door water, dat afgegraven moet worden. De ophoogzandposten voor het wegtalud uit E-4, E-5 en E-7 zijn niet meegenomen: die staan per m3 en vragen een dijkgeometrie die RSopen niet kent. Zie de aannamelijst bij #505.";
+	}
+
+	attribute<Eur_Ha> Goedkoopste (AdminDomain) :=
+		min_elem(
+			 Src/Beschikbaar/A ? Alternatief/A_IntegraalOphogen     : null_f
+			,Src/Beschikbaar/B ? Alternatief/B_PartieelOphogen      : null_f
+			,Src/Beschikbaar/C ? Alternatief/C_OphogenMet120cmZand  : null_f
+			,Src/Beschikbaar/D ? Alternatief/D_LichtOphoogmateriaal : null_f
+			,Src/Beschikbaar/E ? Alternatief/E_AllesFunderen        : null_f
+			,Src/Beschikbaar/F ? Alternatief/F_DrijvendBouwen       : null_f
+		)
+	,	Descr = "De goedkoopste van de toegestane alternatieven. Nooit middelen over alternatieven: de extreme afgraafdieptes tot 251 meter op de zandgronden zijn geen fout maar het rapport dat drijvend bouwen daar onbetaalbaar maakt, en met een minimum valt dat alternatief daar vanzelf af in plaats van het gemiddelde te vergiftigen.";
+
+	attribute<Alt> Keuze (AdminDomain) :=
+		  Goedkoopste == Alternatief/A_IntegraalOphogen     ? Alt/V/A_IntegraalOphogen
+		: Goedkoopste == Alternatief/B_PartieelOphogen      ? Alt/V/B_PartieelOphogen
+		: Goedkoopste == Alternatief/C_OphogenMet120cmZand  ? Alt/V/C_OphogenMet120cmZand
+		: Goedkoopste == Alternatief/D_LichtOphoogmateriaal ? Alt/V/D_LichtOphoogmateriaal
+		: Goedkoopste == Alternatief/E_AllesFunderen        ? Alt/V/E_AllesFunderen
+		: Alt/V/F_DrijvendBouwen
+	,	Descr = "Welk alternatief het goedkoopst uitkomt. Voor kaartbeeld, diagnose en de keuze van de onderhoudspost.";
+
+	attribute<Eur_Ha> Referentie (AdminDomain) := (
+		  m2_Bebouwing      *  Src/Tarief/OphogenRef
+		+ m2_Tuin           * (Src/Tarief/OphogenRef + Src/Kengetallen/InrichtenGroen)
+		+ m2_Straat         * (Src/Tarief/OphogenRef + Src/Kengetallen/Verharding + Src/Kengetallen/Riolering)
+		+ m2_Park           * (Src/Tarief/OphogenRef + Src/Kengetallen/InrichtenPark)
+		+ m2_OpenbareRuimte * (Src/Tarief/OphogenRef + Src/Kengetallen/InrichtenGroen)
+		+ m2_Water          *  Src/Tarief/OphogenRef
+		)[Eur] / 1[Ha]
+	,	Descr = "Integraal ophogen op een locatie zonder bodemdalingsopgave: de minimale ophoging van 0,20 meter die de eis maaiveld plus 20 cm oplegt, en geen heipalen. Het nulpunt waartegen de meerkosten
+				worden bepaald, dezelfde referentie als het rapport gebruikt als het de kaarten relatief ten opzichte van de Brabantse zandgronden toont. Omdat de vlakke posten hier net zo goed in zitten,
+				vallen verharding, riolering en het inrichten van groen tegen elkaar weg zolang ophogen wint; wat overblijft is de extra ophoging plus de heipalen, en voor de alternatieven D, E en F ook hun
+				eigen constructieposten.";
+
+	attribute<Eur_Ha> Meerkosten (AdminDomain) := max_elem((Goedkoopste - Referentie) * Src/Kengetallen/Opslag, 0[Eur_Ha])
+	,	Descr = "De meerkosten ten opzichte van de zandgrondreferentie, met de opslag van 19 procent voor algemene kosten, uitvoeringskosten en winst en risico. Begrensd op nul: een locatie kan niet goedkoper zijn dan de referentie, want die staat al op de minimale ophoging zonder palen.";
+
+	container Onderhoud
+	: Descr = "Beheer en onderhoud over honderd jaar, netto contante waarde, uit tabel E-9. Deze post gaat niet in het exploitatiesaldo: hij valt bij de gemeente en niet bij de ontwikkelaar, en staat hier
+				om als maatschappelijke indicator te kunnen worden uitgelezen. De tarieven zijn gelijk voor alle zes de alternatieven; het verschil zit alleen in welke elementen er zijn en in de steigers en
+				het baggeren bij drijvend bouwen. Tussen integraal en partieel ophogen maakt de tabel geen verschil, terwijl juist daar het argument ligt (een niet opgehoogde tuin op veen zakt weg en moet
+				periodiek terug omhoog); dat kengetal geeft het rapport niet, dus deze post kan de keuze tussen A en B niet rechtzetten (#505). Voetnoot 16 meldt dat het onderhoud voor het alternatief met
+				1,20 meter zand per pixel uit de zettingssnelheid is bepaald; dat raster is niet geleverd, dus alternatief C krijgt hetzelfde onderhoud als de rest."
+	{
+		attribute<Eur_Ha> AndersDanDrijvend (AdminDomain) := (
+			  m2_Tuin           * Src/Kengetallen/Onderhoud_Groen
+			+ m2_Park           * Src/Kengetallen/Onderhoud_Groen
+			+ m2_OpenbareRuimte * Src/Kengetallen/Onderhoud_Groen
+			+ m2_Straat         * (Src/Kengetallen/Onderhoud_Verharding + Src/Kengetallen/Onderhoud_Riolering)
+			)[Eur] / 1[Ha];
+
+		attribute<Eur_Ha> Drijvend (AdminDomain) := (
+			  m2_OpenbareRuimte * Src/Kengetallen/Onderhoud_Groen
+			+ m2_Straat         * (Src/Kengetallen/Onderhoud_Riolering + Src/Kengetallen/Onderhoud_Steigers)
+			+ m2_WaterDrijvend  *  Src/Kengetallen/Onderhoud_Water
+			)[Eur] / 1[Ha]
+		,	Descr = "Bij drijvend bouwen zijn tuinen en parken water geworden, staan er steigers, en heeft de verharding volgens tabel E-9 geen onderhoudspost. De tabel kruist bij straten verharding alleen A tot en met E aan en bij wegen verharding ook F; omdat straten, wegen en parkeervakken hier samengevoegd zijn is de straatrij gekozen.";
+
+		attribute<Eur_Ha> Totaal (AdminDomain) := Keuze == Alt/V/F_DrijvendBouwen ? Drijvend : AndersDanDrijvend
+		,	Descr = "Het onderhoud dat hoort bij het alternatief dat op deze plek het goedkoopst in aanleg is.";
+	}
+}

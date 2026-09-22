@@ -7,16 +7,19 @@
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
-// Bevat de sub-items: Src, Wonen, Werken, Verblijfsrecreatie, PerModelType_Basisjaar, Mean_PerRegion_Basisjaar,
-// Verharding_PerModelType, Verharding_AllowedToChanged_PerModelType.
+// Bevat de sub-items: Src, Wonen, Werken, Verblijfsrecreatie, PerHoofdklasse_Basisjaar, Mean_PerRegion_Basisjaar,
+// Verharding_PerHoofdklasse, Verharding_AllowedToChanged_PerHoofdklasse, VerhardingOfChanged_PerHoofdklasse.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container Verharding
 {
-	unit<UInt32> Regio := SourceData/RegioIndelingen/Provincie;
+	unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
 	
 	container Src := ThisCasus/Basisjaar/Verharding;
+	
+	parameter<string> StorageStr_Verharding := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Verharding_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De bestandsnaam van de kaarten met verhard oppervlak en allocatie van werken en verblijfsrecreatie (#824); @V@ is sector en grootheid. Die kaarten dragen Per_NL en Per_Regio van de twee containers, zodat een tabelrun met ModelParameters/TabellenUitExport aan ze kan teruglezen.";
 	
 	container Wonen
 	{
@@ -25,9 +28,9 @@ container Verharding
 		unit<UInt8>        OP                                                           := Impl/StandVar/OP;
 		attribute<OP>      OP_rel                                         (AdminDomain) := Stand/OP_rel;
 		attribute<Bool>    AllocatieHeeftPlaatsgevonden                   (AdminDomain) := Stand/Sector_rel == Actor/Sector/V/Wonen;
-		attribute<Bool>    IsBAGnieuwbouwWonen                            (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), FALSE), Descr = "BAG-nieuwbouw wonen-cel, onafhankelijk van OP_rel (issue #550: BAG-cellen hebben nu een gematchte OP_rel, dus IsNull(OP_rel) volstaat niet meer).";
+		attribute<Bool>    IsBAGnieuwbouwWonen                            (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantAllocatie/StartState_metBAGnieuwbouw/OPMatch_BAGnieuwbouw/IsBAGnieuwbouwWonen), Descr = "BAG-nieuwbouw wonen-cel, onafhankelijk van OP_rel (issue #550: BAG-cellen hebben nu een gematchte OP_rel, dus IsNull(OP_rel) volstaat niet meer).";
 		attribute<Bool>    BAGNieuwbouwAllocatieHeeftPlaatsgevonden       (AdminDomain) := AllocatieHeeftPlaatsgevonden && (IsNull(OP_rel) || IsBAGnieuwbouwWonen);
-		attribute<meter2>  Verhard_NB                                     (AdminDomain) := ='VariantParameters/Ontwikkelpakketten/'+VariantParameters/VariantK/OPScaleRef[Variant_rel]+'/PerVariant/'+Variant_name+'/InDezeBuurt/Terreinoppervlakte/Totaal/GebouwVoetafdrukPlusVerhard[OP_rel] * AdminDomain/NrHaPerCell[float32]';
+		attribute<meter2>  Verhard_NB                                     (AdminDomain) := ='VariantParameters/Ontwikkelpakketten/NettoBuurt/PerVariant/'+Variant_name+'/Buurt/Terreinoppervlakte/Totaal/GebouwVoetafdrukPlusVerhard[OP_rel] * AdminDomain/NrHaPerCell[float32]';
 		attribute<meter2>  Verhard_NieuweOntwikkeling                     (AdminDomain) := BAGNieuwbouwAllocatieHeeftPlaatsgevonden
 																							? min_elem(AdminDomain/NrHaPerCell[meter2], (Stand/PandFootprint_Wonen + (AdminDomain/NrHaPerCell[meter2] - Stand/PandFootprint_Wonen) * FractieVerhard) / float32(AllocatieHeeftPlaatsgevonden)) / float32(AllocatieHeeftPlaatsgevonden)
 																							: Verhard_NB;
@@ -39,11 +42,19 @@ container Verharding
 	container Werken
 	{
 		attribute<Bool>    AllocatieHeeftPlaatsgevonden (AdminDomain) := Impl/StandVar/Subsector/Sector_rel[Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Werken;
+		attribute<UInt8>   Schrijf_Allocatie            (AdminDomain) := UInt8(AllocatieHeeftPlaatsgevonden), StorageName = "=replace(StorageStr_Verharding, '@V@', 'Werken_Allocatie')", StorageType = "gdalwrite.grid"
+		, Descr = "De allocatievlag als UInt8-kaart voor een tabelrun met TabellenUitExport aan (#824). Niet als bool met de tif-opslag, want die zet de georeferentie alleen in een .tfw, en die vindt GDAL in een grote map niet.";
 		attribute<meter2>  Verhard0                     (AdminDomain) := Stand/PandFootprint_Werken + (AdminDomain/NrHaPerCell[meter2] - Stand/PandFootprint_Werken) * VariantParameters/FractiesGroenInWerken/Default/Verhard / float32(AllocatieHeeftPlaatsgevonden);
-		attribute<meter2>  Verhard                      (AdminDomain) := min_elem(AdminDomain/NrHaPerCell[meter2], Verhard0) / float32(AllocatieHeeftPlaatsgevonden);
+		attribute<meter2>  Verhard                      (AdminDomain) := min_elem(AdminDomain/NrHaPerCell[meter2], Verhard0) / float32(AllocatieHeeftPlaatsgevonden), StorageName = "=replace(StorageStr_Verharding, '@V@', 'Werken_Verhard_m2')", StorageType = "gdalwrite.grid";
 		attribute<float32> Verharding                   (AdminDomain) := Verhard / AdminDomain/NrMeter2PerCell;
-		parameter<m2_ha>   Per_NL                                     := sum(Verhard) / (sum_uint32(AllocatieHeeftPlaatsgevonden)[float32] * AdminDomain/NrHaPerCell);
-		attribute<m2_ha>   Per_Regio                          (Regio) := sum(Verhard, Regio/Per_AdminDomain) / (sum_uint32(AllocatieHeeftPlaatsgevonden, Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell);
+		// #824: Per_NL en Per_Regio lezen Bron_Verhard en Bron_Allocatie, met TabellenUitExport aan de twee tifs hierboven.
+		attribute<meter2>  Lees_Verhard                 (AdminDomain) : StorageName = "=replace(StorageStr_Verharding, '@V@', 'Werken_Verhard_m2')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<UInt8>   Lees_Allocatie_u8            (AdminDomain) : StorageName = "=replace(StorageStr_Verharding, '@V@', 'Werken_Allocatie')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Bool>    Lees_Allocatie               (AdminDomain) := Lees_Allocatie_u8 == 1b;
+		attribute<meter2>  Bron_Verhard                 (AdminDomain) := = /ModelParameters/TabellenUitExport ? 'Lees_Verhard' : 'Verhard';
+		attribute<Bool>    Bron_Allocatie               (AdminDomain) := = /ModelParameters/TabellenUitExport ? 'Lees_Allocatie' : 'AllocatieHeeftPlaatsgevonden';
+		parameter<m2_ha>   Per_NL                                     := sum(Bron_Verhard) / (sum_uint32(Bron_Allocatie)[float32] * AdminDomain/NrHaPerCell);
+		attribute<m2_ha>   Per_Regio                          (Regio) := sum(Bron_Verhard, Regio/Per_AdminDomain_Fijn) / (sum_uint32(Bron_Allocatie, Regio/Per_AdminDomain_Fijn)[float32] * AdminDomain/NrHaPerCell);
 	}
 	
 	container Verblijfsrecreatie
@@ -51,71 +62,101 @@ container Verharding
 		attribute<Bool>    AllocatieHeeftPlaatsgevonden (AdminDomain) := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector 
 																			? 'Impl/StandVar/Subsector/Sector_rel[Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Verblijfsrecreatie'
 																			: 'const(FALSE, AdminDomain)';
+		attribute<UInt8>   Schrijf_Allocatie            (AdminDomain) := UInt8(AllocatieHeeftPlaatsgevonden), StorageName = "=replace(StorageStr_Verharding, '@V@', 'Verblijfsrecreatie_Allocatie')", StorageType = "gdalwrite.grid"
+		, Descr = "Zie Werken/Schrijf_Allocatie.";
 		attribute<meter2>  Verhard0                     (AdminDomain) := Stand/PandFootprint_Verblijfsrecreatie + (AdminDomain/NrHaPerCell[meter2] - Stand/PandFootprint_Verblijfsrecreatie) * VariantParameters/FractiesGroenInVerblijfsrecreatie/Default/Verhard / float32(AllocatieHeeftPlaatsgevonden);
-		attribute<meter2>  Verhard                      (AdminDomain) := min_elem(AdminDomain/NrHaPerCell[meter2], Verhard0) / float32(AllocatieHeeftPlaatsgevonden);
+		attribute<meter2>  Verhard                      (AdminDomain) := min_elem(AdminDomain/NrHaPerCell[meter2], Verhard0) / float32(AllocatieHeeftPlaatsgevonden), StorageName = "=replace(StorageStr_Verharding, '@V@', 'Verblijfsrecreatie_Verhard_m2')", StorageType = "gdalwrite.grid";
 		attribute<float32> Verharding                   (AdminDomain) :=  =ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector 
 																			? 'Verhard / AdminDomain/NrMeter2PerCell'
 																			: 'const(null_f, AdminDomain)';
-		parameter<m2_ha>   Per_NL                                     := sum(Verhard) / (sum_uint32(AllocatieHeeftPlaatsgevonden)[float32] * AdminDomain/NrHaPerCell);
-		attribute<m2_ha>   Per_Regio                          (Regio) := sum(Verhard, Regio/Per_AdminDomain) / (sum_uint32(AllocatieHeeftPlaatsgevonden, Regio/Per_AdminDomain)[float32] * AdminDomain/NrHaPerCell);
+		// #824: Per_NL en Per_Regio lezen Bron_Verhard en Bron_Allocatie, met TabellenUitExport aan de twee tifs hierboven.
+		attribute<meter2>  Lees_Verhard                 (AdminDomain) : StorageName = "=replace(StorageStr_Verharding, '@V@', 'Verblijfsrecreatie_Verhard_m2')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<UInt8>   Lees_Allocatie_u8            (AdminDomain) : StorageName = "=replace(StorageStr_Verharding, '@V@', 'Verblijfsrecreatie_Allocatie')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Bool>    Lees_Allocatie               (AdminDomain) := Lees_Allocatie_u8 == 1b;
+		attribute<meter2>  Bron_Verhard                 (AdminDomain) := = /ModelParameters/TabellenUitExport ? 'Lees_Verhard' : 'Verhard';
+		attribute<Bool>    Bron_Allocatie               (AdminDomain) := = /ModelParameters/TabellenUitExport ? 'Lees_Allocatie' : 'AllocatieHeeftPlaatsgevonden';
+		parameter<m2_ha>   Per_NL                                     := sum(Bron_Verhard) / (sum_uint32(Bron_Allocatie)[float32] * AdminDomain/NrHaPerCell);
+		attribute<m2_ha>   Per_Regio                          (Regio) := sum(Bron_Verhard, Regio/Per_AdminDomain_Fijn) / (sum_uint32(Bron_Allocatie, Regio/Per_AdminDomain_Fijn)[float32] * AdminDomain/NrHaPerCell);
 	}
 	
-	container PerModelType_Basisjaar :=
+	container PerHoofdklasse_Basisjaar :=
 		for_each_nedv(
-			LU_ModelType/Name
-			,'ThisCasus/Basisjaar/Landgebruikskaart/Result_SA  == LU_ModelType/V/'+ string(LU_ModelType/name)+' ? Src/Result : null_f'
+			/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name
+			,'ThisCasus/Basisjaar/LandgebruikskaartNL2120/Result_Hoofdklasse_ZonderVerharding == /Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/V/'+ string(/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/name)+' ? Src/Result : null_f'
 			, rdc_25m
 			, float32
 		);
 	
 	container Mean_PerRegion_Basisjaar := 
 		for_each_nedv(
-			LU_ModelType/Name
-			,'MakeDefined(mean(PerModelType_Basisjaar/'+LU_ModelType/Name+', RegioIndelingen/NVM/per_AdminDomain)[RegioIndelingen/NVM/per_AdminDomain], 0[float32])'
+			/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name
+			,'MakeDefined(mean(PerHoofdklasse_Basisjaar/'+/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name+', RegioIndelingen/NVM/per_AdminDomain)[RegioIndelingen/NVM/per_AdminDomain], 0[float32])'
 			, rdc_25m
 			, float32
 		);
 	
 	parameter<string> output_domain_str := '25m'; //domain of input files
 	
-	attribute<LU_ModelType> LU          (rdc_25m) := Landgebruikskaart/Result_SA;
-	attribute<bool>         IsChanged   (rdc_25m) := ThisCasus/Basisjaar/Landgebruikskaart/Result_SA != LU;
+	attribute</Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding> LU (rdc_25m) := LandgebruikskaartNL2120/Result_Hoofdklasse_ZonderVerharding
+	, Descr = "De landgebruiksklasse van dit zichtjaar: de hoofdklassenkaart van #783 zonder verhardingsbanden (#803), omdat deze indicator anders een klasse zou lezen die zelf uit de verharding volgt; zie
+				Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding. Achtendertig klassen: wonen en werken elk in vijf verhardingsklassen, achttien natuurhoofdtypen, zeven landbouwhoofdgroepen, en
+				stedelijk groen, infrastructuur en overig. De hoofdklassen en niet de detailkaart, want deze indicator maakt een tabel per klasse over het hele raster.";
+	attribute<bool> IsChanged (rdc_25m) := ThisCasus/Basisjaar/LandgebruikskaartNL2120/Result_Hoofdklasse_ZonderVerharding != LU;
+
+	attribute<float32> Basisjaarverharding (rdc_25m) := ='mean(src/Result, rdc_25m/rdc_'+output_domain_str+'_rel)'
+	, Descr = "De waargenomen verharding van de cel in het basisjaar, uit de BGT aangevuld met Copernicus. Stond hieronder drie keer uitgeschreven en staat er nu een keer.";
 	
-	container Verharding_PerModelType := 
+	attribute<bool> BebouwingWijkt (rdc_25m) := Sloopmaskers/NieuweNatuur || Sloopmaskers/OverigeBouwstenen || Sloopmaskers/WaterbergingVeen
+	, Descr = "Wordt de bestaande stand op deze cel geleegd? De drie sloopmaskers uit Sloopmaskers bij elkaar, dus precies de cellen die de uitkoop- en sloopindicatoren tellen (#658). Gebruikt in
+				VerhardingOfChanged_PerHoofdklasse om te weten welke kant de verharding op mag (#697). Het masker wijst meer aan dan alleen bebouwde cellen: waar het model natuur of water oplegt wordt de
+				stand geleegd, ook waar niets stond; geen bezwaar, want het klassegemiddelde geldt in die tak als plafond. Of de landgebruiksklasse meeverandert doet niet ter zake: de sloop bepaalt de
+				richting, niet de klassewisseling, dus deze vlag gaat hieronder voor op IsChanged; Deltares heeft in #697 bevestigd dat ook sloop zonder klassewisseling verharding hoort weg te nemen.";
+	
+	container Verharding_PerHoofdklasse := 
 		for_each_nedv(
-			LU_ModelType/Name
-			, 'LU == LU_ModelType/v/'+LU_ModelType/Name+' 
-					? mean(Mean_PerRegion_Basisjaar/'+LU_ModelType/Name+', rdc_25m/rdc_'+output_domain_str+'_rel) 
+			/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name
+			, 'LU == /Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/v/'+/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name+' 
+					? mean(Mean_PerRegion_Basisjaar/'+/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name+', rdc_25m/rdc_'+output_domain_str+'_rel) 
 					: null_f'
 			, rdc_25m
 			, float32
 		);
 	
-	container Verharding_AllowedToChanged_PerModelType :=
+	container Verharding_AllowedToChanged_PerHoofdklasse :=
 		for_each_nedv(
-			LU_ModelType/Name
-			, 'LU_ModelType/IsVerhard[LU_ModelType/V/'+LU_ModelType/Name+']
-					? Verharding_PerModelType/'+LU_ModelType/Name+' 
+			/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name
+			, '/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/IsVerhard[/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/V/'+/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name+']
+					? Verharding_PerHoofdklasse/'+/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name+' 
 					: 0[float32]'
 			, rdc_25m
 			, float32
 		);
 	
-	container VerhardingOfChanged_PerModelType :=
+	container VerhardingOfChanged_PerHoofdklasse :=
 		for_each_nedv(
-			LU_ModelType/Name
-			, 'IsChanged 
-				? max_elem(Verharding_AllowedToChanged_PerModelType/'+LU_ModelType/Name+', mean(src/Result, rdc_25m/rdc_'+output_domain_str+'_rel)) 
-				: mean(src/Result, rdc_25m/rdc_'+output_domain_str+'_rel)'
+			/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name
+			, 'BebouwingWijkt
+				? min_elem(Verharding_PerHoofdklasse/'+/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name+', Basisjaarverharding)
+				: (IsChanged
+					? max_elem(Verharding_AllowedToChanged_PerHoofdklasse/'+/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name+', Basisjaarverharding)
+					: Basisjaarverharding)'
 			, rdc_25m
 			, float32
-		);
+		)
+	, Descr = "De verharding die bij het landgebruik van dit zichtjaar hoort, per klasse, in drie gevallen (#697), waarbij de richting van het effect het mechanisme volgt. De bebouwing wijkt, dus de cel
+				staat in een van de drie sloopmaskers: het minimum van de basisjaarverharding en het klassegemiddelde van de klasse die de cel in dit zichtjaar heeft; uitkoop en sloop nemen verharding weg
+				en leggen er niets voor terug, dus langs deze tak kan de waarde alleen omlaag. De bebouwing blijft staan en de cel wisselt van klasse: het maximum van de basisjaarverharding en de waarde die
+				de nieuwe klasse toestaat; verstedelijking legt verharding aan, dus langs deze tak kan de waarde alleen omhoog, en een klassewisseling die de bebouwing niet raakt zet een cel met veel
+				waargenomen verharding niet terug naar een laag klassegemiddelde. De bebouwing blijft staan en de klasse ook: de cel houdt haar eigen waargenomen basisjaarverharding. Het klassegemiddelde is
+				in de eerste tak een plafond en geen vervanging: het masker is vooral oplegging van natuur of water op cellen waar niets stond, en daar zou het gemiddelde van de bestaande natuur, met haar
+				paden en parkeerplaatsen, juist een verhoging zijn die groeit met de hoeveelheid nieuwe natuur. Waterberging heeft in het basisjaar geen cellen, dus het klassegemiddelde van dat type is nul
+				en een cel die voor waterberging in het veen wordt geleegd komt op nul verharding uit; Deltares heeft dat in #697 bevestigd, want het gaat om zachte bodems en niet om bassins.";
 	
 	attribute<float32> Verharding_LU_Change (rdc_25m) :=
 		='merge(
 			uint16(LU)
 			, float32
-			,'+AsItemList('VerhardingOfChanged_PerModelType/'+LU_ModelType/Name)+'
+			,'+AsItemList('VerhardingOfChanged_PerHoofdklasse/'+/Classifications/Grondgebruik/LU_Hoofdklasse_ZonderVerharding/Name)+'
 		)';
 	
 	attribute<float32> Result (rdc_25m) := switch(
@@ -124,4 +165,8 @@ container Verharding
 		, case(Verblijfsrecreatie/AllocatieHeeftPlaatsgevonden, Verblijfsrecreatie/Verharding)
 		, Verharding_LU_Change
 	), StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Verharding_'+Zichtjaar_name+'_fractie_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdalwrite.grid";
+	
+	// #824: de indicatorentabel neemt het gemiddelde van Bron_Result, met TabellenUitExport aan de tif die Result schrijft.
+	attribute<float32> Lees_Result (rdc_25m) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Verharding_'+Zichtjaar_name+'_fractie_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	attribute<float32> Bron_Result (rdc_25m) := = /ModelParameters/TabellenUitExport ? 'Lees_Result' : 'Result';
 }
