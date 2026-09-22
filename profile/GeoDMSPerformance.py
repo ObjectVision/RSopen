@@ -708,7 +708,7 @@ def main():
 if __name__=="__main__":
     main()
     #RunTestConfig("./profile_setups.txt")
-    #RunTestConfig("C:/Users/Cicada/prj/GeoDMS-Test/Performance/scripts/profiler_rework.txt")
+    #RunTestConfig("C:/Users/<gebruiker>/prj/GeoDMS-Test/Performance/scripts/profiler_rework.txt")
     #RunTestConfig("./profile_setups_profile_rework.txt")
     #testReadLog()
     #testReadAllocatorInfoLog()

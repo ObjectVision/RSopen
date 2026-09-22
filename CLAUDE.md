@@ -46,6 +46,8 @@ Een Descr zegt wat het item doet of betekent, in een zin; waar nodig waarom het 
 
 Eruit blijven: meetuitkomsten en de datum ervan, de geschiedenis van wat er eerder stond, de weg waarlangs een fout is gevonden, lessen over GeoDMS (skill geodms-valkuilen), instructies aan de volgende lezer (skills) en versienummers of exitcodes. Vorm: een aaneengesloten tekst zonder witregels, inline waar dat kan, vervolgregels ingesprongen op de itemregel plus drie tabs. Richtpunt: parameters en attributen onder de 300 tekens, containers en sjablonen onder de 800.
 
+Geen persoonsnamen in Descr, Source of commentaar. Wie een bestand heeft aangeleverd, gemaild of een expert judgement heeft gegeven staat in de code als organisatie plus volgnummer: `PBL-3`, `Deltares-7`, `ObjectVision-1`, `WUR-5`. De koppeling van nummer naar persoon staat in een afgeschermde lijst buiten de repo (pbl-nl/model-RSopen#1); een nieuwe persoon krijgt het eerstvolgende nummer binnen de organisatie en komt eerst in die lijst. Wat wel blijft: auteurs van gepubliceerd werk met titel of DOI, de contactpersonen in de bestandsheaders en organisatienamen. Een gebruikersnaam in een pad telt ook als persoonsnaam.
+
 ## Meetharnassen
 
 Een harnas dat een vraag uit een issue beantwoordt is tijdelijk en gaat weg zodra het issue dicht is; de meting staat dan in het issue. Wat blijft staat in een thematische container van `cfg/main/Diagnose.dms` (Waterberging, Natuur, Groen, Werken en zo verder) onder een naam die zegt wat er gemeten wordt, draait mee in `GenerateAll` of `GenerateBasisjaar` of zegt in zijn Descr dat het op aanvraag is, en heeft als controlewaarde een norm in `batch/ToetsOplevering.ps1`. Geen containers of bestanden met een issuenummer als naam.
