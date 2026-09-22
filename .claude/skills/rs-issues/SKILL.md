@@ -126,6 +126,25 @@ Controleer achteraf altijd met `git show --stat <commit>`, en niet met `git diff
 
 Let op de blinde vlek bij untracked bestanden: `git diff` geeft daar niets, en een lege diff leest als schoon terwijl het hele bestand meegaat bij `git add`. In een gedeeld diagnosebestand kan dan werk van een andere sessie in je commit belanden; dat is op 2026-08-28 gebeurd met de container D703 in Diagnose667.dms. Bekijk voor een nieuw bestand dus altijd de volledige inhoud, of `git diff --cached` na het stagen, voordat je commit.
 
+### De hoofdkopie bijwerken vanuit een worktree
+
+Werk je in een worktree, dan staat de projectbranch in de hoofdkopie en loopt die achter zodra jij pusht. Bijwerken is jouw werk en niet dat van de gebruiker, maar het gaat over een werkkopie buiten je eigen map: de automodus weigert daar wijzigende git-opdrachten als onomkeerbaar, dus reken op een toestemmingsvraag, en gooi nooit een ongecommitte wijziging van een ander weg om een pull mogelijk te maken.
+
+Het recept dat andermans gestagede werk heel laat:
+
+```bash
+git -C <hoofdkopie> pull --rebase --autostash origin NL2120
+```
+
+De autostash zet de ongecommitte wijziging opzij en weer terug, met een entry die git zelf beheert, dus hij botst niet met de gedeelde stash-stapel. Raakt jouw commit hetzelfde bestand op aangrenzende regels, dan komt die wijziging terug als conflict (`UU`) en blijft de entry staan. Los het conflict met de hand op en bewaar beide kanten, zet het bestand met `git add` terug in de index zoals het stond, en laat de entry pas los nadat je de inhoud hebt gezien:
+
+```bash
+git -C <hoofdkopie> stash list --format='%gd %H %gs'
+git -C <hoofdkopie> stash drop stash@{0}
+```
+
+Toets de SHA tegen de regel `Created autostash:` uit de rebase voordat je dropt, want de stapel is gedeeld. Draai daarna een parse-check op de hoofdkopie (skill rs-draaien, trap 1): een met de hand opgelost conflict in een dms-bestand hoort te laden voordat je het laat staan.
+
 ### BOM en regeleindes bij een scriptbewerking
 
 Sinds #801 zijn de bestanden uniform: elk tekstbestand staat in de werkkopie op CRLF en in git op LF, en `.gitattributes` in de root dwingt dat af, onafhankelijk van `core.autocrlf` op de machine. Geen enkel dms-bestand heeft nog een UTF-8 BOM; 46 bestanden zonder BOM bevatten accenten en laden gewoon, dus GeoDMS heeft hem niet nodig. `.editorconfig` zegt hetzelfde tegen editors.
