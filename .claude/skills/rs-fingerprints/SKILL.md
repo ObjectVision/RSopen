@@ -34,6 +34,8 @@ Een fingerprint bevat ALLE bepalende waarden, ook die al in de bestandsnaam zitt
 - Afgeleide kaarten die alleen een bronvintage in hun naam dragen en geen fingerprint hebben. De BGT-capaciteitskaarten voor piekbuiberging (`WriteBaseData/Impl/WaterbergingCapaciteit`, de Make-items in `SourceData/Grondgebruik/bgt.dms`) heten naar `BGT_file_date` en het studiegebied, maar zijn opgebouwd uit de klassenindeling in `Classifications/Grondgebruik/BGT.dms`. Wijzigt die indeling, zoals met de nieuwe klassegroepen van #757, dan leest het model stil de oude kaart terug totdat de kaarten opnieuw zijn weggeschreven. Ontbreken ze, dan geeft de keten per laag een GDAL-fout met exitcode 0 en een leeg aanbod. Meld zo'n kaart als bestand zonder fingerprint; de indeling hoort erin via `class_flags`, net als bij de andere klassenindelingen.
 - Vintages van brondata die alleen in een pad of in een itemnaam voorkomen.
 - Hardgecodeerde jaartallen in een berekening, zoals het WOZ-jaar 2017 bij de verwervingskosten van niet-woningen.
+- De rekenregel zelf. Een reparatie aan de logica verandert de uitkomst zonder dat er een invoer verandert, dus een fingerprint van alleen invoer ziet haar niet. Geef zo'n regel een versiesleutel als parameter naast de code, met het issuenummer van de laatste wijziging als waarde, en verander die mee. De opbrengstdervingskaarten hebben er sinds #837 drie: `lookup` voor de opzoeking in de WWL-relatiedatabase, `gxg_fill` en `soil_fill` voor de vulling van grondwaterstand en BOFEK. De set van 13 september 2026 was met de foute opzoeking gemaakt en bleef na de reparatie zonder enige waarschuwing in gebruik.
+- Een invoer die zelf live wordt gerekend en te breed is om als lijst op te nemen, zoals de veenallocatie onder de grondwaterstanden van NbSGenuanceerd. Neem dan een controlesom over de uitkomst op: een som in uint64 over de cellen van de klassewaarde maal een plekgewicht, zodat twee cellen die van klasse wisselen de som veranderen (`SourceData/Water/Grondwaterstanden/NbSGenuanceerd/Oplegging_Herkomst`). Een telling per klasse is niet genoeg: een andere seed voor de bouwsteentrekking hield het aantal veencellen gelijk en verschoof alleen welke bouwsteen waar ligt. Reken in gehele getallen, dan hangt de som niet af van de volgorde waarin threads optellen en geven twee processen hetzelfde getal. De prijs: MayReuse staat in een meta-expressie, dus ook wie de kaart alleen teruggelezen wil zien rekent die keten door, voor de veenallocatie 28 s en 14 GB, en in de GUI kost uitklappen van zo'n item diezelfde tijd.
 
 ## Lezers tellen
 
@@ -46,11 +48,13 @@ Welke bestanden een fingerprint hebben en met welke sleutels, staat op de wiki-p
 - De standbestanden per zichtjaar hebben met opzet geen fingerprint. Die hangen van vrijwel de hele configuratie af, dus een fingerprint zou de hele config moeten omvatten. Ze worden elke run opnieuw geschreven.
 - Bestanden op `%RSo_DataDir%` en `%PrivDataDir%` krijgen een vintage plus een versienummer in de naam in plaats van een fingerprint. Zie de regel over schrijf-eenmaal-opslag hieronder.
 
-## Twee GeoDMS-valkuilen die hierbij horen
+## Drie GeoDMS-valkuilen die hierbij horen
 
 `ExplicitSuppliers` op een container lift NIET mee wanneer je een los kind opvraagt. Bij for_each-containers kan het schrijven van het zijbestand dus niet aan de container hangen. De nette oplossing is een klein template dat per item de drieslag plus eigen Decoupling maakt; dat staat nog open.
 
 `PropValue(item, 'StorageName')` geeft de expressietekst terug, niet de uitkomst. Dat werkt als je hem weer als StorageName gebruikt, maar niet als invoer voor `ExistingFile`. Zet het pad dan als eigen `parameter<String>` neer en verwijs daar vanuit beide kanten naar.
+
+`Write_Fingerprint` als ExplicitSupplier van Make schrijft het zijbestand voor het bestand. GeoDMS werkt een leverancier bij voordat het item zelf wordt uitgerekend, rekent het bestand daarna volledig in het geheugen en schrijft de tif pas aan het eind, binnen een seconde. Breekt een run af in die rekentijd, bij de dervingskaarten tien tot twintig seconden per kaart, dan staat er een nieuwe fingerprint naast het oude bestand, en was de remake nodig omdat de invoer veranderde, dan leest de volgende run dat oude bestand als geldig. Gemeten op 2026-09-22 bij #837: beregening van B2 naar B1, de remake afgebroken, en de volgende run met B1 las de B2-kaart met `may_reuse=True`. De opbrengstdervingskaarten schrijven hun zijbestand daarom met een eigen item waarvan de waarde aan de kaart hangt (`Write_Fingerprint_NaKaart` in `SourceData/Landbouw.dms`), zodat het pas ontstaat als de kaart er staat. De andere gebruikers van `DecoupledFile_T` hebben de oude volgorde nog.
 
 ## Schrijf-eenmaal-opslag
 
