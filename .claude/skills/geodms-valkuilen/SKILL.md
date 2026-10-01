@@ -15,6 +15,14 @@ De oplossing is niet de container hernoemen maar de verwijzing kwalificeren: sch
 
 Uitzondering: verwijzingen die in samengestelde strings zitten zijn niet met een slash te kwalificeren. Daarom staan `PotentieleStates`, `Suitabilities` en `Beschikbaarheden` in het meervoud naast hun enkelvoudige tegenhanger.
 
+### Een gegenereerde container schermt de naam van zijn ouder af
+
+Binnen een container die `for_each_nedv` aanmaakt zoekt een ongekwalificeerde naam eerst in die container zelf. Staat daar een item met dezelfde naam als het ouderitem dat je bedoelt, dan wijst de verwijzing naar zichzelf en meldt GeoDMS Invalid Recursion, met een vervolgfout op een willekeurig ander item in de buurt (in september 2026 een `Unknown identifier org_rel` twee containers verderop). Voorbeeld: `container Delta := for_each_nedv(klassen, 'Totaal * sleutel', ...) { Totaal := add(...); }` waarbij `Totaal` in de generator het totaal van de ouder moest zijn. Geef het ouderitem een andere naam (`NaBAG`) of kwalificeer volledig.
+
+### `Diagnose.dms` heeft geen `using`
+
+De container `Diagnose` kent geen `using` voor Geography of SourceData. Een domein of item daaruit moet er volledig gekwalificeerd staan: `(/Geography/CompactedAdminDomain)` en `const(0f, /Geography/CompactedAdminDomain)`, anders `Cannot find Domain unit`. Sjablonen binnen Diagnose erven dat gebrek.
+
 ## De kale `name` in een subcontainer
 
 Een `parameter<String> name` op templateniveau werkt niet meer binnen een subcontainer die zelf een `name` erft. Voorbeeld: binnen `unit<uint64> CompactedAdminDomain := Geography/CompactedAdminDomain` levert een kale `name` de string `CompactedAdminDomain` op, want die unit heeft zelf een `name`.
@@ -125,6 +133,14 @@ Twee dingen die zo'n kanarie goedkoop maken, gemeten op 2026-09-04 met GeoDms20.
 GeoDMS werkt een leverancier bij VOORDAT het gevraagde item zelf wordt uitgerekend. Een kapotte toets valt dus om zodra zijn eigen data klaar is, niet na de hele keten: de kanarie op `Vlak/Som` in de bodemdalingkosten gaf exit 1 na 1,5 s, ruim voor de kostenketen waar hij aan hangt. Je hoeft een kanarie dus niet te ontzien omdat het gevraagde item duur is.
 
 Het log helpt niet als je de toets heel laat. Er staan alleen `Updating::`-regels voor het gevraagde item zelf en niet voor de items eronder, dus uit een geslaagde run is niet af te lezen welke toetsen zijn meegelopen. In de foutcontext staat de keten wel volledig, van `Updating::[[<gevraagd item>]]` naar `Update(<item met de toets>)`. Kapot maken is daarmee de enige manier om te zien of de haak pakt.
+
+## Een IntegrityCheck die alleen het item zelf is geeft Invalid Recursion
+
+Een booleaanse parameter die zijn eigen waarde als toets wil gebruiken, met `IntegrityCheck = "This"`, valt om met `Invalid Recursion in UpdateMetaInfo detected`. Hetzelfde voor `this`, `(This)` en de eigen naam. Zodra er een operator in de check staat, `This == TRUE` of `This && TRUE`, werkt het wel; `This == 'TIGRIS'` en `this == 1` staan daarom al zonder problemen door de configuratie.
+
+Gemeten op 2026-09-22 met GeoDms20.17.0.m in een mini-configuratie van zes parameters; de expressievorm van het item (gewoon of meta-expressie) maakt niet uit. Gevonden in `SourceData/Plancapaciteit.dms` bij `AlleBestandenAanwezig`, dat met `IntegrityCheck = "This"` op elke aanroep omviel.
+
+Schrijf `This == TRUE`, of zet de toets op een zusteritem dat het item bij naam noemt. Vergeet daarbij de haak in de rekengraaf niet (zie de twee secties hierboven): een check op een item zonder afnemer vuurt nooit.
 
 ## Een uitdraai die niet meedraait blijft stil staan
 
@@ -524,6 +540,12 @@ Zoek ze met een grep op de sectornaam in `=`-expansies, en toets met de sector u
 Om de treeview uit te klappen moet GeoDMS weten welke items er zijn. Hangt het aantal items of de gekozen tak van een meta-expressie af van een berekend resultaat, dan moet dat resultaat eerst worden uitgerekend voordat de boom open kan, en wordt iets bekijken een volledige run. Aan de configuratie is dat niet te zien en GeoDmsRun heeft er geen last van; alleen de GUI hangt.
 
 De scheidslijn ligt bij de herkomst van de voorwaarde, niet bij het schakelen zelf. Een voorwaarde uit de configuratie of uit classificatiedata (een parameter in ModelParameters, `Zichtjaar_value` uit `Time/Zichtjaar`, `WaterbergingClaimActief` uit VariantK) is gratis bij uitklappen. Een voorwaarde die een allocatieresultaat of een claimsom nodig heeft kost bij uitklappen een run, hoe elegant het criterium inhoudelijk ook is. Kies bij een schakelaar daarom de configuratieparameter boven de gemeten grootheid die hetzelfde zegt. Het uitgecommentarieerde dynamische stopcriterium in `Templates/Allocatie/Iter_T.dms`, dat het aantal iteraties van de restclaim liet afhangen, staat om deze reden uit naast het actieve `StaticStopCriterium`; dat is een afgewogen keuze en geen onaf werk.
+
+## Een for_each die zijn namen uit een csv-tabel haalt, mist in 20.20 de andere kolommen
+
+Leest de namenlijst van een `for_each` een gdal.vect-tabel, een kolom of alleen het aantal rijen, en heeft de expressielijst een andere kolom van dezelfde tabel nodig, dan faalt GeoDMS 20.20 met een interne fout op die tweede kolom (`Check Failed` in `OperMisc.cpp(287)`). De tabel is dan al zonder die kolom gelezen en de kolom wordt niet meer bijgelezen. 20.17 las elke kolom als eigen taak en deed het goed. Daarna volgt `Unknown identifier` op elke naam die de for_each had moeten maken, dus de foutregels wijzen naar de lezers en niet naar de tabel.
+
+Gemeten op 2026-09-24 in `PrivData/Claims.dms`: de TIGRIS-MetaInfo levert de kolomnamen (Variable) en breedtes (Length) voor `Per_Zichtjaar_T`, en de claimgeneratie viel onder 20.20 voor elk zichtjaar om. Kolommen expliciet declareren, een alias-unit of een andere kolomnaam helpt niet; inline data wel, en ook het apart opvragen van beide kolommen in een run. De omweg in de configuratie: lees de tabel via een selectie waarvan de voorwaarde beide kolommen noemt (`select_with_org_rel(strlen(Bestand/Labour/variable) > 0 || Bestand/Labour/Length[uint32] > 0)`), zodat ze in dezelfde leesslag komen. Kies daar een OF en geen EN: een EN laat een rij zonder breedte stil wegvallen en verschuift dan de positie van elke volgende kolom. Gemeld als ObjectVision/GeoDMS#1284; haal de omweg weg zodra een release die fout niet meer heeft.
 
 ## Overerving van een container is early binding
 

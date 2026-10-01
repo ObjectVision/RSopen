@@ -293,13 +293,16 @@ Een batch die je vanuit een Claude-sessie start met `Start-Process` of als achte
 Start een reeks daarom via WMI, zodat het proces onder `WmiPrvSE.exe` hangt en niet onder de sessie:
 
 ```powershell
+$pw = (Get-Command pwsh.exe).Source
 $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-  CommandLine      = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<pad>\hervat.ps1"'
+  CommandLine      = "`"$pw`" -NoProfile -ExecutionPolicy Bypass -File `"<pad>\hervat.ps1`""
   CurrentDirectory = '<werkkopie>'
 }
 ```
 
-Zet de aanroep van `Run2120.ps1` met een `*>`-omleiding naar een consolelog in dat startscript, want `Win32_Process.Create` heeft geen uitvoerkanaal. Controleer daarna dat de `ParentProcessId` van het nieuwe proces bij `WmiPrvSE.exe` hoort. Hetzelfde geldt voor alles wat langer moet leven dan de sessie: een generatiestap van een uur, een reeks diagnoses.
+Gebruik pwsh 7 en niet `powershell.exe`. `Run2120.ps1` zet `$ErrorActionPreference = 'Stop'` en roept GeoDmsRun aan met `2>&1`; onder Windows PowerShell 5.1 wordt dan de eerste regel die GeoDmsRun naar stderr schrijft, zoals een gdal-fout, een afbrekende fout. Het script stopt, schiet GeoDmsRun af en schrijft geen MISLUKT en geen regel in `status.tsv`, zodat het eruitziet als een harde kill van buitenaf (2026-09-23). Geef het volle pad mee: WMI zoekt op zijn eigen PATH, en zonder pad geeft `Create` ReturnValue 9.
+
+Zet de aanroep van `Run2120.ps1` met een `*>`-omleiding naar een consolelog in dat startscript, want `Win32_Process.Create` heeft geen uitvoerkanaal, en zet er een try/catch omheen die de melding naar hetzelfde log schrijft. Controleer daarna dat de `ParentProcessId` van het nieuwe proces bij `WmiPrvSE.exe` hoort. Hetzelfde geldt voor alles wat langer moet leven dan de sessie: een generatiestap van een uur, een reeks diagnoses.
 
 Bewaak zo'n reeks niet op de grootte van het staplog. Windows werkt de mapvermelding van een bestand dat open staat om te schrijven pas bij als de schrijver het sluit of doorspoelt, dus `Get-ChildItem` toont minutenlang een verouderde omvang en een stilstandsdetector op die omvang slaat vals alarm. Meet stilstand op de processortijd van de GeoDmsRun-processen, of lees de echte lengte door het bestand met gedeelde toegang te openen (`[IO.File]::Open(pad, 'Open', 'Read', 'ReadWrite')`), en tel de `[E]`-regels in het log als tweede signaal.
 
