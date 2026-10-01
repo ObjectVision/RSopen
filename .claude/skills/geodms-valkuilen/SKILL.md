@@ -547,6 +547,25 @@ Leest de namenlijst van een `for_each` een gdal.vect-tabel, een kolom of alleen 
 
 Gemeten op 2026-09-24 in `PrivData/Claims.dms`: de TIGRIS-MetaInfo levert de kolomnamen (Variable) en breedtes (Length) voor `Per_Zichtjaar_T`, en de claimgeneratie viel onder 20.20 voor elk zichtjaar om. Kolommen expliciet declareren, een alias-unit of een andere kolomnaam helpt niet; inline data wel, en ook het apart opvragen van beide kolommen in een run. De omweg in de configuratie: lees de tabel via een selectie waarvan de voorwaarde beide kolommen noemt (`select_with_org_rel(strlen(Bestand/Labour/variable) > 0 || Bestand/Labour/Length[uint32] > 0)`), zodat ze in dezelfde leesslag komen. Kies daar een OF en geen EN: een EN laat een rij zonder breedte stil wegvallen en verschuift dan de positie van elke volgende kolom. Gemeld als ObjectVision/GeoDMS#1284; haal de omweg weg zodra een release die fout niet meer heeft.
 
+## Een mmd schrijft in 20.20 een regel over de eigen opslag als regel en niet als data
+
+Sinds GeoDMS 20.20 (ObjectVision/GeoDMS#1264) schrijft een mmd-opslag een attribuut waarvan de rekenregel alleen namen onder dezelfde opslaghouder noemt niet meer als databestand. De regel komt letterlijk in `0Dictionary.dms` en de lezer rekent hem na het inlezen opnieuw uit. Het criterium is tekstueel: het kijkt naar de namen die de regel noemt en niet naar wat de lezer daar straks vindt.
+
+Dat gaat goed zolang alles wat de regel noemt zelf in de opslag staat. In `BaseData/Verdeling_VSSH.dms` zijn `eengezins_Proxy` en `meergezins_Proxy` de som van twee broertjes; 20.20 schrijft ze als `= eengezins_VrijeSector_Proxy + eengezins_SocialeHuur_Proxy` in het woordenboek, en `Read_Wonen_WP2xVSSH`, dat zijn attributen uit het woordenboek haalt, rekent ze gewoon uit. Wie de uitvoer van 20.17 en 20.20 naast elkaar legt ziet daardoor per indeling een ander woordenboek en twee databestanden minder. Dat is geen fout.
+
+Het gaat mis als de regel een naam noemt die wel onder de houder hangt maar zelf niet in de opslag staat, zoals de `org_rel` van een `select_with_org_rel` of een item met `DisableStorage`. Gemeten op 2026-10-01 in een losse dms met het patroon van `WritePrivData/LogistiekAanvulling.dms`:
+
+```
+unit<uint32> Make := select_with_org_rel(Src/sel), StorageName = ".../aanvulling.mmd"
+{
+	attribute<uint64> pand_bag_nr := org_rel -> pand_bag_nr;
+}
+```
+
+20.17 schreef `pand_bag_nr` als data en las hem terug. 20.20 eindigde het schrijven met exit 0 en zonder `[E]`, maar schreef alleen een woordenboek met de regel `= org_rel -> pand_bag_nr` en geen databestand, en de lezer viel om met `reference 'org_rel' not found (as left operand of the arrow operator)`. Het bestand is dan onleesbaar zonder dat de schrijfstap het merkt.
+
+Twee vormen die in dezelfde dms op 20.20 wel data schrijven en terug lezen: noem een item buiten de opslag (`Pand/pand_bag_nr[org_rel]` in plaats van `org_rel -> pand_bag_nr`), of zet `KeepData = "True"` op het attribuut. De eerste staat sinds 1 oktober 2026 in de logistieke aanvulling. Kijk bij elke nieuwe mmd-schrijver of een attribuut alleen namen onder zijn eigen houder noemt, en lees de opslag na het schrijven in een nieuw proces terug.
+
 ## Overerving van een container is early binding
 
 `container B := A { ... }` erft de items van A en laat je er items aan toevoegen of overschrijven. Een GEERFD item houdt echter de verwijzing naar het item uit A, ook als je dat item in B overschrijft.

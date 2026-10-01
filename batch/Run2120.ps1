@@ -90,7 +90,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe',
+    [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.20.0.m\GeoDmsRun.exe',
     [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
     [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
     [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\run2120',
