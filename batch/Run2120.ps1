@@ -244,6 +244,9 @@ function Test-Invoer {
         $eisen += ,@('BaseData\Vastgoed\Sloopkosten_Woningen_*.tif',    'sloopkosten',                 '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Suitabilities\Werken_raw_*.tif',         'werken-geschiktheid',         '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Suitabilities\Waterberging\Depth_Norm_*.tif', 'waterbergingsnormen',    '/WriteBasedata/Generate_Run3')
+        # De claims staan in LocalData en komen uit een eigen basedatastap (basedata-claims).
+        $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Wonen.csv',  'woonclaims TIGRIS',           '/WriteBasedata/Generate_Run3_Claims')
+        $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Werken.csv', 'werkenclaims TIGRIS',         '/WriteBasedata/Generate_Run3_Claims')
         $hydro  = Get-VariantKolom $Cfg 'Hydrologie_Levering'
         $opbr   = Get-VariantKolom $Cfg 'OpbrengstenVariant_Wonen'
         foreach ($v in $Varianten) {
@@ -364,6 +367,9 @@ if (-not $SkipBasedata) {
     # De tweede stap, Run4 (BGT-capaciteiten), is alleen voor de indicatoren en kost ruim een uur;
     # hij hoort bij een verse LocalData, en RunIndicatoren.ps1 weigert zonder deze bestanden.
     Invoke-Stap 'basedata-allocatie'   @('/WriteBasedata/Generate_Run1', '/WriteBasedata/Generate_Run2', '/WriteBasedata/Generate_Run3')
+    # De claims in LocalData, in een eigen proces na Run3; in RuimteVoorWoningbouw lezen de woonclaims de
+    # basisjaarstand terug die Run3 schrijft.
+    Invoke-Stap 'basedata-claims'      '/WriteBasedata/Generate_Run3_Claims'
     Invoke-Stap 'basedata-indicatoren' '/WriteBasedata/Generate_Run4_IndicatorenData'
     Test-Dictionaries
 } else {

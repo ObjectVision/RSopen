@@ -88,8 +88,22 @@ call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run2
 echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
-REM deze ontkoppelde dat is nodig voor de indicatoren.
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3_IndicatorenData
+REM Run3 maakt de stand van het basisjaar, de woningsubsector-proxies, de sloopkosten, de werken-geschiktheid,
+REM de waterbergingsnormen, de afstandskernels, de zonneladder en de verblijfsrecreatietrends. Zonder deze stap
+REM strandt elke claim op een onbekende naam in plaats van op een ontbrekend bestand, want een mmd levert zijn
+REM kolommen uit de dictionary in het bestand.
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3
+echo "ErrorLevel is " %ErrorLevel%
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+
+REM De claims in LocalData, als eigen stap na Run3; in RuimteVoorWoningbouw lezen de woonclaims de basisjaarstand terug.
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3_Claims
+echo "ErrorLevel is " %ErrorLevel%
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+
+REM Run4 maakt alleen wat de INDICATOREN nodig hebben en is voor een allocatierun niet nodig; zie
+REM batch/RunIndicatoren.ps1, dat deze stap als eis noemt.
+REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run4_IndicatorenData
 REM echo "ErrorLevel is " %ErrorLevel% 
 REM if %ErrorLevel% NEQ 0 goto ErrorEnd
 
