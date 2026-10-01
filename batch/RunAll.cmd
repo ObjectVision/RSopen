@@ -36,15 +36,12 @@ set LocalDataProjDir=C:\LocalData\RSopen_NL2120
 
 set MT_FLAGS=/S1 /S2 /S3
 
-REM Overrulet ModelParameters/StandAllocatieOntkoppeld. Dit is een BATCH-instelling.
-REM FALSE: alle zichtjaren in een proces. De stand blijft in het geheugen en de padafhankelijkheid trekt de
-REM        eerdere zichtjaren mee, dus de batch vraagt alleen om het laatste zichtjaar. De stand-tifs worden
-REM        nog steeds geschreven, dus de indicatoren en de GUI kunnen er daarna mee verder.
-REM TRUE:  zichtjaar N+1 leest de stand van N terug uit een tif. Omdat GeoDMS storage bij het laden bindt heeft
-REM        elk zichtjaar dan een eigen proces nodig, en dat kan dit script niet meer regelen. Zet deze waarde
-REM        dus alleen op TRUE als het geheugen de hele keten niet aankan, en roep de zichtjaren dan met de hand
-REM        stuk voor stuk aan.
-set StandAllocatieOntkoppeld=FALSE
+REM Overrulet ModelParameters/StandAllocatieOntkoppeld. Dit is een BATCH-instelling: hij bepaalt of de allocatie
+REM per zichtjaar een eigen GeoDmsRun-proces krijgt (TRUE) of dat alle zichtjaren in een proces gaan (FALSE).
+REM TRUE  begrenst het geheugengebruik per proces en maakt doorstarten na een fout mogelijk.
+REM FALSE is sneller omdat de stand niet via tif heen en weer gaat, maar vraagt wel dat het geheugen de hele
+REM       keten in een keer aankan, en bij een fout begin je opnieuw bij het basisjaar.
+set StandAllocatieOntkoppeld=TRUE
 
 set CurrentDir=%CD%
 CD ..

@@ -21,34 +21,40 @@ Template Claims_TargetUnits_T
 	parameter<String> Scenario_name    := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Scenario_name[id];
 	parameter<String> Variant_name     := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Variant_name[id];
 	parameter<String> TXLClaims_ref    := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/TXLClaims_ref[id];
-	parameter<uint16> UsedTIGRIS_year  := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/UsedTIGRIS_year[id];
+	parameter<uint16> UsedTIGRIS_year_Voor := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/UsedTIGRIS_year_Voor[id];
+	parameter<uint16> UsedTIGRIS_year_Na   := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/UsedTIGRIS_year_Na[id];
+	parameter<Float32> UsedTIGRIS_gewicht  := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/UsedTIGRIS_gewicht[id];
 	parameter<String> Zichtjaar_name   := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Zichtjaar_name[id];
 	parameter<String> Sector_name      := Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Sector_name[id];
 	unit<UInt8>       AllocRegio       := Classifications/Modellering/AllocRegiosK/TigrisRegios, Descr = "Alleen de landsdekkende indelingen: de waterbergingsregio's zijn niet bedoeld voor TIGRIS-claims, zie AllocRegiosK/IsTigrisRegio.";
 	unit<UInt8>       SectorAllocRegio := ModelParameters/SectorAllocRegio;
 	
-	parameter<String> SrcStr :=
+	parameter<String> SrcStr_Template :=
 		replace(
 			'WonenEnWerken/Cases/@S@/@V@/Tables/@T@/Zichtjaren/@J@/Attributes',
 			'@S@', Scenario_name,
 			'@V@', Variant_name,
-			'@T@', TXLClaims_ref,
-			'@J@', 'Y'+string(UsedTIGRIS_year)
+			'@T@', TXLClaims_ref
 		);
-	
+
+	parameter<String> SrcStr_Voor := replace(SrcStr_Template, '@J@', 'Y'+string(UsedTIGRIS_year_Voor));
+	parameter<String> SrcStr_Na   := replace(SrcStr_Template, '@J@', 'Y'+string(UsedTIGRIS_year_Na));
+
 	unit<UInt8> AttrUnit        := = Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Attr_ref[id];
 	unit<UInt8> Aggregatie_Unit := = AttrUnit/Aggregatie_Unit[0b];
 	unit<Int32> TargetValUnit   := = Classifications/Modellering/ZichtjaarxTXLClaimsxCase/TargetValUnitRef[id];
 	
 	unit<UInt32> LMS := RegioIndelingen/LMSsubzone;
 	
-	container Results_in_Org := 
+	container Results_in_Org :=
 		for_each_nedv(
 			AttrUnit/name
-			, 'union_data(LMS, '+SrcStr+'/'+AttrUnit/TXLTbl_Ref+'[TargetValUnit])'
+			, UsedTIGRIS_gewicht == 0f
+				? 'union_data(LMS, '+SrcStr_Voor+'/'+AttrUnit/TXLTbl_Ref+'[TargetValUnit])'
+				: 'union_data(LMS, round(float32('+SrcStr_Voor+'/'+AttrUnit/TXLTbl_Ref+') + UsedTIGRIS_gewicht * (float32('+SrcStr_Na+'/'+AttrUnit/TXLTbl_Ref+') - float32('+SrcStr_Voor+'/'+AttrUnit/TXLTbl_Ref+')))[TargetValUnit])'
 			, LMS
 			, TargetValUnit
-		);
+		), Descr = "Claims per LMS-subzone. Valt het zichtjaar samen met een TIGRIS-jaar (of ligt het erbuiten), dan wordt dat ene jaar gelezen en blijft de berekening exact gelijk aan die van voor de invoering van interpolatie. Ligt het ertussenin, dan wordt er lineair geinterpoleerd tussen de twee omliggende TIGRIS-jaren, zodat zichtjaren op een fijner raster dan de TIGRIS-jaren mogelijk zijn. De round is nodig omdat TargetValUnit op Int32 gebaseerd is: zonder afronding kapt de cast af en levert dat per subzone een systematische onderschatting op. Zie /Classifications/Time/Zichtjaar voor de bepaling van de omliggende jaren en het gewicht.";
 	
 	container Results := 
 		for_each_nedv(
@@ -78,7 +84,7 @@ Template Claims_TargetUnits_T
 		}
 		
 		parameter<String> CalcStr          := 'sum('+Zichtjaar_name+'/@X@/'+Scenario_name+'/'+Variant_name+'/Results/@Y@, RegioUnit/per_TigrisXLSrcRegio)';
-		parameter<Bool>   IsClaimBasisjaar := UsedTIGRIS_year == uint16(ModelParameters/Model_StartYear)
+		parameter<Bool>   IsClaimBasisjaar := UsedTIGRIS_year_Voor == uint16(ModelParameters/Model_StartYear)
 		, Descr = "Is dit het claimbasisjaar en niet een zichtjaar? Dat bepaalt waar de geaggregeerde claim heen wordt geschreven.";
 
 		parameter<String> ClaimDir        := (IsClaimBasisjaar ? '%PrivDataDir%' : '%RSo_DataDir%') + '/Claims/TXL_'+ModelParameters/TIGRIS_filedate
