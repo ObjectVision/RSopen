@@ -38,7 +38,8 @@
       -Scenario             Standaard WLO_hoog; casusnamen zijn <scenario>_<variant>.
       -Varianten            Lijst, bijvoorbeeld BAU,BAU2,NbSGenuanceerd. De namen staan in
                             cfg\main\VariantParameters\VariantK.dms, kolom name.
-      -Zichtjaren           Standaard Y2120. Meerdere kan: Y2040,Y2120. Het basisjaar kan niet
+      -Zichtjaren           Standaard het laatste zichtjaar van de configuratie (Y2120 in NL2120, Y2045 in
+                            RuimteVoorWoningbouw). Meerdere kan: Y2040,Y2120. Het basisjaar kan niet
                             (ExportZichtjaar=Basisjaar valt om; de basisjaarkaarten komen vanzelf mee).
       -IndicatorRegio       Op welke indeling de tabel Indicatoren_<regio>.csv aggregeert: NL,
                             Provincie, COROP, Gemeente, NVM, een van de vier Landschap_<naam>, of
@@ -84,6 +85,13 @@
                             alleen de landelijke tabel leest de groenkaarten zelf terug.
       -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
 
+      Welke bestanden de export schrijft hangt af van ModelParameters/Productieprofiel (Export/generates/Set):
+      NL2120 de volledige set, RuimteVoorWoningbouw de woningbouwset. Voor de woningbouwset staan
+      -Ontkoppeld en -TabellenUitExport standaard uit: de ketens schrijven de cumulatieve indicatoren van de
+      volledige set, en de woningbouwtabel leest kolommen waarvan de kaart niet in de set zit. Wie ze toch
+      wil, geeft ze expliciet mee. De toets op de invoer eist de bergingscapaciteiten van Run4 alleen voor
+      de volledige set.
+
    B. Omgevingsvariabelen die dit script zelf zet: StandAllocatieOntkoppeld=TRUE (stand uit de tifs),
       VariantDataOntkoppeld=TRUE, IndicatorenOntkoppeld (TRUE met -Ontkoppeld, anders FALSE),
       TabellenUitExport (per stap: TRUE alleen voor de tabelstappen van -TabellenUitExport),
@@ -115,7 +123,7 @@ param(
     [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\indicatoren',
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
-    [string[]] $Zichtjaren = @('Y2120'),
+    [string[]] $Zichtjaren = @(),
     [ValidateSet('NL','Provincie','COROP','Gemeente','NVM','Landschappen',
                  'Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand')]
     [string]   $IndicatorRegio = 'NL',
@@ -143,6 +151,22 @@ $status = Join-Path $LogDir 'status.tsv'
 if (-not (Test-Path $status)) { "tijd`tstap`texit`tseconden" | Set-Content $status -Encoding UTF8 }
 
 function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $T" }
+
+function Get-Productieprofiel {
+    # ModelParameters/Productieprofiel uit de tekst, zoals Get-VariantKolom VariantK leest. Bepaalt welke
+    # set de export schrijft, zie Templates/Indicatoren_T/Export.dms, generates/Set.
+    $mp = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms'
+    $m  = [regex]::Match((Get-Content $mp -Raw), "Productieprofiel\s*:=\s*'([^']*)'")
+    if (-not $m.Success) { throw "Productieprofiel niet gevonden in $mp" }
+    return $m.Groups[1].Value
+}
+
+$Set = if ((Get-Productieprofiel) -eq 'RuimteVoorWoningbouw') { 'RuimteVoorWoningbouw' } else { 'Volledig' }
+if ($Set -eq 'RuimteVoorWoningbouw') {
+    if (-not $PSBoundParameters.ContainsKey('Ontkoppeld'))        { $Ontkoppeld = $false }
+    if (-not $PSBoundParameters.ContainsKey('TabellenUitExport')) { $TabellenUitExport = $false }
+}
+$env:IndicatorenOntkoppeld = if ($Ontkoppeld) { 'TRUE' } else { 'FALSE' }
 
 function Get-VariantKolom([string]$CfgPad, [string]$Kolom) {
     # Een kolom uit VariantK.dms als tabel variant -> waarde, geparsed uit de tekst omdat dat
@@ -192,8 +216,11 @@ function Test-Invoer {
     $eisen += ,@('BaseData\StandBasisjaar\Wonen\*.tif',                    'stand basisjaar',            '/WriteBasedata/Generate_Run3')
     $eisen += ,@('BaseData\Vastgoed\WP2xVSSH_Proxy\*',                     'woningsubsector-proxies',    '/WriteBasedata/Generate_Run3')
     $eisen += ,@('BaseData\Vastgoed\Sloopkosten_Woningen_*.tif',           'sloopkosten',                '/WriteBasedata/Generate_Run3')
-    $eisen += ,@('BaseData\Grondgebruik\BGT\GroenOpp_*.tif',               'BGT groen, bruin, verhard',  '/WriteBasedata/Generate_Run4_IndicatorenData')
-    $eisen += ,@('BaseData\Grondgebruik\BGT\*Capaciteit_*.tif',            'BGT bergingscapaciteiten',   '/WriteBasedata/Generate_Run4_IndicatorenData')
+    if ($Set -eq 'Volledig') {
+        # De woningbouwset leest geen landgebruikskaart en geen piekbuiberging, dus geen BGT-oppervlakken.
+        $eisen += ,@('BaseData\Grondgebruik\BGT\GroenOpp_*.tif',           'BGT groen, bruin, verhard',  '/WriteBasedata/Generate_Run4_IndicatorenData')
+        $eisen += ,@('BaseData\Grondgebruik\BGT\*Capaciteit_*.tif',        'BGT bergingscapaciteiten',   '/WriteBasedata/Generate_Run4_IndicatorenData')
+    }
     foreach ($v in $Varianten) {
         if (-not $opbr.ContainsKey($v)) { throw "Variant $v staat niet in VariantK.dms (kolom name); bekende varianten: $($opbr.Keys -join ', ')" }
         $standVan = if ($leen[$v]) { $leen[$v] } else { $v }
@@ -204,8 +231,11 @@ function Test-Invoer {
                 $eisen += ,@("Allocatie\${Scenario}_$standVan\Stand$j\OP_rel_*.tif", "stand $j van ${Scenario}_$standVan (variant $v)", "batch\Run2120.ps1, stap allocatie-$standVan-$j")
             }
         }
-        $eisen += ,@("BaseData\Landbouw\WWL_Opbrengstderving\$($hydro[$v])_*.tif", "opbrengstderving van levering $($hydro[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
-        $eisen += ,@("VariantData\Vastgoed\Opbrengsten_perOP\$($opbr[$v])\*.tif", "opbrengsten per pakket, set $($opbr[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run1")
+        if ($Set -eq 'Volledig') {
+            # Alleen de landbouwindicatoren lezen de opbrengstderving; de woningbouwset heeft ze niet.
+            $eisen += ,@("BaseData\Landbouw\WWL_Opbrengstderving\$($hydro[$v])_*.tif", "opbrengstderving van levering $($hydro[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
+        }
+        $eisen += ,@("VariantData\Vastgoed\Opbrengsten_perOP\$($opbr[$v])\*.tif", "opbrengsten per pakket, set $($opbr[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
         $eisen += ,@("VariantData\Grondgebruik\BGT\EvidentBenut_*_$v.tif",         "evident benut (variant $v)",                     "/WriteVariantData/per_Variant/$v/Generate_Run1")
     }
 
@@ -254,7 +284,10 @@ function Assert-Ketens([string]$casus, [string]$jaar, [string]$standVan) {
 }
 
 $totaal = [Diagnostics.Stopwatch]::StartNew()
+$alleJaren = Get-Zichtjaren
+if ($Zichtjaren.Count -eq 0) { $Zichtjaren = @($alleJaren[-1]) }
 Write-Regel "config    : $Cfg"
+Write-Regel "set       : $Set (ModelParameters/Productieprofiel)"
 Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
 Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"
@@ -262,7 +295,6 @@ Write-Regel "regio     : $IndicatorRegio$(if ($IndicatorRegio -eq 'Landschappen'
 Write-Regel "ketens    : $(if ($Ontkoppeld) { 'ontkoppeld, via tifs per zichtjaar (#824)' } else { 'in een proces, elke export rekent alle voorgaande zichtjaren mee' })"
 Write-Regel "tabellen  : $(if ($TabellenUitExport) { 'uit de geschreven kaarten, in een eigen proces na de kaarten (#824)' } else { 'levend, in hetzelfde proces als de kaarten' })"
 
-$alleJaren = Get-Zichtjaren
 $leen      = Get-VariantKolom $Cfg 'StandVanVariant'
 function Get-StandVan([string]$v) { if ($leen[$v]) { $leen[$v] } else { $v } }
 foreach ($y in $Zichtjaren) { if ($alleJaren.IndexOf($y) -lt 0) { throw "Zichtjaar $y staat niet in de configuratie ($($alleJaren -join ', '))" } }
