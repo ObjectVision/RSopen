@@ -58,7 +58,10 @@ $NormenZichtjaar = @(
     @('waterberging_regios_met_tekort', 'waterbergingsregio''s waar de opgave niet in het volume past', 0,    0),
     @('groenwaarde_lek_eur',            'groenwaarde nieuwbouw meet verandering, geen niveau (euro)',    0,    1000),
     @('verharding_cellen_gedaald',      'verharding kan dalen (cellen)',                                 1,    1e12),
-    @('ijburg2_woningen_groei',         'woningen erbij op IJburg2 sinds het basisjaar',                 1,    1e12)
+    @('ijburg2_woningen_groei',         'woningen erbij op IJburg2 sinds het basisjaar',                 1,    1e12),
+    @('koolstof_keten_null_cellen',     'koolstofketens vastlegging en afboeking gevuld (null-cellen)',  0,    0),
+    @('koolstof_vastlegging_keten_min', 'vastlegging sinds basisjaar min deze periode, laagste cel (ton)', -0.01, 1e12),
+    @('koolstof_afboeking_keten_max',   'afboeking sinds basisjaar min deze periode, hoogste cel (ton)',  -1e12, 0.01)
 )
 # De basisjaarcontroles gelden per casus en niet per zichtjaar; de bestanden dragen Basisjaar in de naam.
 # De bandbreedtes zijn gezet op de meting van 20 september 2026 (woningen 8.123.721, banen 9.298.568,
