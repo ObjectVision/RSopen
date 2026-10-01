@@ -4,8 +4,8 @@
 ================================================================================================
 
  WAT DIT SCRIPT DOET
-   1. Schrijft de ontkoppelde basisdata weg (WriteBasedata: een stap voor de allocatie, een voor de
-      indicatoren).
+   1. Schrijft de ontkoppelde basisdata weg (WriteBasedata), elke generatiestap in een eigen
+      GeoDmsRun-proces: Run1, Run2 en Run3 voor de allocatie, dan de claims en de indicatoren.
    2. Schrijft per variant de variantdata weg (opbrengsten per ontwikkelpakket, opbrengstderving).
    3. Alloceert per variant elk zichtjaar in een eigen GeoDmsRun-proces, dat de stand van het
       vorige zichtjaar uit de tifs leest. Daardoor blijft het geheugen per proces beperkt en is
@@ -43,6 +43,9 @@
                       bestanden er staan en zegt welke stap ze maakt als er iets ontbreekt.
       -SkipVariantData  Idem voor de variantdata.
       -StartBij       Naam van de stap waar de reeks verdergaat; alles ervoor wordt overgeslagen.
+                      basedata-allocatie, de naam in een status.tsv van voordat Run1, Run2 en Run3
+                      elk een eigen stap kregen, begint bij basedata-run1. Een naam die geen stap
+                      van de reeks is, laat het script aan het eind stoppen met een fout.
       -HerbouwBasedata  Bevestigt dat je de basisdata opnieuw maakt terwijl er al standen staan.
                       Zonder deze schakelaar weigert het script dat, omdat vroege en late zichtjaren
                       dan met verschillende invoer zouden rekenen.
@@ -123,6 +126,9 @@ if (-not (Test-Path $status)) {
     "tijd`tstap`titem`texit`tseconden" | Set-Content $status -Encoding UTF8
 }
 
+# Run1, Run2 en Run3 van de basedata waren samen een stap, basedata-allocatie, en een oudere status.tsv
+# noemt die naam nog. Hervatten bij die stap is beginnen bij de eerste van de drie.
+if ($StartBij -eq 'basedata-allocatie') { $StartBij = 'basedata-run1' }
 $script:Overgeslagen = ($StartBij -ne '')
 
 function Write-Regel([string]$Tekst) {
@@ -149,8 +155,9 @@ function Invoke-Stap {
 
     Write-Regel "start     : $Stap"
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af, in deze volgorde; dat is de
-    # manier om stappen die elkaars bestanden lezen in een proces te houden.
+    # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af in een proces, maar alleen voor items
+    # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
+    # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
     & $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg @Item 2>&1 | Out-Null
     $code = $LASTEXITCODE
     $sw.Stop()
@@ -317,7 +324,7 @@ function Test-Invoer {
     $mis = @()
     foreach ($e in $eisen) {
         $pad = Join-Path $LocalData $e[0]
-        if (-not (Get-ChildItem $pad -ErrorAction SilentlyContinue | Select-Object -First 1)) { $mis += $e }
+        if (-not (Get-ChildItem $pad -ErrorAction SilentlyContinue | Select-Object -First 1)) { $mis += ,$e }
     }
     if ($mis.Count -gt 0) {
         Write-Regel "GESTOPT: ontkoppelde invoer ontbreekt in $LocalData. Maak hem eerst met GeoDmsRun op het genoemde item:"
@@ -416,19 +423,25 @@ function Test-ReeksNogNietBegonnen {
 
 if (-not $SkipBasedata) {
     Test-ReeksNogNietBegonnen 'basedata opnieuw wegschrijven'
-    # Twee stappen. De eerste maakt alles wat de allocatie leest: Run1 (pandtypering), Run2 (BBG,
-    # verwerving, BRT, IBIS, groenfracties, en NBP en MNP wanneer iets ze leest) en Run3 (stand basisjaar, proxies, sloopkosten,
-    # werken-geschiktheid, normen, kernels), in een proces en in deze volgorde, want Run3 leest de
-    # tifs van Run2 terug. Run3 stond tot 11 september 2026 niet in dit script; de allocatie viel
-    # dan na een uur om op 'Unknown identifier meergezins_VrijeSector_Proxy'. Samen ruim een half uur.
-    # De tweede stap, Run4 (BGT-oppervlakken en -capaciteiten), is alleen voor de indicatoren en kost ruim
-    # een uur, maar alleen in een projectlijn die de landgebruikskaart of het domein Water levert
-    # (ModelParameters/Indicatoren/Domein); in RuimteVoorWoningbouw is hij leeg. RunIndicatoren.ps1
-    # weigert de volledige set zonder deze bestanden.
-    Invoke-Stap 'basedata-allocatie'   @('/WriteBasedata/Generate_Run1', '/WriteBasedata/Generate_Run2', '/WriteBasedata/Generate_Run3')
+    # Eerst alles wat de allocatie leest: Run1 (pandtypering), Run2 (BBG, verwerving, BRT, IBIS,
+    # groenfracties, en NBP en MNP wanneer iets ze leest) en Run3 (stand basisjaar, proxies, sloopkosten,
+    # werken-geschiktheid, normen, kernels), in deze volgorde en elk in een eigen proces, zodat elke stap
+    # de configuratie opnieuw laadt. GeoDMS bindt een te lezen bestand bij het laden, en Run2 en Run3
+    # lezen de WP5-mmd van Run1, Run3 ook de tifs van Run2. In een proces met alle drie viel de stap op
+    # een lege LocalData om op 'Unknown identifier AfleidingPandType/Results/WP5_rel', en met de mmd al
+    # aanwezig in Run3 op een lege BBG-kaart, terwijl Run2 de tif had geschreven. Samen ongeveer tien
+    # minuten op een lege LocalData. Run3 stond tot 11 september 2026 niet in dit script; de allocatie
+    # viel dan na een uur om op 'Unknown identifier meergezins_VrijeSector_Proxy'.
+    Invoke-Stap 'basedata-run1'        '/WriteBasedata/Generate_Run1'
+    Invoke-Stap 'basedata-run2'        '/WriteBasedata/Generate_Run2'
+    Invoke-Stap 'basedata-run3'        '/WriteBasedata/Generate_Run3'
     # De claims in LocalData, in een eigen proces na Run3; in RuimteVoorWoningbouw lezen de woonclaims de
     # basisjaarstand terug die Run3 schrijft.
     Invoke-Stap 'basedata-claims'      '/WriteBasedata/Generate_Run3_Claims'
+    # Run4 (BGT-oppervlakken en -capaciteiten) is alleen voor de indicatoren en kost ruim een uur, maar
+    # alleen in een projectlijn die de landgebruikskaart of het domein Water levert
+    # (ModelParameters/Indicatoren/Domein); in RuimteVoorWoningbouw is hij leeg. RunIndicatoren.ps1
+    # weigert de volledige set zonder deze bestanden.
     if ($ZonderIndicatorBasedata) { Write-Regel "overslaan : basedata-indicatoren (-ZonderIndicatorBasedata)" }
     else { Invoke-Stap 'basedata-indicatoren' '/WriteBasedata/Generate_Run4_IndicatorenData' }
     Test-Dictionaries
@@ -528,6 +541,10 @@ foreach ($v in $Varianten) {
         }
     }
 }
+
+# Een -StartBij die geen enkele stap tegenkwam heeft alles overgeslagen; zonder deze regel eindigt dat
+# als een geslaagde reeks.
+if ($script:Overgeslagen) { throw "-StartBij $StartBij is geen stap van deze reeks; er is niets gedraaid" }
 
 $totaal.Stop()
 Write-Regel "ALLES KLAAR in $([math]::Round($totaal.Elapsed.TotalHours,2)) uur"

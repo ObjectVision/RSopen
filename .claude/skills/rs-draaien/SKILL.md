@@ -97,6 +97,8 @@ Dit is de manier om werk te delen dat verschillende casussen gemeen hebben, zoal
 
 Kies dit boven een verzamelitem met `ExplicitSuppliers` in de configuratie wanneer de items naar gedeelde paden schrijven of wanneer niet alle casussen uit de lijst mee moeten: het verzamelitem trekt alles gelijktijdig en over de hele lijst, de commandoregel precies wat je opgeeft en na elkaar.
 
+Niet voor een item dat leest wat een eerder item in dezelfde aanroep schrijft. De namen van alle items worden opgelost voordat het eerste gaat rekenen, en GeoDMS bindt een te lezen bestand bij het laden: de lezer van een mmd die nog niet bestaat heeft geen subitems, en een tif die pas in het proces ontstaat leest als leeg. Gemeten op 2026-10-01 met de basedata van `Run2120.ps1` op een lege LocalData: `Generate_Run1`, `Generate_Run2` en `Generate_Run3` in een aanroep vielen om op `Unknown identifier 'AfleidingPandType/Results/WP5_rel'`, de lezer van de WP5-mmd die Run1 nog moest schrijven, en met die mmd al aanwezig in Run3 op de IntegrityCheck van de BBG-kaart die Run2 net had geschreven. Los opgevraagd lost `Generate_Run1` op een lege LocalData wel op; Run2 en Run3 falen alleen zolang de mmd ontbreekt. Een generatiestap en zijn lezers horen dus in aparte aanroepen, zodat elke stap de configuratie opnieuw laadt.
+
 ### De export per bestand of per domein
 
 `RunIndicatoren.ps1` vraagt `Zichtjaren/Export/Generate_Indicatoren` en dat is de hele set, ruim tachtig bestanden per casus en zeventig minuten per variant. Wil je minder, dan hoef je daar niet omheen te bouwen: `Zichtjaren/Export/generates` heeft een parameter per uitvoerbestand en `generates/Themas` een parameter per domein (Grondgebruik, Wonen, Werken, Water, Natuur, Landbouw, Koolstof, Sloop, Tabellen).
