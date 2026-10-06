@@ -54,6 +54,9 @@ $OPSetGrootte = @{ 'BAU'=27; 'BAU2'=27; 'NbSGenuanceerder'=39; 'NbSGenuanceerd'=
 # bestandsnaam zonder casus en jaar, omschrijving, ondergrens, bovengrens. De rekenregel achter elke waarde
 # staat in de Descr van het item dat de rij in de tabel noemt. Een waarde null betekent dat de controle in
 # deze opzet niet van toepassing is (de Descr zegt wanneer) en telt als INFO, niet als PASS.
+# woningtype_eengezins_afwijking (#847): zonder quotum per woningtype 0,26, met quotum 0,045, gemeten op
+# een allocatie van alleen wonen in Y2040 van WLO_hoog_BAU op 6 oktober 2026. De bovengrens laat ruimte voor
+# wat de hogere allocatieregio's vrij kiezen; een waarde in de buurt van 0,26 betekent dat het quotum niet werkt.
 $NormenZichtjaar = @(
     @('waterberging_regios_met_tekort', 'waterbergingsregio''s waar de opgave niet in het volume past', 0,    0),
     @('groenwaarde_lek_eur',            'groenwaarde nieuwbouw meet verandering, geen niveau (euro)',    0,    1000),
@@ -61,7 +64,8 @@ $NormenZichtjaar = @(
     @('ijburg2_woningen_groei',         'woningen erbij op IJburg2 sinds het basisjaar',                 1,    1e12),
     @('koolstof_keten_null_cellen',     'koolstofketens vastlegging en afboeking gevuld (null-cellen)',  0,    0),
     @('koolstof_vastlegging_keten_min', 'vastlegging sinds basisjaar min deze periode, laagste cel (ton)', -0.01, 1e12),
-    @('koolstof_afboeking_keten_max',   'afboeking sinds basisjaar min deze periode, hoogste cel (ton)',  -1e12, 0.01)
+    @('koolstof_afboeking_keten_max',   'afboeking sinds basisjaar min deze periode, hoogste cel (ton)',  -1e12, 0.01),
+    @('woningtype_eengezins_afwijking', 'eengezinsnieuwbouw per woningtype tegen het gebouwde aandeel',  0,    0.10)
 )
 # De basisjaarcontroles gelden per casus en niet per zichtjaar; de bestanden dragen Basisjaar in de naam.
 # De bandbreedtes zijn gezet op de meting van 20 september 2026 (woningen 8.123.721, banen 9.298.568,
