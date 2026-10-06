@@ -47,8 +47,8 @@ function Meld {
     Write-Host ("{0,-5} {1,-22} {2,-40} {3,-10} {4}" -f $Trap, $Casus, $Toets, $Oordeel, $Gemeten) -ForegroundColor $kleur
 }
 
-# Verwachte setgroottes per variant, uit de OP-tabel na #721.
-$OPSetGrootte = @{ 'BAU'=27; 'BAU2'=27; 'NbSGenuanceerder'=39; 'NbSGenuanceerd'=39 }
+# Verwachte setgroottes per variant, uit de OP-tabel na #721 en het stedelijke vrijstaande pakket van #847.
+$OPSetGrootte = @{ 'BAU'=28; 'BAU2'=28; 'NbSGenuanceerder'=40; 'NbSGenuanceerd'=40 }
 
 # Normen voor de losse controlewaarden uit de tabellen Checks en ChecksBasisjaar in cfg/main/Diagnose.dms:
 # bestandsnaam zonder casus en jaar, omschrijving, ondergrens, bovengrens. De rekenregel achter elke waarde
