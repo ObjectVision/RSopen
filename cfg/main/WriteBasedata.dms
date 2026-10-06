@@ -27,8 +27,8 @@ container WriteBaseData : using = "Classifications"
 		+ Impl/BRT_Vergriddingen
 		+ Impl/IBIS_Zeefafgeleiden
 		+ Impl/Groenfracties
-		+ Impl/NBP //de beheertypenkaart van het basisjaar (#776), voor de stand-administratie in run 2
-		+ Impl/MNP //de planpotentieelkaart van de WUR op 25 meter (#795), tweede beheertypenkaart en BAU-levering
+		+ Impl/MakeNBP //de beheertypenkaart van het basisjaar (#776), alleen wanneer het basisjaar een beheertypenkaart leest
+		+ Impl/MakeMNP //de planpotentieelkaart van de WUR op 25 meter (#795), alleen wanneer het basisjaar, de natuuroplegging of een landschapslevering hem leest
 		, Descr = "Activeer dit item om alle te ontkoppelen base data te genereren.";
 
 		parameter<String> Generate_Run3 :=
@@ -36,23 +36,39 @@ container WriteBaseData : using = "Classifications"
 		+ Impl/Verdeling_VSSH_Proxy
 		+ Impl/Sloopkosten
 		+ Impl/Werken_Geschiktheid
-		+ Impl/WaterbergingNormen
+		+ Impl/MakeWaterbergingNormen //alleen wanneer de sector Waterberging meedraait
 		+ Impl/AfstandsKernels
 		+ Impl/MakeZonneladder
 		+ Impl/MakeVerblijfsrecreatie_Trends
 		, Descr = "Activeer dit item om alle additionele te ontkoppelen base data te genereren, waarvoor eerste run1 nodig is. AfstandsKernels staat hier en niet in run1 omdat de GrootWater-buffer de ontkoppelde BBG-tifs uit run1 leest.";
+
+		parameter<String> Generate_Run3_Claims := Impl/TIGRISClaims
+		, Descr = "De TIGRIS-claims voor wonen en werken, naar allocatieregio's geaggregeerd, in LocalData. Een eigen stap na Generate_Run3, zodat batch/Run2120.ps1 en RunAll.cmd hem los kunnen
+					draaien en de invoertoets hem kan noemen; in RuimteVoorWoningbouw schrijft dezelfde stap ook de woonclaims van de woningbouwkaart, die de basisjaarstand van Run3 teruglezen.";
 		
 		parameter<String> Generate_Run4_IndicatorenData :=
-		  Impl/GroenBruinBlauwVerhard
-		+ Impl/WaterbergingCapaciteit
-		, Descr = "Activeer dit item om alle te ontkoppelen base data te genereren die nodig is om indicatoren te kunnen berekenen. WaterbergingCapaciteit hoort erbij:
-					Templates/Indicatoren/Piekbuiberging/Aanbod.dms leest de zes capaciteitslagen in container OpOverigePlekken, en zij leveren het hele aanbod in bestaand gebied buiten de daken; ontbreken de
-					tifs, dan geeft de keten per laag een GDAL-fout met een lege laag als uitkomst (#757).";
+		  Impl/MakeGroenBruinBlauwVerhard
+		+ Impl/MakeWaterbergingCapaciteit
+		, Descr = "Activeer dit item om de ontkoppelde base data te genereren die de indicatoren van deze projectlijn nodig hebben; welke dat zijn volgt uit ModelParameters/Indicatoren/Domein.
+					De BGT-oppervlakken groen, bruin en water geven samen de verharding van het basisjaar en daarmee de landgebruikskaart, en alles wat die kaart leest; zonder de rij Landgebruikskaart blijven ze weg. WaterbergingCapaciteit
+					hoort bij het domein Water: Templates/Indicatoren/Piekbuiberging/Aanbod.dms leest de zes capaciteitslagen in container OpOverigePlekken, en ontbreken de tifs, dan geeft de keten per laag een
+					GDAL-fout met een lege laag als uitkomst (#757).";
 	
 	container Impl
 	{
 		parameter<String> StateBasisjaar                := 'Ready', ExplicitSuppliers = "BaseData/StartState/StateBasisjaar/Write/Generate;BaseData/StartState/Verdeling_VSSH/Checks/WoningstandSluitendMetBAG", Descr = "Schrijft de stand in het basisjaar voor alle subsectoren weg; voorkomt dat deze zwaar berekende startdata bij elke variant-run opnieuw gegenereerd moeten worden. Controleert daarbij via de Checks dat de woningstand sluit met het aantal woon-vbo's in de BAG.";
 		parameter<String> Verdeling_VSSH_Proxy          := 'Ready', ExplicitSuppliers = "BaseData/StartState/Verdeling_VSSH/Per_AllocRegios/Generate_Wonen", Descr = "Genereert de verdeling van woningsubectoren (VrijeSector/SocialeHuur) voor alle allocatieregios.";
+		unit<UInt32> TIGRISClaims_Case := select_with_org_rel(
+				Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Zichtjaar_value <= ModelParameters/Advanced/FromWhichDoWeKeepTIGRISconstant
+			&&	Classifications/Modellering/ZichtjaarxTXLClaimsxCase/Variant_name == VariantParameters/VariantK/ClaimVariantName[Classifications/Modellering/AllCases/variant_rel[Classifications/Modellering/ZichtjaarxTXLClaimsxCase/second_rel]])
+		, Descr = "De claimjaren, claims en casussen waarvoor TIGRIS-claims worden geschreven: elk jaar van Time/ClaimJaar tot en met FromWhichDoWeKeepTIGRISconstant, het basisjaar inbegrepen, want de
+					leeskant ankert de claim daarop, en alleen de varianten met eigen TIGRIS-claims (VariantK/ClaimVariantName). Latere zichtjaren lezen de map van FromWhichDoWeKeepTIGRISconstant
+					(Templates/Claims/ZichtjaarXScenarioxAllocRegios.dms, TIGRIS_Jaar_name) en de andere varianten die van hun claimvariant; voor hen heeft de levering ook geen bronbestanden.";
+		unit<UInt32> TIGRISClaims_Bestand := combine(TIGRISClaims_Case, Classifications/Modellering/AllocRegiosK/TigrisRegios)
+		{
+			attribute<String> Pad := 'PrivData/Claims/AggregateToRegions/'+Classifications/Modellering/ZichtjaarxTXLClaimsxCase/name[TIGRISClaims_Case/org_rel[first_rel]]+'/AllocRegios/'+Classifications/Modellering/AllocRegiosK/TigrisRegios/name[second_rel]+'/Write';
+		}
+		parameter<String> TIGRISClaims                  := 'Ready', ExplicitSuppliers = "=AsList(TIGRISClaims_Bestand/Pad, ';')", Descr = "Schrijft de TIGRIS-claims voor wonen en werken per claimjaar en allocatieregio naar LocalData (PrivData/Claims/WonenEnWerken/ClaimRef), uit de levering in %PrivDataDir%.";
 		parameter<String> IsAutoweg                     := 'Ready', ExplicitSuppliers = "SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/IsAutoweg/Make_Per_AdminDomain", Descr = "Maakt de buffer rond autosnelwegen op de afstand uit ModelParameters/Wind/BufferSizeSnelwegenVoorWindRestrictie. Enige lezer is de windtak van de zeef, dus deze staat achter MakeWindBuffersBGT.";
 		parameter<String> IsAutowegKlaverbladFix        := 'Ready', ExplicitSuppliers = "SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/IsAutoweg/FixKlaverbladen/Make_Per_AdminDomain", Descr = "Voert correcties uit op knooppunten (klaverbladen) in de autosnelweg-laag om artefacten en overlapfouten te verwijderen; zorgt voor correcte uitsluitingen bij analyses.";
 		parameter<String> IsSpoorweg                    := 'Ready', ExplicitSuppliers = "SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/IsSpoorbaan/Make_Per_AdminDomain", Descr = "Maakt de buffer rond spoorbanen op dezelfde afstand als de autowegbuffer. Enige lezer is de windtak van de zeef, dus deze staat achter MakeWindBuffersBGT.";
@@ -89,12 +105,14 @@ container WriteBaseData : using = "Classifications"
 		parameter<String> WaterbergingNormen            := 'Ready', ExplicitSuppliers = "BaseData/Suitabilities/Waterberging/Depth_Norm;BaseData/Suitabilities/Waterberging/InvUAI_Norm;BaseData/Suitabilities/Waterberging/IsMeer_Nabij_Norm;BaseData/Suitabilities/Waterberging/IsVeen_Nabij_Norm;BaseData/Suitabilities/Waterberging/Kwel_Norm;BaseData/Suitabilities/Waterberging/Wegzijging_Norm;BaseData/Suitabilities/Waterberging/IsDiepGenoeg", Descr = "De variant-onafhankelijke waterberging-geschiktheidsnormen; de variantweging blijft live in Suitability_Zichtjaar_T. Run2 omdat InvUAI_Norm via de UAI aan de BAG hangt.";
 		parameter<String> AfstandsKernels               := 'Ready', ExplicitSuppliers = "SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/Ring_rel_100m;BaseData/Omgeving/GrootWater1500mBuffer;BaseData/Omgeving/N2K1000mBuffer;SourceData/Grondgebruik/NWB/Stichtse_Rotonde/Per_AdminDomain", Descr = "De jaar- en variantinvariante afstandskernels: de NNN-ringkaart op 100m, de buffers rond Natura2000 en groot water, en de Stichtse Rotonde. Run2 omdat de GrootWater-buffer de ontkoppelde BBG-tifs uit run1 leest.";
 		parameter<String> Verwervingskosten             := 'Ready', ExplicitSuppliers = "BaseData/Suitabilities/Wonen/Verwervingskosten/Generate", Descr = "Berekent en schrijft verwervingskosten voor woonlocaties/totale suitability; noodzakelijk voor kostenafwegingen bij allocatie en haalbaarheidsberekeningen.";
-		// Het zijbestand met de fingerprint hangt hier aan de trigger en niet aan de geschreven items zelf: dat zijn
-		// for_each-containers, en ExplicitSuppliers op containerniveau lift niet mee wanneer je een los kind
-		// opvraagt. Vraag je zo'n bestand rechtstreeks op zonder deze trigger, dan wordt het wel gerekend en
-		// geschreven maar komt er geen zijbestand, en rekent de volgende run het opnieuw uit.
-		parameter<String> Zonneladder                   := 'Ready', ExplicitSuppliers = "BaseData/Zonneladder/PerAdminDomain/Write;BaseData/Zonneladder/PerAdminDomain/Decoupling/Write_Fingerprint", Descr = "Schrijft de 'zonneladder' (geprioritiseerde locaties voor zonprojecten) per allocdomain; wordt gebruikt door de zonnesector voor plaatsing en ranking van locaties.";
-		parameter<String> Verblijfsrecreatie_Trends     := 'Ready', ExplicitSuppliers = "BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Write_Betas;BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Decoupling/Write_Fingerprint", Descr = "Schrijft trends en beta-parameters voor de verblijfsrecreatie-sector; deze trendparameters sturen de ontwikkeling over runs.";
+		// De twee triggers hieronder vragen alleen het fingerprint-zijbestand: de geschreven items staan als Writers
+		// onder de Decoupling en hangen dus onder dat zijbestand, zodat het pas ontstaat als de bestanden er staan
+		// (#837). Het blijft de trigger die het zijbestand maakt en niet het geschreven item zelf, want dit zijn
+		// containers en ExplicitSuppliers lift op containerniveau niet mee wanneer je een los kind opvraagt. Vraag je
+		// zo'n bestand rechtstreeks op zonder deze trigger, dan wordt het wel gerekend en geschreven maar komt er
+		// geen zijbestand, en rekent de volgende run het opnieuw uit.
+		parameter<String> Zonneladder                   := 'Ready', ExplicitSuppliers = "BaseData/Zonneladder/PerAdminDomain/Decoupling/Write_Fingerprint", Descr = "Schrijft de 'zonneladder' (geprioritiseerde locaties voor zonprojecten) per allocdomain; wordt gebruikt door de zonnesector voor plaatsing en ranking van locaties.";
+		parameter<String> Verblijfsrecreatie_Trends     := 'Ready', ExplicitSuppliers = "BaseData/StartState/Verblijfsrecreatie_Trends/Trends/Decoupling/Write_Fingerprint", Descr = "Schrijft trends en beta-parameters voor de verblijfsrecreatie-sector; deze trendparameters sturen de ontwikkeling over runs.";
 		
 		parameter<String> MakeVerblijfsrecreatie_Trends := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector ? 'Verblijfsrecreatie_Trends' : quote('NotNeeded'), Descr = "Schakelt het genereren van verblijfsrecreatie-trends in wanneer de sector aanwezig is; voorkomt onnodige berekeningen voor niet-relevante varianten.";
 		parameter<String> MakeZonneladder               := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasZonSector ? 'Zonneladder' : quote('NotNeeded'), Descr = "Schakelt het genereren van de zonneladder in wanneer de zonsector is opgenomen in de variant; bespaart rekentijd als zon niet relevant is.";
@@ -102,8 +120,14 @@ container WriteBaseData : using = "Classifications"
 																																												Templates/Beschikbaarheden/Zeef_Basisjaar_T/IsEvidentBenut_obv_BGT_wind is de enige lezer van IsAutoweg/Per_AdminDomain en IsSpoorbaan/Per_AdminDomain, en die tak staat op IsThisSectorWind,
 																																												dus zonder windsector worden de twee tifs geschreven en nooit gelezen. IsAutowegKlaverbladFix valt hier bewust niet onder: die kaart is de autoweg inclusief op- en afritten, hangt niet aan
 																																												de windbuffer en wordt in elk zichtjaarproces gelezen.";
+		parameter<String> MakeWaterbergingNormen        := =ModelParameters/SectorAllocRegio/Uq_Sectors/HasWaterbergingSector ? 'WaterbergingNormen' : quote('NotNeeded'), Descr = "Schakelt de waterberging-geschiktheidsnormen in wanneer de sector Waterberging meedraait; de enige lezer is de geschiktheid van die sector.";
+		parameter<String> MakeGroenBruinBlauwVerhard    := =/ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Landgebruikskaart] ? 'GroenBruinBlauwVerhard' : quote('NotNeeded')
+		, Descr = "Schakelt de BGT-oppervlakken in wanneer de projectlijn de landgebruikskaart levert (ModelParameters/Indicatoren/Domein): de kaart leest ze via de verharding van het basisjaar, en de domeinen Water, Natuur en Landbouw lezen de kaart.";
+		parameter<String> MakeWaterbergingCapaciteit    := =/ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Water] ? 'WaterbergingCapaciteit' : quote('NotNeeded'), Descr = "Schakelt de bergingscapaciteiten van de piekbuiberging in wanneer de projectlijn het domein Water levert.";
 		parameter<String> WindBuffersBGT                := IsAutoweg + IsSpoorweg, Descr = "De twee windrestrictiebuffers samen, zodat MakeWindBuffersBGT er een naam voor heeft om naar te wijzen.";
-		parameter<String> NBP                           := 'Ready', ExplicitSuppliers = "SourceData/Grondgebruik/NBP/INL_Beheertype_AD", Descr = "Rastert het Natuurbeheerplan 2026 naar 25 meter en schrijft de ontkoppelde tif met fingerprint (#776). Staat in run 1 omdat BaseData/StartState/Landgebruik/Type erop rust en de basisjaarstand van run 2 die leest.";
+		parameter<String> MakeNBP                       := =ModelParameters/Natuur/Beheertype_Basisjaar_Bron != 'Heuristiek' ? 'NBP' : quote('NotNeeded'), Descr = "Schakelt de NBP-kaart in wanneer het basisjaar een beheertypenkaart leest (ModelParameters/Natuur/Beheertype_Basisjaar_Bron): BaseData/StartState/Landgebruik leest het NBP dan als bron of tweede kaart, en als vastgesteld beheertype op grasland.";
+		parameter<String> MakeMNP                       := =ModelParameters/Natuur/Beheertype_Basisjaar_Bron != 'Heuristiek' || ModelParameters/Natuur/NatuurOpleggen || any(VariantParameters/VariantK/HeeftLandschapslevering) ? 'MNP' : quote('NotNeeded'), Descr = "Schakelt de MNP-kaart in wanneer iets haar leest: het basisjaar als bron of tweede kaart, de natuuroplegging als levering (Templates/VariantData/Natuur/Natuur_T) en een landschapslevering als planpotentieel (Veen_T).";
+		parameter<String> NBP                           := 'Ready', ExplicitSuppliers = "SourceData/Grondgebruik/NBP/INL_Beheertype_AD", Descr = "Rastert het Natuurbeheerplan 2026 naar 25 meter en schrijft de ontkoppelde tif met fingerprint (#776). Staat in run 2 omdat BaseData/StartState/Landgebruik/Type erop rust en de basisjaarstand van run 3 die leest.";
 		parameter<String> MNP                           := 'Ready', ExplicitSuppliers = "SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/INL_beheertypen_25m", Descr = "Vat de MNP-planpotentieelkaart van de WUR samen van 2,5 naar 25 meter en schrijft de ontkoppelde tif met fingerprint (#795). Naast NBP, want BaseData/StartState/Landgebruik/Beheertype leest
 					hem als tweede kaart en de BAU-oplegging leest hem als levering. Kost enkele minuten, want de bron telt ruim veertien miljard cellen. Een kaart die naast de bron op de share staat en door
 					geen enkele run wordt gemaakt geeft bij verwijdering een lege laag zonder foutmelding; daarom wordt hij hier gemaakt.";

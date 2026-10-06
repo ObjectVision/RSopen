@@ -15,6 +15,14 @@ De oplossing is niet de container hernoemen maar de verwijzing kwalificeren: sch
 
 Uitzondering: verwijzingen die in samengestelde strings zitten zijn niet met een slash te kwalificeren. Daarom staan `PotentieleStates`, `Suitabilities` en `Beschikbaarheden` in het meervoud naast hun enkelvoudige tegenhanger.
 
+### Een gegenereerde container schermt de naam van zijn ouder af
+
+Binnen een container die `for_each_nedv` aanmaakt zoekt een ongekwalificeerde naam eerst in die container zelf. Staat daar een item met dezelfde naam als het ouderitem dat je bedoelt, dan wijst de verwijzing naar zichzelf en meldt GeoDMS Invalid Recursion, met een vervolgfout op een willekeurig ander item in de buurt (in september 2026 een `Unknown identifier org_rel` twee containers verderop). Voorbeeld: `container Delta := for_each_nedv(klassen, 'Totaal * sleutel', ...) { Totaal := add(...); }` waarbij `Totaal` in de generator het totaal van de ouder moest zijn. Geef het ouderitem een andere naam (`NaBAG`) of kwalificeer volledig.
+
+### `Diagnose.dms` heeft geen `using`
+
+De container `Diagnose` kent geen `using` voor Geography of SourceData. Een domein of item daaruit moet er volledig gekwalificeerd staan: `(/Geography/CompactedAdminDomain)` en `const(0f, /Geography/CompactedAdminDomain)`, anders `Cannot find Domain unit`. Sjablonen binnen Diagnose erven dat gebrek.
+
 ## De kale `name` in een subcontainer
 
 Een `parameter<String> name` op templateniveau werkt niet meer binnen een subcontainer die zelf een `name` erft. Voorbeeld: binnen `unit<uint64> CompactedAdminDomain := Geography/CompactedAdminDomain` levert een kale `name` de string `CompactedAdminDomain` op, want die unit heeft zelf een `name`.
@@ -125,6 +133,14 @@ Twee dingen die zo'n kanarie goedkoop maken, gemeten op 2026-09-04 met GeoDms20.
 GeoDMS werkt een leverancier bij VOORDAT het gevraagde item zelf wordt uitgerekend. Een kapotte toets valt dus om zodra zijn eigen data klaar is, niet na de hele keten: de kanarie op `Vlak/Som` in de bodemdalingkosten gaf exit 1 na 1,5 s, ruim voor de kostenketen waar hij aan hangt. Je hoeft een kanarie dus niet te ontzien omdat het gevraagde item duur is.
 
 Het log helpt niet als je de toets heel laat. Er staan alleen `Updating::`-regels voor het gevraagde item zelf en niet voor de items eronder, dus uit een geslaagde run is niet af te lezen welke toetsen zijn meegelopen. In de foutcontext staat de keten wel volledig, van `Updating::[[<gevraagd item>]]` naar `Update(<item met de toets>)`. Kapot maken is daarmee de enige manier om te zien of de haak pakt.
+
+## Een IntegrityCheck die alleen het item zelf is geeft Invalid Recursion
+
+Een booleaanse parameter die zijn eigen waarde als toets wil gebruiken, met `IntegrityCheck = "This"`, valt om met `Invalid Recursion in UpdateMetaInfo detected`. Hetzelfde voor `this`, `(This)` en de eigen naam. Zodra er een operator in de check staat, `This == TRUE` of `This && TRUE`, werkt het wel; `This == 'TIGRIS'` en `this == 1` staan daarom al zonder problemen door de configuratie.
+
+Gemeten op 2026-09-22 met GeoDms20.17.0.m in een mini-configuratie van zes parameters; de expressievorm van het item (gewoon of meta-expressie) maakt niet uit. Gevonden in `SourceData/Plancapaciteit.dms` bij `AlleBestandenAanwezig`, dat met `IntegrityCheck = "This"` op elke aanroep omviel.
+
+Schrijf `This == TRUE`, of zet de toets op een zusteritem dat het item bij naam noemt. Vergeet daarbij de haak in de rekengraaf niet (zie de twee secties hierboven): een check op een item zonder afnemer vuurt nooit.
 
 ## Een uitdraai die niet meedraait blijft stil staan
 
@@ -524,6 +540,27 @@ Zoek ze met een grep op de sectornaam in `=`-expansies, en toets met de sector u
 Om de treeview uit te klappen moet GeoDMS weten welke items er zijn. Hangt het aantal items of de gekozen tak van een meta-expressie af van een berekend resultaat, dan moet dat resultaat eerst worden uitgerekend voordat de boom open kan, en wordt iets bekijken een volledige run. Aan de configuratie is dat niet te zien en GeoDmsRun heeft er geen last van; alleen de GUI hangt.
 
 De scheidslijn ligt bij de herkomst van de voorwaarde, niet bij het schakelen zelf. Een voorwaarde uit de configuratie of uit classificatiedata (een parameter in ModelParameters, `Zichtjaar_value` uit `Time/Zichtjaar`, `WaterbergingClaimActief` uit VariantK) is gratis bij uitklappen. Een voorwaarde die een allocatieresultaat of een claimsom nodig heeft kost bij uitklappen een run, hoe elegant het criterium inhoudelijk ook is. Kies bij een schakelaar daarom de configuratieparameter boven de gemeten grootheid die hetzelfde zegt. Het uitgecommentarieerde dynamische stopcriterium in `Templates/Allocatie/Iter_T.dms`, dat het aantal iteraties van de restclaim liet afhangen, staat om deze reden uit naast het actieve `StaticStopCriterium`; dat is een afgewogen keuze en geen onaf werk.
+
+## Een for_each die zijn namen uit een csv-tabel haalt, mist in 20.20 de andere kolommen
+
+Leest de namenlijst van een `for_each` een gdal.vect-tabel, een kolom of alleen het aantal rijen, en heeft de expressielijst een andere kolom van dezelfde tabel nodig, dan faalt GeoDMS 20.20 met een interne fout op die tweede kolom (`Check Failed` in `OperMisc.cpp(287)`). De tabel is dan al zonder die kolom gelezen en de kolom wordt niet meer bijgelezen. 20.17 las elke kolom als eigen taak en deed het goed. Daarna volgt `Unknown identifier` op elke naam die de for_each had moeten maken, dus de foutregels wijzen naar de lezers en niet naar de tabel.
+
+Gemeten op 2026-09-24 in `PrivData/Claims.dms`: de TIGRIS-MetaInfo levert de kolomnamen (Variable) en breedtes (Length) voor `Per_Zichtjaar_T`, en de claimgeneratie viel onder 20.20 voor elk zichtjaar om. Kolommen expliciet declareren, een alias-unit of een andere kolomnaam helpt niet; inline data wel, en ook het apart opvragen van beide kolommen in een run. De omweg in de configuratie: lees de tabel via een selectie waarvan de voorwaarde beide kolommen noemt (`select_with_org_rel(strlen(Bestand/Labour/variable) > 0 || Bestand/Labour/Length[uint32] > 0)`), zodat ze in dezelfde leesslag komen. Kies daar een OF en geen EN: een EN laat een rij zonder breedte stil wegvallen en verschuift dan de positie van elke volgende kolom. Gemeld als ObjectVision/GeoDMS#1284; haal de omweg weg zodra een release die fout niet meer heeft.
+
+## Een mmd schrijft in 20.20 een regel over de eigen opslag als regel en niet als data
+
+Sinds GeoDMS 20.20 (ObjectVision/GeoDMS#1264) schrijft een mmd-opslag een attribuut waarvan de rekenregel alleen namen onder dezelfde opslaghouder noemt niet meer als databestand. De regel komt letterlijk in `0Dictionary.dms` en de lezer rekent hem na het inlezen opnieuw uit. Het criterium is tekstueel: het kijkt naar de namen die de regel noemt en niet naar wat de lezer daar straks vindt.
+
+Dat gaat goed zolang alles wat de regel noemt zelf in de opslag staat. In `BaseData/Verdeling_VSSH.dms` zijn `eengezins_Proxy` en `meergezins_Proxy` de som van twee broertjes; 20.20 schrijft ze als `= eengezins_VrijeSector_Proxy + eengezins_SocialeHuur_Proxy` in het woordenboek, en `Read_Wonen_WP2xVSSH`, dat zijn attributen uit het woordenboek haalt, rekent ze gewoon uit. Wie de uitvoer van 20.17 en 20.20 naast elkaar legt ziet daardoor per indeling een ander woordenboek en twee databestanden minder. Dat is geen fout.
+
+Het gaat mis zodra de regel de `org_rel` van een `select_with_org_rel` of `select_with_attr_by_org_rel` noemt: die hangt onder de houder, maar de opslag bevat hem niet. 20.20 schrijft dan met exit 0 en zonder `[E]` een woordenboek zonder data, en de lezer valt om met `Unknown identifier 'org_rel'` of `reference 'org_rel' not found (as left operand of the arrow operator)`. Het bestand is onleesbaar zonder dat de schrijfstap het merkt. Gemeten op 2026-10-01 in een losse dms en gemeld als ObjectVision/GeoDMS#1288; 20.17 schreef in alle gevallen de data. Het raakt twee vormen:
+
+- een eigen regel die `org_rel` noemt, zoals `pand_bag_nr := org_rel -> pand_bag_nr` in `WritePrivData/LogistiekAanvulling.dms`;
+- een `select_with_attr_by_org_rel` als opslag, zonder enige eigen regel. 20.20 zet elke meegekopieerde kolom als `= collect_by_org_rel(org_rel, scope(.., Bron/kolom))` in het woordenboek en schrijft geen enkel databestand.
+
+Een `DisableStorage` onder de houder helpt daar niet tegen: sinds ObjectVision/GeoDMS#1245 weigert 20.20 de hele opslag met exit 1 en `DisableStorage is not supported below the MMD storage`, ook op `org_rel` en op een meegekopieerde kolom. `SourceData/Vastgoed/BAG/MaakVolledigeBAG.dms` schrijft de BAG-tabellen met `select_with_attr_by_org_rel` en zet zulke items onder de houders (`org_rel`, `geometry_mm`, `openbareruimte_id`), dus op 20.20 zal die stap weigeren. Afgeleid uit de nagebootste vorm, de stap zelf is niet gedraaid; de bestaande BAG-bestanden lezen op 20.20 gewoon.
+
+Wat op 20.20 wel data schrijft en terugleest: een item buiten de opslag noemen (`Pand/pand_bag_nr[org_rel]` in plaats van `org_rel -> pand_bag_nr`, sinds 1 oktober 2026 in de logistieke aanvulling), of `KeepData = "True"` op het attribuut of op de houder. Voor MaakVolledigeBAG betekent dat de `DisableStorage`-regels onder de houders weghalen en `KeepData` op de `write_result`-units zetten, waarmee de kolommen die nu buiten de opslag blijven er wel in komen. Kijk bij elke nieuwe mmd-schrijver of een attribuut alleen namen onder zijn eigen houder noemt, lees de opslag na het schrijven in een nieuw proces terug, en haal de omweg weg zodra een release ObjectVision/GeoDMS#1288 heeft opgelost.
 
 ## Overerving van een container is early binding
 

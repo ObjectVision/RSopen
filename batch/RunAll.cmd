@@ -25,7 +25,7 @@ REM ========== PARAMETER INSTELLINGEN ================
 REM De geinstalleerde GeoDMS, niet de build uit Visual Studio. Die laatste is een bewegend doel:
 REM hij wordt opnieuw gecompileerd zonder dat de configuratie verandert, en een run kan dan
 REM halverwege op een andere engine draaien dan waarmee hij begon.
-set geodmsversion=GeoDms20.17.0.m
+set geodmsversion=GeoDms20.20.0.m
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 REM set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
@@ -36,15 +36,12 @@ set LocalDataProjDir=C:\LocalData\RSopen
 
 set MT_FLAGS=/S1 /S2 /S3
 
-REM Overrulet ModelParameters/StandAllocatieOntkoppeld. Dit is een BATCH-instelling.
-REM FALSE: alle zichtjaren in een proces. De stand blijft in het geheugen en de padafhankelijkheid trekt de
-REM        eerdere zichtjaren mee, dus de batch vraagt alleen om het laatste zichtjaar. De stand-tifs worden
-REM        nog steeds geschreven, dus de indicatoren en de GUI kunnen er daarna mee verder.
-REM TRUE:  zichtjaar N+1 leest de stand van N terug uit een tif. Omdat GeoDMS storage bij het laden bindt heeft
-REM        elk zichtjaar dan een eigen proces nodig, en dat kan dit script niet meer regelen. Zet deze waarde
-REM        dus alleen op TRUE als het geheugen de hele keten niet aankan, en roep de zichtjaren dan met de hand
-REM        stuk voor stuk aan.
-set StandAllocatieOntkoppeld=FALSE
+REM Overrulet ModelParameters/StandAllocatieOntkoppeld. Dit is een BATCH-instelling: hij bepaalt of de allocatie
+REM per zichtjaar een eigen GeoDmsRun-proces krijgt (TRUE) of dat alle zichtjaren in een proces gaan (FALSE).
+REM TRUE  begrenst het geheugengebruik per proces en maakt doorstarten na een fout mogelijk.
+REM FALSE is sneller omdat de stand niet via tif heen en weer gaat, maar vraagt wel dat het geheugen de hele
+REM       keten in een keer aankan, en bij een fout begin je opnieuw bij het basisjaar.
+set StandAllocatieOntkoppeld=TRUE
 
 set CurrentDir=%CD%
 CD ..
@@ -91,8 +88,22 @@ call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run2
 echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
-REM deze ontkoppelde dat is nodig voor de indicatoren.
-REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3_IndicatorenData
+REM Run3 maakt de stand van het basisjaar, de woningsubsector-proxies, de sloopkosten, de werken-geschiktheid,
+REM de waterbergingsnormen, de afstandskernels, de zonneladder en de verblijfsrecreatietrends. Zonder deze stap
+REM strandt elke claim op een onbekende naam in plaats van op een ontbrekend bestand, want een mmd levert zijn
+REM kolommen uit de dictionary in het bestand.
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3
+echo "ErrorLevel is " %ErrorLevel%
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+
+REM De claims in LocalData, als eigen stap na Run3; in RuimteVoorWoningbouw lezen de woonclaims de basisjaarstand terug.
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3_Claims
+echo "ErrorLevel is " %ErrorLevel%
+if %ErrorLevel% NEQ 0 goto ErrorEnd
+
+REM Run4 maakt alleen wat de INDICATOREN nodig hebben en is voor een allocatierun niet nodig; zie
+REM batch/RunIndicatoren.ps1, dat deze stap als eis noemt.
+REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run4_IndicatorenData
 REM echo "ErrorLevel is " %ErrorLevel% 
 REM if %ErrorLevel% NEQ 0 goto ErrorEnd
 

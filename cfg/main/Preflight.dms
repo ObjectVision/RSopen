@@ -1,0 +1,151 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De toets die voor een productierun draait: staan de sleutelparameters op de stand die bij dit project hoort,
+// en is de invoer die pas laat in de run wordt gelezen nu al aanwezig. Aangeroepen door batch/Preflight.py, dat
+// ook de resolutieronde over de productie-items doet. Zie pbl-nl/model-RSopen #53 en ObjectVision/RSopen #833; de eerste vondst van de boomcontrole staat in ObjectVision/RSopen #838.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Preflight : using = "Units;Classifications"
+, Descr = "De controle voor een productierun. Profiel toetst de stand van de sleutelparameters tegen het profiel van de projectlijn, Invoer toetst of de bestanden die pas laat in de run gelezen worden er nu al zijn. Aangeroepen door batch/Preflight.py (#53); de sluitcontroles tijdens de run staan in Diagnose.dms en de beoordeling achteraf in batch/ToetsOplevering.ps1."
+{
+	container Profiel
+	: Descr = "De verwachte stand van de sleutelparameters per projectlijn, zodat een productierun niet start op een vergeten testinstelling. Elke projectlijn heeft een eigen kolom in de tabel Regel; welke kolom geldt bepaalt ModelParameters/Productieprofiel."
+	{
+		unit<uint32> Regel : nrofrows = 13
+		, Descr = "Een rij per sleutelparameter: het pad onder /ModelParameters, en per projectlijn de waarde die bij een productierun hoort. Voeg een rij toe wanneer een nieuwe schakelaar de uitkomst zo stuurt dat een verkeerde stand de hele run waardeloos maakt; een schakelaar die alleen een indicator aan- of uitzet hoort hier niet."
+		{
+			attribute<String> naam :
+			[
+				 'StudyArea'
+				,'AlleenEindjaar'
+				,'PlancapaciteitOpleggen'
+				,'NatuurOpleggen'
+				,'Beheertype_Basisjaar_Bron'
+				,'TIGRIS_filedate'
+				,'Woningbouwkaart_filedate'
+				,'Model_StartYear'
+				,'Model_FirstZichtjaar'
+				,'Model_ZichtjaarInterval'
+				,'Model_FinalYear'
+				,'ClaimBasisjaar_Anker'
+				,'AlwaysRemakeDecoupledFiles'
+			];
+			attribute<String> pad:
+			[
+				 'StudyArea'
+				,'AlleenEindjaar'
+				,'PlancapaciteitOpleggen'
+				,'Natuur/NatuurOpleggen'
+				,'Natuur/Beheertype_Basisjaar_Bron'
+				,'TIGRIS_filedate'
+				,'Woningbouwkaart_filedate'
+				,'Model_StartYear'
+				,'Model_FirstZichtjaar'
+				,'Model_ZichtjaarInterval'
+				,'Model_FinalYear'
+				,'ClaimBasisjaar/Anker'
+				,'AlwaysRemakeDecoupledFiles'
+			]
+			, Descr = "Het pad onder /ModelParameters; de werkelijke waarde wordt hiermee opgebouwd. Een streepje in de kolom van een projectlijn betekent dat de parameter daar niet bestaat; die rij leest dan niets en staat op PASS.";
+			attribute<String> RuimteVoorWoningbouw:
+			[
+				 'Nederland'
+				,'False'
+				,'True'
+				,'False'
+				,'Heuristiek'
+				,'20251216_Run32'
+				,'20260818'
+				,'2023'
+				,'2030'
+				,'5'
+				,'2045'
+				,'TrendLISARegio'
+				,'False'
+			]
+			, Descr = "Het PBL-project RuimteVoorWoningbouw: zichtjaren 2030 tot 2045 per vijf jaar, woonclaims uit de nationale woningbouwkaart met Gemeente als claimregio, de plancapaciteit als oplegging voor de allocatie, geen natuuroplegging en daarom een basisjaar-beheertype zonder NBP- en MNP-kaart (#36, #40, #41).";
+			attribute<String> NL2120:
+			[
+				 'Nederland'
+				,'False'
+				,'-'
+				,'True'
+				,'NBP'
+				,'20251216_Run32'
+				,'-'
+				,'2023'
+				,'2040'
+				,'10'
+				,'2120'
+				,'TrendLISARegio'
+				,'False'
+			]
+			, Descr = "De projectlijn NL2120 met Deltares: horizon 2120 per tien jaar vanaf 2040, woonclaims uit TIGRIS met NVM als claimregio, natuuroplegging volgens de variant. De plancapaciteitsoplegging en de woningbouwkaart bestaan in deze projectlijn niet, vandaar het streepje.";
+
+			attribute<String> verwacht := ='lowercase('+ModelParameters/Productieprofiel+')'
+			, Descr = "De kolom van de gekozen projectlijn, in kleine letters zodat de vergelijking niet over hoofdletters struikelt.";
+
+			attribute<String> werkelijk := ='lowercase(union_data(., '+asItemList(verwacht == '-' ? quote('-') : 'string(/ModelParameters/'+pad+')')+'))'
+			, Descr = "De stand in deze configuratie, per rij opgehaald via het pad. Alles als tekst, zodat een jaartal, een schakelaar en een naam in dezelfde tabel passen. Een rij met een streepje voor deze projectlijn noemt het pad niet, zodat een parameter die hier niet bestaat geen onbekende naam geeft.";
+
+			attribute<Bool>   klopt   := werkelijk == verwacht;
+			attribute<String> oordeel := klopt ? 'PASS' : 'FAIL';
+		}
+
+		container Schrijf
+		: StorageName = "='%LocalDataProjDir%/Preflight/profiel_'+ModelParameters/Productieprofiel+'.csv'", StorageType = "gdalwrite.vect"
+		, Descr = "De tabel als csv, zodat batch/Preflight.py kan zeggen welke regel faalt en niet alleen dat er een regel faalt. Wordt geschreven ook wanneer er een FAIL in zit; het script vraagt dit item daarom voor Afwijkingen op."
+		{
+			attribute<String> naam      (Regel) := Regel/naam;
+			attribute<String> verwacht  (Regel) := Regel/verwacht;
+			attribute<String> werkelijk (Regel) := Regel/werkelijk;
+			attribute<String> oordeel   (Regel) := Regel/oordeel;
+		}
+
+		parameter<UInt32> Afwijkingen := sum(uint32(!Regel/klopt))
+		, IntegrityCheck = "This == 0"
+		, Descr = "Het aantal sleutelparameters dat afwijkt van het profiel. De IntegrityCheck breekt de preflight af; welke regel het is staat in de csv van Schrijf.";
+	}
+
+	container Invoer
+	: Descr = "Bestanden die pas laat in de run gelezen worden en waarvan het ontbreken de run dan pas laat stranden. De fingerprintbestanden van DecoupledFile_T staan hier niet bij: die falen de goede kant op, want een ontbrekend bestand wordt gewoon opnieuw gerekend."
+	{
+		parameter<String> PlancapaciteitBron := = ModelParameters/Productieprofiel == 'RuimteVoorWoningbouw'
+			? 'ModelParameters/PlancapaciteitOpleggen ? '+quote('/BaseData/Beleid/Plancapaciteit/Gereed')+' : '+quote('/ModelParameters/PlancapaciteitOpleggen')
+			: quote('/ModelParameters/Productieprofiel')
+		, Descr = "Welk item de plancapaciteitstoets draagt. Alleen RuimteVoorWoningbouw kent de oplegging; in een andere projectlijn noemt de keuze de schakelaar niet, want die bestaat daar niet, en wijst hij naar het productieprofiel zelf.";
+		parameter<String> Plancapaciteit := 'Ready'
+		, ExplicitSuppliers = "=PlancapaciteitBron"
+		, Descr = "De levering met planwoningen moet minstens de periode van het eerste zichtjaar bevatten en elke gemeente een verdeelsleutel hebben; Gereed draagt die toetsen (BaseData/Beleid/Plancapaciteit). Staat PlancapaciteitOpleggen uit, of kent de projectlijn geen oplegging, dan valt er niets te toetsen en wijst de leverancier naar een schakelaar.";
+
+		parameter<String> ClaimPad := '/VariantData/'+first(VariantParameters/VariantK/name)+'/Claims/'+first(Classifications/Modellering/ScenarioK/name)+'/Zichtjaren/'+first(Classifications/Time/Zichtjaar/name)+'/AllocRegios/NL/Read_Wonen_CSV/'
+		, Descr = "Het pad naar de landelijke woonclaim van het eerste zichtjaar, voor de eerste variant en het eerste scenario. Een variant en een scenario volstaan: alle varianten lezen dezelfde map, met de claims van de woningbouwkaart in RuimteVoorWoningbouw en die van TIGRIS in NL2120.";
+
+		parameter<Float32> ClaimSomWonen := ='sum(float32('+ClaimPad+'eengezins)) + sum(float32('+ClaimPad+'meergezins))'
+		, IntegrityCheck = "This > 0f"
+		, Descr = "De landelijke woonclaim van het eerste zichtjaar, opgeteld, zodat de csv werkelijk gelezen wordt: een pad in ExplicitSuppliers lost wel op maar materialiseert niet, en gaf daarmee een geslaagde toets op een bestand dat nooit is opengegaan. De check op groter dan nul vangt zowel een ontbrekende als een lege levering.";
+
+		parameter<String> ClaimPadWerken := '/VariantData/'+first(VariantParameters/VariantK/name)+'/Claims/'+first(Classifications/Modellering/ScenarioK/name)+'/Zichtjaren/'+first(Classifications/Time/Zichtjaar/name)+'/AllocRegios/NL/Read_Werken_CSV/'
+		, Descr = "Hetzelfde pad voor de landelijke TIGRIS-werkenclaim van het eerste zichtjaar.";
+
+		parameter<Float32> ClaimSomWerken := = ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector ? 'sum(float32('+ClaimPadWerken+'Totaal))' : '1f'
+		, IntegrityCheck = "This > 0f"
+		, Descr = "De landelijke werkenclaim van het eerste zichtjaar, opgeteld om dezelfde reden als ClaimSomWonen. Zonder de sector Werken valt er niets te toetsen en is de waarde een.";
+
+		parameter<String> Claims := 'Ready'
+		, ExplicitSuppliers = "ClaimSomWonen;ClaimSomWerken"
+		, Descr = "Staan de woon- en werkenclaims er? Een ontbrekende of verkeerd benoemde map valt hier om en niet pas in de allocatie. Ze komen uit WriteBaseData/Generate_Run3_Claims, in LocalData.";
+	}
+
+	parameter<String> Generate := 'Ready'
+	, ExplicitSuppliers = "/Preflight/Profiel/Afwijkingen;/Preflight/Invoer/Plancapaciteit;/Preflight/Invoer/Claims"
+	, Descr = "Alle toetsen van de preflight in een aanroep. batch/Preflight.py vraagt eerst Profiel/Schrijf op, zodat de csv er ook staat wanneer een toets hieronder afbreekt.";
+}

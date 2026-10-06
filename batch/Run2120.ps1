@@ -4,8 +4,8 @@
 ================================================================================================
 
  WAT DIT SCRIPT DOET
-   1. Schrijft de ontkoppelde basisdata weg (WriteBasedata: een stap voor de allocatie, een voor de
-      indicatoren).
+   1. Schrijft de ontkoppelde basisdata weg (WriteBasedata), elke generatiestap in een eigen
+      GeoDmsRun-proces: Run1, Run2 en Run3 voor de allocatie, dan de claims en de indicatoren.
    2. Schrijft per variant de variantdata weg (opbrengsten per ontwikkelpakket, opbrengstderving).
    3. Alloceert per variant elk zichtjaar in een eigen GeoDmsRun-proces, dat de stand van het
       vorige zichtjaar uit de tifs leest. Daardoor blijft het geheugen per proces beperkt en is
@@ -43,9 +43,16 @@
                       bestanden er staan en zegt welke stap ze maakt als er iets ontbreekt.
       -SkipVariantData  Idem voor de variantdata.
       -StartBij       Naam van de stap waar de reeks verdergaat; alles ervoor wordt overgeslagen.
+                      basedata-allocatie, de naam in een status.tsv van voordat Run1, Run2 en Run3
+                      elk een eigen stap kregen, begint bij basedata-run1. Een naam die geen stap
+                      van de reeks is, laat het script aan het eind stoppen met een fout.
       -HerbouwBasedata  Bevestigt dat je de basisdata opnieuw maakt terwijl er al standen staan.
                       Zonder deze schakelaar weigert het script dat, omdat vroege en late zichtjaren
                       dan met verschillende invoer zouden rekenen.
+      -ZonderIndicatorBasedata  Slaat WriteBasedata/Generate_Run4_IndicatorenData over. Run4 volgt de
+                      indicatordomeinen van de projectlijn (ModelParameters/Indicatoren/Domein) maar kent geen
+                      fingerprint, dus zonder deze schakelaar rekent elke basedatastap de BGT-oppervlakken
+                      opnieuw; gebruik hem als die er al staan. RunIndicatoren.ps1 toetst of ze er zijn.
       -AlleenLandbouw Bevestigt dat alleen de landbouw alloceert. Hoort samen met de schakelaar
                       OntkoppelStedelijkeKlasses op TRUE (zie B); het script toetst dat.
       -DiagnoseNaZichtjaar  Na welke zichtjaren het diagnoseharnas meedraait (ongeveer acht
@@ -64,6 +71,10 @@
       VariantK/StandVanVariant     (VariantParameters\VariantK.dms) Een variant die hier een andere
                                    naam draagt, leent die stand en alloceert niet.
       Model_FirstZichtjaar, Model_FinalYear   De reeks zichtjaren.
+      Natuur/Beheertype_Basisjaar_Bron  (ModelParameters\Natuur.dms) Met Heuristiek leest het basisjaar
+                                   geen NBP- of MNP-kaart; de basedatastap maakt ze dan niet en de
+                                   invoertoets eist ze niet, tenzij NatuurOpleggen of een
+                                   landschapslevering de MNP-kaart toch leest.
       ConfigSettings.dms           Machine-eigen paden (bronnen, LocalData). Staat niet in git;
                                    elke machine heeft zijn eigen exemplaar.
 
@@ -82,7 +93,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe',
+    [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.20.0.m\GeoDmsRun.exe',
     [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
     [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
     [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\run2120',
@@ -94,7 +105,8 @@ param(
     [switch]   $SkipVariantData,
     [string]   $StartBij   = '',
     [switch]   $HerbouwBasedata,
-    [switch]   $AlleenLandbouw
+    [switch]   $AlleenLandbouw,
+    [switch]   $ZonderIndicatorBasedata
 )
 
 $ErrorActionPreference = 'Stop'
@@ -114,6 +126,9 @@ if (-not (Test-Path $status)) {
     "tijd`tstap`titem`texit`tseconden" | Set-Content $status -Encoding UTF8
 }
 
+# Run1, Run2 en Run3 van de basedata waren samen een stap, basedata-allocatie, en een oudere status.tsv
+# noemt die naam nog. Hervatten bij die stap is beginnen bij de eerste van de drie.
+if ($StartBij -eq 'basedata-allocatie') { $StartBij = 'basedata-run1' }
 $script:Overgeslagen = ($StartBij -ne '')
 
 function Write-Regel([string]$Tekst) {
@@ -140,8 +155,9 @@ function Invoke-Stap {
 
     Write-Regel "start     : $Stap"
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af, in deze volgorde; dat is de
-    # manier om stappen die elkaars bestanden lezen in een proces te houden.
+    # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af in een proces, maar alleen voor items
+    # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
+    # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
     & $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg @Item 2>&1 | Out-Null
     $code = $LASTEXITCODE
     $sw.Stop()
@@ -224,6 +240,32 @@ function Get-VariantKolom([string]$CfgPad, [string]$Kolom) {
     return $t
 }
 
+function Get-Productieprofiel {
+    # ModelParameters/Productieprofiel uit de tekst, zoals Get-VariantKolom VariantK leest. Bepaalt onder
+    # meer waar de woonclaims vandaan komen: de woningbouwkaart in RuimteVoorWoningbouw, TIGRIS elders.
+    $mp = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms'
+    $m  = [regex]::Match((Get-Content $mp -Raw), "Productieprofiel\s*:=\s*'([^']*)'")
+    if (-not $m.Success) { throw "Productieprofiel niet gevonden in $mp" }
+    return $m.Groups[1].Value
+}
+
+function Test-SectorActief([string]$Sector) {
+    # Staat de sector als actieve regel in ModelParameters/SectorAllocRegio? Uit de tekst, zoals de leentoets
+    # hieronder dat voor Landbouw doet; een uitgecommentarieerde regel telt niet.
+    $mp = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms'
+    $regels = (Get-Content $mp) | Where-Object { $_ -match "^\s*[,']" -and $_ -match "'$Sector'" -and $_ -notmatch '^\s*//' }
+    return [bool]$regels
+}
+
+function Get-BeheertypeBron {
+    # ModelParameters/Natuur/Beheertype_Basisjaar_Bron uit de tekst. Met Heuristiek leest het basisjaar
+    # geen beheertypenkaart, en maakt WriteBasedata/Generate_Run2 NBP en MNP niet (Impl/MakeNBP, MakeMNP).
+    $np = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters\Natuur.dms'
+    $m  = [regex]::Match((Get-Content $np -Raw), "Beheertype_Basisjaar_Bron\s*:=\s*'([^']*)'")
+    if (-not $m.Success) { throw "Beheertype_Basisjaar_Bron niet gevonden in $np" }
+    return $m.Groups[1].Value
+}
+
 function Test-Invoer {
     # De toets uit ObjectVision/RSopen#816: zeg VOORAF welke ontkoppelde bestanden ontbreken en welke stap
     # ze maakt, in plaats van na een uur rekenen om te vallen op 'Unknown identifier' of 'cannot open
@@ -236,20 +278,45 @@ function Test-Invoer {
     $eisen += ,@('BaseData\Vastgoed\VolledigeTabel_*\WP5\*.mmd',        'WP5-pandtypering',            '/WriteBasedata/Generate_Run1')
     $eisen += ,@('BaseData\Grondgebruik\BBG\BBG*_25m_Modus_*.tif',      'BBG-vergridding',             '/WriteBasedata/Generate_Run2')
     $eisen += ,@('BaseData\Vastgoed\Verwervingskosten_Woningen_*.tif',  'verwervingskosten',           '/WriteBasedata/Generate_Run2')
-    $eisen += ,@('BaseData\Grondgebruik\NBP\*.tif',                     'beheertypenkaart basisjaar',  '/WriteBasedata/Generate_Run2')
-    $eisen += ,@('BaseData\Grondgebruik\MNP\*.tif',                     'MNP-planpotentieel',          '/WriteBasedata/Generate_Run2')
+    # NBP en MNP alleen wanneer iets ze leest, dezelfde voorwaarden als Impl/MakeNBP en Impl/MakeMNP in
+    # WriteBasedata.dms; die kijken naar alle varianten, deze toets naar de varianten van deze run.
+    $bron  = Get-BeheertypeBron
+    $lands = Get-VariantKolom $Cfg 'Landschap_Levering'
+    $metLandschap = @($Varianten | Where-Object { $lands[$_] -and $lands[$_] -ne 'geen' }).Count -gt 0
+    if ($bron -ne 'Heuristiek') {
+        $eisen += ,@('BaseData\Grondgebruik\NBP\*.tif',                 'beheertypenkaart basisjaar',  '/WriteBasedata/Generate_Run2')
+    }
+    if ($bron -ne 'Heuristiek' -or $env:NatuurOpleggen -eq 'TRUE' -or $metLandschap) {
+        $eisen += ,@('BaseData\Grondgebruik\MNP\*.tif',                 'MNP-planpotentieel',          '/WriteBasedata/Generate_Run2')
+    }
     if ($Fase -eq 'allocatie') {
         $eisen += ,@('BaseData\StandBasisjaar\Wonen\*.tif',             'stand basisjaar',             '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Vastgoed\WP2xVSSH_Proxy\*',              'woningsubsector-proxies',     '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Vastgoed\Sloopkosten_Woningen_*.tif',    'sloopkosten',                 '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Suitabilities\Werken_raw_*.tif',         'werken-geschiktheid',         '/WriteBasedata/Generate_Run3')
-        $eisen += ,@('BaseData\Suitabilities\Waterberging\Depth_Norm_*.tif', 'waterbergingsnormen',    '/WriteBasedata/Generate_Run3')
+        # De claims staan in LocalData en komen uit een eigen basedatastap (basedata-claims).
+        if (Test-SectorActief 'Wonen') {
+            if ((Get-Productieprofiel) -eq 'RuimteVoorWoningbouw') {
+                $eisen += ,@('BaseData\Beleid\Claims\NWK_*\*\*\Wonen.csv',         'woonclaims woningbouwkaart',  '/WriteBasedata/Generate_Run3_Claims')
+            } else {
+                $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Wonen.csv',   'woonclaims TIGRIS',           '/WriteBasedata/Generate_Run3_Claims')
+            }
+        }
+        if (Test-SectorActief 'Werken') {
+            $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Werken.csv',  'werkenclaims TIGRIS',         '/WriteBasedata/Generate_Run3_Claims')
+        }
+        if (Test-SectorActief 'Waterberging') {
+            $eisen += ,@('BaseData\Suitabilities\Waterberging\Depth_Norm_*.tif', 'waterbergingsnormen', '/WriteBasedata/Generate_Run3')
+        }
         $hydro  = Get-VariantKolom $Cfg 'Hydrologie_Levering'
         $opbr   = Get-VariantKolom $Cfg 'OpbrengstenVariant_Wonen'
         foreach ($v in $Varianten) {
             if (-not $opbr.ContainsKey($v)) { throw "Variant $v staat niet in VariantK.dms (kolom name); bekende varianten: $($opbr.Keys -join ', ')" }
-            $eisen += ,@("BaseData\Landbouw\WWL_Opbrengstderving\$($hydro[$v])_*.tif", "opbrengstderving van levering $($hydro[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
-            $eisen += ,@("VariantData\Vastgoed\Opbrengsten_perOP\$($opbr[$v])\*.tif", "opbrengsten per pakket, set $($opbr[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run1")
+            if (Test-SectorActief 'Landbouw') {
+                # Alleen de landbouwgeschiktheid leest de opbrengstderving (WriteVariantData, Impl/LeestOpbrengstderving).
+                $eisen += ,@("BaseData\Landbouw\WWL_Opbrengstderving\$($hydro[$v])_*.tif", "opbrengstderving van levering $($hydro[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
+            }
+            $eisen += ,@("VariantData\Vastgoed\Opbrengsten_perOP\$($opbr[$v])\*.tif", "opbrengsten per pakket, set $($opbr[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
             $eisen += ,@("VariantData\Grondgebruik\BGT\EvidentBenut_*_$v.tif",         "evident benut (variant $v)",                     "/WriteVariantData/per_Variant/$v/Generate_Run1")
         }
     }
@@ -257,7 +324,7 @@ function Test-Invoer {
     $mis = @()
     foreach ($e in $eisen) {
         $pad = Join-Path $LocalData $e[0]
-        if (-not (Get-ChildItem $pad -ErrorAction SilentlyContinue | Select-Object -First 1)) { $mis += $e }
+        if (-not (Get-ChildItem $pad -ErrorAction SilentlyContinue | Select-Object -First 1)) { $mis += ,$e }
     }
     if ($mis.Count -gt 0) {
         Write-Regel "GESTOPT: ontkoppelde invoer ontbreekt in $LocalData. Maak hem eerst met GeoDmsRun op het genoemde item:"
@@ -356,15 +423,27 @@ function Test-ReeksNogNietBegonnen {
 
 if (-not $SkipBasedata) {
     Test-ReeksNogNietBegonnen 'basedata opnieuw wegschrijven'
-    # Twee stappen. De eerste maakt alles wat de allocatie leest: Run1 (pandtypering), Run2 (BBG,
-    # verwerving, BRT, IBIS, groenfracties, NBP, MNP) en Run3 (stand basisjaar, proxies, sloopkosten,
-    # werken-geschiktheid, normen, kernels), in een proces en in deze volgorde, want Run3 leest de
-    # tifs van Run2 terug. Run3 stond tot 11 september 2026 niet in dit script; de allocatie viel
-    # dan na een uur om op 'Unknown identifier meergezins_VrijeSector_Proxy'. Samen ruim een half uur.
-    # De tweede stap, Run4 (BGT-capaciteiten), is alleen voor de indicatoren en kost ruim een uur;
-    # hij hoort bij een verse LocalData, en RunIndicatoren.ps1 weigert zonder deze bestanden.
-    Invoke-Stap 'basedata-allocatie'   @('/WriteBasedata/Generate_Run1', '/WriteBasedata/Generate_Run2', '/WriteBasedata/Generate_Run3')
-    Invoke-Stap 'basedata-indicatoren' '/WriteBasedata/Generate_Run4_IndicatorenData'
+    # Eerst alles wat de allocatie leest: Run1 (pandtypering), Run2 (BBG, verwerving, BRT, IBIS,
+    # groenfracties, en NBP en MNP wanneer iets ze leest) en Run3 (stand basisjaar, proxies, sloopkosten,
+    # werken-geschiktheid, normen, kernels), in deze volgorde en elk in een eigen proces, zodat elke stap
+    # de configuratie opnieuw laadt. GeoDMS bindt een te lezen bestand bij het laden, en Run2 en Run3
+    # lezen de WP5-mmd van Run1, Run3 ook de tifs van Run2. In een proces met alle drie viel de stap op
+    # een lege LocalData om op 'Unknown identifier AfleidingPandType/Results/WP5_rel', en met de mmd al
+    # aanwezig in Run3 op een lege BBG-kaart, terwijl Run2 de tif had geschreven. Samen ongeveer tien
+    # minuten op een lege LocalData. Run3 stond tot 11 september 2026 niet in dit script; de allocatie
+    # viel dan na een uur om op 'Unknown identifier meergezins_VrijeSector_Proxy'.
+    Invoke-Stap 'basedata-run1'        '/WriteBasedata/Generate_Run1'
+    Invoke-Stap 'basedata-run2'        '/WriteBasedata/Generate_Run2'
+    Invoke-Stap 'basedata-run3'        '/WriteBasedata/Generate_Run3'
+    # De claims in LocalData, in een eigen proces na Run3; in RuimteVoorWoningbouw lezen de woonclaims de
+    # basisjaarstand terug die Run3 schrijft.
+    Invoke-Stap 'basedata-claims'      '/WriteBasedata/Generate_Run3_Claims'
+    # Run4 (BGT-oppervlakken en -capaciteiten) is alleen voor de indicatoren en kost ruim een uur, maar
+    # alleen in een projectlijn die de landgebruikskaart of het domein Water levert
+    # (ModelParameters/Indicatoren/Domein); in RuimteVoorWoningbouw is hij leeg. RunIndicatoren.ps1
+    # weigert de volledige set zonder deze bestanden.
+    if ($ZonderIndicatorBasedata) { Write-Regel "overslaan : basedata-indicatoren (-ZonderIndicatorBasedata)" }
+    else { Invoke-Stap 'basedata-indicatoren' '/WriteBasedata/Generate_Run4_IndicatorenData' }
     Test-Dictionaries
 } else {
     Test-Invoer 'basedata'
@@ -462,6 +541,10 @@ foreach ($v in $Varianten) {
         }
     }
 }
+
+# Een -StartBij die geen enkele stap tegenkwam heeft alles overgeslagen; zonder deze regel eindigt dat
+# als een geslaagde reeks.
+if ($script:Overgeslagen) { throw "-StartBij $StartBij is geen stap van deze reeks; er is niets gedraaid" }
 
 $totaal.Stop()
 Write-Regel "ALLES KLAAR in $([math]::Round($totaal.Elapsed.TotalHours,2)) uur"

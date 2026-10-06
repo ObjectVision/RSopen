@@ -29,7 +29,7 @@ Gaat er toch een zware run aan, kijk dan eerst wie er kan meeliften. De meeste v
 ## Trap 1: laadt het (seconden)
 
 ```powershell
-& "C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "<werkkopie>\cfg\main.dms" "/pad/naar/item"
+& "C:\Program Files\ObjectVision\GeoDms20.20.0.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "<werkkopie>\cfg\main.dms" "/pad/naar/item"
 ```
 
 Of via het meegeleverde script, dat de projectversie kiest, de tijd meet en de foutregels filtert:
@@ -97,6 +97,8 @@ Dit is de manier om werk te delen dat verschillende casussen gemeen hebben, zoal
 
 Kies dit boven een verzamelitem met `ExplicitSuppliers` in de configuratie wanneer de items naar gedeelde paden schrijven of wanneer niet alle casussen uit de lijst mee moeten: het verzamelitem trekt alles gelijktijdig en over de hele lijst, de commandoregel precies wat je opgeeft en na elkaar.
 
+Niet voor een item dat leest wat een eerder item in dezelfde aanroep schrijft. De namen van alle items worden opgelost voordat het eerste gaat rekenen, en GeoDMS bindt een te lezen bestand bij het laden: de lezer van een mmd die nog niet bestaat heeft geen subitems, en een tif die pas in het proces ontstaat leest als leeg. Gemeten op 2026-10-01 met de basedata van `Run2120.ps1` op een lege LocalData: `Generate_Run1`, `Generate_Run2` en `Generate_Run3` in een aanroep vielen om op `Unknown identifier 'AfleidingPandType/Results/WP5_rel'`, de lezer van de WP5-mmd die Run1 nog moest schrijven, en met die mmd al aanwezig in Run3 op de IntegrityCheck van de BBG-kaart die Run2 net had geschreven. Los opgevraagd lost `Generate_Run1` op een lege LocalData wel op; Run2 en Run3 falen alleen zolang de mmd ontbreekt. Een generatiestap en zijn lezers horen dus in aparte aanroepen, zodat elke stap de configuratie opnieuw laadt.
+
 ### De export per bestand of per domein
 
 `RunIndicatoren.ps1` vraagt `Zichtjaren/Export/Generate_Indicatoren` en dat is de hele set, ruim tachtig bestanden per casus en zeventig minuten per variant. Wil je minder, dan hoef je daar niet omheen te bouwen: `Zichtjaren/Export/generates` heeft een parameter per uitvoerbestand en `generates/Themas` een parameter per domein (Grondgebruik, Wonen, Werken, Water, Natuur, Landbouw, Koolstof, Sloop, Tabellen).
@@ -134,9 +136,9 @@ In PowerShell bindt de komma sterker dan de plus. `@($g+'a', $g+'b')` wordt daar
 
 ## Welke GeoDMS
 
-Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.17.0.m`. Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
+Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.20.0.m`. Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
 
-De versie staat op vier plekken: `geodmsversion` in `batch/RunAll.cmd`, de default van `-Version` in `run-item.ps1`, en `-Exe` in `Run2120.ps1` en `RunIndicatoren.ps1`. Controleer ze alle vier voordat je een lange run start.
+De versie staat op zes plekken: `geodmsversion` in `batch/RunAll.cmd`, waar `batch/Preflight.py` hem leest, de default van `-Version` in `run-item.ps1` en `resolutie.ps1`, en `-Exe` in `Run2120.ps1`, `RunIndicatoren.ps1` en `ToetsOplevering.ps1`. Controleer ze alle zes voordat je een lange run start. De versie staat niet in de fingerprint van de ontkoppelde bestanden: na een wissel blijft een bestand van de vorige versie stil in gebruik, ook waar de nieuwe versie een andere kaart zou maken. Vergelijk na een wissel met `batch/VergelijkUitvoer.py`, of zet `AlwaysRemakeDecoupledFiles` tijdelijk aan.
 
 ## Geheugen: de registerknoppen staan per machine
 
@@ -293,13 +295,16 @@ Een batch die je vanuit een Claude-sessie start met `Start-Process` of als achte
 Start een reeks daarom via WMI, zodat het proces onder `WmiPrvSE.exe` hangt en niet onder de sessie:
 
 ```powershell
+$pw = (Get-Command pwsh.exe).Source
 $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-  CommandLine      = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<pad>\hervat.ps1"'
+  CommandLine      = "`"$pw`" -NoProfile -ExecutionPolicy Bypass -File `"<pad>\hervat.ps1`""
   CurrentDirectory = '<werkkopie>'
 }
 ```
 
-Zet de aanroep van `Run2120.ps1` met een `*>`-omleiding naar een consolelog in dat startscript, want `Win32_Process.Create` heeft geen uitvoerkanaal. Controleer daarna dat de `ParentProcessId` van het nieuwe proces bij `WmiPrvSE.exe` hoort. Hetzelfde geldt voor alles wat langer moet leven dan de sessie: een generatiestap van een uur, een reeks diagnoses.
+Gebruik pwsh 7 en niet `powershell.exe`. `Run2120.ps1` zet `$ErrorActionPreference = 'Stop'` en roept GeoDmsRun aan met `2>&1`; onder Windows PowerShell 5.1 wordt dan de eerste regel die GeoDmsRun naar stderr schrijft, zoals een gdal-fout, een afbrekende fout. Het script stopt, schiet GeoDmsRun af en schrijft geen MISLUKT en geen regel in `status.tsv`, zodat het eruitziet als een harde kill van buitenaf (2026-09-23). Geef het volle pad mee: WMI zoekt op zijn eigen PATH, en zonder pad geeft `Create` ReturnValue 9.
+
+Zet de aanroep van `Run2120.ps1` met een `*>`-omleiding naar een consolelog in dat startscript, want `Win32_Process.Create` heeft geen uitvoerkanaal, en zet er een try/catch omheen die de melding naar hetzelfde log schrijft. Controleer daarna dat de `ParentProcessId` van het nieuwe proces bij `WmiPrvSE.exe` hoort. Hetzelfde geldt voor alles wat langer moet leven dan de sessie: een generatiestap van een uur, een reeks diagnoses.
 
 Bewaak zo'n reeks niet op de grootte van het staplog. Windows werkt de mapvermelding van een bestand dat open staat om te schrijven pas bij als de schrijver het sluit of doorspoelt, dus `Get-ChildItem` toont minutenlang een verouderde omvang en een stilstandsdetector op die omvang slaat vals alarm. Meet stilstand op de processortijd van de GeoDmsRun-processen, of lees de echte lengte door het bestand met gedeelde toegang te openen (`[IO.File]::Open(pad, 'Open', 'Read', 'ReadWrite')`), en tel de `[E]`-regels in het log als tweede signaal.
 
@@ -401,6 +406,8 @@ cp -r cfg Data git.txt /pad/naar/scratchpad/RSopen_NL2120/
 ```
 
 `Data` en `git.txt` moeten mee omdat vier bronnen aan `%ProjDir%/Data` hangen: de SOMERS-datasheet, de CBS-kerncijfers per wijk en buurt, en twee classificatietabellen. Zonder die map parseert de kopie schoon met exit 0 en valt hij pas om zodra een keten de csv opent, met 49 foutregels op `cannot open dataset`.
+
+Houd het pad van de kopie kort. De langste paden onder `cfg` tellen zelf 90 tekens, en zodra een include boven de 260 van Windows komt, stopt GeoDmsRun met exit 2 en `Cannot open configuration file` op dat bestand. Met de scratchpad van een sessie in een worktree ervoor was dat op 2026-09-22 al zo, 261 tekens bij `SourceData/Energie/analysekaarten`; een map direct onder `%TEMP%\claude` past wel.
 
 De naam van de map boven `cfg` bepaalt waar `%LocalDataProjDir%` heen wijst: `%LocalDataDir%/<naam van de map boven cfg>`. Heet de kopie anders dan het project, dan vindt de configuratie de ontkoppelde bestanden niet; dat valt niet op bij het parsen maar pas als een keten er een leest. Heet hij hetzelfde, dan leest en schrijft de kopie in dezelfde LocalData als de werkkopie. `Run2120.ps1` verwijdert de omgevingsvariabele `LocalDataProjDir` juist om deze afleiding te laten werken; vertrouw op de mapnaam en niet op de variabele om de uitvoer te verleggen.
 

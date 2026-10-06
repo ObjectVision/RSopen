@@ -23,7 +23,7 @@
 param(
     [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
     [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
-    [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe',
+    [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.20.0.m\GeoDmsRun.exe',
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @(),
@@ -58,7 +58,10 @@ $NormenZichtjaar = @(
     @('waterberging_regios_met_tekort', 'waterbergingsregio''s waar de opgave niet in het volume past', 0,    0),
     @('groenwaarde_lek_eur',            'groenwaarde nieuwbouw meet verandering, geen niveau (euro)',    0,    1000),
     @('verharding_cellen_gedaald',      'verharding kan dalen (cellen)',                                 1,    1e12),
-    @('ijburg2_woningen_groei',         'woningen erbij op IJburg2 sinds het basisjaar',                 1,    1e12)
+    @('ijburg2_woningen_groei',         'woningen erbij op IJburg2 sinds het basisjaar',                 1,    1e12),
+    @('koolstof_keten_null_cellen',     'koolstofketens vastlegging en afboeking gevuld (null-cellen)',  0,    0),
+    @('koolstof_vastlegging_keten_min', 'vastlegging sinds basisjaar min deze periode, laagste cel (ton)', -0.01, 1e12),
+    @('koolstof_afboeking_keten_max',   'afboeking sinds basisjaar min deze periode, hoogste cel (ton)',  -1e12, 0.01)
 )
 # De basisjaarcontroles gelden per casus en niet per zichtjaar; de bestanden dragen Basisjaar in de naam.
 # De bandbreedtes zijn gezet op de meting van 20 september 2026 (woningen 8.123.721, banen 9.298.568,
@@ -173,6 +176,12 @@ function LeesDiag([string]$bestand) {
     return @{ Verouderd = $false; Tekst = $t.Trim(); Tijd = $f.LastWriteTime }
 }
 
+function NietVanToepassing($d) {
+    # Diagnose/Voorwaarde zet een controle waarvan de sector of het indicatordomein in deze run niet meedoet
+    # op null, en een uitdraai buiten de tabel op een regel die met niet_van_toepassing begint.
+    return ($null -ne $d -and -not $d.Verouderd -and ($d.Tekst -eq 'null' -or $d.Tekst -like 'niet_van_toepassing*'))
+}
+
 function Ontleed([string]$tekst) {
     # Vorm: 'maat;waarde|sleutel;getal|sleutel;getal'
     $h = @{}
@@ -212,6 +221,7 @@ function TrapB([string]$variant, [string]$jaar) {
     $wb = LeesDiag "piekbuiberging_${casus}_$j.txt"
     if ($null -eq $wb)          { Meld 'B' $casus "$j piekbui" 'GEEN DATA' 'bestand ontbreekt' 'draai /Diagnose/GenerateAll' }
     elseif ($wb.Verouderd)      { Meld 'B' $casus "$j piekbui" 'GEEN DATA' "bestand van $($wb.Tijd.ToString('dd-MM HH:mm'))" 'na de runstart' }
+    elseif (NietVanToepassing $wb) { Meld 'B' $casus "$j piekbui" 'INFO' 'niet van toepassing' (($wb.Tekst -split ';')[1]) }
     else {
         $v = Ontleed $wb.Tekst
         $okOpgave = [math]::Abs($v['opgave'] - 497.023) -lt 0.01
@@ -246,6 +256,7 @@ function TrapB([string]$variant, [string]$jaar) {
     $gb = LeesDiag "${casus}_${j}_grondbalans_bestemmingen.txt"
     if ($null -eq $gb)     { Meld 'B' $casus "$j grondbalans" 'GEEN DATA' 'bestand ontbreekt' 'draai /Diagnose/GenerateAll' }
     elseif ($gb.Verouderd) { Meld 'B' $casus "$j grondbalans" 'GEEN DATA' "bestand van $($gb.Tijd.ToString('dd-MM HH:mm'))" 'na de runstart' }
+    elseif (NietVanToepassing $gb) { Meld 'B' $casus "$j grondbalans" 'INFO' 'niet van toepassing' (($gb.Tekst -split ';')[1]) }
     else {
         $g = Ontleed ($gb.Tekst -replace ';(?=[a-z_]+;)', '|')
         $som = $g['verstedelijking_vruchtbaar_ha'] + $g['nieuwenatuur_vruchtbaar_ha'] + $g['waterberging_vruchtbaar_ha'] - $g['overlap_verst_natuur_ha']
@@ -259,6 +270,7 @@ function TrapB([string]$variant, [string]$jaar) {
     foreach ($paar in @(@('claimreal_NL_woningen','wonen landelijk',0.99,1.01), @('claimreal_NL_banen','banen landelijk',0.99,1.06))) {
         $d = LeesDiag "${casus}_${j}_$($paar[0]).txt"
         if ($null -eq $d -or $d.Verouderd) { Meld 'B' $casus "$j $($paar[1])" 'GEEN DATA' 'ontbreekt of verouderd' 'draai /Diagnose/GenerateAll'; continue }
+        if (NietVanToepassing $d) { Meld 'B' $casus "$j claimrealisatie $($paar[1])" 'INFO' 'niet van toepassing' 'de sector doet in deze run niet mee'; continue }
         $w = [double]($d.Tekst -replace ',','.')
         Meld 'B' $casus "$j claimrealisatie $($paar[1])" $(if ($w -ge $paar[2] -and $w -le $paar[3]) {'PASS'} else {'FAIL'}) ("{0:N4}" -f $w) ("{0} tot {1}" -f $paar[2], $paar[3])
     }
@@ -269,6 +281,7 @@ function TrapB([string]$variant, [string]$jaar) {
     # FAIL. Dat maakt de toets waardeloos. Het aantal regio's onder de norm is wel te vergelijken:
     # de oplevering van 28 augustus noteerde er negen op Y2120 voor de referentievarianten.
     $nvm = LeesDiag "${casus}_${j}_claimreal_NVM_woningen.txt"
+    if (NietVanToepassing $nvm) { Meld 'B' $casus "$j NVM-regio's onder alarmdrempel" 'INFO' 'niet van toepassing' 'wonen alloceert niet op NVM; zie de claimtoets van wonen' }
     if ($null -ne $nvm -and -not $nvm.Verouderd) {
         $r = @($nvm.Tekst -split ';' | Where-Object { $_ -match '^\d' } | ForEach-Object { [double]$_ } | Where-Object { $_ -gt 0 })
         if ($r.Count -gt 0) {
@@ -291,7 +304,8 @@ function TrapB([string]$variant, [string]$jaar) {
 
     # Waterbergingsclaim. Sinds #664 hoort BAU en BAU2 geen enkele regio met een opgave te hebben.
     $wbc = LeesDiag "${casus}_${j}_claimreal_Waterberging.txt"
-    if ($null -ne $wbc -and -not $wbc.Verouderd) {
+    if (NietVanToepassing $wbc) { Meld 'B' $casus "$j waterberging" 'INFO' 'niet van toepassing' 'de sector Waterberging doet in deze run niet mee' }
+    elseif ($null -ne $wbc -and -not $wbc.Verouderd) {
         $r = @($wbc.Tekst -split ';' | Where-Object { $_ -match '^\d' } | ForEach-Object { [double]$_ })
         if ($variant -like 'BAU*') {
             Meld 'B' $casus "$j waterberging heeft geen opgave" $(if ($r.Count -eq 0) {'PASS'} else {'FAIL'}) "$($r.Count) regio's met een opgave" '0, zie #664'
