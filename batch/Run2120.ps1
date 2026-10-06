@@ -5,7 +5,7 @@
 
  WAT DIT SCRIPT DOET
    1. Schrijft de ontkoppelde basisdata weg (WriteBasedata), elke generatiestap in een eigen
-      GeoDmsRun-proces: Run1, Run2 en Run3 voor de allocatie, dan de claims en de indicatoren.
+      GeoDmsRun-proces: Run1, Run2 en Run3 voor de allocatie, de claims in Run3, dan de indicatoren.
    2. Schrijft per variant de variantdata weg (opbrengsten per ontwikkelpakket, opbrengstderving).
    3. Alloceert per variant elk zichtjaar in een eigen GeoDmsRun-proces, dat de stand van het
       vorige zichtjaar uit de tifs leest. Daardoor blijft het geheugen per proces beperkt en is
@@ -44,8 +44,10 @@
       -SkipVariantData  Idem voor de variantdata.
       -StartBij       Naam van de stap waar de reeks verdergaat; alles ervoor wordt overgeslagen.
                       basedata-allocatie, de naam in een status.tsv van voordat Run1, Run2 en Run3
-                      elk een eigen stap kregen, begint bij basedata-run1. Een naam die geen stap
-                      van de reeks is, laat het script aan het eind stoppen met een fout.
+                      elk een eigen stap kregen, begint bij basedata-run1; basedata-claims, de losse
+                      claimstap van voor 6 oktober 2026, begint bij basedata-run3, dat de claims nu
+                      schrijft. Een naam die geen stap van de reeks is, laat het script aan het eind
+                      stoppen met een fout.
       -HerbouwBasedata  Bevestigt dat je de basisdata opnieuw maakt terwijl er al standen staan.
                       Zonder deze schakelaar weigert het script dat, omdat vroege en late zichtjaren
                       dan met verschillende invoer zouden rekenen.
@@ -127,8 +129,10 @@ if (-not (Test-Path $status)) {
 }
 
 # Run1, Run2 en Run3 van de basedata waren samen een stap, basedata-allocatie, en een oudere status.tsv
-# noemt die naam nog. Hervatten bij die stap is beginnen bij de eerste van de drie.
+# noemt die naam nog. Hervatten bij die stap is beginnen bij de eerste van de drie. Zo had ook de claimstap
+# tot 6 oktober 2026 een eigen naam, basedata-claims; die claims schrijft nu Run3.
 if ($StartBij -eq 'basedata-allocatie') { $StartBij = 'basedata-run1' }
+if ($StartBij -eq 'basedata-claims')    { $StartBij = 'basedata-run3' }
 $script:Overgeslagen = ($StartBij -ne '')
 
 function Write-Regel([string]$Tekst) {
@@ -294,16 +298,16 @@ function Test-Invoer {
         $eisen += ,@('BaseData\Vastgoed\WP2xVSSH_Proxy\*',              'woningsubsector-proxies',     '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Vastgoed\Sloopkosten_Woningen_*.tif',    'sloopkosten',                 '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Suitabilities\Werken_raw_*.tif',         'werken-geschiktheid',         '/WriteBasedata/Generate_Run3')
-        # De claims staan in LocalData en komen uit een eigen basedatastap (basedata-claims).
+        # De claims staan in LocalData en komen uit Run3.
         if (Test-SectorActief 'Wonen') {
             if ((Get-Productieprofiel) -eq 'RuimteVoorWoningbouw') {
-                $eisen += ,@('BaseData\Beleid\Claims\NWK_*\*\*\Wonen.csv',         'woonclaims woningbouwkaart',  '/WriteBasedata/Generate_Run3_Claims')
+                $eisen += ,@('BaseData\Beleid\Claims\NWK_*\*\*\Wonen.csv',         'woonclaims woningbouwkaart',  '/WriteBasedata/Generate_Run3')
             } else {
-                $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Wonen.csv',   'woonclaims TIGRIS',           '/WriteBasedata/Generate_Run3_Claims')
+                $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Wonen.csv',   'woonclaims TIGRIS',           '/WriteBasedata/Generate_Run3')
             }
         }
         if (Test-SectorActief 'Werken') {
-            $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Werken.csv',  'werkenclaims TIGRIS',         '/WriteBasedata/Generate_Run3_Claims')
+            $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Werken.csv',  'werkenclaims TIGRIS',         '/WriteBasedata/Generate_Run3')
         }
         if (Test-SectorActief 'Waterberging') {
             $eisen += ,@('BaseData\Suitabilities\Waterberging\Depth_Norm_*.tif', 'waterbergingsnormen', '/WriteBasedata/Generate_Run3')
@@ -425,7 +429,7 @@ if (-not $SkipBasedata) {
     Test-ReeksNogNietBegonnen 'basedata opnieuw wegschrijven'
     # Eerst alles wat de allocatie leest: Run1 (pandtypering), Run2 (BBG, verwerving, BRT, IBIS,
     # groenfracties, en NBP en MNP wanneer iets ze leest) en Run3 (stand basisjaar, proxies, sloopkosten,
-    # werken-geschiktheid, normen, kernels), in deze volgorde en elk in een eigen proces, zodat elke stap
+    # werken-geschiktheid, normen, kernels en de claims), in deze volgorde en elk in een eigen proces, zodat elke stap
     # de configuratie opnieuw laadt. GeoDMS bindt een te lezen bestand bij het laden, en Run2 en Run3
     # lezen de WP5-mmd van Run1, Run3 ook de tifs van Run2. In een proces met alle drie viel de stap op
     # een lege LocalData om op 'Unknown identifier AfleidingPandType/Results/WP5_rel', en met de mmd al
@@ -435,9 +439,6 @@ if (-not $SkipBasedata) {
     Invoke-Stap 'basedata-run1'        '/WriteBasedata/Generate_Run1'
     Invoke-Stap 'basedata-run2'        '/WriteBasedata/Generate_Run2'
     Invoke-Stap 'basedata-run3'        '/WriteBasedata/Generate_Run3'
-    # De claims in LocalData, in een eigen proces na Run3; in RuimteVoorWoningbouw lezen de woonclaims de
-    # basisjaarstand terug die Run3 schrijft.
-    Invoke-Stap 'basedata-claims'      '/WriteBasedata/Generate_Run3_Claims'
     # Run4 (BGT-oppervlakken en -capaciteiten) is alleen voor de indicatoren en kost ruim een uur, maar
     # alleen in een projectlijn die de landgebruikskaart of het domein Water levert
     # (ModelParameters/Indicatoren/Domein); in RuimteVoorWoningbouw is hij leeg. RunIndicatoren.ps1
