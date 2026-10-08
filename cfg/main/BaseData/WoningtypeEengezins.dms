@@ -1,0 +1,101 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het gebouwde aandeel rij, twee-onder-een-kap en vrijstaand binnen de eengezinsnieuwbouw, per regio van de
+// eerste allocatieregio van wonen, uit de BAG naar bouwjaar van het pand. Het quotum per woningtype in
+// Templates/Allocatie/IterSubsector_T_Wonen verdeelt de eengezinsclaim daarmee (#847).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container WoningtypeEengezins
+: Descr = "Het aandeel van elke woningtypegroep in de eengezinswoningen die in de basisperiode zijn gebouwd, per regio van de eerste allocatieregio van wonen (#847). Geteld zijn de woningen in de
+			BAG-stand van BAG_RecentYear in een eengezinspand met een bouwjaar in de basisperiode, dus de nieuwbouw die er dan nog staat; splitsing en transformatie in oudere panden vallen erbuiten. Ontkoppeld
+			als mmd met een fingerprint, want elk zichtjaar leest het en de telling vraagt de hele BAG-stand."
+{
+	unit<UInt8>       Groep      := /ModelParameters/Wonen/WoningtypeEengezins/Groep;
+	parameter<String> Regio_name := /ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_name;
+	unit<UInt32>      RegioUnit  := ='/SourceData/'+/ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_path
+	, Descr = "De indeling waarop het quotum geldt; bij StudyArea Friesland de hele indeling, want de allocatie zoekt het aandeel daar op met AllocRegio/org_rel, zoals de claims.";
+
+	unit<UInt32> Gebouwd := select_with_org_rel(
+			/BaseData/BAG_RecentJaar/vbo/Bovengrens_geldt
+		&&	/Classifications/Vastgoed/WP4/WP2_rel[/BaseData/BAG_RecentJaar/vbo/WP4_rel] == /Classifications/Vastgoed/WP2/V/eengezins
+		&&	/BaseData/BAG_RecentJaar/vbo/Bouwjaar_trunc >= /ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeVan
+		&&	/BaseData/BAG_RecentJaar/vbo/Bouwjaar_trunc <= /ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeTotEnMet
+		&&	IsDefined(/BaseData/BAG_RecentJaar/vbo/AdminDomain_rel))
+	, Descr = "De woon-vbo's in een eengezinspand met een bouwjaar in de basisperiode, binnen het studiegebied."
+	{
+		attribute<Classifications/Vastgoed/WP4> WP4_rel   := /BaseData/BAG_RecentJaar/vbo/WP4_rel[org_rel];
+		attribute<Groep>                        Groep_rel := rlookup(WP4_rel, Groep/WP4_rel), IntegrityCheck = "all(IsDefined(this))", Descr = "Elk eengezinstype hoort in een groep; een type zonder groep zou stil uit de noemer vallen.";
+		attribute<RegioUnit>                    Regio_rel := RegioUnit/Per_AdminDomain[/BaseData/BAG_RecentJaar/vbo/AdminDomain_rel[org_rel]];
+	}
+
+	attribute<UInt32>  AantalNL  (Groep) := pcount(Gebouwd/Groep_rel), Descr = "Het aantal gebouwde eengezinswoningen per groep in het hele studiegebied.";
+	attribute<Float32> AandeelNL (Groep) := float32(AantalNL) / float32(sum(AantalNL)), IntegrityCheck = "abs(sum(this) - 1f) < 0.001f", Descr = "Het landelijke aandeel per groep, de terugval voor een regio met te weinig waarnemingen.";
+
+	container Aantal :=
+		for_each_nedv(
+			Groep/name
+			, 'sum_uint32(Gebouwd/Groep_rel == '+string(id(Groep))+'[Groep], Gebouwd/Regio_rel)'
+			, RegioUnit
+			, UInt32
+		), Descr = "Het aantal gebouwde eengezinswoningen per groep en regio."
+	{
+		attribute<UInt32> Totaal (RegioUnit) := ='add('+AsItemList(Groep/name)+')';
+	}
+
+	attribute<Bool> GenoegWaarnemingen (RegioUnit) := Aantal/Totaal >= /ModelParameters/Wonen/WoningtypeEengezins/MinimumAantalPerRegio
+	, Descr = "Is er in deze regio genoeg gebouwd om er een eigen verdeling op te baseren? Zo niet, dan geldt het landelijke aandeel.";
+
+	container Calc :=
+		for_each_nedv(
+			Groep/name
+			, 'GenoegWaarnemingen ? float32(Aantal/'+Groep/name+') / float32(Aantal/Totaal) : AandeelNL['+string(id(Groep))+'[Groep]]'
+			, RegioUnit
+			, Float32
+		), Descr = "Het aandeel per groep en regio, met het landelijke aandeel waar te weinig is gebouwd. De aandelen tellen per regio op tot een, want elk eengezinstype hoort in een groep (Gebouwd/Groep_rel). AantalGebouwd staat ernaast voor de diagnose."
+	{
+		attribute<UInt32> AantalGebouwd (RegioUnit) := Aantal/Totaal;
+	}
+
+	parameter<String> FileName := '%LocalDataProjDir%/BaseData/Vastgoed/WoningtypeEengezins/'+Regio_name+'_'+string(/ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeVan)+'_'+string(/ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeTotEnMet)+'_BAG'+string(/ModelParameters/BAG_RecentYear)+'_'+/ModelParameters/StudyArea+'.mmd'
+	, Descr = "Het pad als eigen parameter, omdat DecoupledFile_T het als gegeven nodig heeft; PropValue op de StorageName geeft de expressietekst.";
+
+	container Write :=
+		for_each_nedv(
+			Groep/name
+			, 'Calc/'+Groep/name
+			, RegioUnit
+			, Float32
+		), StorageName = "=FileName"
+	, Descr = "Schrijft de aandelen weg. Elk attribuut leest uit Calc, buiten deze opslag, zodat de mmd de waarden zelf bevat."
+	{
+		attribute<UInt32> AantalGebouwd (RegioUnit) := Calc/AantalGebouwd;
+	}
+
+	container Read : StorageName = "=FileName", StorageReadOnly = "TRUE", Descr = "Leest de weggeschreven aandelen terug.";
+
+	parameter<String> Fingerprint :=
+		  'alloc_region='  + Regio_name
+		+ ';cbs_year='     + /ModelParameters/RegioIndelingen_CBSjaar
+		+ ';build_years='  + string(/ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeVan) + '-' + string(/ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeTotEnMet)
+		+ ';bag_year='     + string(/ModelParameters/BAG_RecentYear)
+		+ ';bag_date='     + /ModelParameters/BAG_file_date
+		+ ';study_area='   + /ModelParameters/StudyArea
+		+ ';min_count='    + string(/ModelParameters/Wonen/WoningtypeEengezins/MinimumAantalPerRegio)
+		+ ';groups='       + AsList(Groep/WP4_name, ',')
+		+ ';rule='         + /ModelParameters/Wonen/WoningtypeEengezins/Rekenregel
+	, Descr = "De invoeren die de aandelen bepalen. De indeling, de basisperiode, het BAG-jaar en het studiegebied zitten ook in de bestandsnaam; de CBS-jaargang, de leveringsdatum, de drempel, de groepen en de versie van de rekenregel niet.";
+
+	parameter<String>  Writers    := AsList('Write/'+Groep/name, ';')+';Write/AantalGebouwd';
+	container          Decoupling := /Templates/DecoupledFile_T(FileName, Fingerprint, Writers);
+
+	container Aandeel := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc' : Decoupling/MayReuse ? 'Read' : 'Write'
+	, Descr = "Wat de allocatie leest: de mmd als die er staat en de fingerprint klopt, anders opnieuw gerekend en weggeschreven. Het zijbestand met de fingerprint schrijft WriteBaseData/Impl/WoningtypeEengezins.";
+}
