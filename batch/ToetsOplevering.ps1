@@ -50,35 +50,10 @@ function Meld {
 # Verwachte setgroottes per variant, uit de OP-tabel na #721 en het stedelijke vrijstaande pakket van #847.
 $OPSetGrootte = @{ 'BAU'=28; 'BAU2'=28; 'NbSGenuanceerder'=40; 'NbSGenuanceerd'=40 }
 
-# Normen voor de losse controlewaarden uit de tabellen Checks en ChecksBasisjaar in cfg/main/Diagnose.dms:
-# bestandsnaam zonder casus en jaar, omschrijving, ondergrens, bovengrens. De rekenregel achter elke waarde
-# staat in de Descr van het item dat de rij in de tabel noemt. Een waarde null betekent dat de controle in
-# deze opzet niet van toepassing is (de Descr zegt wanneer) en telt als INFO, niet als PASS.
-# woningtype_eengezins_afwijking (#847): zonder quotum per woningtype 0,26, met quotum 0,045, gemeten op
-# een allocatie van alleen wonen in Y2040 van WLO_hoog_BAU op 6 oktober 2026. De bovengrens laat ruimte voor
-# wat de hogere allocatieregio's vrij kiezen; een waarde in de buurt van 0,26 betekent dat het quotum niet werkt.
-$NormenZichtjaar = @(
-    @('waterberging_regios_met_tekort', 'waterbergingsregio''s waar de opgave niet in het volume past', 0,    0),
-    @('groenwaarde_lek_eur',            'groenwaarde nieuwbouw meet verandering, geen niveau (euro)',    0,    1000),
-    @('verharding_cellen_gedaald',      'verharding kan dalen (cellen)',                                 1,    1e12),
-    @('ijburg2_woningen_groei',         'woningen erbij op IJburg2 sinds het basisjaar',                 1,    1e12),
-    @('koolstof_keten_null_cellen',     'koolstofketens vastlegging en afboeking gevuld (null-cellen)',  0,    0),
-    @('koolstof_vastlegging_keten_min', 'vastlegging sinds basisjaar min deze periode, laagste cel (ton)', -0.01, 1e12),
-    @('koolstof_afboeking_keten_max',   'afboeking sinds basisjaar min deze periode, hoogste cel (ton)',  -1e12, 0.01),
-    @('woningtype_eengezins_afwijking', 'eengezinsnieuwbouw per woningtype tegen het gebouwde aandeel',  0,    0.10)
-)
-# De basisjaarcontroles gelden per casus en niet per zichtjaar; de bestanden dragen Basisjaar in de naam.
-# De bandbreedtes zijn gezet op de meting van 20 september 2026 (woningen 8.123.721, banen 9.298.568,
-# hoge gronden 1.819.410 ha, bouwperiodeterm -0,093, verwerving 566 mld): ruim genoeg voor een nieuwe
-# BAG-jaargang, krap genoeg om een losgeraakte keten (een nul) of een dubbeltelling van tienden te zien.
-$NormenBasisjaar = @(
-    @('basisjaar_woningen',                 'woningvoorraad basisjaar tegen de CBS-voorraad',          8.0e6,  8.5e6),
-    @('basisjaar_banen',                    'banen basisjaar tegen het LISA-totaal',                   8.5e6,  10.0e6),
-    @('hogegronden_ha',                     'hoge gronden binnen het studiegebied (ha)',               1.75e6, 1.90e6),
-    @('bouwperiode_term',                   'bouwperiodecoefficient bestaande voorraad, gewogen',      -0.15,  -0.05),
-    @('verwerving_nietwoon_mld',            'verwervingskosten niet-woon vastgoed (mld euro)',         250,    900),
-    @('verblijfsrecreatie_stand_tov_trend', 'stand logies in CBS-gebied tegen de trend, verhouding',   0,      1)
-)
+# De normen voor de controlewaarden van de tabellen Checks en ChecksBasisjaar staan sinds #833 in cfg/main/Diagnose.dms,
+# in de kolommen norm_onder en norm_boven, met de afweging bij de rij. Het harnas schrijft per casus en zichtjaar een csv
+# <casus>_<jaar>_checks.csv met naam, waarde, ondergrens, bovengrens en oordeel; dit script leest alleen dat oordeel.
+# Een nieuwe norm hoort dus in die tabel en niet hier.
 
 function Get-Zichtjaren([string]$casusPad) {
     Get-ChildItem $casusPad -Directory -Filter 'Stand Y*' -ErrorAction SilentlyContinue |
@@ -196,30 +171,38 @@ function Ontleed([string]$tekst) {
     return $h
 }
 
-function ToetsNormen([string]$casus, [string]$jaarlabel, $normen) {
-    foreach ($n in $normen) {
-        $d = LeesDiag "${casus}_${jaarlabel}_$($n[0]).txt"
-        if ($null -eq $d) { Meld 'B' $casus "$jaarlabel $($n[1])" 'GEEN DATA' 'bestand ontbreekt' 'draai de diagnose'; continue }
-        if ($d.Verouderd) { Meld 'B' $casus "$jaarlabel $($n[1])" 'GEEN DATA' "bestand van $($d.Tijd.ToString('dd-MM HH:mm'))" 'na de runstart'; continue }
-        $tekst = $d.Tekst -replace ',','.'
-        if ($tekst -eq '' -or $tekst -eq 'null') { Meld 'B' $casus "$jaarlabel $($n[1])" 'INFO' 'niet van toepassing' 'zie de Descr in Diagnose.dms'; continue }
-        $w = [double]$tekst
-        $ok = ($w -ge $n[2] -and $w -le $n[3])
-        Meld 'B' $casus "$jaarlabel $($n[1])" $(if ($ok) {'PASS'} else {'FAIL'}) ("{0:N4}" -f $w) ("{0} tot {1}" -f $n[2], $n[3])
+function ToetsChecks([string]$casus, [string]$jaarlabel) {
+    # Een regel per rij met een norm. NVT is een rij waarvan de sector of het indicatordomein in deze run niet meedoet
+    # (Diagnose/Voorwaarde), GEEN_GETAL een rij met een norm die geen getal opleverde, GEEN_NORM een waarde om te lezen.
+    $bestand = "${casus}_${jaarlabel}_checks.csv"
+    $p = Join-Path $LocalData "Diagnose\$bestand"
+    if (-not (Test-Path $p)) { Meld 'B' $casus "$jaarlabel controletabel" 'GEEN DATA' 'bestand ontbreekt' "draai de diagnose, $bestand"; return }
+    $f = Get-Item $p
+    if ($vers -and $f.LastWriteTime -lt $vers) { Meld 'B' $casus "$jaarlabel controletabel" 'GEEN DATA' "bestand van $($f.LastWriteTime.ToString('dd-MM HH:mm'))" 'na de runstart'; return }
+    foreach ($r in (Import-Csv $p)) {
+        $onder = if ($r.ondergrens -ne '') { $r.ondergrens } else { '-' }
+        $boven = if ($r.bovengrens -ne '') { $r.bovengrens } else { '-' }
+        $verwacht = "$onder tot $boven"
+        switch ($r.oordeel) {
+            'PASS'       { Meld 'B' $casus "$jaarlabel $($r.naam)" 'PASS' $r.waarde $verwacht }
+            'FAIL'       { Meld 'B' $casus "$jaarlabel $($r.naam)" 'FAIL' $r.waarde $verwacht }
+            'GEEN_GETAL' { Meld 'B' $casus "$jaarlabel $($r.naam)" 'GEEN DATA' "geen getal: $($r.waarde)" $verwacht }
+            'NVT'        { if ($r.ondergrens -ne '' -or $r.bovengrens -ne '') { Meld 'B' $casus "$jaarlabel $($r.naam)" 'INFO' 'niet van toepassing' 'zie Voorwaarde in Diagnose.dms' } }
+            default      { }
+        }
     }
 }
 
 function TrapBasisjaar([string]$variant) {
-    ToetsNormen "${Scenario}_$variant" 'Basisjaar' $NormenBasisjaar
+    ToetsChecks "${Scenario}_$variant" 'Basisjaar'
 }
 
 function TrapB([string]$variant, [string]$jaar) {
     $casus = "${Scenario}_$variant"
     $j = $jaar -replace '^Stand',''
 
-    # Piekbui. De opgave hangt aan het basisjaar en is op bestaand bebouwd gebied gemaskeerd, dus
-    # hij hoort in elke variant en elk zichtjaar hetzelfde te zijn. Dat maakt hem een harde
-    # invariant: wijkt hij af, dan is er iets met de maskering of met de basisjaarstand.
+    # Piekbui. De opgave, het aanbod op bergingscellen en de sluiting van het aanbod hebben een norm en staan sinds #833 als
+    # rijen piekbui_* in Checks. Hier blijft alleen de dekkingsgraad als INFO, want daar is geen norm voor.
     # Het bestand heet sinds #720 piekbuiberging_*; onder de oude naam waterberging_* stond dezelfde
     # uitdraai, en die naam droeg ook de sector, wat precies de verwarring was die #720 opruimt.
     $wb = LeesDiag "piekbuiberging_${casus}_$j.txt"
@@ -228,11 +211,6 @@ function TrapB([string]$variant, [string]$jaar) {
     elseif (NietVanToepassing $wb) { Meld 'B' $casus "$j piekbui" 'INFO' 'niet van toepassing' (($wb.Tekst -split ';')[1]) }
     else {
         $v = Ontleed $wb.Tekst
-        $okOpgave = [math]::Abs($v['opgave'] - 497.023) -lt 0.01
-        Meld 'B' $casus "$j piekbuiopgave is de bekende invariant" $(if ($okOpgave) {'PASS'} else {'FAIL'}) ("{0:N3} mln m3" -f $v['opgave']) '497,023 mln m3'
-        $okWb = ($v['aanbod_op_wbcellen'] -eq 0)
-        Meld 'B' $casus "$j bergingscellen tellen niet mee in de dekking" $(if ($okWb) {'PASS'} else {'FAIL'}) ("{0}" -f $v['aanbod_op_wbcellen']) 'exact 0'
-
         # Twee posten die de dekkingsgraad bepalen en tot #720 nergens werden gerapporteerd. Geen
         # PASS of FAIL: er is geen norm voor. Ze staan hier omdat een dekkingsgraad die zonder deze
         # twee getallen wordt overgenomen een puntgetal suggereert dat het niet is.
@@ -244,69 +222,13 @@ function TrapB([string]$variant, [string]$jaar) {
             Meld 'B' $casus "$j dekkingsgraad piekbui, bandbreedte" 'INFO' ("{0:P1} geklemd op blok, {1:P1} ongeklemd" -f $dekking, $dekkingOngekl) 'lees als bandbreedte'
             Meld 'B' $casus "$j aanbod dat de dekking niet haalt" 'INFO' ("{0:P1} valt door de blokklemming, {1:P1} ligt buiten bebouwd gebied" -f $klemAandeel, $buitenAandeel) 'zie #720 en #741'
         }
-
-        # De drie aanbodposten horen op te tellen: de gemaskeerde som plus wat de maskering weglaat is
-        # het aanbod zoals het tot #741 werd geteld. Sluit dat niet, dan is er iets met de begrenzing
-        # of met een null in BBGSamengesteld, en dan klopt de dekkingsgraad ook niet.
-        if ($null -ne $v['aanbod'] -and $null -ne $v['aanbod_buiten_bbg']) {
-            $gat = [math]::Abs(($v['aanbod'] + $v['aanbod_buiten_bbg']) - $v['aanbod_totaal'])
-            Meld 'B' $casus "$j aanbod binnen plus buiten is het totaal" $(if ($gat -lt 0.001) {'PASS'} else {'FAIL'}) ("gat {0:N4} mln m3" -f $gat) 'kleiner dan 0,001'
-        }
     }
 
-    # Grondbalans. De drie bestemmingen zijn deelverzamelingen van het verlies, dus ze hoeven niet
-    # exact op te tellen, maar een gat groter dan een half procent betekent dat er een categorie
-    # zoek is en niet dat er een restje naar een vierde bestemming gaat.
-    $gb = LeesDiag "${casus}_${j}_grondbalans_bestemmingen.txt"
-    if ($null -eq $gb)     { Meld 'B' $casus "$j grondbalans" 'GEEN DATA' 'bestand ontbreekt' 'draai /Diagnose/GenerateAll' }
-    elseif ($gb.Verouderd) { Meld 'B' $casus "$j grondbalans" 'GEEN DATA' "bestand van $($gb.Tijd.ToString('dd-MM HH:mm'))" 'na de runstart' }
-    elseif (NietVanToepassing $gb) { Meld 'B' $casus "$j grondbalans" 'INFO' 'niet van toepassing' (($gb.Tekst -split ';')[1]) }
-    else {
-        $g = Ontleed ($gb.Tekst -replace ';(?=[a-z_]+;)', '|')
-        $som = $g['verstedelijking_vruchtbaar_ha'] + $g['nieuwenatuur_vruchtbaar_ha'] + $g['waterberging_vruchtbaar_ha'] - $g['overlap_verst_natuur_ha']
-        $rest = $g['verdwenen_vruchtbaar_ha'] - $som
-        $frac = if ($g['verdwenen_vruchtbaar_ha'] -gt 0) { $rest / $g['verdwenen_vruchtbaar_ha'] } else { 0 }
-        Meld 'B' $casus "$j grondbalans sluit" $(if ([math]::Abs($frac) -lt 0.005) {'PASS'} else {'FAIL'}) ("rest {0:N1} ha, {1:P2}" -f $rest, $frac) 'onder 0,5 procent'
-    }
+    # De grondbalans en de claimrealisatie, landelijk en per NVM-regio, zijn sinds #833 rijen in Checks
+    # (grondbalans_rest_fractie, claimreal_NL_woningen, claimreal_NL_banen, claimreal_NVM_onder_alarm).
 
-    # Claimrealisatie. Kijk naar het uiterste over de regio's en niet naar het landelijke gemiddelde;
-    # een landelijke 1,00 kan negen regio's onder de norm verbergen.
-    foreach ($paar in @(@('claimreal_NL_woningen','wonen landelijk',0.99,1.01), @('claimreal_NL_banen','banen landelijk',0.99,1.06))) {
-        $d = LeesDiag "${casus}_${j}_$($paar[0]).txt"
-        if ($null -eq $d -or $d.Verouderd) { Meld 'B' $casus "$j $($paar[1])" 'GEEN DATA' 'ontbreekt of verouderd' 'draai /Diagnose/GenerateAll'; continue }
-        if (NietVanToepassing $d) { Meld 'B' $casus "$j claimrealisatie $($paar[1])" 'INFO' 'niet van toepassing' 'de sector doet in deze run niet mee'; continue }
-        $w = [double]($d.Tekst -replace ',','.')
-        Meld 'B' $casus "$j claimrealisatie $($paar[1])" $(if ($w -ge $paar[2] -and $w -le $paar[3]) {'PASS'} else {'FAIL'}) ("{0:N4}" -f $w) ("{0} tot {1}" -f $paar[2], $paar[3])
-    }
-
-    # Wonen per NVM-regio. Beoordeel op het AANTAL regio's onder de norm en niet op het minimum:
-    # het minimum zakt vanzelf naarmate de reeks vordert, want de claim groeit door terwijl de
-    # ruimte opraakt, en een vaste ondergrens geeft daarom vanaf de latere zichtjaren altijd een
-    # FAIL. Dat maakt de toets waardeloos. Het aantal regio's onder de norm is wel te vergelijken:
-    # de oplevering van 28 augustus noteerde er negen op Y2120 voor de referentievarianten.
-    $nvm = LeesDiag "${casus}_${j}_claimreal_NVM_woningen.txt"
-    if (NietVanToepassing $nvm) { Meld 'B' $casus "$j NVM-regio's onder alarmdrempel" 'INFO' 'niet van toepassing' 'wonen alloceert niet op NVM; zie de claimtoets van wonen' }
-    if ($null -ne $nvm -and -not $nvm.Verouderd) {
-        $r = @($nvm.Tekst -split ';' | Where-Object { $_ -match '^\d' } | ForEach-Object { [double]$_ } | Where-Object { $_ -gt 0 })
-        if ($r.Count -gt 0) {
-            $min    = ($r | Measure-Object -Minimum).Minimum
-            # LET OP: 0,99 is de ALARMDREMPEL van dit harnas en niet de norm van het model.
-            # Het model hanteert 0,98 als ondergrens, als ModelParameters/Advanced/ClaimRealisatie_NormOnder,
-            # en dat is de waarde achter de kolommen OnderNorm, OpNorm en BovenNorm die in de levering komen.
-            # De twee tellen dus verschillend: op NbSGenuanceerd Y2060 geeft deze drempel 26 regio's en de
-            # modelnorm 22. Dat verschil is bewust, een levering wordt strenger beoordeeld dan het model
-            # zichzelf beoordeelt, maar het moet uit de regelnaam blijken. Wie ze gelijk wil trekken zet
-            # $drempel op /ModelParameters/Advanced/ClaimRealisatie_NormOnder; dan verandert het oordeel.
-            $drempel = 0.99
-            $onder  = @($r | Where-Object { $_ -lt $drempel }).Count
-            # Ruim boven de negen van 28 augustus, zodat gewone spreiding geen alarm geeft en een
-            # verdubbeling wel. NbSGenuanceerd zat op Y2120 op 33 en dat is een echte bevinding.
-            $grens  = 15
-            Meld 'B' $casus "$j NVM-regio's onder alarmdrempel $drempel" $(if ($onder -le $grens) {'PASS'} else {'FAIL'}) ("$onder van $($r.Count), laagste {0:N4}" -f $min) "hoogstens $grens; let op: modelnorm is 0,98"
-        }
-    }
-
-    # Waterbergingsclaim. Sinds #664 hoort BAU en BAU2 geen enkele regio met een opgave te hebben.
+    # Waterbergingsclaim. Sinds #664 hoort BAU en BAU2 geen enkele regio met een opgave te hebben. Blijft hier en niet
+    # in Checks, want de norm hangt van de variant af en een rij in die tabel kent een band voor alle varianten.
     $wbc = LeesDiag "${casus}_${j}_claimreal_Waterberging.txt"
     if (NietVanToepassing $wbc) { Meld 'B' $casus "$j waterberging" 'INFO' 'niet van toepassing' 'de sector Waterberging doet in deze run niet mee' }
     elseif ($null -ne $wbc -and -not $wbc.Verouderd) {
@@ -319,7 +241,7 @@ function TrapB([string]$variant, [string]$jaar) {
         }
     }
 
-    ToetsNormen $casus $j $NormenZichtjaar
+    ToetsChecks $casus $j
 }
 
 # --------------------------------------------------------- trap C: wat zelf gerekend moet worden
