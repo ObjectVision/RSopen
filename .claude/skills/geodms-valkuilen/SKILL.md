@@ -308,6 +308,14 @@ Denk hierbij aan de plekken waar de configuratie zelf bewust een null neerzet, z
 
 Beide helften bewijs je in seconden met een losse .dms in de scratchpad; zie de skill rs-draaien, trap 2.
 
+### `max_elem` en `min_elem` slaan een null over
+
+`max_elem(null, x)` geeft `x` en geen null, in beide volgordes; alleen als alle argumenten null zijn komt er null uit. `min_elem` doet hetzelfde. Gemeten op 2026-10-12 met GeoDms20.20.0.m op a = 1, null, 3, null en b = 0, 0, null, null: `max_elem(a, b)` en `max_elem(b, a)` geven allebei 1, 0, 3, null, terwijl `a + b` drie nullen geeft.
+
+Daarmee breekt de rekenkundige helft van hierboven precies op de plek waar je een ondergrens zet. `max_elem(netto - (voor + in), 0d)` geeft 0 zodra `in` leeg is: het verschil wordt null en de ondergrens neemt het over, zodat onbekend stil "niets meer over" wordt. Zo telde `SourceData/Grondgebruik/IBIS.dms` elk terrein met een lege uitgifte in het peiljaar als helemaal uitgegeven en dus vol. In IBIS 2024 waren dat 406 terreinen, en 18 daarvan zaten met samen 112 ha nog uitgeefbaar ten onrechte dicht voor alle werksubsectoren. Dezelfde regel zonder `max_elem`, in pbl-nl/model-RS-PlanCapaciteit, deed het omgekeerde: daar bleef de null staan, gaf `> 0` FALSE en viel het terrein uit de harde plancapaciteit.
+
+Beslis dus voor je een ondergrens zet wat een lege invoer betekent, en schrijf dat als `MakeDefined` op de invoer zelf: `max_elem(netto - (voor + MakeDefined(in, 0d)), 0d)`. Tel de nullen op de invoer en niet op de uitkomst, want de uitkomst heeft er geen meer: `NogUitgeefbaarHa` meldde nul nullen terwijl `uitgifte_in_2023` er 406 had.
+
 ### Classify laat een waarde onder de laagste klassegrens op null vallen
 
 `Classify(x, ClassBreaks)` geeft null voor elke waarde onder de laagste klassegrens, en een klassegrens die zelf `null_f` is slaat hij over. Dat is de rekenkundige helft van hierboven in een andere gedaante: `combine_data` is rekenkundig, dus een null op een van de assen maakt de hele combinatie-index null en de `rjoin` erachter geeft niets terug. Op de kaart is dat een witte cel, en die leest als een lage waarde in plaats van als een ontbrekende. Zo verloor de SOMERS-emissiekaart bij #619 percelen, en verschillend per variant: alleen de variant die de gemeten drooglegging uit de peilvakken leest kwam onder de natste grens uit, de varianten met een constante niet, zodat elk vernattingseffect een verschil van twee sommen over een ander areaal was.
@@ -666,3 +674,15 @@ Loop bij een `Unknown identifier` op een gegenereerd subitem dus eerst de ontkop
 Hetzelfde patroon geldt voor een bronbestand dat in de gedeelde bronmap is hernoemd of verplaatst. Na een enkele regel `GDAL Error: cannot open dataset` volgen meldingen op namen die niets met de bron te maken hebben: `Unknown identifier 'org_rel'` in de veenketen, `'Alloc/landuse'`, en in de allocatie honderdveertig regels `Unknown identifier 'Districts'`. Zie je `Unknown identifier` op een naam die je niet hebt aangeraakt, grep het staplog dan eerst op `cannot open dataset` voordat je in de configuratie duikt. Een ontbrekend bronbestand van een variant legt bovendien elke variant plat, ook BAU: de takken in `VariantData_T` zijn data-expressies met een voorwaarde, en GeoDMS resolvet beide takken ook als de voorwaarde de ene niet kiest. Herkenbaar aan exit 1 binnen een seconde.
 
 Drie stappen. Zoek het bestand met `Get-ChildItem -Recurse -Filter '*<deel van de naam>*'` in de map achter `%sourceDataDir%` voordat je concludeert dat het weg is; die map is schrijf-eenmaal en wordt aan de bronkant opgeruimd, dus het staat vaker ergens anders dan dat het echt ontbreekt. Draai dezelfde item-aanroep in een losse cfg-kopie met de verdachte schakelaar uit: geeft dat dezelfde fout, dan is de schakelaar het niet. En vergelijk met het staplog van de vorige geslaagde run: een `grep -c` op de bestandsnaam die daar 0 gaf en nu 3 zegt dat die keten de bron eerder niet las. Haal daarna eerst de laatste commits op voordat je zelf het pad repareert, tenzij er op deze machine een productierun loopt, want een andere machine liep er waarschijnlijk eerder tegenaan.
+
+## regex_search geeft zonder treffer een ontbrekende waarde, geen lege tekst
+
+`regex_search(tekst, patroon)` geeft het gevonden stuk terug, en zonder treffer een ontbrekende waarde, niet `''`. Een toets `regex_search(t, p) == ''` is daardoor nooit waar, en `<> ''` lijkt alleen te werken omdat een ontbrekende waarde in `any` of in een selectie als onwaar telt. Toets met `IsDefined(regex_search(t, p))` en `!IsDefined(regex_search(t, p))`. `regex_match` vraagt een treffer op de hele tekst, dus `'.*(a|b).*'`. `regex_replace` geeft de tekst ongewijzigd terug als het patroon niet past; toets dus eerst met `regex_match` voordat je een groep uitleest. Een backslash in een patroon wordt in een dms-expressie ontsnapt voordat de regex hem ziet (`\\b` geeft een waarschuwing over `\b`); schrijf tekenklassen als `[0-9]` en `[ ,:.]`.
+
+Gemeten op 2026-10-08, GeoDms20.20.0.m, in pbl-nl/model-RS-PlanCapaciteit (`SourceData/Plancapaciteit/Vergunningen`): een titelfilter met `== ''` liet alle 1.690 zaken vallen, zonder melding.
+
+## Een GML-schema telt nul objecten als de klasse anders heet dan het element
+
+Een `GFS_TEMPLATE` voor GDAL moet zijn klasse noemen naar het GML-element van de objecten: `<Name>BuildingPart</Name>` bij `<ElementPath>BuildingPart</ElementPath>`. Onder een andere naam meldt `ogrinfo -so` een Feature Count van 0, terwijl `ogrinfo -al` de objecten wel toont; GeoDMS neemt die telling over en schrijft een lege store, met exit 0 en zonder `[W]`. Verder: niets voor het hoofdelement van de gfs, ook geen commentaar; en het pad naar de gfs niet met `expand(.)` in een `GDAL_Options` onder de storage zetten, want dat geeft een recursie zodra GDAL de laag leest. Zet het pad in een parameter buiten de unit.
+
+Gemeten op 2026-10-08, GeoDms20.20.0.m, op de pandlaag van de BRK Kadastrale Kaart (`SourceData/Kadaster` in pbl-nl/model-RS-PlanCapaciteit): twaalf minuten lezen voor een store zonder panden.
