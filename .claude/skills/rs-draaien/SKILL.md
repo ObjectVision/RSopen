@@ -29,7 +29,7 @@ Gaat er toch een zware run aan, kijk dan eerst wie er kan meeliften. De meeste v
 ## Trap 1: laadt het (seconden)
 
 ```powershell
-& "C:\Program Files\ObjectVision\GeoDms20.20.0.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "<werkkopie>\cfg\main.dms" "/pad/naar/item"
+& "C:\Program Files\ObjectVision\GeoDms20.23.1.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "<werkkopie>\cfg\main.dms" "/pad/naar/item"
 ```
 
 Of via het meegeleverde script, dat de projectversie kiest, de tijd meet en de foutregels filtert:
@@ -136,7 +136,7 @@ In PowerShell bindt de komma sterker dan de plus. `@($g+'a', $g+'b')` wordt daar
 
 ## Welke GeoDMS
 
-Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.20.0.m`. Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
+Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.23.1.m`. Niet op 20.20.0.m: daar haalde een allocatie van heel Nederland de commit-limiet van de machine (Y2030 van WLO_hoog_BAU, 586 GB toegezegd en gestopt, tegen 279 GB op 20.23.1 en 284 GB op 20.17, gemeten op 2026-10-13), en een iteratie kan er stoppen op "no read lock can be set" (ObjectVision/GeoDMS#1295). Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
 
 De versie staat op zes plekken: `geodmsversion` in `batch/RunAll.cmd`, waar `batch/Preflight.py` hem leest, de default van `-Version` in `run-item.ps1` en `resolutie.ps1`, en `-Exe` in `Run2120.ps1`, `RunIndicatoren.ps1` en `ToetsOplevering.ps1`. Controleer ze alle zes voordat je een lange run start. De versie staat niet in de fingerprint van de ontkoppelde bestanden: na een wissel blijft een bestand van de vorige versie stil in gebruik, ook waar de nieuwe versie een andere kaart zou maken. Vergelijk na een wissel met `batch/VergelijkUitvoer.py`, of zet `AlwaysRemakeDecoupledFiles` tijdelijk aan.
 
@@ -227,7 +227,7 @@ Neem een zelftoets op zodra je een samengestelde toets met de hand nabouwt, bijv
 
 Die twee werken niet hetzelfde. `DiagCasus` voedt een gewone parameter, dus `WLO_hoog_BAU` volstaat. `DiagJaar` voedt een meta-expressie, dus de waarde moet zelf aanhalingstekens dragen: `'Y2040'` en niet `Y2040`. Zonder die aanhalingstekens wordt het zichtjaar als itemnaam gelezen en krijg je `Unknown identifier 'Y2040'`, een melding die naar het diagnose-item wijst en niet naar de omgevingsvariabele.
 
-Een meetharnas dat een vraag uit een issue beantwoordt is tijdelijk: bouw het in een thematische container van `cfg/main/Diagnose.dms` (`Waterberging`, `Natuur`, `Groen`, `Werken` en zo verder) of als los bestand in `cfg/main/Diagnose/`, en haal het weg zodra de getallen in het issue staan. Wat blijft krijgt een thematische naam en een norm in `batch/ToetsOplevering.ps1`, en draait mee in `GenerateAll` of `GenerateBasisjaar`, of zegt in zijn Descr dat het op aanvraag is.
+Een meetharnas dat een vraag uit een issue beantwoordt is tijdelijk: bouw het in een thematische container van `cfg/main/Diagnose.dms` (`Waterberging`, `Natuur`, `Groen`, `Werken` en zo verder) of als los bestand in `cfg/main/Diagnose/`, en haal het weg zodra de getallen in het issue staan. Wat blijft krijgt een thematische naam en een norm in de kolommen `norm_onder` en `norm_boven` van `Checks` of `ChecksBasisjaar`, en draait mee in `GenerateAll` of `GenerateBasisjaar`, of zegt in zijn Descr dat het op aanvraag is.
 
 Let bij een nieuw harnas op de naamketen. Een kale naam zoekt vanuit de container omhoog en komt dan langs de items van het hoofdharnas voordat hij de wortel bereikt, dus namen als `Casus`, `Jaar`, `Variant` en `Pad_Z` binden aan het hoofdharnas zodra je ze niet zelf definieert. Verwijs naar modelcode daarom met een absoluut pad.
 

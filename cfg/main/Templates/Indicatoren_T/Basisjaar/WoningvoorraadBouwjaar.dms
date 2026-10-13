@@ -1,0 +1,88 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De basisjaarkant van de woningvoorraad naar bouwjaar (#836): per cel het aandeel van de basisjaarwoningen in
+// elke bouwjaarklasse, uit de BAG van het basisjaar. De zichtjaarkant staat in
+// Templates/Indicatoren/WoningvoorraadBouwjaar.dms.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container WoningvoorraadBouwjaar
+: Descr = "De woningen van het basisjaar per bouwjaarklasse (#836). De stand draagt geen bouwjaar, dus het aandeel per klasse komt uit de BAG van het basisjaar: per pand de unieke woon-vbo's naar het
+			oorspronkelijke bouwjaar van het pand, met dezelfde toedeling van panden over cellen als de basisjaarstand (Uitsmeren_T in BaseData/Verdeling_VSSH). Woningen in een pand zonder bouwjaar en
+			vbo's zonder pand vallen in Onbekend. Het aandeel wordt op de stand toegepast en niet de telling zelf, zodat de klassen per cel altijd optellen tot de basisjaarstand."
+{
+	unit<UInt8> Klasse := /SourceData/Vastgoed/Funderingsschade/BouwjaarKlassen
+	, Descr = "De vier bouwjaarklassen van SourceData/Vastgoed, met hun klassegrenzen; Onbekend staat er los naast."
+	{
+		attribute<String> Kolom : ['Voor1940', 'Van1940tot1970', 'Van1970tot1990', 'Vanaf1990']
+		, IntegrityCheck = "all(IsDefined(this))"
+		, Descr = "De naam van de klasse in de kaarten en de tabelkolommen, WoningvoorraadBouwjaar_<Kolom>, in de volgorde van de klassen.";
+
+		attribute<Bool> IsNieuwbouwKlasse := ClassBreaks == max(ClassBreaks)
+		, IntegrityCheck = "max(ClassBreaks) <= value(/ModelParameters/Model_StartYear, yr)"
+		, Descr = "De klasse waarin alles valt wat na het basisjaar is gebouwd: de jongste, mits die voor het basisjaar begint.";
+	}
+
+	unit<UInt32> Pand      := ='/SourceData/Vastgoed/BAG/PerJaar/Y' + string(/ModelParameters/Model_StartYear) + '/pand', Descr = "De panden van het basisjaar, dezelfde set als in Verdeling_VSSH en EigendomStaat.";
+	unit<UInt32> Toedeling := Pand/ToedelingsMatrix, Descr = "Pand maal cel; ToedelingPand_CAD is per pand hernormaliseerd binnen het CompactedAdminDomain, zoals Uitsmeren_T de woningen telt.";
+
+	attribute<Woning> Woningen_perPand   (Pand)      := Pand/Counts/woon_VBOs_uniek[Woning], Descr = "De unieke woon-vbo's per pand, dezelfde telling als count_vbo_pand_woon in EigendomStaat.";
+	attribute<Klasse> Klasse_rel         (Pand)      := Classify(Pand/Bouwjaar_trunc, Klasse/ClassBreaks), Descr = "Leeg voor een pand zonder bekend bouwjaar.";
+	attribute<Woning> Woningen_Toedeling (Toedeling) := Woningen_perPand[Toedeling/Pand_rel] * Toedeling/ToedelingPand_CAD;
+	attribute<Klasse> Klasse_Toedeling   (Toedeling) := Klasse_rel[Toedeling/Pand_rel];
+
+	container Per_CAD :=
+		for_each_nedv(
+			Klasse/Kolom
+			, 'sum(Klasse_Toedeling == ' + string(id(Klasse)) + '[Klasse] ? Woningen_Toedeling : 0[Woning], Toedeling/CompactedAdminDomain_rel)'
+			, /Geography/CompactedAdminDomain
+			, Woning
+		)
+	, Descr = "De getelde woningen per klasse per cel van het CompactedAdminDomain."
+	{
+		attribute<Woning> ZonderPand (/Geography/CompactedAdminDomain) := ='add(' + AsItemList('/BaseData/StartState/Verdeling_VSSH/VBOsZonderPand/Per_CAD_WP2/' + /Classifications/Vastgoed/WP2/name) + ')'
+		, Descr = "Woon-vbo's zonder pand in de pandenset; de basisjaarstand telt ze op hun vbo-punt, hun bouwjaar is onbekend.";
+		attribute<Woning> Onbekend   (/Geography/CompactedAdminDomain) := sum(IsNull(Klasse_Toedeling) ? Woningen_Toedeling : 0[Woning], Toedeling/CompactedAdminDomain_rel) + ZonderPand;
+		attribute<Woning> Totaal     (/Geography/CompactedAdminDomain) := sum(Woningen_Toedeling, Toedeling/CompactedAdminDomain_rel) + ZonderPand;
+	}
+
+	attribute<Woning> Geteld (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, Per_CAD/Totaal, 0[Woning])
+	, Descr = "Alle basisjaarwoningen opnieuw geteld uit de BAG; de noemer van de aandelen.";
+
+	container Aandeel :=
+		for_each_nedv(
+			Klasse/Kolom
+			, 'Geteld > 0[Woning] ? recollect_by_cond(AdminDomain/IsCompactedDomain, Per_CAD/' + Klasse/Kolom + ', 0[Woning])[Float32] / Geteld[Float32] : 0f'
+			, AdminDomain
+			, Float32
+		)
+	, Descr = "Het deel van de getelde woningen in de cel per klasse."
+	{
+		attribute<Float32> Onbekend (AdminDomain) := Geteld > 0[Woning] ? recollect_by_cond(AdminDomain/IsCompactedDomain, Per_CAD/Onbekend, 0[Woning])[Float32] / Geteld[Float32] : 1f
+		, Descr = "Het deel zonder bekend bouwjaar; een cel waar de stand woningen heeft en de BAG-telling niet, valt hier helemaal in.";
+	}
+
+	attribute<Woning> Stand_Woningen (AdminDomain) := MakeDefined(Stand/Aantal_Woningen_Totaal, 0[Woning]), Descr = "De basisjaarstand, waarop de aandelen worden toegepast.";
+
+	container Woningen :=
+		for_each_nedv(
+			Klasse/Kolom
+			, 'Stand_Woningen * Aandeel/' + Klasse/Kolom
+			, AdminDomain
+			, Woning
+		)
+	, Descr = "De basisjaarstand per bouwjaarklasse."
+	{
+		attribute<Woning> Onbekend (AdminDomain) := Stand_Woningen * Aandeel/Onbekend;
+	}
+
+	parameter<Woning> Geteld_Per_NL := sum(Geteld), Descr = "Controlegetal: de BAG-telling, hoort gelijk te zijn aan Stand_Per_NL; wijkt hij af, dan komt het aandeel uit een andere BAG dan de stand.";
+	parameter<Woning> Stand_Per_NL  := sum(Stand_Woningen);
+}

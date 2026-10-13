@@ -1,0 +1,77 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De woningvoorraad van het zichtjaar naar bouwjaarklasse (#836). Het aandeel per klasse in het basisjaar staat in
+// Templates/Indicatoren_T/Basisjaar/WoningvoorraadBouwjaar.dms.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container WoningvoorraadBouwjaar
+: Descr = "De woningen van het zichtjaar per bouwjaarklasse (#836). De stand draagt geen bouwjaar; een woning uit een klasse voor het basisjaar kan alleen een basisjaarwoning zijn. Per cel blijft van de
+			basisjaarwoningen het deel staan dat de stand van het zichtjaar nog draagt, begrensd op 1, en niets op een cel waar de allocatie een ontwikkelpakket heeft ingericht (IsOPCel); dat deel gaat
+			naar rato over de klassen van het basisjaar. Wat de stand daarboven draagt is na het basisjaar gebouwd en telt in de jongste klasse. Twee aannames: een gedeeltelijke afname raakt alle klassen
+			naar rato, en waar de BAG op een cel sloop en meer nieuwbouw kent, telt de gesloopte basisjaarvoorraad als behouden. Exact kan het pas met het bouwjaar als dimensie van de stand."
+{
+	unit<UInt8> Klasse := Basisjaar/WoningvoorraadBouwjaar/Klasse;
+
+	attribute<Woning>  Woningen_Zichtjaar (AdminDomain) := MakeDefined(Stand/Aantal_Woningen_Totaal, 0[Woning]);
+	attribute<Woning>  Woningen_Basisjaar (AdminDomain) := Basisjaar/WoningvoorraadBouwjaar/Stand_Woningen;
+	attribute<Bool>    IsModelpakket      (AdminDomain) := WaardeNabijheidGroen/Bron_Zichtjaar/IsOPCel, Descr = "Hier heeft de allocatie de stand vervangen door een ontwikkelpakket, dus is er van het basisjaar niets over.";
+	attribute<Float32> Behouden           (AdminDomain) := IsModelpakket || Woningen_Basisjaar <= 0[Woning] ? 0f : min_elem(Woningen_Zichtjaar[Float32] / Woningen_Basisjaar[Float32], 1f)
+	, Descr = "Het deel van de basisjaarwoningen dat in het zichtjaar nog staat.";
+	attribute<Woning>  BasisjaarBehouden  (AdminDomain) := Woningen_Basisjaar * Behouden;
+	attribute<Woning>  NaBasisjaar        (AdminDomain) := max_elem(Woningen_Zichtjaar - BasisjaarBehouden, 0[Woning]), Descr = "Wat de stand bovenop de behouden basisjaarwoningen draagt: nieuwbouw na het basisjaar, uit de BAG of de allocatie.";
+
+	container Woningen :=
+		for_each_nedv(
+			Klasse/Kolom
+			, 'BasisjaarBehouden * Basisjaar/WoningvoorraadBouwjaar/Aandeel/' + Klasse/Kolom + (Klasse/IsNieuwbouwKlasse ? ' + NaBasisjaar' : '')
+			, AdminDomain
+			, Woning
+		)
+	, Descr = "De woningen per bouwjaarklasse; de klassen en Onbekend tellen per cel op tot de stand."
+	{
+		attribute<Woning> Onbekend (AdminDomain) := BasisjaarBehouden * Basisjaar/WoningvoorraadBouwjaar/Aandeel/Onbekend;
+	}
+
+	parameter<String> Pad    := '%LocalDataProjDir%/Indicatoren/' + Casus_name + '/WoningvoorraadBouwjaar_', Descr = "Begin van de bestandsnaam van de kaarten; daarna volgen de klasse en Staart.";
+	parameter<String> Staart := '_' + Zichtjaar_name + '_' + /ModelParameters/StudyArea + '.tif';
+
+	container Schrijf :=
+		for_each_nedvat(
+			Klasse/Kolom
+			, 'Woningen/' + Klasse/Kolom
+			, AdminDomain
+			, Woning
+			, Pad + Klasse/Kolom + Staart
+			, 'gdalwrite.grid'
+		)
+	, Descr = "De kaarten per klasse, met de georeferentie in de tif zelf; een eigen container, zodat Woningen geen opslag draagt."
+	{
+		attribute<Woning> Onbekend (AdminDomain) := Woningen/Onbekend, StorageName = "=Pad + 'Onbekend' + Staart", StorageType = "gdalwrite.grid";
+	}
+
+	// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824) --
+	container Lees :=
+		for_each_ndvat(
+			Klasse/Kolom
+			, AdminDomain
+			, Woning
+			, Pad + Klasse/Kolom + Staart
+			, 'gdal.grid'
+		)
+	, StorageReadOnly = "True"
+	, Descr = "De kaarten van Schrijf teruggelezen, voor een tabelrun met ModelParameters/TabellenUitExport aan."
+	{
+		attribute<Woning> Onbekend (AdminDomain) : StorageName = "=Pad + 'Onbekend' + Staart", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	}
+	container Live := Woningen;
+	container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+	, Descr = "Waar de tabelkolommen hun per-celwaarden vandaan halen, gestuurd door ModelParameters/TabellenUitExport (#824).";
+}
