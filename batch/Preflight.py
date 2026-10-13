@@ -118,7 +118,7 @@ def exe_uit_runall() -> str:
     """De GeoDMS-versie die RunAll.cmd zet, zodat de preflight niet op een andere versie toetst."""
     tekst = (projdir() / "batch" / "RunAll.cmd").read_text(encoding="utf-8", errors="replace")
     m = re.search(r"^set geodmsversion=(\S+)", tekst, re.M)
-    versie = m.group(1) if m else "GeoDms20.17.0.m"
+    versie = m.group(1) if m else "GeoDms20.23.1.m"
     return rf"C:\Program Files\ObjectVision\{versie}\GeoDmsRun.exe"
 
 
