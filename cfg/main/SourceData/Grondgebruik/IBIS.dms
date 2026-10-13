@@ -317,15 +317,26 @@ container IBIS
 				ontbrekende brondata.";
 		attribute<Meter>     Buffer_Dist                    := MakeDefined(MilieuCat/Buffer_wonen[MilieuCat_rel], 0[Meter]);
 
+		attribute<bool>      IsWoningbouwplanCel (AdminDomain) := /SourceData/Plancapaciteit/Read/Wonen/Hard/Per_AdminDomain || /SourceData/Plancapaciteit/Read/Wonen/Zacht/Per_AdminDomain
+		, Descr = "Ligt de cel in een woningbouwplan, hard of zacht, uit de plancaplevering van ModelParameters/PlanCapaciteit_filedate.";
+		attribute<uint32>    NrCellen                       := sum_uint32(IsDefined(Per_AdminDomain), Per_AdminDomain), Descr = "Het aantal cellen van 25 meter waarvan het middelpunt in het terrein ligt.";
+		attribute<uint32>    NrCellenOnderWoningbouwplan    := sum_uint32(IsWoningbouwplanCel, Per_AdminDomain);
+		attribute<float32>   AandeelOnderWoningbouwplan     := NrCellen > 0 ? float32(NrCellenOnderWoningbouwplan) / float32(NrCellen) : 0f
+		, Descr = "Het deel van het terrein dat onder een woningbouwplan ligt. Een terrein kleiner dan een cel heeft geen cellen en telt niet als transformerend.";
+		attribute<bool>      IsTransformerend               := AandeelOnderWoningbouwplan >= /ModelParameters/Wonen/MilieuCat/TransformatieDrempel
+		, Descr = "Gaat het terrein volgens de plannen grotendeels naar wonen? Dan verdwijnt de bedrijvigheid en houdt het geen milieuzone, niet op het terrein en niet eromheen; zie
+				ModelParameters/Wonen/MilieuCat/TransformatieDrempel.";
+
 		//Alleen terreinen met een bufferafstand > 0 (milieucategorie 2 en hoger) blokkeren wonen. Voorheen kregen ook cat-1-terreinen, economische zones en terreinen zonder categorie via geos_buffer(0) hun eigen polygoon als buffer, waardoor wonen op elke IBIS-werklocatie restrictief was; dat was alleen als rem op hoge categorieen bedoeld.
-		unit<uint32> MetWoonbuffer := select_with_org_rel(Buffer_Dist > 0[Meter])
+		//Een terrein dat volgens de woningbouwplannen grotendeels transformeert, krijgt geen buffer: zijn bedrijvigheid verdwijnt.
+		unit<uint32> MetWoonbuffer := select_with_org_rel(Buffer_Dist > 0[Meter] && !IsTransformerend)
 		{
 			attribute<rdc_meter> geometrie     (poly) := geometry[org_rel]; //lexicaal indexeren: org_rel -> Buffer_Dist zoekt in de onderliggende Y-unit, waar de afgeleide attributen niet bestaan
 			attribute<Meter>     BufferAfstand := Buffer_Dist[org_rel];
 			attribute<rdc_meter> Buffer_wonen  (poly) := geos_buffer_multi_polygon(geometrie, float64(BufferAfstand), 4b);
 		}
 
-		attribute<bool>      Calc_RestrictiefWonen (AdminDomain) := IsDefined(poly2grid(MetWoonbuffer/Buffer_wonen, AdminDomain)), Descr = "Binnen de milieucat-buffer (inclusief het terrein zelf) van een werklocatie met categorie 2 of hoger; daar is wonen in de basisjaar-zeef restrictief.";
+		attribute<bool>      Calc_RestrictiefWonen (AdminDomain) := IsDefined(poly2grid(MetWoonbuffer/Buffer_wonen, AdminDomain)), Descr = "Binnen de milieucat-buffer (inclusief het terrein zelf) van een werklocatie met categorie 2 of hoger die niet transformeert; daar is wonen in de basisjaar-zeef restrictief.";
 
 		parameter<String> FileName_RestrictiefWonen := '%LocalDataProjDir%/BaseData/Grondgebruik/IBIS/RestrictiefWonen_'+/ModelParameters/IBIS_Year+'_'+/ModelParameters/StudyArea+'.tif'
 		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft. PropValue van een StorageName levert de expressietekst en niet de uitkomst, en daar kan ExistingFile niets mee.";
@@ -337,12 +348,15 @@ container IBIS
 			+ ';buffer_wonen_m='  + asList(string(/ModelParameters/Wonen/MilieuCat/Buffer_wonen), ',')
 			+ ';milieucat_count=' + string(#/ModelParameters/Wonen/MilieuCat)
 			+ ';milieucat_aanvulling=' + string(/ModelParameters/Wonen/MilieuCat/AanvullenBijOnbekend) + ':' + string(/ModelParameters/Wonen/MilieuCat/Aanvulling_Zeehaven) + ',' + string(/ModelParameters/Wonen/MilieuCat/Aanvulling_Bedrijventerrein)
+			+ ';transformatie_drempel=' + string(/ModelParameters/Wonen/MilieuCat/TransformatieDrempel)
+			+ ';plancap_wonen='   + (/ModelParameters/UsePrivPlanCapaciteit ? 'priv_' : '') + /ModelParameters/PlanCapaciteit_filedate
 			+ ';admin_grid='      + /ModelParameters/Advanced/AdminDomain_ref
 			+ ';grid_size='       + string(AdminDomain/gridsize)
 			+ ';study_area='      + /ModelParameters/StudyArea
 		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. De bufferafstanden per milieucategorie komen uit de VNG-tabel in
 				ModelParameters/Wonen/MilieuCat, dus een gewijzigde tabel verandert de kaart zonder de bestandsnaam te raken. ibis_sources benoemt de brondata per bruikbare jaargang en moet met de hand mee
-				veranderen bij een nieuwe IBIS-levering; stacked_years is de jaargangenstapeling, voor het volledige verslag.";
+				veranderen bij een nieuwe IBIS-levering; stacked_years is de jaargangenstapeling, voor het volledige verslag. transformatie_drempel en plancap_wonen bepalen welke terreinen als
+				transformerend geen buffer krijgen.";
 
 		container Decoupling_RestrictiefWonen := /Templates/DecoupledFile_T(FileName_RestrictiefWonen, Fingerprint_RestrictiefWonen, 'Write_RestrictiefWonen');
 
@@ -359,7 +373,7 @@ container IBIS
 				Decoupling_RestrictiefWonen/Explanation zegt waarom een bestand wel of niet hergebruikt wordt.";
 
 		//Milieugevoelige niet-woonfuncties (diensten, detailhandel, verblijfsrecreatie) worden alleen rond zware terreinen (categorie 4 en hoger) geweerd, met dezelfde VNG-buffer. Voorheen mochten die functies wel direct naast bestaand categorie-6-terrein, terwijl ze rond nieuw gealloceerde nijverheid juist gebufferd werden.
-		unit<uint32> MetGevoeligBuffer := select_with_org_rel(MakeDefined(Milieucategorie_x10, 0b) >= 40b)
+		unit<uint32> MetGevoeligBuffer := select_with_org_rel(MakeDefined(Milieucategorie_x10, 0b) >= 40b && !IsTransformerend)
 		{
 			attribute<rdc_meter> geometrie     (poly) := geometry[org_rel];
 			attribute<Meter>     BufferAfstand := Buffer_Dist[org_rel];
@@ -378,6 +392,8 @@ container IBIS
 			+ ';milieucat_count=' + string(#/ModelParameters/Wonen/MilieuCat)
 			+ ';milieucat_aanvulling=' + string(/ModelParameters/Wonen/MilieuCat/AanvullenBijOnbekend) + ':' + string(/ModelParameters/Wonen/MilieuCat/Aanvulling_Zeehaven) + ',' + string(/ModelParameters/Wonen/MilieuCat/Aanvulling_Bedrijventerrein)
 			+ ';min_cat=40'
+			+ ';transformatie_drempel=' + string(/ModelParameters/Wonen/MilieuCat/TransformatieDrempel)
+			+ ';plancap_wonen='   + (/ModelParameters/UsePrivPlanCapaciteit ? 'priv_' : '') + /ModelParameters/PlanCapaciteit_filedate
 			+ ';admin_grid='      + /ModelParameters/Advanced/AdminDomain_ref
 			+ ';grid_size='       + string(AdminDomain/gridsize)
 			+ ';study_area='      + /ModelParameters/StudyArea
