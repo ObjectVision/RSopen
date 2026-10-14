@@ -424,7 +424,7 @@ De restrictie- en stimulikaarten die RSopen leest als `SourceData/Restricties/<s
 Een nieuwe set in RSopen brengen gaat in vier stappen.
 
 1. Draai het restrictieproject. Het verwacht zijn brondata op `%sourceDataDir%/Ruimtelijke_Restricties`; `sourceDataDir` staat in `HKCU\Software\ObjectVision\<machinenaam>\GeoDMS` en geldt voor alle GeoDMS-projecten tegelijk. Staat de boom een niveau dieper, dan stopt de run meteen op het CBS-gebiedsindelingenbestand en faalt daarmee de hele optelling, dus toets dat pad met `Test-Path` voordat je draait. Het schrijft naar `%LocalDataProjDir%/Output/<tijdstempel>/Restricties_<sector>_<hardheid>.tif`, en de stimuli op dezelfde manier.
-2. Kopieer die map met de hand naar `%RSo_DataDir%/Beleid/Restricties/<tijdstempel>/` (stimuli naar `Beleid/Stimuli/`). De share is schrijf-eenmaal: altijd een nieuwe tijdstempelmap, nooit een bestaande overschrijven.
+2. Kopieer die map met de hand naar `%RSo_DataDir%/Beleid/Restricties/<tijdstempel>/` (stimuli naar `Beleid/Stimuli/`). De share is alleen-lezen voor Claude: dit doet de gebruiker zelf, of Claude op expliciet verzoek van de gebruiker, en altijd in een nieuwe tijdstempelmap, nooit over een bestaande heen.
 3. Zet `ModelParameters/Restricties_filedate` of `Stimuli_filedate` op de nieuwe tijdstempel en schrijf in de Descr wat er in de set anders is dan in de vorige, met het issuenummer.
 4. Laad met trap 1 het item `SourceData/Restricties` en toets het log op `[E]`: `SourceData.dms` bouwt per combinatie uit `Actor/Sector_x_ResHardheidK` een bestandsnaam op, en een ontbrekend bestand kan met exit 0 aflopen.
 
