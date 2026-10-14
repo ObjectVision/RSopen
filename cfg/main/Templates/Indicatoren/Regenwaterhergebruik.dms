@@ -1,0 +1,123 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het script wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m. Object Vision, VU Vrije Universiteit Amsterdam en Deltares.
+//
+// De indicator regenwaterhergebruik (#507); de parameters staan in ModelParameters/Regenwaterhergebruik.dms.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Regenwaterhergebruik
+: Descr = "Hoeveel drinkwater de woningen kunnen besparen met regenwater van hun eigen dak (#507). Per cel het dak van de woonpanden met zijn dominante daktype, de drinkwatervraag van de woningen
+			en de provincie; daarop de systeemcurve van Deltares, die zegt welke vraag een tank van een gegeven grootte met de gekozen leveringszekerheid dekt. Twee vragen, zoals het plan van aanpak ze
+			stelt: wat een vaste tank per woning bespaart (VasteTank), en welke tank per woning het besparingsdoel haalt (Doeltank). Een cel met woningen maar zonder woondak of buiten de provincies doet
+			niet mee; die woningen tellen wel in de vraag."
+{
+	attribute<Woning>  Woningen        (AdminDomain) := Stand/Aantal_Woningen_Totaal;
+	attribute<m3_jaar> Drinkwatervraag (AdminDomain) := Woningen * /ModelParameters/Regenwaterhergebruik/DrinkwatervraagPerWoning;
+	attribute<m3_jaar> Vervangbaar     (AdminDomain) := Drinkwatervraag * /ModelParameters/Regenwaterhergebruik/AandeelVervangbaar, Descr = "Het deel van de drinkwatervraag dat met regenwater kan: tuin, toilet en wasmachine.";
+
+	container Dak
+	: Descr = "Het dak van de woonpanden per cel. Plat en schuin volgen de dakvorm uit ModelParameters/Piekbuiberging/Dakvorm en het groene deel de groendakfracties van de variant, langs dezelfde
+				takken als de dakmaatregelen in Piekbuiberging/Aanbod: een cel met nieuwbouw wonen volgt het pakket of de woningtelling, een andere cel de pandtypen van het basisjaar. Zo zien de twee
+				indicatoren hetzelfde dak."
+	{
+		attribute<Bool>    IsNieuwbouw  (AdminDomain) := Piekbuiberging/Aanbod/WaarAllocatieHeeftPlaatsgevonden/Wonen/AllocatieHeeftPlaatsgevonden;
+		attribute<meter2>  Totaal       (AdminDomain) := Stand/PandFootprint_Wonen;
+		attribute<Float32> FractiePlat  (AdminDomain) := IsNieuwbouw
+			? Piekbuiberging/Aanbod/WaarAllocatieHeeftPlaatsgevonden/Wonen/OpDaken/FractiePlatDakCel
+			: Piekbuiberging/Aanbod/WaarGeenAllocatieHeeftPlaatsgevonden/OpDaken/FractiePlatWonen;
+		attribute<Float32> FractieGroen (AdminDomain) := IsNieuwbouw
+			? const(Piekbuiberging/Aanbod/WaarAllocatieHeeftPlaatsgevonden/Wonen/OpDaken/FractieGroenDak, AdminDomain)
+			: const(Piekbuiberging/Aanbod/WaarGeenAllocatieHeeftPlaatsgevonden/OpDaken/FractieGroenDak, AdminDomain);
+		attribute<meter2>  Schuin       (AdminDomain) := Totaal * (1f - FractiePlat) * (1f - FractieGroen);
+		attribute<meter2>  Plat         (AdminDomain) := Totaal * FractiePlat * (1f - FractieGroen);
+		attribute<meter2>  Groen        (AdminDomain) := Totaal * FractieGroen;
+
+		attribute</ModelParameters/Regenwaterhergebruik/Daktype> Dominant_rel (AdminDomain) := Totaal > 0[meter2]
+			? ArgMax(Schuin, Plat, Groen)[/ModelParameters/Regenwaterhergebruik/Daktype]
+			: null_b[/ModelParameters/Regenwaterhergebruik/Daktype]
+		, Descr = "Het daktype met het grootste oppervlak in de cel; het plan van aanpak geeft de cel de curve van dat daktype voor het hele dak.";
+	}
+
+	attribute</SourceData/RegioIndelingen/Provincie> Provincie_rel (AdminDomain) := /SourceData/RegioIndelingen/Provincie/StudyArea/org_rel[/SourceData/RegioIndelingen/Provincie/StudyArea/Per_AdminDomain_Fijn]
+	, Descr = "De provincie van de cel; Deltares gebruikt de provincies als grove klimaatzones.";
+	attribute</ModelParameters/Regenwaterhergebruik/CurveGekozen> Curve_rel (AdminDomain) := rlookup(uint32(Provincie_rel) * #/ModelParameters/Regenwaterhergebruik/Daktype + uint32(Dak/Dominant_rel), /ModelParameters/Regenwaterhergebruik/CurveGekozen/Sleutel);
+	attribute<Float32> a (AdminDomain) := /ModelParameters/Regenwaterhergebruik/CurveGekozen/a[Curve_rel];
+	attribute<Float32> b (AdminDomain) := /ModelParameters/Regenwaterhergebruik/CurveGekozen/b[Curve_rel];
+	attribute<Float32> n (AdminDomain) := /ModelParameters/Regenwaterhergebruik/CurveGekozen/n[Curve_rel];
+
+	attribute<Bool> DoetMee (AdminDomain) := Woningen > 0[Woning] && Dak/Totaal > 0[meter2] && IsDefined(Curve_rel)
+	, Descr = "Cellen met woningen, een woondak en een curve; daarbuiten zijn de grootheden hieronder null.";
+
+	container VasteTank
+	: Descr = "Wat een tank van ModelParameters/Regenwaterhergebruik/TankPerWoning per woning bespaart. De tank per m2 dak volgt uit de woningen en het dak van de cel, de curve geeft wat die tank
+				per m2 dak per jaar levert, en de besparing is dat volume, begrensd op het vervangbare deel van de vraag."
+	{
+		attribute<mm>      Tank_spec         (AdminDomain) := DoetMee ? (/ModelParameters/Regenwaterhergebruik/TankPerWoning * Woningen / Dak/Totaal)[mm] : 0[mm] / 0f, Descr = "De tank in mm over het dak: de x van de systeemcurve.";
+		attribute<Float32> x_n               (AdminDomain) := exp(n * log(Tank_spec[float32]));
+		attribute<mm_jaar> Leverbaar_spec    (AdminDomain) := (a * x_n / (x_n + b))[mm_jaar], Descr = "De y van de systeemcurve: hoeveel drinkwatervraag per m2 dak per jaar deze tank met de gekozen leveringszekerheid dekt.";
+		attribute<m3_jaar> Leverbaar         (AdminDomain) := (Leverbaar_spec * Dak/Totaal)[m3_jaar];
+		attribute<m3_jaar> Besparing         (AdminDomain) := min_elem(Leverbaar, Vervangbaar);
+		attribute<Float32> Besparingsaandeel (AdminDomain) := Besparing[float32] / Drinkwatervraag[float32], Descr = "Het bespaarde deel van het hele drinkwatergebruik van de cel.";
+		attribute<m3>      Tankvolume        (AdminDomain) := DoetMee ? Woningen * /ModelParameters/Regenwaterhergebruik/TankPerWoning : 0[m3] / 0f;
+	}
+
+	container Doeltank
+	: Descr = "Welke tank per woning nodig is om ModelParameters/Regenwaterhergebruik/Besparingsdoel van het drinkwatergebruik met regenwater te dekken: de inverse van de systeemcurve bij de vraag
+				per m2 dak. Ligt die vraag op of boven het plafond a van de curve, dan levert het dak te weinig regen, bij elke tankgrootte; vraagt hij een tank boven
+				ModelParameters/Regenwaterhergebruik/MaximaleTank, dan valt hij buiten het bereik van de curve. In beide gevallen tellen de woningen als niet haalbaar."
+	{
+		attribute<mm_jaar>   Vraag_spec        (AdminDomain) := DoetMee ? (Drinkwatervraag * /ModelParameters/Regenwaterhergebruik/Besparingsdoel / Dak/Totaal)[mm_jaar] : 0[mm_jaar] / 0f;
+		attribute<mm>        Tank_spec_curve   (AdminDomain) := DoetMee && Vraag_spec[float32] < a ? exp(log(b * Vraag_spec[float32] / (a - Vraag_spec[float32])) / n)[mm] : 0[mm] / 0f, Descr = "De x van de systeemcurve bij deze vraag: x = (b * y / (a - y))^(1/n); leeg als de vraag op of boven het plafond ligt.";
+		attribute<Bool>      IsHaalbaar        (AdminDomain) := IsDefined(Tank_spec_curve) && Tank_spec_curve <= /ModelParameters/Regenwaterhergebruik/MaximaleTank;
+		attribute<mm>        Tank_spec         (AdminDomain) := IsHaalbaar ? Tank_spec_curve : 0[mm] / 0f;
+		attribute<m3>        Tankvolume        (AdminDomain) := (Tank_spec * Dak/Totaal)[m3];
+		attribute<m3_Woning> TankPerWoning     (AdminDomain) := Tankvolume / Woningen;
+		attribute<Woning>    Woningen_Haalbaar (AdminDomain) := IsHaalbaar ? Woningen : 0[Woning];
+	}
+
+	parameter<String> Pad    := '%LocalDataProjDir%/Indicatoren/' + Casus_name + '/Regenwaterhergebruik_', Descr = "Begin van de bestandsnaam van de kaarten; daarna volgen de grootheid en Staart.";
+	parameter<String> Staart := '_' + Zichtjaar_name + '_' + /ModelParameters/StudyArea + '.tif';
+
+	container Schrijf
+	: Descr = "De kaarten van de indicator, met de georeferentie in de tif zelf; een eigen container, zodat de rekenitems geen opslag dragen."
+	{
+		attribute<m3_jaar>   Drinkwatervraag             (AdminDomain) := ../Drinkwatervraag,          StorageName = "=Pad + 'Drinkwatervraag' + Staart", StorageType = "gdalwrite.grid";
+		attribute<m3_jaar>   VasteTank_Besparing         (AdminDomain) := VasteTank/Besparing,         StorageName = "=Pad + 'VasteTank_Besparing' + Staart", StorageType = "gdalwrite.grid";
+		attribute<Float32>   VasteTank_Besparingsaandeel (AdminDomain) := VasteTank/Besparingsaandeel, StorageName = "=Pad + 'VasteTank_Besparingsaandeel' + Staart", StorageType = "gdalwrite.grid";
+		attribute<m3>        Doeltank_Tankvolume         (AdminDomain) := Doeltank/Tankvolume,         StorageName = "=Pad + 'Doeltank_Tankvolume' + Staart", StorageType = "gdalwrite.grid";
+		attribute<m3_Woning> Doeltank_TankPerWoning      (AdminDomain) := Doeltank/TankPerWoning,      StorageName = "=Pad + 'Doeltank_TankPerWoning' + Staart", StorageType = "gdalwrite.grid";
+	}
+
+	container PerRegio
+	{
+		unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
+
+		attribute<Woning>    Woningen                    (Regio) := sum(MakeDefined(../Woningen, 0[Woning]), Regio/Per_AdminDomain_Fijn);
+		attribute<Woning>    Woningen_DoetMee            (Regio) := sum(../DoetMee ? ../Woningen : 0[Woning], Regio/Per_AdminDomain_Fijn);
+		attribute<m3_jaar>   Drinkwatervraag             (Regio) := sum(MakeDefined(../Drinkwatervraag, 0[m3_jaar]), Regio/Per_AdminDomain_Fijn);
+		attribute<m3_jaar>   VasteTank_Besparing         (Regio) := sum(MakeDefined(VasteTank/Besparing, 0[m3_jaar]), Regio/Per_AdminDomain_Fijn);
+		attribute<Float32>   VasteTank_Besparingsaandeel (Regio) := VasteTank_Besparing[float32] / Drinkwatervraag[float32];
+		attribute<m3>        VasteTank_Tankvolume        (Regio) := sum(MakeDefined(VasteTank/Tankvolume, 0[m3]), Regio/Per_AdminDomain_Fijn);
+		attribute<Woning>    Doeltank_Woningen_Haalbaar  (Regio) := sum(Doeltank/Woningen_Haalbaar, Regio/Per_AdminDomain_Fijn);
+		attribute<Float32>   Doeltank_AandeelHaalbaar    (Regio) := Doeltank_Woningen_Haalbaar[float32] / Woningen[float32];
+		attribute<m3>        Doeltank_Tankvolume         (Regio) := sum(MakeDefined(Doeltank/Tankvolume, 0[m3]), Regio/Per_AdminDomain_Fijn);
+		attribute<m3_Woning> Doeltank_TankPerWoning      (Regio) := Doeltank_Tankvolume / Doeltank_Woningen_Haalbaar, Descr = "De gemiddelde tank per woning waar het doel haalbaar is.";
+	}
+
+	container PerNL
+	{
+		parameter<Woning>    Woningen                    := sum(MakeDefined(../Woningen, 0[Woning]));
+		parameter<Woning>    Woningen_DoetMee            := sum(../DoetMee ? ../Woningen : 0[Woning]);
+		parameter<m3_jaar>   Drinkwatervraag             := sum(MakeDefined(../Drinkwatervraag, 0[m3_jaar]));
+		parameter<m3_jaar>   VasteTank_Besparing         := sum(MakeDefined(VasteTank/Besparing, 0[m3_jaar]));
+		parameter<Float32>   VasteTank_Besparingsaandeel := VasteTank_Besparing[float32] / Drinkwatervraag[float32];
+		parameter<m3>        VasteTank_Tankvolume        := sum(MakeDefined(VasteTank/Tankvolume, 0[m3]));
+		parameter<Woning>    Doeltank_Woningen_Haalbaar  := sum(Doeltank/Woningen_Haalbaar);
+		parameter<Float32>   Doeltank_AandeelHaalbaar    := Doeltank_Woningen_Haalbaar[float32] / Woningen[float32];
+		parameter<m3>        Doeltank_Tankvolume         := sum(MakeDefined(Doeltank/Tankvolume, 0[m3]));
+		parameter<m3_Woning> Doeltank_TankPerWoning      := Doeltank_Tankvolume / Doeltank_Woningen_Haalbaar;
+	}
+}
