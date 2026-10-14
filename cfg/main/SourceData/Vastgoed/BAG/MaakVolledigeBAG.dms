@@ -7,7 +7,8 @@
 // Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
 // Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
-// Maakt de VolledigeTabel uit de mmd-stores van BAG20_Xml2MMD uit de BAG-tools: per objecttype een tabel met
+// Maakt de VolledigeTabel uit de BAG-levering, de mmd-stores van BAG20_Xml2MMD of de fss-bestanden van de oude
+// BAG-tools (levering 20260710), zie Invoerformaat: per objecttype een tabel met
 // alle voorkomens, dus de volledige historie van statussen en geldigheid. RSopen leest alleen pand, vbo en
 // nummeraanduiding. De tabellen zijn compact, zoals in Hestia: identificaties als uint64, de status als code
 // met per tabel een labeltabel, de registratiedatums als getal, de coordinaten in millimeters en alleen de
@@ -16,12 +17,18 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container MaakVolledigeBAG : using = "Classifications/Vastgoed"
-, Descr = "Maakt de VolledigeTabel uit de mmd-stores van BAG20_Xml2MMD uit de BAG-tools: voor pand, vbo en nummeraanduiding een tabel met alle voorkomens. Compact, zoals in Hestia: identificaties als uint64, de status als code met een labeltabel, de registratiedatums als jjjjmmdd, de coordinaten als millimeters en alleen de velden die SourceData/Vastgoed/BAG leest; bij elke relatie vbo-pand de rij van het vbo-voorkomen (#839). Schrijft niets als de map van deze levering al bestaat, want die staat op de share."
+, Descr = "Maakt de VolledigeTabel uit de BAG-levering, de mmd-stores van BAG20_Xml2MMD of de fss-bestanden van de oude BAG-tools (Invoerformaat): voor pand, vbo en nummeraanduiding een tabel met alle voorkomens. Compact, zoals in Hestia: identificaties als uint64, de status als code met een labeltabel, de registratiedatums als jjjjmmdd, de coordinaten als millimeters en alleen de velden die SourceData/Vastgoed/BAG leest; bij elke relatie vbo-pand de rij van het vbo-voorkomen (#839). Schrijft niets als de map van deze levering al bestaat, want die staat op de share."
 {
 	parameter<String>  Snapshot_Date_Input := ModelParameters/BAG_file_date;
-	parameter<String>  SrcFileDir          := '%BAG_DataDir%/' + Snapshot_Date_Input + '/mmd', Descr = "De StoreDir van BAG20_Xml2MMD voor deze levering.";
+	parameter<String>  Invoerformaat       := 'fss', IntegrityCheck = "Invoerformaat == 'fss' || Invoerformaat == 'mmd'"
+	, Descr = "Hoe de levering onder %BAG_DataDir%/<datum> is aangeleverd: fss zijn de bestanden van de oude BAG-tools (per objecttype filesets fs_<n>.fss met nr_fss.csv, en nummeraanduiding.fss), zoals de
+				levering 20260710; mmd zijn de stores van BAG20_Xml2MMD uit de nieuwe BAG-tools in de submap mmd (fs_<n>.mmd met nr_stores.csv), de vorm van de volgende leveringen. De fss-bestanden hebben de
+				coordinaten al in millimeters en het bouwjaar als uint16; de mmd-stores hebben meters en int16. Beide geven dezelfde compacte VolledigeTabel.";
+	parameter<Bool>    IsFss               := Invoerformaat == 'fss';
+	parameter<String>  F                   := 'file_' + Invoerformaat, Descr = "De naam van de bronunit per fileset in de sjablonen hieronder: file_fss of file_mmd.";
+	parameter<String>  SrcFileDir          := '%BAG_DataDir%/' + Snapshot_Date_Input + (IsFss ? '' : '/mmd'), Descr = "De map van de levering: de fss-bestanden zelf, of de StoreDir van BAG20_Xml2MMD.";
 	parameter<String>  ResultDir           := '%RSo_DataDir%/Vastgoed/' + ModelParameters/BAG_VolledigeTabel;
-	parameter<String>  FileNeeded          := expand(., SrcFileDir) + '/pand/nr_stores.csv';
+	parameter<String>  FileNeeded          := expand(., SrcFileDir) + (IsFss ? '/pand/nr_fss.csv' : '/pand/nr_stores.csv');
 	parameter<Bool>    isValidSrcFileDir   := ExistingFile('missing', FileNeeded) == FileNeeded;
 	parameter<String>  ResultFile          := expand(., ResultDir) + '/vbo.mmd/0Dictionary.dms';
 	parameter<Bool>    ResultBestaatAl     := ExistingFile('missing', ResultFile) == ResultFile
@@ -34,7 +41,7 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 	parameter<String> MaakVolledigeBAGTabel :=
 		ResultBestaatAl     ? 'Map ' + expand(., ResultDir) + ' bestaat al' :
 		isValidSrcFileDir   ? 'Ready'
-							: 'Map ' + expand(., SrcFileDir) + ' bevat geen volledige set mmd-stores van BAG20_Xml2MMD'
+							: 'Map ' + expand(., SrcFileDir) + ' bevat geen volledige set bestanden van de levering in de vorm ' + Invoerformaat
 	, ExplicitSuppliers = "= SuppliersExprAll"
 	, Descr = "Schrijft de VolledigeTabel als de SrcFileDir de stores van BAG20_Xml2MMD bevat en de map van deze levering nog niet bestaat.";
 
@@ -45,7 +52,7 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 	{
 		container pand
 		{
-			parameter<String> nr_stores : StorageName = "= SrcFileDir + '/pand/nr_stores.csv'", StorageType = "str";
+			parameter<String> nr_stores : StorageName = "= SrcFileDir + (IsFss ? '/pand/nr_fss.csv' : '/pand/nr_stores.csv')", StorageType = "str", Descr = "Het aantal filesets.";
 			unit<UInt32> fileset := range(uint32, 1, uint32(nr_stores) + 1);
 			container Filesets := for_each_ne(
 				  'nr_' + string(id(fileset))
@@ -57,17 +64,38 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 				parameter<fileset> nr_fileseset;
 				// end case Parameters
 
-				unit<UInt32> file
+				unit<UInt32> file := = F, Descr = "De bronunit van deze fileset in de vorm van de levering; identificatie en meta heten in beide vormen gelijk en lopen via deze alias.";
+				unit<UInt32> file_mmd
 				: StorageName     = "= SrcFileDir + '/pand/fs_' + string(nr_fileseset) + '.mmd'"
 				, StorageReadOnly = "True";
+				unit<UInt32> file_fss
+				: StorageName     = "= SrcFileDir + '/pand/fs_' + string(nr_fileseset) + '.fss'"
+				, StorageReadOnly = "True"
+				, Descr           = "De fss van de oude BAG-tools; alleen de velden die hier worden gelezen zijn gedeclareerd."
+				{
+					attribute<Geography/rdc_mm> geometry_mm (polygon);
+					attribute<String>           identificatie;
+					attribute<uint16>           oorspronkelijkBouwjaar;
 
-				unit<UInt32> punten := sequence2points(file/geometry)
+					container meta
+					{
+						attribute<String> STATUS              (file_fss);
+						attribute<Int32>  BEGINDATUM          (file_fss);
+						attribute<Int32>  EINDDATUM           (file_fss);
+						attribute<String> TIJDSTIPREGISTRATIE (file_fss);
+						attribute<String> EINDREGISTRATIE     (file_fss);
+					}
+				}
+
+				attribute<Int16> oorspronkelijkBouwjaar (file) := = IsFss ? 'int16(file_fss/oorspronkelijkBouwjaar)' : 'file_mmd/oorspronkelijkBouwjaar';
+
+				unit<UInt32> punten := sequence2points(file_mmd/geometry)
 				, Descr = "De punten van de pandvlakken, om ze een voor een op millimeters af te ronden."
 				{
 					attribute<rdc_mm_rond>      rond := point[rdc_mm_rond];
 					attribute<Geography/rdc_mm> mm   := point_yx(PointRow(rond), PointCol(rond), Geography/rdc_mm);
 				}
-				attribute<Geography/rdc_mm> geometry_mm (file, polygon) := points2polygon(punten/mm, punten/sequence_rel, punten/ordinal), Descr = "Het pandvlak in millimeters, per punt afgerond.";
+				attribute<Geography/rdc_mm> geometry_mm (file, polygon) := = IsFss ? 'file_fss/geometry_mm' : 'points2polygon(punten/mm, punten/sequence_rel, punten/ordinal)', Descr = "Het pandvlak in millimeters: uit de fss zoals het er staat, uit de mmd-store per punt afgerond.";
 			}
 
 			unit<UInt32> src := = 'union_unit(' + asList('Filesets/nr_' + string(id(fileset)) + '/File', ',') + ')'
@@ -75,7 +103,7 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 			{
 				attribute<Geography/rdc_mm> geometry_mm (polygon)  := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/geometry_mm', ',') + ')';
 				attribute<String>           identificatie          := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/File/identificatie', ',') + ')';
-				attribute<Int16>            oorspronkelijkBouwjaar := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/File/oorspronkelijkBouwjaar', ',') + ')';
+				attribute<Int16>            oorspronkelijkBouwjaar := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/oorspronkelijkBouwjaar', ',') + ')';
 				attribute<pand_status>      status_rel             := rlookup(LowerCase(meta/STATUS), LowerCase(pand_status/Label));
 
 				container meta
@@ -122,7 +150,7 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 
 		container vbo
 		{
-			parameter<String> nr_stores : StorageName = "= SrcFileDir + '/vbo/nr_stores.csv'", StorageType = "str";
+			parameter<String> nr_stores : StorageName = "= SrcFileDir + (IsFss ? '/vbo/nr_fss.csv' : '/vbo/nr_stores.csv')", StorageType = "str", Descr = "Het aantal filesets.";
 			unit<UInt32> fileset := range(uint32, 1, uint32(nr_stores) + 1)
 			{
 				attribute<UInt32> nr_voorkomens := pcount(src/fileset_rel);
@@ -138,17 +166,55 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 				parameter<fileset> nr_fileseset;
 				// end case Parameters
 
-				unit<UInt32> file
+				unit<UInt32> file := = F, Descr = "De bronunit van deze fileset in de vorm van de levering; identificatie, hoofdadres, oppervlakte, gebruiksdoelen, gerelateerdPand en meta heten in beide vormen gelijk en lopen via deze alias.";
+				unit<UInt32> file_mmd
 				: StorageName     = "= SrcFileDir + '/vbo/fs_' + string(nr_fileseset) + '.mmd'"
 				, StorageReadOnly = "True";
+				unit<UInt32> file_fss
+				: StorageName     = "= SrcFileDir + '/vbo/fs_' + string(nr_fileseset) + '.fss'"
+				, StorageReadOnly = "True"
+				, Descr           = "De fss van de oude BAG-tools; alleen de velden die hier worden gelezen zijn gedeclareerd. Het punt staat in millimeters en is leeg bij een voorkomen met een vlak, dat dan in polygon staat."
+				{
+					attribute<Geography/rdc_mm> geometry_mm;
+					attribute<String>           identificatie;
+					attribute<String>           nummeraanduiding_id;
+					attribute<Int32>            oppervlakte;
+
+					container gebruiksdoelen := for_each_ndv(vbo_gebruiksdoel/name, file_fss, bool);
+
+					unit<UInt32> polygon
+					{
+						attribute<Geography/rdc_mm> geometry_mm (polygon);
+						attribute<String>           identificatie;
+					}
+
+					unit<UInt32> gerelateerdPand
+					{
+						attribute<String> pand_id;
+						attribute<UInt32> mutatie_rel;
+					}
+
+					container meta
+					{
+						attribute<String> STATUS     (file_fss);
+						attribute<Int32>  BEGINDATUM (file_fss);
+						attribute<Int32>  EINDDATUM  (file_fss);
+					}
+				}
+
+				attribute<rdc_mm_rond>      geometry_rond (file) := file_mmd/geometry[rdc_mm_rond];
+				attribute<Geography/rdc_mm> geometry_mm   (file) := = IsFss ? 'file_fss/geometry_mm' : 'point_yx(PointRow(geometry_rond), PointCol(geometry_rond), Geography/rdc_mm)', Descr = "Het BAG-punt in millimeters: uit de fss zoals het er staat, uit de mmd-store afgerond; leeg bij een voorkomen met een vlak.";
+
+				unit<UInt32> polygon := = F + '/polygon', Descr = "De vlakken van de voorkomens zonder punt."
+				{
+					attribute<Geography/rdc_meter> geometry (polygon) := = IsFss ? 'file_fss/polygon/geometry_mm[rdc_meter]' : 'file_mmd/polygon/geometry', Descr = "Het vlak in meters, voor het punt binnen het vlak dat src/polygon afrondt.";
+				}
 			}
 
 			unit<UInt32> src := = 'union_unit(' + asList('Filesets/nr_' + string(id(fileset)) + '/File', ',') + ')'
 			, Descr = "Alle filesets samen."
 			{
-				attribute<Geography/rdc_meter> geometry      := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/File/geometry', ',') + ')';
-				attribute<rdc_mm_rond>         geometry_rond := geometry[rdc_mm_rond];
-				attribute<Geography/rdc_mm>    geometry_mm   := point_yx(PointRow(geometry_rond), PointCol(geometry_rond), Geography/rdc_mm), Descr = "Het BAG-punt in millimeters, afgerond.";
+				attribute<Geography/rdc_mm>    geometry_mm   := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/geometry_mm', ',') + ')', Descr = "Het BAG-punt in millimeters; leeg bij een voorkomen met een vlak.";
 				attribute<String>              identificatie       := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/File/identificatie', ',') + ')';
 				attribute<String>              nummeraanduiding_id := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/File/nummeraanduiding_id', ',') + ')';
 				attribute<Int32>               oppervlakte         := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/File/oppervlakte', ',') + ')';
@@ -166,13 +232,13 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 						, bool
 					);
 
-				unit<UInt32> zonder_punt := select_with_org_rel(!IsDefined(geometry))
+				unit<UInt32> zonder_punt := select_with_org_rel(!IsDefined(geometry_mm))
 				, Descr = "De voorkomens met een vlak in plaats van een punt; BAG20_Xml2MMD laat het punt dan leeg en zet het vlak in polygon.";
 
-				unit<UInt32> polygon := = 'union_unit(' + asList('Filesets/nr_' + string(id(fileset)) + '/File/polygon', ',') + ')'
+				unit<UInt32> polygon := = 'union_unit(' + asList('Filesets/nr_' + string(id(fileset)) + '/polygon', ',') + ')'
 				{
-					attribute<Geography/rdc_meter> geometry (polygon) := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/File/polygon/geometry', ',') + ')';
-					attribute<String>              identificatie      := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/File/polygon/identificatie', ',') + ')';
+					attribute<Geography/rdc_meter> geometry (polygon) := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/polygon/geometry', ',') + ')';
+					attribute<String>              identificatie      := = 'union_data(., ' + asList('Filesets/nr_' + string(id(fileset)) + '/polygon/identificatie', ',') + ')';
 					attribute<src>                 vbo_rel            := zonder_punt/org_rel[value(id(.), zonder_punt)], Descr = "Het voorkomen waar het vlak bij hoort: het k-de vlak hoort bij het k-de voorkomen zonder punt; Controle/vlak_koppeling_fout toetst dat op de identificatie.";
 					attribute<rdc_mm_rond>         punt_rond          := centroid_or_mid(geometry)[rdc_mm_rond];
 					attribute<Geography/rdc_mm>    punt               := point_yx(PointRow(punt_rond), PointCol(punt_rond), Geography/rdc_mm), Descr = "Het zwaartepunt als dat in het vlak ligt, anders een punt midden in het vlak, in millimeters.";
@@ -244,9 +310,28 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 		container nummeraanduiding
 		: Descr = "Het adres; SourceData/Vastgoed/BAG leest er de postcode van het hoofdadres uit."
 		{
-			unit<UInt32> src
+			unit<UInt32> src := = 'src_' + Invoerformaat, Descr = "De bron in de vorm van de levering; de velden heten in beide vormen gelijk en lopen via deze alias.";
+			unit<UInt32> src_mmd
 			: StorageName     = "= SrcFileDir + '/nummeraanduiding.mmd'"
 			, StorageReadOnly = "True";
+			unit<UInt32> src_fss
+			: StorageName     = "= SrcFileDir + '/nummeraanduiding.fss'"
+			, StorageReadOnly = "True"
+			, Descr           = "De fss van de oude BAG-tools; alleen de velden die hier worden gelezen zijn gedeclareerd."
+			{
+				attribute<String> identificatie;
+				attribute<Int32>  huisnummer;
+				attribute<String> huisletter;
+				attribute<String> toevoeging;
+				attribute<String> postcode;
+
+				container meta
+				{
+					attribute<String> STATUS     (src_fss);
+					attribute<Int32>  BEGINDATUM (src_fss);
+					attribute<Int32>  EINDDATUM  (src_fss);
+				}
+			}
 
 			attribute<nummeraanduiding_status> status_rel (src) := rlookup(LowerCase(src/meta/STATUS), LowerCase(nummeraanduiding_status/Label));
 
@@ -286,7 +371,7 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 		parameter<UInt32> vbo_status_onbekend              := sum_uint32(!IsDefined(Object/vbo/src/status_rel));
 		parameter<UInt32> pand_status_onbekend             := sum_uint32(!IsDefined(Object/pand/src/status_rel));
 		parameter<UInt32> nummeraanduiding_status_onbekend := sum_uint32(!IsDefined(Object/nummeraanduiding/status_rel));
-		parameter<UInt32> vbo_met_vlak                     := sum_uint32(!IsDefined(Object/vbo/src/geometry));
+		parameter<UInt32> vbo_met_vlak                     := sum_uint32(!IsDefined(Object/vbo/src/geometry_mm));
 		parameter<UInt32> n_vlak                           := #Object/vbo/src/polygon;
 		parameter<UInt32> vlak_koppeling_fout              := sum_uint32(!IsDefined(Object/vbo/src/polygon/vbo_rel) || Object/vbo/src/polygon/identificatie != Object/vbo/src/identificatie[Object/vbo/src/polygon/vbo_rel]), Descr = "Vlakken die niet bij een voorkomen met dezelfde identificatie terechtkomen; hoort 0 te zijn.";
 		parameter<UInt32> vbo_zonder_locatie               := sum_uint32(!IsDefined(Object/vbo/src/punt));
@@ -296,7 +381,7 @@ container MaakVolledigeBAG : using = "Classifications/Vastgoed"
 	parameter<String> Metadata :=
 		  'VolledigeTabel voor RSopen'
 		+ '; BAG-levering: '                + Snapshot_Date_Input
-		+ '; bron: '                        + expand(., SrcFileDir)
+		+ '; bron: '                        + expand(., SrcFileDir) + ' (' + Invoerformaat + ')'
 		+ '; gemaakt met: cfg/main/SourceData/Vastgoed/BAG/MaakVolledigeBAG.dms'
 		+ '; GeoDMS: '                      + string(GeoDmsMajorVersionNumber()) + '.' + string(GeoDmsMinorVersionNumber()) + '.' + string(GeoDmsPatchNumber())
 		+ '; vbo-voorkomens: '              + string(Controle/n_vbo)
