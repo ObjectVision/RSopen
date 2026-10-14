@@ -14,7 +14,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container SloopNieuwbouwPerWoningtype
-: Descr = "De woningen die in de periode tot dit zichtjaar zijn gebouwd en gesloopt, per WP4-woningtype en zonder BAG-nieuwbouw en BAG-sloop, als levering voor Hestia. Sloop is de beginstand op een cel waar die in deze periode verdwijnt, door allocatie of door de opgelegde sloop: een allocatie legt elke cel vast behalve landbouw, die ook niets verdringt, dus alleen de beginstand kan worden gesloopt. Alles schrijft de kaarten en een balanstabel in de map van Map; Export/generates/AlleZichtjaren/Hestia doet dat voor alle zichtjaren."
+: Descr = "De woningen die in de periode tot dit zichtjaar zijn gebouwd en gesloopt, per WP4-woningtype en zonder BAG-nieuwbouw en BAG-sloop, als levering voor Hestia. Sloop is de beginstand op een cel waar die in deze periode verdwijnt, door allocatie of door de opgelegde sloop: een allocatie legt elke cel vast behalve landbouw, die ook niets verdringt, dus alleen de beginstand kan worden gesloopt. Daarnaast de vervanging (#859): woningen van de beginstand die op een cel die het model in deze periode niet aanraakt worden gesloopt en in hetzelfde type en aantal terugkomen, in Sloop en in Nieuwbouw beide, zie Vervanging. Alles schrijft de kaarten en een balanstabel in de map van Map; Export/generates/AlleZichtjaren/Hestia doet dat voor alle zichtjaren."
 {
 	parameter<String> Map := '%LocalDataProjDir%/Hestia_'+/ModelParameters/StudyArea+'/'+/ModelParameters/Hestia_Exportdatum+'_RO_'+Casus_name+'/'
 	, Descr = "De map van de levering, <datum>_RO_<casus>, met per zichtjaar de submappen Nieuwbouw<zichtjaar> en Sloop<zichtjaar> en daarin een kaart per woningtype, zoals Hestia hem inleest (pbl-nl/model-hestia-development#180).";
@@ -44,15 +44,40 @@ container SloopNieuwbouwPerWoningtype
 	attribute<Bool> IsModelCel (AdminDomain) := IsGealloceerd || IsOpgelegdeSloop
 	, Descr = "Een cel waar het model in deze periode iets doet, en dus de enige plek waar nieuwbouw of sloop kan staan; Balans splitst de rest hierop.";
 
+	container Vervanging
+	: Descr = "De vervangingsstroom (#859): woningen van de beginstand die in deze periode worden gesloopt en op dezelfde plek in hetzelfde type en aantal terugkomen, op cellen die het model in deze periode
+				niet aanraakt en waar de beginstand nog staat. Per cel het aandeel van de beginstand dat in deze periode aan de beurt is, uit de jaarlijkse vervangingskans van de cel
+				(BaseData/Suitabilities/Wonen/Vervanging/Kans) als exponentieel uitdunnen vanaf het basisjaar. Telt in Sloop en in Nieuwbouw mee, zodat Hestia de vervangen woning als gesloopt en opnieuw
+				gebouwd ziet, met een nieuw bouwjaar; de stand verandert er niet door, dus de balans sluit. Een op een, want de stand kent geen krimp bij vervanging; terugbouwen met minder woningen, in de
+				BAG bij herstructurering ongeveer twee derde, vraagt eerst een haak in de stand en staat open in #859. De BAG-nieuwbouw in de beginstand deelt de kans van haar cel."
+	{
+		parameter<YearRange> Begin := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel), Descr = "Het vorige zichtjaar, voor het eerste zichtjaar het basisjaar.";
+		parameter<YearRange> Eind  := rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel);
+		parameter<Float32>   JarenTotBegin := float32((Begin - /ModelParameters/Model_StartYear) / 1[YearRange]);
+		parameter<Float32>   JarenTotEind  := float32((Eind  - /ModelParameters/Model_StartYear) / 1[YearRange]);
+
+		attribute<Float32> Kans    (AdminDomain) := MakeDefined(/BaseData/Suitabilities/Wonen/Vervanging/Kans/Totaal, 0f), Descr = "De jaarlijkse vervangingskans van de voorraad in de cel.";
+		attribute<Float32> Fractie (AdminDomain) := BeginstandAanwezig && !IsGesloopt ? exp((0f - Kans) * JarenTotBegin) - exp((0f - Kans) * JarenTotEind) : 0f
+		, Descr = "Het aandeel van de beginstand van de cel dat in deze periode wordt vervangen: wat er aan het begin van de periode nog stond min wat er aan het eind nog staat, bij uitdunnen met de jaarlijkse kans sinds het basisjaar. Nul waar de beginstand weg is of in deze periode verdwijnt.";
+
+		container PerType :=
+			for_each_nedv(
+				/Classifications/Vastgoed/WP4/name
+				, 'Fractie * MakeDefined(StartState_metBAGSloopNieuwbouwWonen/Woningen/'+/Classifications/Vastgoed/WP4/name+', 0[Woning])'
+				, AdminDomain
+				, Woning
+			), Descr = "De vervangen woningen per woningtype: de fractie maal de beginstand van dat type.";
+	}
+
 	container Nieuwbouw :=
 		for_each_nedv(
 			/Classifications/Vastgoed/WP4/name
-			, 'IsGealloceerd && ThisVariantClassifications/Vastgoed/OP/WP4_rel[Stand/OP_rel] == /Classifications/Vastgoed/WP4/V/'+/Classifications/Vastgoed/WP4/name
-				+' ? MakeDefined(ThisVariantClassifications/Vastgoed/OP/Dichtheid[Stand/OP_rel] * AdminDomain/NrHaPerCell, 0[Woning]) : 0[Woning]'
+			, '(IsGealloceerd && ThisVariantClassifications/Vastgoed/OP/WP4_rel[Stand/OP_rel] == /Classifications/Vastgoed/WP4/V/'+/Classifications/Vastgoed/WP4/name
+				+' ? MakeDefined(ThisVariantClassifications/Vastgoed/OP/Dichtheid[Stand/OP_rel] * AdminDomain/NrHaPerCell, 0[Woning]) : 0[Woning]) + Vervanging/PerType/'+/Classifications/Vastgoed/WP4/name
 			, AdminDomain
 			, Woning
 		)
-	, Descr = "De woningen die de allocatie in deze periode bouwt, per woningtype: de dichtheid van het pakket maal het oppervlak van de cel, zoals de stand ze telt. BAG-nieuwbouw valt erbuiten, want die draagt in de beginstand al een label."
+	, Descr = "De woningen die de allocatie in deze periode bouwt, per woningtype: de dichtheid van het pakket maal het oppervlak van de cel, zoals de stand ze telt, plus de vervangen woningen van dat type (#859). BAG-nieuwbouw valt erbuiten, want die draagt in de beginstand al een label."
 	{
 		attribute<Woning> Totaal (AdminDomain) := ='add('+AsItemList(/Classifications/Vastgoed/WP4/name)+')';
 	}
@@ -60,11 +85,11 @@ container SloopNieuwbouwPerWoningtype
 	container Sloop :=
 		for_each_nedv(
 			/Classifications/Vastgoed/WP4/name
-			, 'IsGesloopt ? MakeDefined(StartState_metBAGSloopNieuwbouwWonen/Woningen/'+/Classifications/Vastgoed/WP4/name+', 0[Woning]) : 0[Woning]'
+			, '(IsGesloopt ? MakeDefined(StartState_metBAGSloopNieuwbouwWonen/Woningen/'+/Classifications/Vastgoed/WP4/name+', 0[Woning]) : 0[Woning]) + Vervanging/PerType/'+/Classifications/Vastgoed/WP4/name
 			, AdminDomain
 			, Woning
 		)
-	, Descr = "De woningen die in deze periode worden gesloopt, per woningtype: de beginstand, het basisjaar plus BAG-nieuwbouw min BAG-sloop, op de cellen van IsGesloopt."
+	, Descr = "De woningen die in deze periode worden gesloopt, per woningtype: de beginstand, het basisjaar plus BAG-nieuwbouw min BAG-sloop, op de cellen van IsGesloopt, plus de vervangen woningen van dat type (#859)."
 	{
 		attribute<Woning> Totaal (AdminDomain) := ='add('+AsItemList(/Classifications/Vastgoed/WP4/name)+')';
 	}
@@ -101,7 +126,7 @@ container SloopNieuwbouwPerWoningtype
 						parameter<String> Periode_van        := IsFirstAllocYear ? BAG_peiljaar : string(uint32(rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/PrevYearRange_rel)) + uint32(1))
 						, Descr = "Het eerste jaar dat de kaart beslaat: in het eerste zichtjaar het jaar van de BAG-peildatum, want wat de BAG tot en met de pijplijn levert zit er niet in, daarna het jaar na het vorige zichtjaar.";
 						parameter<String> Periode_tot_en_met := string(rjoin(lowercase(Zichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name), /Classifications/Time/Zichtjaar/YearRange_rel));
-						parameter<String> Toelichting        := 'Nieuwbouw en sloop die de Ruimtescanner zelf toedeelt, zonder BAG-nieuwbouw en BAG-sloop, over de jaren Periode_van tot en met Periode_tot_en_met. Het BAG-peiljaar is het jaar van de peildatum op 1 januari.';
+						parameter<String> Toelichting        := 'Nieuwbouw en sloop die de Ruimtescanner zelf toedeelt, zonder BAG-nieuwbouw en BAG-sloop, over de jaren Periode_van tot en met Periode_tot_en_met, plus de vervanging van bestaande woningen op dezelfde plek in hetzelfde type en aantal, die in de sloopkaart en in de nieuwbouwkaart beide staat. Het BAG-peiljaar is het jaar van de peildatum op 1 januari.';
 					}
 				}
 			}
@@ -165,6 +190,14 @@ container SloopNieuwbouwPerWoningtype
 				, Woning
 			);
 
+		container Vervanging :=
+			for_each_nedv(
+				/Classifications/Vastgoed/WP2/name
+				, 'sum('+AsList('SloopNieuwbouwPerWoningtype/Vervanging/PerType/'+/Classifications/Vastgoed/WP4/name, ' + ', /Classifications/Vastgoed/WP4/WP2_rel)+')'
+				, void
+				, Woning
+			), Descr = "De vervangen woningen per eengezins en meergezins: het deel van Nieuwbouw en Sloop dat elkaar opheft (#859).";
+
 		container BAG_Model  := for_each_nedv(/Classifications/Vastgoed/WP2/name, BAGTerm+'IsModelCel))',  void, Woning);
 		container BAG_Overig := for_each_nedv(/Classifications/Vastgoed/WP2/name, BAGTerm+'!IsModelCel))', void, Woning);
 
@@ -194,6 +227,7 @@ container SloopNieuwbouwPerWoningtype
 			attribute<Woning> stand_vorige          (/Classifications/Vastgoed/WP2) := ='union_data(/Classifications/Vastgoed/WP2, '+AsItemList('Balans/Vorige_Model/'+/Classifications/Vastgoed/WP2/name+' + Balans/Vorige_Overig/'+/Classifications/Vastgoed/WP2/name)+')';
 			attribute<Woning> nieuwbouw_periode     (/Classifications/Vastgoed/WP2) := ='union_data(/Classifications/Vastgoed/WP2, '+AsItemList('Balans/Nieuwbouw/'+/Classifications/Vastgoed/WP2/name)+')';
 			attribute<Woning> sloop_periode         (/Classifications/Vastgoed/WP2) := ='union_data(/Classifications/Vastgoed/WP2, '+AsItemList('Balans/Sloop/'+/Classifications/Vastgoed/WP2/name)+')';
+			attribute<Woning> vervanging_periode    (/Classifications/Vastgoed/WP2) := ='union_data(/Classifications/Vastgoed/WP2, '+AsItemList('Balans/Vervanging/'+/Classifications/Vastgoed/WP2/name)+')', Descr = "Zit in nieuwbouw_periode en in sloop_periode beide (#859).";
 			attribute<Woning> bag_saldo             (/Classifications/Vastgoed/WP2) := ='union_data(/Classifications/Vastgoed/WP2, '+AsItemList('Balans/BAG_Model/'+/Classifications/Vastgoed/WP2/name+' + Balans/BAG_Overig/'+/Classifications/Vastgoed/WP2/name)+')';
 			attribute<Woning> stand_nu              (/Classifications/Vastgoed/WP2) := ='union_data(/Classifications/Vastgoed/WP2, '+AsItemList('Balans/Nu_Model/'+/Classifications/Vastgoed/WP2/name+' + Balans/Nu_Overig/'+/Classifications/Vastgoed/WP2/name)+')';
 			attribute<Woning> residu_modelcellen    (/Classifications/Vastgoed/WP2) := ='union_data(/Classifications/Vastgoed/WP2, '+AsItemList('Balans/Residu_Model/'+/Classifications/Vastgoed/WP2/name)+')';
@@ -202,6 +236,6 @@ container SloopNieuwbouwPerWoningtype
 	}
 
 	parameter<String> Alles := 'Ready'
-	, ExplicitSuppliers = "=AsList('Schrijf/Nieuwbouw/'+/Classifications/Vastgoed/WP4/name+';Schrijf/Sloop/'+/Classifications/Vastgoed/WP4/name, ';')+';Balans/Tabel/klasse_wp2;Balans/Tabel/stand_vorige;Balans/Tabel/nieuwbouw_periode;Balans/Tabel/sloop_periode;Balans/Tabel/bag_saldo;Balans/Tabel/stand_nu;Balans/Tabel/residu_modelcellen;Balans/Tabel/residu_overige_cellen'"
+	, ExplicitSuppliers = "=AsList('Schrijf/Nieuwbouw/'+/Classifications/Vastgoed/WP4/name+';Schrijf/Sloop/'+/Classifications/Vastgoed/WP4/name, ';')+';Balans/Tabel/klasse_wp2;Balans/Tabel/stand_vorige;Balans/Tabel/nieuwbouw_periode;Balans/Tabel/sloop_periode;Balans/Tabel/vervanging_periode;Balans/Tabel/bag_saldo;Balans/Tabel/stand_nu;Balans/Tabel/residu_modelcellen;Balans/Tabel/residu_overige_cellen'"
 	, Descr = "Schrijft de kaarten per woningtype en de balanstabel van dit zichtjaar. Vraagt StandAllocatieOntkoppeld op TRUE, zoals de batchscripts die zetten, anders rekent hij de allocatie door.";
 }

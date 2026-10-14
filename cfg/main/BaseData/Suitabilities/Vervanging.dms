@@ -1,0 +1,160 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De vervangingsstroom van de bestaande woningvoorraad (#859): per cel de jaarlijkse kans dat een woning wordt
+// gesloopt en op dezelfde plek in dezelfde dichtheid terugkomt, en de waardefactor van die vervanging. Twee
+// ontkoppelde kaarten, gemaakt in WriteBasedata/Generate_Run2 naast de verwervingskosten, en per zichtjaar de
+// factor op de verwervingskosten die daaruit volgt.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Vervanging
+: Descr = "De vervangingsstroom van de bestaande woningvoorraad (#859): sloop en nieuwbouw op dezelfde plek in dezelfde dichtheid. In de BAG was dat van 2013 tot en met 2024 bijna twee derde van alle
+			sloop op sloop-nieuwbouwlocaties, maar een allocatie op netto claims ziet die stroom niet, want de voorraad verandert er niet door. Twee kaarten per cel uit de woon-vbo's van het basisjaar,
+			dezelfde set als Verwervingskosten/Woningen: Kans, de jaarlijkse vervangingskans van de voorraad in de cel uit de kans per bouwperiode in ModelParameters/Wonen/Vervanging, en Waardefactor,
+			de hedonische waarde van de vervangen voorraad gedeeld door die van de huidige. De indicator SloopNieuwbouwPerWoningtype boekt met Kans per periode de vervangen woningen als sloop en
+			nieuwbouw van hetzelfde type, zodat Hestia ze met een nieuw bouwjaar ziet; Suitability_Wonen_perOP_T laat de verwervingskosten van een cel oplopen met het aandeel dat voor het begin van
+			de periode is vervangen maal Waardefactor (PerZichtjaar), want een vervangen woning koopt het model als nieuwbouw. Beide kaarten ontkoppeld via DecoupledFile_T, zoals de
+			verwervingskosten. De zeef kent de vervanging niet: een cel met vervangen woningen houdt het bouwjaar van het basisjaar in de leeftijdsregel."
+{
+	unit<UInt32> vbo_startjaar := Verwervingskosten/vbo_startjaar, Descr = "De woon-vbo's van het basisjaar, dezelfde set als de verwervingskosten van woningen, zodat kans, waarde en waardefactor over dezelfde woningen gaan.";
+	unit<UInt8>  Bouwperiode   := /Classifications/Vastgoed/Bouwperiode;
+
+	attribute<Bool>        HeeftBouwjaar   (vbo_startjaar) := IsDefined(vbo_startjaar/Bouwjaar_trunc), Descr = "Een vbo zonder gerelateerd pand heeft geen bouwjaar en krijgt kans nul en waardeverhouding een, dezelfde keuze als Telt in Bouwperiode_T.";
+	attribute<Bouwperiode> Bouwperiode_rel (vbo_startjaar) := classify(vbo_startjaar/Bouwjaar_trunc, Bouwperiode/ClassBreaks);
+	attribute<Float32>     KansPerVBO      (vbo_startjaar) := HeeftBouwjaar ? /ModelParameters/Wonen/Vervanging/KansPerJaar[Bouwperiode_rel] : 0f, Descr = "De jaarlijkse vervangingskans van deze woning, uit de bouwperiode van haar pand.";
+
+	container Kans
+	: Descr = "De jaarlijkse vervangingskans van de woningvoorraad in de cel: het gemiddelde van KansPerVBO over de woon-vbo's met bouwjaar in de cel, nul zonder woningen. Een kans per cel en niet per
+				woning, dus een cel met een gemengde voorraad dunt uit op het gemiddelde; bij deze kansen, hoogstens 0,23 procent per jaar, blijft het verschil met een exact mengsel over honderd jaar
+				onder een procent van de stroom."
+	{
+		attribute<Float32> Aantal (AdminDomain) := sum(float32(HeeftBouwjaar), vbo_startjaar/AdminDomain_rel);
+		attribute<Float32> Som    (AdminDomain) := sum(KansPerVBO, vbo_startjaar/AdminDomain_rel), Descr = "De verwachte vervanging per jaar in de cel, in woningen.";
+		attribute<Float32> Calc   (AdminDomain) := Aantal > 0f ? Som / Aantal : 0f;
+
+		parameter<String> TifFile := '%LocalDataProjDir%/BaseData/Vastgoed/Vervangingskans_Woningen_AdminDomain_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+
+		parameter<String> Fingerprint :=
+			  'start_year='              + string(ModelParameters/Model_StartYear)
+			+ ';bag_date='               + ModelParameters/BAG_file_date
+			+ ';constr_period_count='    + string(#Bouwperiode)
+			+ ';constr_period_breaks='   + asList(string(Bouwperiode/ClassBreaks), ',')
+			+ ';replacement_rates='      + asList(string(/ModelParameters/Wonen/Vervanging/KansPerJaar), ',')
+			+ ';admin_grid='             + ModelParameters/Advanced/AdminDomain_ref
+			+ ';grid_size='              + string(AdminDomain/gridsize)
+			+ ';study_area='             + ModelParameters/StudyArea
+		, Descr = "Alles wat de kaart bepaalt: de vbo-set van het basisjaar met haar BAG-levering, de klassengrenzen, de kans per klasse en het grid.";
+
+		container Decoupling := Templates/DecoupledFile_T(TifFile, Fingerprint, 'Write');
+
+		attribute<Float32> Write          (AdminDomain) := Calc, StorageName = "=TifFile", StorageType = "gdalwrite.grid", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))", Descr = "Schrijft de tif, zonder zijbestand; dat volgt via Make.";
+		attribute<Float32> Make           (AdminDomain) := Write, ExplicitSuppliers = "Decoupling/Write_Fingerprint", Descr = "Maakt de tif en daarna het zijbestand. Vraag dit item en niet Write, want alleen langs deze weg ontstaat de fingerprint (#837).";
+		attribute<Float32> Read_UNCHECKED (AdminDomain) : StorageName = "=TifFile", StorageReadOnly = "True";
+		attribute<Float32> Read           (AdminDomain) := Read_UNCHECKED, IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))";
+		attribute<Float32> Totaal         (AdminDomain) :=
+			=	!ModelParameters/BaseDataOntkoppeld ? 'Calc'
+			:	Decoupling/MayReuse                 ? 'Read'
+			:	                                      'Make'
+		, Descr = "Wat de rest van het model gebruikt, in drie standen, als Verwervingskosten/Woningen/Totaal: niet ontkoppeld rekent door, ontkoppeld met een geldige fingerprint leest de tif, anders rekent en schrijft hij in een keer.";
+	}
+
+	parameter<Float32> VerwachtPerJaar := sum(Kans/Som)
+	, Descr = "De verwachte vervanging per jaar op de voorraad van het basisjaar, in woningen: de som van de kans over alle woon-vbo's in het studiegebied. De controlewaarde vervanging_per_jaar in Diagnose/ChecksBasisjaar.";
+
+	container Waardefactor
+	: Descr = "De hedonische waarde van de vervangen voorraad gedeeld door die van de huidige, per cel. Per woning verandert bij vervanging het bouwjaar naar de referentieklasse vanaf 2002 en het
+				onderhoud naar goed; de verhouding is exp van de bouwperiodecoefficient van de referentieklasse min die van de eigen bouwperiode, plus de onderhoudscoefficient maal het aandeel van de
+				voorraad in de regio dat nu niet goed is onderhouden, met de coefficienten van het eigen woningtype. Grootte, kavel en ligging blijven staan, dus een vervangen woning wordt even groot
+				teruggebouwd; dat is een aanname. Gewogen met de waarde per vbo uit Verwervingskosten/Woningen, want de factor werkt op het waardetotaal van de cel; een cel zonder woningwaarde krijgt
+				een. Vooroorlogse appartementen hebben een positieve bouwperiodecoefficient en krijgen dus een factor onder een."
+	{
+		container PerWP4 :=
+			for_each_ne(
+				/Classifications/Vastgoed/WP4/name
+				, 'PerWP4_T('+string(id(/Classifications/Vastgoed/WP4))+'[/Classifications/Vastgoed/WP4])'
+			), Descr = "Per woningtype de log van de waardeverhouding per bouwperiode en de onderhoudsopslag per cel.";
+
+		Template PerWP4_T
+		{
+			parameter</Classifications/Vastgoed/WP4> WP4_id;
+			//
+			parameter<String> WP4_name := /Classifications/Vastgoed/WP4/name[WP4_id];
+
+			attribute<Float32> Coef          (Bouwperiode) := ='/BaseData/Suitabilities/Wonen/BouwperiodeTerm/'+WP4_name+'/Coef', Descr = "De bouwperiodecoefficienten van dit type, de referentieklasse op nul.";
+			attribute<Float32> LnBouwperiode (Bouwperiode) := Coef[Bouwperiode/V/d_constrgt2001] - Coef, Descr = "De log van de waardeverhouding door het bouwjaar: de referentieklasse min de eigen klasse.";
+
+			parameter<Float32> Coef_maintgood := ='/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4_name+'/Result/d_maintgood';
+			attribute<Float32> LnOnderhoud   (AdminDomain) := ='Coef_maintgood * (1f - MakeDefined(/BaseData/Suitabilities/Wonen/RegionalAvgCharacteristics/perWP4/RegionalAvgCharacteristics/'+WP4_name+'_d_maintgood[float32], /BaseData/Suitabilities/Wonen/RegionalAvgCharacteristics/perWP4/NationalAvgCharacteristics/d_maintgood[WP4_id]))'
+			, Descr = "De log van de waardeverhouding door het onderhoud: nieuwbouw is goed onderhouden, de huidige voorraad voor het regionale aandeel uit de NVM-karakteristieken, landelijk waar de regio geen waarde heeft, dezelfde terugval als in Woningwaarde_perWoningType_T.";
+		}
+
+		attribute<Float32> LnRatio     (vbo_startjaar) :=
+			= 'HeeftBouwjaar ? '
+			+ AsList('(vbo_startjaar/WP4_rel == /Classifications/Vastgoed/WP4/V/'+/Classifications/Vastgoed/WP4/name+' ? PerWP4/'+/Classifications/Vastgoed/WP4/name+'/LnBouwperiode[Bouwperiode_rel] + PerWP4/'+/Classifications/Vastgoed/WP4/name+'/LnOnderhoud[vbo_startjaar/AdminDomain_rel] : 0f)', ' + ')
+			+ ' : 0f'
+		, Descr = "De log van de waardeverhouding van deze woning na vervanging, met de coefficienten van haar type; nul zonder bouwjaar.";
+		attribute<Eur>     Waarde      (vbo_startjaar) := Verwervingskosten/Woningen/PerVBO, Descr = "De waarde van de woning zoals de verwervingskosten haar tellen.";
+		attribute<Eur>     WaardeNa    (vbo_startjaar) := Waarde * exp(LnRatio);
+		attribute<Eur>     SomWaarde   (AdminDomain)   := sum(Waarde,   vbo_startjaar/AdminDomain_rel);
+		attribute<Eur>     SomWaardeNa (AdminDomain)   := sum(WaardeNa, vbo_startjaar/AdminDomain_rel);
+		attribute<Float32> Calc        (AdminDomain)   := SomWaarde > 0[Eur] ? float32(SomWaardeNa / SomWaarde) : 1f;
+
+		parameter<String> TifFile := '%LocalDataProjDir%/BaseData/Vastgoed/Vervanging_Waardefactor_AdminDomain_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Zie Kans/TifFile.";
+
+		parameter<String> Fingerprint :=
+			  'start_year='              + string(ModelParameters/Model_StartYear)
+			+ ';bag_recent_year='        + string(ModelParameters/BAG_RecentYear)
+			+ ';bag_date='               + ModelParameters/BAG_file_date
+			+ ';nvm_date='               + ModelParameters/NVM_filedate
+			+ ';nvm_coeff_year='         + ModelParameters/NVM_coeff_Year
+			+ ';constr_period_count='    + string(#Bouwperiode)
+			+ ';constr_period_breaks='   + asList(string(Bouwperiode/ClassBreaks), ',')
+			+ ';wp4_classes='            + asList(/Classifications/Vastgoed/WP4/name, ',')
+			+ ';maintenance_uplift=True'
+			+ ';trunc_upper='            + string(ModelParameters/Wonen/VBO_opp_truncation_upper)
+			+ ';trunc_lower='            + string(ModelParameters/Wonen/VBO_opp_truncation_lower)
+			+ ';admin_grid='             + ModelParameters/Advanced/AdminDomain_ref
+			+ ';grid_size='              + string(AdminDomain/gridsize)
+			+ ';study_area='             + ModelParameters/StudyArea
+		, Descr = "Dezelfde lijst als Verwervingskosten/Woningen, want de weging is die waarde per vbo, plus de keuze dat het onderhoud meetelt; de coefficienten en de regionale onderhoudsaandelen hangen aan nvm_date.";
+
+		container Decoupling := Templates/DecoupledFile_T(TifFile, Fingerprint, 'Write');
+
+		attribute<Float32> Write          (AdminDomain) := Calc, StorageName = "=TifFile", StorageType = "gdalwrite.grid", IntegrityCheck = "all(this > 0f)", Descr = "Schrijft de tif, zonder zijbestand; dat volgt via Make. Een verhouding is altijd positief en een waar geen woningen staan.";
+		attribute<Float32> Make           (AdminDomain) := Write, ExplicitSuppliers = "Decoupling/Write_Fingerprint", Descr = "Maakt de tif en daarna het zijbestand. Vraag dit item en niet Write, want alleen langs deze weg ontstaat de fingerprint (#837).";
+		attribute<Float32> Read_UNCHECKED (AdminDomain) : StorageName = "=TifFile", StorageReadOnly = "True";
+		attribute<Float32> Read           (AdminDomain) := Read_UNCHECKED, IntegrityCheck = "all(this > 0f)";
+		attribute<Float32> Totaal         (AdminDomain) :=
+			=	!ModelParameters/BaseDataOntkoppeld ? 'Calc'
+			:	Decoupling/MayReuse                 ? 'Read'
+			:	                                      'Make'
+		, Descr = "Zie Kans/Totaal.";
+	}
+
+	parameter<String> Generate := 'Ready', ExplicitSuppliers = "Kans/Make;Waardefactor/Make", Descr = "Maakt beide kaarten met hun zijbestand; WriteBasedata/Impl/Vervanging vraagt dit item.";
+
+	container PerZichtjaar :=
+		for_each_ne(
+			/Classifications/Time/Zichtjaar/name
+			, 'PerZichtjaar_T('+string(/Classifications/Time/Zichtjaar/PrevYearRange_rel)+'[YearRange])'
+		), Descr = "Per zichtjaar de factor op de verwervingskosten van woningen voor Suitability_Wonen_perOP_T: een plus het aandeel van de voorraad dat voor het begin van de periode is vervangen maal de
+				waardefactor min een. Op het begin van de periode en niet op het zichtjaar zelf, want de allocatie koopt de stand aan het begin van de periode; in het eerste zichtjaar is de factor dus een.";
+
+	Template PerZichtjaar_T
+	{
+		parameter<YearRange> Begin;
+		//
+		parameter<Float32> JarenTotBegin := float32((Begin - /ModelParameters/Model_StartYear) / 1[YearRange]), Descr = "Jaren tussen het basisjaar en het begin van de periode.";
+		attribute<Float32> Aandeel (AdminDomain) := 1f - exp((0f - Kans/Totaal) * JarenTotBegin), Descr = "Het aandeel van de voorraad van de cel dat voor het begin van de periode is vervangen, als exponentieel uitdunnen met de jaarlijkse kans.";
+		attribute<Float32> Factor  (AdminDomain) := 1f + Aandeel * (Waardefactor/Totaal - 1f), Descr = "Waarmee de verwervingskosten van de woningen in de cel worden vermenigvuldigd.";
+	}
+}
