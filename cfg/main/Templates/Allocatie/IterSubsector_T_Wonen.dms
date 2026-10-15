@@ -39,6 +39,7 @@ Template IterSubsector_T_Wonen
 
 	parameter</Classifications/Vastgoed/WP2xVSSH> WP2xVSSH_rel := rlookup(lowercase(Subsector_name), lowercase(/Classifications/Vastgoed/WP2xVSSH/name));
 	parameter<Bool> IsVrijeSector := /Classifications/Vastgoed/WP2xVSSH/VSSH_rel[WP2xVSSH_rel] == /Classifications/Vastgoed/VSSH/V/VrijeSector;
+	parameter<Bool> VolgtVrijeSector := !IsVrijeSector && /ModelParameters/Wonen/SocialeHuur/Bonus > 0f, Descr = "Volgt deze subsector in haar rangorde de nieuwbouw van de vrije sector van dit zichtjaar (#528)? De sociale huur, zolang de bonus in ModelParameters/Wonen/SocialeHuur aanstaat; de vrije sector nooit.";
 	parameter<Bool> HeeftQuotum   := /ModelParameters/Wonen/WoningtypeEengezins/Actief
 										&& lowercase(AllocRegio_name) == lowercase(/ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_name)
 										&& /Classifications/Vastgoed/WP2xVSSH/WP2_rel[WP2xVSSH_rel] == /Classifications/Vastgoed/WP2/V/eengezins
@@ -109,13 +110,16 @@ Template IterSubsector_T_Wonen
 		attribute<Float32> Geschiktheid_Cleaned            := Geschiktheid_MaxElem_OP_sub == 0f ? null_f : Geschiktheid_MaxElem_OP_sub, Descr = "Als de geschiktheid 0 is, willen we dit undefined hebben.";
 		attribute<Float32> Geschiktheid_VoorSubsectorKeuze := = HeeftQuotum ? 'Quotum/Geschiktheid_VoorSubsectorKeuze' : 'Geschiktheid_Cleaned', Descr = "Score voor de keuze tussen subsectoren in Iter_Allocatie; voor wonen de kale geschiktheid, met quotum die van het pakket van de groep die de cel kiest (de werken-variant telt hier de plancapaciteit-prioriteit bij op).";
 		attribute<UInt32>  Geschiktheid_Ordered            := invert(index(Geschiktheid_Cleaned))[uint32], Descr = "In het allocatie proces moet de geschiktheid gesorteerd worden, zodat er greedy vanaf de meest geschikte locatie gealloceerd wordt.";
-		parameter<Uint64>  Geschiktheid_Ordered_range      := Uint64(max(Geschiktheid_Ordered)+100), Descr = "Wat is de maximale geschiktheid, plus een getal wat er voor zorgt dat er later geen dubbele waarden kunnen voorkomen.";
+		attribute<Float32> VolgScore                       := = VolgtVrijeSector ? 'Context/ThisIter/VrijeSectorNieuwbouw/Score' : 'const(0f, CompactedAdminDomain)', Descr = "Het deel van de bonus dat voor de cel geldt, naar de vrije-sectornieuwbouw van dit zichtjaar binnen Straal (#528). Alleen gevuld voor een subsector die volgt; de telling zelf staat per iteratie in Iter_T.";
+		attribute<UInt32>  Geschiktheid_Rang               := = VolgtVrijeSector ? 'Geschiktheid_Ordered + uint32(float32(Geschiktheid_Ordered) * /ModelParameters/Wonen/SocialeHuur/Bonus * VolgScore)' : 'Geschiktheid_Ordered'
+		, Descr = "De rang waarmee de cel de zaaglijn in gaat: de rang van het saldo, voor een volgende subsector verhoogd met de bonus maal de score van de cel (#528). Zonder bonus letterlijk Geschiktheid_Ordered, zodat de uitkomst dan tot op de bit die van voor #528 is.";
+		parameter<Uint64>  Geschiktheid_Ordered_range      := Uint64(max(Geschiktheid_Rang)+100), Descr = "Wat is de maximale rang, plus een getal wat er voor zorgt dat er later geen dubbele waarden kunnen voorkomen.";
 		attribute<UInt32>  TredeScore                      := (#TredeK - 1) - collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TredeK/Per_AdminDomain)
 																, Descr = "Tredes introduceren een volgordelijkheid in groepen cellen, zodat onafhankelijk van de geschiktheid sommige groepen cellen boven andere geplaatst worden, bijvoorbeeld dichtbij een
 																		OV-knooppunt. Hier wordt die volgorde voorbereid, met een check of de maximale waarde van een trede kleiner of gelijk is aan de cardinaliteit van de tredes. De IntegrityCheck toetst exact de
 																		term die hierboven wordt afgetrokken, TredeK/Per_AdminDomain over CompactedAdminDomain, en niet de AllocDomain-variant: dat zijn verschillende verzamelingen cellen, en een toets op de andere
 																		kan slagen terwijl de aftrekking onder nul gaat en in UInt32 omslaat (#605).", IntegrityCheck = "max(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TredeK/Per_AdminDomain)) < #TredeK";
-		attribute<Uint64>       Geschiktheid               := Uint64(Beschikbaar) * (Uint64(TredeScore) * Geschiktheid_Ordered_range + Uint64(Geschiktheid_Ordered)), Descr = "Hier wordt de sorteerde geschiktheid gecombineerd met de tredescores tot een aangepaste geschiktheid in groepen per trede.";
+		attribute<Uint64>       Geschiktheid               := Uint64(Beschikbaar) * (Uint64(TredeScore) * Geschiktheid_Ordered_range + Uint64(Geschiktheid_Rang)), Descr = "Hier wordt de sorteerde geschiktheid gecombineerd met de tredescores tot een aangepaste geschiktheid in groepen per trede.";
 		attribute<Bool>         LigtBovenAfkapgrens        := = HeeftQuotum
 																	? 'Quotum/LigtBovenAfkapgrens'
 																	: 'Geschiktheid > AllocRegio/Afkapgrens[AllocRegio/per_CompactedAdminDomain]', Descr = "Wil deze subsector de cel in deze iteratie hebben? Zonder quotum ligt de geschiktheid boven de zaaglijn van de regio, met quotum boven die van een van de woningtypegroepen. Iter_Allocatie kiest daarna tussen de subsectoren.";
@@ -193,11 +197,12 @@ Template IterSubsector_T_Wonen
 			attribute<Float32>      MaxElem              (CompactedAdminDomain) := ='max_elem('+AsItemList(OP_groep/Expr)+')';
 			attribute<Float32>      Geschiktheid_Cleaned (CompactedAdminDomain) := MaxElem == 0f ? null_f : MaxElem;
 			attribute<UInt32>       Geschiktheid_Ordered (CompactedAdminDomain) := invert(index(Geschiktheid_Cleaned))[uint32], Descr = "De rang van het saldo, iteratie-invariant zoals CompactedAdminDomain/Geschiktheid_Ordered; de beschikbaarheid telt pas mee in Geschiktheid.";
-			parameter<UInt64>       Geschiktheid_Ordered_range := UInt64(max(Geschiktheid_Ordered)+100);
+			attribute<UInt32>       Geschiktheid_Rang    (CompactedAdminDomain) := = VolgtVrijeSector ? 'Geschiktheid_Ordered + uint32(float32(Geschiktheid_Ordered) * /ModelParameters/Wonen/SocialeHuur/Bonus * CompactedAdminDomain/VolgScore)' : 'Geschiktheid_Ordered', Descr = "De rang met de bonus naar de score van de cel, zoals CompactedAdminDomain/Geschiktheid_Rang (#528).";
+			parameter<UInt64>       Geschiktheid_Ordered_range := UInt64(max(Geschiktheid_Rang)+100);
 
 			attribute<Bool>   BezetVoor   (CompactedAdminDomain) := = Vorige_name == '' ? 'const(FALSE, CompactedAdminDomain)' : 'Groepen/'+Vorige_name+'/BezetNa', Descr = "De cellen die een eerdere groep in deze iteratie al kiest.";
 			attribute<Bool>   Beschikbaar (CompactedAdminDomain) := CompactedAdminDomain/Beschikbaar && IsDefined(ArgMax_OP_groep) && !BezetVoor, Descr = "Beschikbaar voor deze subsector, met een beschikbaar pakket van deze groep, en niet al door een eerdere groep gekozen.";
-			attribute<UInt64> Geschiktheid (CompactedAdminDomain) := UInt64(Beschikbaar) * (UInt64(CompactedAdminDomain/TredeScore) * Geschiktheid_Ordered_range + UInt64(Geschiktheid_Ordered)), Descr = "Dezelfde opbouw als CompactedAdminDomain/Geschiktheid: eerst de trede, daarbinnen het saldo.";
+			attribute<UInt64> Geschiktheid (CompactedAdminDomain) := UInt64(Beschikbaar) * (UInt64(CompactedAdminDomain/TredeScore) * Geschiktheid_Ordered_range + UInt64(Geschiktheid_Rang)), Descr = "Dezelfde opbouw als CompactedAdminDomain/Geschiktheid: eerst de trede, daarbinnen het saldo.";
 			attribute<Float32> PotentieleStateNaAllocatie (CompactedAdminDomain) := MakeDefined(OP/Dichtheid[ArgMax_OP_sub -> org_rel], 0f) * float32(Beschikbaar) * AdminDomain/NrHaPerCell, Descr = "De woningen die het pakket van deze groep op de cel zet.";
 
 			attribute<Float32> Aandeel (AllocRegio) := ='/BaseData/StartState/WoningtypeEengezins/Aandeel/'+Groep_name+AllocRegio_StudyArea_orgrel, Descr = "Het gebouwde aandeel van deze groep in de eengezinsnieuwbouw van de regio.";
