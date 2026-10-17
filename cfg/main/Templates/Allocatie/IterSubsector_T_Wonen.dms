@@ -41,9 +41,9 @@ Template IterSubsector_T_Wonen
 	parameter<Bool> IsVrijeSector := /Classifications/Vastgoed/WP2xVSSH/VSSH_rel[WP2xVSSH_rel] == /Classifications/Vastgoed/VSSH/V/VrijeSector;
 	parameter<Bool> VolgtVrijeSector := !IsVrijeSector && /ModelParameters/Wonen/SocialeHuur/Bonus > 0f, Descr = "Volgt deze subsector in haar rangorde de nieuwbouw van de vrije sector van dit zichtjaar (#528)? De sociale huur, zolang de bonus in ModelParameters/Wonen/SocialeHuur aanstaat; de vrije sector nooit.";
 	parameter<Bool> HeeftQuotum   := /ModelParameters/Wonen/WoningtypeEengezins/Actief
-										&& lowercase(AllocRegio_name) == lowercase(/ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_name)
 										&& /Classifications/Vastgoed/WP2xVSSH/WP2_rel[WP2xVSSH_rel] == /Classifications/Vastgoed/WP2/V/eengezins
-	, Descr = "Geldt hier het quotum per woningtype (#847)? Voor eengezins op de eerste allocatieregio van wonen, in elke sequentie. Op de hogere regio's en voor meergezins kiest de cel het pakket met het hoogste saldo.";
+	, Descr = "Geldt hier het quotum per woningtype (#847)? Voor eengezins op elke allocatieregio van wonen, in elke sequentie, met het gebouwde aandeel van de indeling van die regio. Alleen op de
+				eerste regio liet de overloop naar COROP en provincie het type vrij, en dat werd bijna altijd rij. Voor meergezins kiest de cel het pakket met het hoogste saldo.";
 
 	parameter<Bool>   IsPlancapaciteitNogGeldig := ='uint32('+substr(Zichtjaar_name, 1, 4)+') <= uint32(/ModelParameters/Advanced/PlancapaciteitGeldigTotEnMet)', Descr = "Dezelfde vervaldatum als in Templates/Beschikbaarheden/Zeef_T, hier voor de trede (#739).";
 	parameter<String> TredeWortel               := 'Context/ThisZichtjaar/Impl/TredeDynamischeUrbanContour'
@@ -197,15 +197,37 @@ Template IterSubsector_T_Wonen
 			attribute<Float32>      MaxElem              (CompactedAdminDomain) := ='max_elem('+AsItemList(OP_groep/Expr)+')';
 			attribute<Float32>      Geschiktheid_Cleaned (CompactedAdminDomain) := MaxElem == 0f ? null_f : MaxElem;
 			attribute<UInt32>       Geschiktheid_Ordered (CompactedAdminDomain) := invert(index(Geschiktheid_Cleaned))[uint32], Descr = "De rang van het saldo, iteratie-invariant zoals CompactedAdminDomain/Geschiktheid_Ordered; de beschikbaarheid telt pas mee in Geschiktheid.";
-			attribute<UInt32>       Geschiktheid_Rang    (CompactedAdminDomain) := = VolgtVrijeSector ? 'Geschiktheid_Ordered + uint32(float32(Geschiktheid_Ordered) * /ModelParameters/Wonen/SocialeHuur/Bonus * CompactedAdminDomain/VolgScore)' : 'Geschiktheid_Ordered', Descr = "De rang met de bonus naar de score van de cel, zoals CompactedAdminDomain/Geschiktheid_Rang (#528).";
+			parameter<Bool>         VolgtRijwoningen := Groep/VolgtRijwoningen[Groep_rel] && /ModelParameters/Wonen/WoningtypeEengezins/Nabijheid/Bonus > 0f
+			, Descr = "Volgt deze groep in haar rangorde de rijwoningen van dit zichtjaar (#847)? Naar Groep/VolgtRijwoningen, zolang de bonus in ModelParameters/Wonen/WoningtypeEengezins/Nabijheid aanstaat.";
+			parameter<String>       RijGroep_name := Groep/name[rlookup(/Classifications/Vastgoed/WP4/V/rijtjeswoning, Groep/WP4_rel)], Descr = "De groep van de rijwoningen, die in de volgorde van ActieveGroep voor deze groep kiest.";
+			attribute<Float32>      RijDezeIteratie      (CompactedAdminDomain) := = VolgtRijwoningen
+				? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, potential(recollect_by_cond(AdminDomain/IsCompactedDomain, float32(Groepen/'+RijGroep_name+'/Boven) * Groepen/'+RijGroep_name+'/PotentieleStateNaAllocatie, 0f), /Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(/ModelParameters/Wonen/WoningtypeEengezins/Nabijheid/Straal / 1[meter]))+'m/Flat2))'
+				: 'const(0f, CompactedAdminDomain)'
+			, Descr = "De rijwoningen die de rijgroep van deze subsector in deze iteratie binnen Nabijheid/Straal van de cel kiest. De zaaglijn van een groep alloceert in de eerste iteratie bijna de hele claim, dus
+						met alleen de rijnieuwbouw van eerdere iteraties (Iter_T/RijwoningNieuwbouw) komt het signaal te laat; de rijgroep kiest binnen een iteratie voor deze groep, dus haar keuze is bekend.";
+			attribute<Float32>      VolgScoreRij         (CompactedAdminDomain) := = VolgtRijwoningen
+				? 'min_elem((Context/ThisIter/RijwoningNieuwbouw/Intensiteit + RijDezeIteratie) / float32(/ModelParameters/Wonen/WoningtypeEengezins/Nabijheid/Referentie / 1[Woning]), 1f)'
+				: 'const(0f, CompactedAdminDomain)'
+			, Descr = "Het deel van de bonus dat voor de cel geldt: de rijnieuwbouw van dit zichtjaar tot en met de vorige iteratie plus die van de rijgroep in deze iteratie, binnen Nabijheid/Straal, gedeeld door
+						Referentie en begrensd op een (#847). Alleen gevuld voor een groep die volgt.";
+			attribute<UInt32>       Geschiktheid_Rang    (CompactedAdminDomain) := = VolgtVrijeSector || VolgtRijwoningen
+				? 'Geschiktheid_Ordered + uint32(float32(Geschiktheid_Ordered) * ' + (VolgtVrijeSector ? '/ModelParameters/Wonen/SocialeHuur/Bonus * CompactedAdminDomain/VolgScore' : '0f')
+					+ (VolgtRijwoningen ? ' + float32(Geschiktheid_Ordered) * /ModelParameters/Wonen/WoningtypeEengezins/Nabijheid/Bonus * VolgScoreRij' : '') + ')'
+				: 'Geschiktheid_Ordered'
+			, Descr = "De rang met de bonus naar de score van de cel, zoals CompactedAdminDomain/Geschiktheid_Rang (#528), plus voor een groep die de rijwoningen volgt de bonus van Nabijheid maal haar score (#847).
+						De twee opslagen tellen op; met alleen de sociale-huurbonus is de expressie letterlijk die van #528.";
 			parameter<UInt64>       Geschiktheid_Ordered_range := UInt64(max(Geschiktheid_Rang)+100);
 
 			attribute<Bool>   BezetVoor   (CompactedAdminDomain) := = Vorige_name == '' ? 'const(FALSE, CompactedAdminDomain)' : 'Groepen/'+Vorige_name+'/BezetNa', Descr = "De cellen die een eerdere groep in deze iteratie al kiest.";
 			attribute<Bool>   Beschikbaar (CompactedAdminDomain) := CompactedAdminDomain/Beschikbaar && IsDefined(ArgMax_OP_groep) && !BezetVoor, Descr = "Beschikbaar voor deze subsector, met een beschikbaar pakket van deze groep, en niet al door een eerdere groep gekozen.";
-			attribute<UInt64> Geschiktheid (CompactedAdminDomain) := UInt64(Beschikbaar) * (UInt64(CompactedAdminDomain/TredeScore) * Geschiktheid_Ordered_range + UInt64(Geschiktheid_Rang)), Descr = "Dezelfde opbouw als CompactedAdminDomain/Geschiktheid: eerst de trede, daarbinnen het saldo.";
+			attribute<UInt64> TredeLift (CompactedAdminDomain) := = VolgtRijwoningen
+				? 'UInt64((VolgScoreRij / 1[Woning]) * /ModelParameters/Wonen/WoningtypeEengezins/Nabijheid/LadderSprong * float32(#TredeK))'
+				: 'const(0u64, CompactedAdminDomain)'
+			, Descr = "Hoeveel treden de cel door de nabijheid van rijnieuwbouw stijgt: haar score maal LadderSprong maal het aantal treden, naar beneden afgerond (#847). De score draagt de eenheid van de telling (woningen) mee en wordt door een woning gedeeld, anders krijgt de trede-opslag een eenheid en weigert de optelling in Geschiktheid. Nul voor een groep die niet volgt.";
+			attribute<UInt64> Geschiktheid (CompactedAdminDomain) := UInt64(Beschikbaar) * ((UInt64(CompactedAdminDomain/TredeScore) + TredeLift) * Geschiktheid_Ordered_range + UInt64(Geschiktheid_Rang)), Descr = "Dezelfde opbouw als CompactedAdminDomain/Geschiktheid: eerst de trede, verhoogd met TredeLift, daarbinnen het saldo.";
 			attribute<Float32> PotentieleStateNaAllocatie (CompactedAdminDomain) := MakeDefined(OP/Dichtheid[ArgMax_OP_sub -> org_rel], 0f) * float32(Beschikbaar) * AdminDomain/NrHaPerCell, Descr = "De woningen die het pakket van deze groep op de cel zet.";
 
-			attribute<Float32> Aandeel (AllocRegio) := ='/BaseData/StartState/WoningtypeEengezins/Aandeel/'+Groep_name+AllocRegio_StudyArea_orgrel, Descr = "Het gebouwde aandeel van deze groep in de eengezinsnieuwbouw van de regio.";
+			attribute<Float32> Aandeel (AllocRegio) := ='/BaseData/StartState/WoningtypeEengezins/PerIndeling/'+AllocRegio_name+'/Aandeel/'+Groep_name+AllocRegio_StudyArea_orgrel, Descr = "Het gebouwde aandeel van deze groep in de eengezinsnieuwbouw van de regio.";
 			attribute<Float32> Doel    (AllocRegio) := = IsExclusief
 				? '(Quotum/AandeelExclusief > 0f ? Aandeel / Quotum/AandeelExclusief : 0f) * Quotum/DoelExclusief'
 				: '(Quotum/AandeelNietExclusief > 0f ? Aandeel / Quotum/AandeelNietExclusief : 1f / float32(Quotum/AantalNietExclusief)) * (Quotum/Doel - Quotum/DoelExclusief)'
