@@ -282,6 +282,7 @@ function Test-Invoer {
     $eisen += ,@('BaseData\Vastgoed\VolledigeTabel_*\WP5\*.mmd',        'WP5-pandtypering',            '/WriteBasedata/Generate_Run1')
     $eisen += ,@('BaseData\Grondgebruik\BBG\BBG*_25m_Modus_*.tif',      'BBG-vergridding',             '/WriteBasedata/Generate_Run2')
     $eisen += ,@('BaseData\Vastgoed\Verwervingskosten_Woningen_*.tif',  'verwervingskosten',           '/WriteBasedata/Generate_Run2')
+    $eisen += ,@('BaseData\Vastgoed\BRK\Perceel_*.tif',                'kadastraal perceel per cel',  '/WriteBasedata/Generate_Run2')
     # NBP en MNP alleen wanneer iets ze leest, dezelfde voorwaarden als Impl/MakeNBP en Impl/MakeMNP in
     # WriteBasedata.dms; die kijken naar alle varianten, deze toets naar de varianten van deze run.
     $bron  = Get-BeheertypeBron

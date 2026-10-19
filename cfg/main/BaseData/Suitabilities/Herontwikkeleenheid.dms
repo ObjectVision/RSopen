@@ -13,14 +13,14 @@
 
 container Herontwikkeleenheid
 : Descr = "De herontwikkeleenheid van een cel en de kosten van de bestaande bebouwing uitgesmeerd over die eenheid (#861). Een cel met een tuin of een stuk openbare ruimte in woongebied was voor niets te
-			koop, want de verwervings- en sloopkosten hingen alleen aan de cellen met panden; het model herontwikkelde daardoor losse tuincellen en open plekken in plaats van hele sites. Hier hoort elke
-			cel binnen Straal van een pandcel bij de eenheid van die panden (HeeftPandOpSite) en krijgt zij haar deel van hun kosten: elke pandcel verdeelt haar kosten gelijk over de eenheidcellen
-			binnen haar Straal, en een cel telt op wat zij zo van de pandcellen om haar heen krijgt. Een uitsmering op het raster en geen polygoonsites: op een cel van 25 meter is een site uit het EconLogic-paper (mediaan
-			1.400 m2) twee cellen groot, dus de straal is de site. Het totaal per post blijft exact behouden, zie Behoud. Alleen de geschiktheid (Templates/Suitabilities/
-			Suitability_Wonen_perOP_T) leest dit; de stand, de sloop en de indicatoren blijven per cel rekenen met wat er werkelijk staat."
+			koop, want de verwervings- en sloopkosten hingen alleen aan de cellen met panden; het model herontwikkelde daardoor losse tuincellen en open plekken in plaats van hele sites. De eenheid is het
+			kadastrale perceel (SourceData/Vastgoed/BRK): elke cel hoort bij het perceel waarin haar midden ligt, de kosten van alle pandcellen van een perceel worden gelijk over de cellen van dat
+			perceel verdeeld, en een cel zonder perceel houdt haar eigen kosten. Wie een pand koopt om te slopen koopt het perceel, dus de tuin kost wat het huis kost en een flat met zijn groen eromheen
+			weegt op elke cel van het perceel. Het totaal per post blijft exact behouden, zie Behoud. Alleen de geschiktheid (Templates/Suitabilities/Suitability_Wonen_perOP_T) leest dit; de stand,
+			de sloop en de indicatoren blijven per cel rekenen met wat er werkelijk staat."
 {
-	parameter<meter>  Straal := /ModelParameters/Wonen/Herontwikkeleenheid/Straal;
-	parameter<String> Kernel := '/Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(Straal / 1[meter]))+'m/Flat2', Descr = "De schijf met straal Straal op het raster van de administratie.";
+	unit<UInt32>       Perceel     := /SourceData/Vastgoed/BRK/Perceel;
+	attribute<Perceel> Eenheid_rel (AdminDomain) := /SourceData/Vastgoed/BRK/Perceel_rel, Descr = "Het perceel van de cel, de herontwikkeleenheid; null voor een cel waarvan het midden in geen perceel ligt.";
 
 	attribute<Eur>  Verwerving_Woningen_Cel     (AdminDomain) := MakeDefined(Verwervingskosten/Woningen/Totaal,          0[Eur]), Descr = "De hedonische waarde van de woningen in de cel, nul zonder woningen.";
 	attribute<Eur>  Verwerving_NietWoningen_Cel (AdminDomain) := MakeDefined(Verwervingskosten/Niet_Woningen/Totaal,     0[Eur]), Descr = "De verwervingskosten van het niet-woonvastgoed in de cel.";
@@ -28,19 +28,22 @@ container Herontwikkeleenheid
 	attribute<Eur>  Sloop_NietWoningen_Cel      (AdminDomain) := MakeDefined(Sloopkosten/Totaal_Niet_Woningen,           0[Eur]), Descr = "De sloopkosten van het niet-woonvastgoed in de cel.";
 	attribute<Bool> IsPandcel                   (AdminDomain) := Verwerving_Woningen_Cel > 0[Eur] || Verwerving_NietWoningen_Cel > 0[Eur] || Sloop_Woningen_Cel > 0[Eur] || Sloop_NietWoningen_Cel > 0[Eur], Descr = "Staat er in de cel een BAG-pand met een verwervings- of sloopkostenpost: woningen met een hedonische waarde of met woonoppervlak, of niet-woonvloeroppervlak? Ook de sloopposten tellen, anders valt een woning zonder prijs buiten de uitsmering en gaat haar sloopkostenpost verloren (in Noord-Holland 0,5 procent).";
 
-	attribute<Float32> PandcellenNabij   (AdminDomain) := = 'potential(float32(IsPandcel), '+Kernel+')', Descr = "Het aantal pandcellen binnen Straal, de cel zelf meegeteld.";
-	attribute<Bool>    HeeftPandOpSite   (AdminDomain) := PandcellenNabij > 0f
-	, Descr = "Hoort de cel bij een herontwikkeleenheid met een pand, dus ligt zij binnen Straal van een pandcel? Dat zijn de pandcellen zelf en de tuinen, erven en openbare ruimte eromheen. Een cel buiten deze omtrek is kale grond en houdt haar grondwaarde als enige verwervingspost.";
-	attribute<Float32> EenheidcellenNabij (AdminDomain) := = 'potential(float32(HeeftPandOpSite), '+Kernel+')', Descr = "Het aantal eenheidcellen binnen Straal, de noemer van de uitsmering; minstens een voor een eenheidcel.";
+
+	attribute<UInt64> CellenPerEenheid     (Perceel) := pcount(Eenheid_rel), Descr = "Het aantal cellen van het perceel, de noemer van de uitsmering; minstens een voor een perceel met een cel.";
+	attribute<UInt32> PandcellenPerEenheid (Perceel) := sum_uint32(IsPandcel, Eenheid_rel), Descr = "Het aantal pandcellen op het perceel.";
+	attribute<Bool>   HeeftPandOpSite      (AdminDomain) := IsDefined(Eenheid_rel) ? PandcellenPerEenheid[Eenheid_rel] > 0 : IsPandcel
+	, Descr = "Hoort de cel bij een perceel met een pand, of is zij zonder perceel zelf een pandcel? Dat zijn de pandcellen en de tuinen, erven en het groen op hetzelfde perceel. Een cel op een perceel zonder pand is kale grond en houdt haar grondwaarde als enige verwervingspost.";
+	parameter<Float32> AandeelPandcellenMetPerceel := float32(sum(uint32(IsPandcel && IsDefined(Eenheid_rel)))) / float32(sum(uint32(IsPandcel)))
+	, Descr = "Het aandeel van de pandcellen met een perceel. Een pand staat altijd op een perceel, dus dit hoort dicht bij een te liggen; een lage waarde betekent een lege of verschoven perceelkaart, en dan smeert de uitsmering niets uit zonder dat iets anders faalt. Diagnose/Basisjaar leest dit (ChecksBasisjaar).";
 
 	Template Uitsmeren_T
-	: Descr = "Smeert een kostenpost van de pandcellen uit over de eenheidcellen: elke pandcel verdeelt haar post gelijk over de eenheidcellen binnen haar Straal (dat zijn er EenheidcellenNabij, want elke cel binnen Straal van een pandcel is een eenheidcel), en een cel telt op wat zij van de pandcellen binnen Straal krijgt. Nul buiten de eenheden, en de som over alle cellen is de som van de post."
+	: Descr = "Smeert een kostenpost van de pandcellen uit over hun perceel: de post van alle pandcellen van het perceel samen, gelijk verdeeld over alle cellen van het perceel. Een cel zonder perceel houdt haar eigen post. De som over alle cellen is de som van de post."
 	{
 		attribute<Eur> Bron (AdminDomain);
 		//
-		attribute<Float32> PerEenheidcel (AdminDomain) := IsPandcel ? float32(Bron) / EenheidcellenNabij : 0f, Descr = "Wat elke pandcel aan elk van haar eenheidcellen geeft.";
-		attribute<Eur>     Result        (AdminDomain) := = 'HeeftPandOpSite ? value(potential(PerEenheidcel, '+Kernel+'), Eur) : 0[Eur]', Descr = "De uitgesmeerde post per cel.";
-		parameter<Float64> Behoud               := sum(float64(Result)) / sum(float64(Bron)), Descr = "Het totaal na de uitsmering gedeeld door het totaal ervoor; een, op afronding na. Diagnose, niets leest dit.";
+		attribute<Eur>     PerEenheid (Perceel)     := sum(Bron, Eenheid_rel), Descr = "De post van alle pandcellen van het perceel samen.";
+		attribute<Eur>     Result     (AdminDomain) := IsDefined(Eenheid_rel) ? PerEenheid[Eenheid_rel] / float32(CellenPerEenheid[Eenheid_rel]) : Bron, Descr = "De uitgesmeerde post per cel: het perceelstotaal gedeeld door het aantal cellen van het perceel.";
+		parameter<Float64> Behoud                   := sum(float64(Result)) / sum(float64(Bron)), Descr = "Het totaal na de uitsmering gedeeld door het totaal ervoor; een, op afronding na. Diagnose, niets leest dit.";
 	}
 
 	container Verwerving_NietWoningen := Uitsmeren_T(Verwerving_NietWoningen_Cel), Descr = "De verwervingskosten van het niet-woonvastgoed, uitgesmeerd.";
