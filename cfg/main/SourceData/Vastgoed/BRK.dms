@@ -14,56 +14,21 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container BRK
-: Descr = "De kadastrale percelen en hun vergridding naar de administratie: per cel het perceel waarin het celmidden ligt, ontkoppeld als tif met een fingerprint. Het perceel is de
+: Descr = "De kadastrale percelen en hun vergridding naar de administratie: per cel het perceel waarin het celmidden ligt. Het perceel is de
 			herontwikkeleenheid van wonen (#861, BaseData/Suitabilities/Wonen/Herontwikkeleenheid): wie een pand koopt om te slopen koopt het perceel, met de tuin, het erf of het groen eromheen.
-			De percelen komen rechtstreeks uit de download van PDOK, een zip met de GML van heel Nederland; GDAL leest die via /vsizip met het schema in kadastralekaart_perceel.gfs. Die lees is
-			kostbaar en gebeurt alleen wanneer de tif gemaakt wordt; alle lezers gaan via Perceel en Perceel_rel, die aan de tif hangen. Een cel waarvan het midden in geen perceel ligt (het
-			buitenwater, een deel van de wegen) heeft geen perceel. De fss-tabel van de levering 20231206 onder %SourceDataDir%/BRK/20231206 is door een oudere GeoDMS geschreven en leest in de
-			huidige versie niet meer goed, daarom de GML."
-, Source = "Kadaster, BRK Kadastrale Kaart via PDOK, perceellaag zonder historie: %SourceDataDir%/BRK/kadastralekaart-gml-nl-nohist_<datum>.zip, de datum van ModelParameters/BRK_file_date."
+			Een cel waarvan het midden in geen perceel ligt, zoals het buitenwater en een deel van de wegen, heeft geen perceel."
+, Source = "Kadaster, BRK Kadastrale Kaart via PDOK, perceellaag zonder historie, de download van ModelParameters/BRK_file_date; als mmd-store gemaakt door pbl-nl/model-RS-PlanCapaciteit,
+			%SourceDataDir%/PlanCapaciteit/BRK_<datum>/perceel_<datum>.mmd."
 {
-	parameter<String> Download      := '%SourceDataDir%/BRK/kadastralekaart-gml-nl-nohist_'+/ModelParameters/BRK_file_date+'.zip', Descr = "De download van PDOK zoals hij is; GDAL leest de perceellaag rechtstreeks uit de zip.";
-	parameter<String> PerceelSchema := expand(., '%projDir%/cfg/main/SourceData/Vastgoed/BRK/kadastralekaart_perceel.gfs')
-	, Descr = "Het GML-schema voor GDAL (GFS_TEMPLATE): de identificatie als veld en alleen de perceelgrens als geometrie, niet het plaatsingspunt van het perceelnummer. Een gfs-bestand mag niets voor het
-				hoofdelement bevatten, ook geen commentaar. Het pad staat hier en niet in GDAL_Options zelf: een expand(.) in een optie onder de storage geeft een recursie zodra GDAL de laag leest.";
-
-	unit<UInt32> PerceelGML
-	:	StorageName     = "='/vsizip/'+Download+'/kadastralekaart_perceel.gml'"
-	,	StorageType     = "gdal.vect"
+	unit<UInt32> Perceel
+	:	StorageName     = "='%SourceDataDir%/PlanCapaciteit/BRK_'+/ModelParameters/BRK_file_date+'/perceel_'+/ModelParameters/BRK_file_date+'.mmd'"
 	,	StorageReadOnly = "True"
-	,	Descr           = "De percelen van heel Nederland uit de download. Alleen de vergridding leest dit: GDAL loopt de laag van tientallen GB voor de omvang en voor elk gevraagd attribuut opnieuw door,
-							dus vraag hier niets op buiten Make_PerceelIndex; de lezers gebruiken Perceel en Perceel_rel."
+	,	Descr           = "De percelen van heel Nederland met hun geometrie, identificatie, kadastrale aanduiding en grootte, in de rijvolgorde van de perceellaag van de download. De store noemt zijn
+							eenheden zelf, de geometrie op /Geography/rdc_meter."
 	{
-		parameter<String>    GDAL_Options := 'GFS_TEMPLATE='+PerceelSchema;
-		attribute<rdc_meter> geometry (poly);
-		attribute<Int64>     identificatie;
 	}
 
-	attribute<UInt32> Calc_PerceelIndex (AdminDomain) := uint32(poly2grid(PerceelGML/geometry, AdminDomain))
-	, Descr = "De vergridding zelf, met dezelfde expressie als voor de ontkoppeling: de rij in de perceellaag van het perceel waarin het midden van de cel ligt, null waar dat geen perceel is.";
-
-	parameter<String> FileName_PerceelIndex := '%LocalDataProjDir%/BaseData/Vastgoed/BRK/Perceel_'+/ModelParameters/BRK_file_date+'_'+/ModelParameters/StudyArea+'.tif'
-	, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
-
-	parameter<String> Fingerprint_PerceelIndex :=
-		  'brk_date='    + /ModelParameters/BRK_file_date
-		+ ';study_area=' + /ModelParameters/StudyArea
-		+ ';admin_grid=' + /ModelParameters/Advanced/AdminDomain_ref
-		+ ';grid_size='  + string(AdminDomain/gridsize)
-		+ ';source=kadastralekaart_perceel.gml;method=poly2grid_celmidden'
-	, Descr = "De invoeren die de tif bepalen: de levering, het studiegebied, het raster en de methode. De perceelindex in de tif is de rij in de perceellaag van die levering, dus een andere levering is een ander bestand.";
-
-	container Decoupling_PerceelIndex := /Templates/DecoupledFile_T(FileName_PerceelIndex, Fingerprint_PerceelIndex, 'Write_PerceelIndex');
-
-	attribute<UInt32> Write_PerceelIndex (AdminDomain) := Calc_PerceelIndex, StorageName = "=FileName_PerceelIndex", StorageType = "tif", Descr = "Schrijft de vergridding eenmalig als tif, zonder zijbestand; dat volgt via Make_PerceelIndex.";
-	attribute<UInt32> Make_PerceelIndex  (AdminDomain) := Write_PerceelIndex, ExplicitSuppliers = "Decoupling_PerceelIndex/Write_Fingerprint"
-	, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_PerceelIndex, want alleen langs deze weg ontstaat de fingerprint (#837).";
-	attribute<UInt32> Read_PerceelIndex  (AdminDomain) : StorageName = "=FileName_PerceelIndex", StorageType = "tif", StorageReadOnly = "TRUE", Descr = "Leest de eerder weggeschreven tif terug.";
-	attribute<UInt32> PerceelIndex       (AdminDomain) := = Decoupling_PerceelIndex/MayReuse ? 'Read_PerceelIndex' : 'Make_PerceelIndex'
-	, Descr = "De perceelindex per cel als kaal getal, de schakel van de ontkoppeling: klopt de fingerprint dan wordt de tif gelezen, anders wordt er gerekend en geschreven, inclusief het zijbestand. WriteBasedata/Impl/BRK vraagt dit op.";
-
-	unit<UInt32> Perceel := range(UInt32, uint32(0), max(PerceelIndex) + uint32(1))
-	, Descr = "De percelen als eenheid: de rijen van de perceellaag tot en met de hoogste die in de tif voorkomt. De eenheid hangt zo aan de tif en niet aan de GML, want de omvang van de perceellaag
-				opvragen laat GDAL de hele laag doorlopen. Een rij zonder cel is een leeg perceel en telt nergens mee.";
-	attribute<Perceel> Perceel_rel (AdminDomain) := value(PerceelIndex, Perceel), Descr = "Het perceel per cel, de schakel die de lezers gebruiken; null voor een cel waarvan het midden in geen perceel ligt.";
+	attribute<Perceel> Perceel_rel (AdminDomain) := poly2grid(Perceel/geometry, AdminDomain)
+	, Descr = "Het perceel per cel: het perceel waarin het midden van de cel ligt, null waar dat geen perceel is. De lezers gebruiken dit. Niet ontkoppeld, want de vergridding uit de store is
+				goedkoop.";
 }
