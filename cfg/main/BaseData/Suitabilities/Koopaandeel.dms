@@ -1,0 +1,38 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De opslag op de verwervingskosten van woningen naar het aandeel koopwoningen per vierkant van 100 m (#861)
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Koopaandeel
+: Descr = "De opslag op de verwervingskosten van woningen naar het aandeel koopwoningen (#861). Het aandeel komt per vierkant van 100 m uit de CBS-vierkantstatistiek van het jaar in
+			ModelParameters/Wonen/Eigendom. Waar CBS het onderdrukt geldt het aandeel van de vierkanten met een bekend aandeel in hetzelfde vierkant van 500 m, gewogen met hun woningen,
+			en anders het landelijke. De opslag van een cel met woningen is het aandeel in procentpunten maal ModelParameters/Wonen/Eigendom/OpslagPerProcentpunt maal de oppervlakte van
+			de cel; Herontwikkeleenheid telt haar op bij de verwervingskosten van de woningen en smeert haar mee uit over het perceel."
+{
+	container Bron := ='/SourceData/Bevolking/CBS_vierkanten/Read/Y'+/ModelParameters/Wonen/Eigendom/CBS_Vierkant_Jaar, Descr = "De lezer van de CBS-vierkantstatistiek van dat jaar.";
+	unit<UInt32> Vierkant := Bron/domain;
+
+	attribute<Int32>   Procent_Src    (Vierkant) := Bron/domain/percentage_koopwoningen[Int32], Descr = "Het percentage koopwoningen zoals CBS het levert, negatief waar het is onderdrukt.";
+	attribute<Bool>    IsBekend       (Vierkant) := Procent_Src >= 0i && Bron/aantal_woningen > 0i;
+	attribute<Float32> Woningen       (Vierkant) := IsBekend ? float32(Bron/aantal_woningen) : 0f, Descr = "De woningen van een vierkant met een bekend aandeel, het gewicht van het aandeel.";
+	attribute<Float32> Aandeel_Bekend (Vierkant) := IsBekend ? float32(Procent_Src) / 100f : null_f;
+
+	attribute<rdc_500m> R500_rel        (Vierkant) := centroid_or_mid(Bron/domain/geometry)[rdc_500m];
+	attribute<Float32>  Koopwoningen500 (rdc_500m) := sum(Woningen * MakeDefined(Aandeel_Bekend, 0f), R500_rel);
+	attribute<Float32>  Woningen500     (rdc_500m) := sum(Woningen, R500_rel);
+	parameter<Float32>  Aandeel_NL                 := sum(Koopwoningen500) / sum(Woningen500), Descr = "Het aandeel koopwoningen over alle vierkanten met een bekend aandeel.";
+
+	attribute<Float32>  Aandeel_Vierkant (Vierkant)    := MakeDefined(Aandeel_Bekend, Woningen500[R500_rel] > 0f ? Koopwoningen500[R500_rel] / Woningen500[R500_rel] : Aandeel_NL);
+	attribute<Vierkant> Vierkant_rel     (AdminDomain) := poly2grid(Bron/domain/geometry, AdminDomain);
+	attribute<Float32>  Aandeel          (AdminDomain) := MakeDefined(Aandeel_Vierkant[Vierkant_rel], Aandeel_NL), Descr = "Het aandeel koopwoningen van het vierkant waarin de cel ligt, als fractie.";
+	attribute<Eur>      Opslag_Cel       (AdminDomain) := MakeDefined(Verwervingskosten/Woningen/Totaal, 0[Eur]) > 0[Eur] ? (Aandeel * 100f * float32(/ModelParameters/Wonen/Eigendom/OpslagPerProcentpunt) * float32(AdminDomain/NrHaPerCell))[Eur] : 0[Eur]
+	, Descr = "De opslag van de cel, nul zonder woningen.";
+}
