@@ -48,23 +48,35 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 	,	StorageReadOnly = "True"
 	,	Descr = "LISA-afgeleide aanvulling op de statische logistieke pandenset: panden met bouwjaar vanaf 2021 die volgens BAG en LISA logistiek zijn. Gegenereerd door WritePrivData/LogistiekAanvulling; alleen gelezen wanneer ModelParameters/Werken/BAG_LogistiekDynamisch aanstaat. Bevat uitsluitend pand_bag_nr, dat via de mmd-dictionary binnenkomt.";
 	
-	unit<UInt32> Energielabels
-	:	StorageName     = "%RSo_DataDir%/Vastgoed/Energielabel/VestaStartanalyse2020/RVOtot.fss"
-	,	StorageReadOnly = "True"
-	,	DialogType      = "Map"
-	,	DialogData      = "locatie"
-	,	Source          = "export uit https://pbl.sliksvn.com/vesta/PD/branch/VestaStartanalyse2020_To_RSL rev 566, GeoDMS 7.239, open S1a_B_LuchtWP.dms activate /Invoer/RuimtelijkeData/energieLabel/RVOtot --> fss in LD, ongegeveer 300000 records bleken niet koppelbaar (voor vastgesteld en voorlopig dms geocoding (zijn niet opgenomen in fss bestand)"
-	,	Descr           = "Alle energielabels van woningen en utiliteitsgebouwen in Nederland"
+	container Energielabels
+	: Descr = "De geldige energielabels uit EP-online (#860): het nieuwste label per woning, en per cel het meest voorkomende label van de woningen van het basisjaar voor de zeefregel
+				GeenSloopvanafELabel. Utiliteitsgebouwen en labels zonder verblijfsobject tellen niet mee."
+	, Source = "EP-online, openbare levering (https://www.ep-online.nl/PublicData) van de datum in ModelParameters/Wonen/Energielabel/EP_Levering, zonder inhoudelijke bewerking omgezet van csv naar parquet"
 	{
-		attribute<String>                                vbo_id;
-		attribute<rdc_meter>                             locatie;
-		attribute<UInt8>                                 SchilLabel_rel;
-		attribute<String>                                pand_id;
-		attribute<UInt32>                                Bron                : Descr = "Bron van het energielabel: 1=vastgesteld,2=voorlopig,3=utiliteit (is volledig)";
-		attribute<Classifications/Vastgoed/Energielabel> Energielabel_rel    := SchilLabel_rel[Classifications/Vastgoed/Energielabel];
-		attribute<AllocDomain>                           AllocDomain_rel     := locatie[AllocDomain];
-		attribute<AdminDomain>                           AdminDomain_rel     := locatie[AdminDomain];
-		attribute<Classifications/Vastgoed/Energielabel> Modus (AdminDomain) := Modus(Energielabel_rel, locatie[AdminDomain]); //, StorageName = "%LocalDataProjDir%/BaseData/Vastgoed/Energielabels.tif", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))";
+		unit<UInt32> Bron
+		:	StorageName     = "='%RSo_DataDir%/Vastgoed/EnergieLabel/EP-online_'+/ModelParameters/Wonen/Energielabel/EP_Levering+'.parquet'"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "True"
+		{
+			attribute<String> BAGVerblijfsobjectID;
+			attribute<String> Energieklasse;
+			attribute<Int32>  Opnamedatum;
+			attribute<String> Gebouwklasse;
+		}
+		unit<UInt32> Woning := select_with_org_rel(Bron/Gebouwklasse == 'W' && strlen(Bron/BAGVerblijfsobjectID) == 16 && strlen(Bron/Energieklasse) > 0), Descr = "De labels van woningen met een verblijfsobject."
+		{
+			attribute<UInt64>                                vbo_nr    := uint64(Bron/BAGVerblijfsobjectID[org_rel]);
+			attribute<Classifications/Vastgoed/Energielabel> Label_rel := rlookup(left(Bron/Energieklasse[org_rel], 1), Classifications/Vastgoed/Energielabel/name), Descr = "A+ tot en met A++++ tellen als A.";
+			attribute<UInt32>                                Sleutel   := uint32(Bron/Opnamedatum[org_rel]) * 16 + uint32(Label_rel), Descr = "Opnamedatum en label in een getal, zodat het maximum per verblijfsobject het label van de nieuwste opname geeft.";
+		}
+		unit<UInt32> PerVbo := unique(Woning/vbo_nr), Descr = "Het nieuwste label per verblijfsobject."
+		{
+			attribute<UInt32>                                Sleutel   := max(Woning/Sleutel, rlookup(Woning/vbo_nr, values));
+			attribute<Classifications/Vastgoed/Energielabel> Label_rel := value(uint8(Sleutel % 16), Classifications/Vastgoed/Energielabel);
+		}
+		unit<UInt32> vbo := ='/SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/Model_StartYear)+'/vbo/Per_Gebruiksdoel/woon/select', Descr = "De woningen van het basisjaar.";
+		attribute<Classifications/Vastgoed/Energielabel> Label_Vbo (vbo)         := PerVbo/Label_rel[rlookup(vbo/vbo_bag_nr, PerVbo/values)];
+		attribute<Classifications/Vastgoed/Energielabel> Modus     (AdminDomain) := modus(Label_Vbo, vbo/AdminDomain_rel), Descr = "Het meest voorkomende label van de gelabelde woningen van de cel.";
 	}
 
 	container Funderingsschade
