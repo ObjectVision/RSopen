@@ -152,6 +152,15 @@ if (-not (Test-Path $status)) { "tijd`tstap`texit`tseconden" | Set-Content $stat
 
 function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $T" }
 
+function Get-BagDatum {
+    # ModelParameters/BAG_file_date uit de tekst: de BAG-levering waaronder AfleidingPandtype/Write_WP5 de WP5-typering schrijft
+    # (BaseData\Vastgoed\BAG_<datum>_History\WP5). Een map van een andere levering telt niet, want die leest het model niet.
+    $mp = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms'
+    $m  = [regex]::Match((Get-Content $mp -Raw), "BAG_file_date\s*:=\s*'([^']*)'")
+    if (-not $m.Success) { throw "BAG_file_date niet gevonden in $mp" }
+    return $m.Groups[1].Value
+}
+
 function Get-Productieprofiel {
     # ModelParameters/Productieprofiel uit de tekst, zoals Get-VariantKolom VariantK leest. Bepaalt welke
     # set de export schrijft, zie Templates/Indicatoren_T/Export.dms, generates/Set.
@@ -210,7 +219,7 @@ function Test-Invoer {
     $opbr  = Get-VariantKolom $Cfg 'OpbrengstenVariant_Wonen'
 
     $eisen = @()
-    $eisen += ,@('BaseData\Vastgoed\VolledigeTabel_*\WP5\*.mmd',           'WP5-pandtypering',           '/WriteBasedata/Generate_Run1')
+    $eisen += ,@("BaseData\Vastgoed\BAG_$(Get-BagDatum)_History\WP5\*.mmd",   'WP5-pandtypering',           '/WriteBasedata/Generate_Run1')
     $eisen += ,@('BaseData\Grondgebruik\BBG\BBG*_25m_Modus_*.tif',         'BBG-vergridding',            '/WriteBasedata/Generate_Run2')
     $eisen += ,@('BaseData\Grondgebruik\LGN\*.tif',                        'LGN-groenfracties',          '/WriteBasedata/Generate_Run2')
     $eisen += ,@('BaseData\StandBasisjaar\Wonen\*.tif',                    'stand basisjaar',            '/WriteBasedata/Generate_Run3')

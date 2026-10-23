@@ -83,7 +83,7 @@ OPERATOR_SUBITEM = ("Unknown identifier 'Districts'",)
 # ontbreekt, in plaats van na een uur rekenen om te vallen op "Unknown identifier". De lijst is een
 # ondergrens en geen inventaris. Paden zijn relatief aan de LocalData van deze werkkopie.
 BASEDATA = [
-    ("BaseData/Vastgoed/VolledigeTabel_*/WP5/*.mmd",         "WP5-pandtypering",        "/WriteBaseData/Generate_Run1"),
+    ("BaseData/Vastgoed/BAG_{bag}_History/WP5/*.mmd",        "WP5-pandtypering",        "/WriteBaseData/Generate_Run1"),
     ("BaseData/Grondgebruik/BBG/BBG*_25m_Modus_*.tif",       "BBG-vergridding",         "/WriteBaseData/Generate_Run2"),
     ("BaseData/Vastgoed/Verwervingskosten_Woningen_*.tif",   "verwervingskosten",       "/WriteBaseData/Generate_Run2"),
     ("BaseData/StandBasisjaar/Wonen/*.tif",                  "stand basisjaar",         "/WriteBaseData/Generate_Run3"),
@@ -120,6 +120,15 @@ def exe_uit_runall() -> str:
     m = re.search(r"^set geodmsversion=(\S+)", tekst, re.M)
     versie = m.group(1) if m else "GeoDms20.23.1.m"
     return rf"C:\Program Files\ObjectVision\{versie}\GeoDmsRun.exe"
+
+
+def bag_datum(cfg: Path) -> str:
+    """BAG_file_date uit ModelParameters.dms: de levering waaronder de WP5-typering staat (BaseData/Vastgoed/BAG_<datum>_History/WP5)."""
+    tekst = (cfg.parent / "main" / "ModelParameters.dms").read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"BAG_file_date\s*:=\s*'([^']*)'", tekst)
+    if not m:
+        raise SystemExit("BAG_file_date niet gevonden in ModelParameters.dms")
+    return m.group(1)
 
 
 def eerste_zichtjaar(cfg: Path) -> str:
@@ -275,7 +284,8 @@ def main(argv: list[str]) -> int:
 
     toets("1_profiel", "sleutelparameters", PROFIEL_ITEMS)
 
-    ontbreekt = [(o, stap) for patroon, o, stap in BASEDATA if not list(localdata().glob(patroon))]
+    bag = bag_datum(cfg)
+    ontbreekt = [(o, stap) for patroon, o, stap in BASEDATA if not list(localdata().glob(patroon.format(bag=bag)))]
     t = time.time()
     melding = "; ".join(f"{o} ontbreekt, maak met {stap}" for o, stap in ontbreekt)
     regels.append({"laag": "2_invoer", "toets": "basedata", "oordeel": "FAIL" if ontbreekt else "PASS",
