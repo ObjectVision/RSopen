@@ -462,9 +462,25 @@ Template Zichtjaar_T
 			attribute<Eur> Verwerving   (AdminDomain) := float32(IsNieuwbouw) * (max_elem(Woningen0 - Afwaardering, 0[Eur]) + Posten/Verwerving_NietWoningen + Grond);
 		}
 
-		attribute<Eur> Saldo_Zeef (AdminDomain) := IsNieuwbouw ? Saldo + Posten/Verwerving - Zeef/Verwerving : null_f[Eur]
-		, Descr = "Het saldo waarop de allocatie koos: Saldo met de verwerving van Zeef in plaats van die in geld. Het laagste Saldo_Zeef van de gealloceerde cellen hoort op of boven de zeefdrempel VariantK/MinimumExploitatieSaldo te liggen; zie Saldo_Zeef_BovenDrempel. Geen uitvoer.";
-		parameter<Eur> Saldo_Zeef_Min := min(Saldo_Zeef), Descr = "Het laagste saldo waarop de allocatie koos.";
+		attribute<Eur> Saldo_Zeef_Cel (AdminDomain) := IsNieuwbouw ? Saldo + Posten/Verwerving - Zeef/Verwerving : null_f[Eur], Descr = "Het saldo van de cel zelf met de verwerving van Zeef in plaats van die in geld.";
+		container PerPerceel
+		: Descr = "De nabouw van het saldo per perceel van de geschiktheid (Templates/Suitabilities/Suitability_Wonen_perOP_T, PerPerceel, #861) over de gealloceerde cellen van een perceel met een
+					pand: hun gemiddelde Saldo_Zeef_Cel min de verwerving met de opslagen en de sloop van de rest van het perceel, verdeeld over de gealloceerde cellen. Exact waar de allocatie elke cel van
+					het perceel met hetzelfde pakket heeft bebouwd; nam de allocatie een deel, dan weet de indicator niet welke cellen beschikbaar waren en is het een benadering. De kaart Saldo blijft per cel en
+					draagt op een deels bebouwd perceel alleen het deel van de verwerving dat over de gebouwde cellen is uitgesmeerd."
+		{
+			unit<UInt32>       Perceel     := /BaseData/Suitabilities/Wonen/Herontwikkeleenheid/Perceel;
+			attribute<Perceel> Eenheid_rel (AdminDomain) := /BaseData/Suitabilities/Wonen/Herontwikkeleenheid/Eenheid_rel;
+			attribute<Bool>    OpEenheid   (AdminDomain) := IsDefined(Eenheid_rel) && /BaseData/Suitabilities/Wonen/Herontwikkeleenheid/IsHerontwikkeleenheid[Eenheid_rel] && IsNieuwbouw, Descr = "Gealloceerde cel op een perceel met een pand.";
+			attribute<Eur>     Opstal      (AdminDomain) := Zeef/Verwerving - float32(IsNieuwbouw) * Zeef/Grond + Posten/Sloop, Descr = "De verwerving met de opslagen en de sloop van het opstal op een gealloceerde cel, zoals Opstal in de geschiktheid.";
+			attribute<UInt32>  Gealloceerd (Perceel)     := sum_uint32(OpEenheid, Eenheid_rel), Descr = "Het aantal gealloceerde cellen van het perceel.";
+			attribute<Bool>    IsHeel      (Perceel)     := uint64(Gealloceerd) == /BaseData/Suitabilities/Wonen/Herontwikkeleenheid/CellenPerEenheid && max(OpEenheid ? uint32(Stand/OP_rel) : null_u, Eenheid_rel) == min(OpEenheid ? uint32(Stand/OP_rel) : null_u, Eenheid_rel), Descr = "Heeft de allocatie elke cel van het perceel met hetzelfde pakket bebouwd? Dan is de nabouw exact.";
+			attribute<Eur>     SaldoPerceel (Perceel)    := mean(OpEenheid ? Saldo_Zeef_Cel : null_f[Eur], Eenheid_rel) - mean(OpEenheid ? Opstal : null_f[Eur], Eenheid_rel) * (float32(/BaseData/Suitabilities/Wonen/Herontwikkeleenheid/CellenPerEenheid) - float32(Gealloceerd)) / float32(Gealloceerd), Descr = "Het saldo per gealloceerde cel van het perceel als geheel.";
+		}
+		attribute<Eur> Saldo_Zeef (AdminDomain) := PerPerceel/OpEenheid ? PerPerceel/SaldoPerceel[PerPerceel/Eenheid_rel] : Saldo_Zeef_Cel
+		, Descr = "Het saldo waarop de allocatie koos: Saldo met de verwerving van Zeef in plaats van die in geld, en op een perceel met een pand het saldo van het perceel als geheel (PerPerceel). Het laagste Saldo_Zeef van de cellen waar die nabouw exact is hoort op of boven de zeefdrempel VariantK/MinimumExploitatieSaldo te liggen; zie Saldo_Zeef_BovenDrempel. Geen uitvoer.";
+		attribute<Bool> IsExact (AdminDomain) := IsNieuwbouw && (!PerPerceel/OpEenheid || PerPerceel/IsHeel[PerPerceel/Eenheid_rel]), Descr = "Een gealloceerde cel waar Saldo_Zeef precies het saldo is waarop de allocatie koos: buiten een perceel met een pand, of op een perceel dat helemaal met een pakket is bebouwd.";
+		parameter<Eur> Saldo_Zeef_Min := min(IsExact ? Saldo_Zeef : null_f[Eur]), Descr = "Het laagste saldo waarop de allocatie koos, over de cellen waar de nabouw exact is.";
 		parameter<Eur> Saldo_Zeef_BovenDrempel := Saldo_Zeef_Min - VariantParameters/VariantK/MinimumExploitatieSaldo[Variant_rel]
 		, Descr = "Hoeveel het laagste saldo waarop de allocatie koos boven de zeefdrempel ligt, de toets van #799: nul of positief, want de zeef laat geen cel onder de drempel door; negatief betekent dat deze nabouw een andere post rekent dan de geschiktheid. De controlewaarde grondexploitatie_zeef_min_boven_drempel in Diagnose/Checks.";
 
