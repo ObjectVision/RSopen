@@ -73,6 +73,10 @@ container Allocatie
 	attribute<Bool>              Gealloceerd_Basis                     (AdminDomain) := IsDefined(per_SectorxSubsector_recoll) || Gealloceerd_EerdereIters
 	, Descr = "De verzameling waarop de erosie, de dilatie en de districten bepaald worden: de cellen van deze iteratie plus alles wat er dit zichtjaar al ligt, zodat een cluster kan aangroeien. De bestaande bebouwing uit het basisjaar telt hier nooit in mee: zou dat wel zo zijn, dan haalt elke losse cel naast een dorp de toets en is de minimale clusteromvang betekenisloos.";
 
+	attribute<Bool>              IsVrijgekomenPerceel                  (AdminDomain) := = lowercase(Sector_name) == lowercase('Wonen') ? 'Context/ThisZichtjaar/Impl/TredeDynamischeUrbanContour/AanDeBeurt' : 'const(FALSE, AdminDomain)'
+	, Descr = "De cellen van de percelen die de herontwikkelingskans van wonen in dit zichtjaar vrij liet (#869), alleen voor wonen. Zo'n perceel is zelf de ontwikkeleenheid en meestal een of enkele losse cellen,
+						dus de erosie en de minimale clusteromvang hieronder gelden daar niet: die houden linten en snippers uit het landschap, en een herontwikkeld perceel in bestaand woongebied is geen van beide.";
+
 	// Stap 1: Erosie - cel overleeft alleen als alle 8 buren ook gealloceerd zijn
 	parameter<float32>           BuurCellenEis                                       := ='ModelParameters/Advanced/MorfologischeCleaning_BuurCellen_'+Sector_name, Descr = "De minimale beukmaat voor deze sector. Staat per sector omdat een bedrijventerrein van 50 meter breed vreemd is en een woonstraat van 50 meter niet.";
 	attribute<bool>              Eroded                                (AdminDomain) := potential(float32(Gealloceerd_Basis), Distmatrices_25m/pot25m/binair) >= BuurCellenEis + 1f, Descr = "Cel overleeft alleen als een parameteriseerd aantal buren ook gealloceerd zijn.";
@@ -80,7 +84,7 @@ container Allocatie
 	attribute<Bool>              Dilated                               (AdminDomain) := potential(float32(Eroded), Distmatrices_25m/pot25m/binair) >= 1f, Descr = "Cel hoort bij het geopende resultaat als minstens een buurcel de erosie overleefde.";
 	// Stap 3: Originele allocatie AND binnen gedilateerd gebied
 	attribute<Bool>              Cleaned                               (AdminDomain) := Gealloceerd_Basis && Dilated, Descr = "Originele allocatie AND binnen gedilateerd gebied.";
-	attribute<bool>              IsAfgewezen_dmv_Morfologie            (AdminDomain) := IsDefined(per_SectorxSubsector_recoll) && NOT(Cleaned), Descr = "Afgewezen door morfologische cleaning. Alleen cellen van deze iteratie kunnen worden afgewezen; wat al gealloceerd was blijft staan.";
+	attribute<bool>              IsAfgewezen_dmv_Morfologie            (AdminDomain) := IsDefined(per_SectorxSubsector_recoll) && NOT(Cleaned) && !IsVrijgekomenPerceel, Descr = "Afgewezen door morfologische cleaning, behalve op een vrijgekomen perceel (IsVrijgekomenPerceel, #869). Alleen cellen van deze iteratie kunnen worden afgewezen; wat al gealloceerd was blijft staan.";
 
 	unit<uint32> VindAangeslotenCellen := district_8(Cleaned), Descr = "Districten van aaneengesloten gealloceerde cellen."
 	{
@@ -93,13 +97,13 @@ container Allocatie
 		parameter<ha>   Minimum_alloc_group_size_Buitenstedelijk           := ='ModelParameters/Advanced/minimum_alloc_group_size_Buitenstedelijk_'+sector_name;
 		parameter<bool> HeeftGeenMinimumGroepsgrootte                      := =IsWaterbergingSector ? 'FALSE' : '!IsDefined(Minimum_alloc_group_size_Buitenstedelijk)', Descr = "Sectoren zonder minimum groepsgrootte (i.e. wind, met null_f in Advanced) alloceren losse cellen; de groepsgroottetoets is dan niet van toepassing.";
 		
-		attribute<bool> IsAllocGroupLargeEnough_Generiek     (AdminDomain) := IsWoonkern
+		attribute<bool> IsAllocGroupLargeEnough_Generiek     (AdminDomain) := ../IsVrijgekomenPerceel || (IsWoonkern
 																				? Oppervlakte >= Minimum_alloc_group_size_Binnenstedelijk && NOT(IsNonGroup)
-																				: Oppervlakte >= Minimum_alloc_group_size_Buitenstedelijk && NOT(IsNonGroup);
+																				: Oppervlakte >= Minimum_alloc_group_size_Buitenstedelijk && NOT(IsNonGroup)), Descr = "Op een vrijgekomen perceel altijd waar (#869).";
 		attribute<bool> IsAllocGroupLargeEnough_Waterberging (AdminDomain) := ='Oppervlakte >= ModelParameters/Advanced/Minimum_alloc_group_size_Waterberging && NOT(IsNonGroup)';
 		attribute<bool> IsAllocGroupLargeEnough              (AdminDomain) := =IsWaterbergingSector ? 'IsAllocGroupLargeEnough_Waterberging' : HeeftGeenMinimumGroepsgrootte ? 'const(TRUE, AdminDomain)' : 'IsAllocGroupLargeEnough_Generiek';
 		
-		attribute<bool> IsAfgewezen_Generiek                 (AdminDomain) := Cleaned && IsDefined(per_SectorxSubsector_recoll) && (IsWoonkern //Cleaned-conditie: alleen daadwerkelijk gealloceerde cellen afwijzen; anders worden ook kleine niet-gealloceerde gaten (FALSE-districten) cumulatief uitgesloten (#594). De extra conditie op per_SectorxSubsector_recoll houdt cellen uit eerdere iteraties buiten de afwijzing wanneer ClusterToetsCumulatief aanstaat.
+		attribute<bool> IsAfgewezen_Generiek                 (AdminDomain) := Cleaned && IsDefined(per_SectorxSubsector_recoll) && !../IsVrijgekomenPerceel && (IsWoonkern //Cleaned-conditie: alleen daadwerkelijk gealloceerde cellen afwijzen; anders worden ook kleine niet-gealloceerde gaten (FALSE-districten) cumulatief uitgesloten (#594). De extra conditie op per_SectorxSubsector_recoll houdt cellen uit eerdere iteraties buiten de afwijzing wanneer ClusterToetsCumulatief aanstaat.
 																				? Oppervlakte < Minimum_alloc_group_size_Binnenstedelijk && NOT(IsNonGroup)
 																				: Oppervlakte < Minimum_alloc_group_size_Buitenstedelijk && NOT(IsNonGroup));
 		attribute<bool> IsAfgewezen_Waterberging             (AdminDomain) := ='Cleaned && IsDefined(per_SectorxSubsector_recoll) && Oppervlakte < ModelParameters/Advanced/Minimum_alloc_group_size_Waterberging && NOT(IsNonGroup)';
