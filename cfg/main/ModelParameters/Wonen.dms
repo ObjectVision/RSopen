@@ -14,7 +14,7 @@
 container Wonen
 {
 	parameter<Yr>        GeenSlooptotLeeftijd_BinnenHardePlancapaciteit      := 25[Yr], Descr = "Geen sloop van panden jonger dan deze leeftijd op cellen met harde plancapaciteit voor de betreffende subsector. Geldt in Templates/Beschikbaarheden/Zeef_T voor elke sector die daar
-				langskomt, niet alleen wonen; de tegenhanger buiten harde plancapaciteit is VariantK/GeenSlooptotLeeftijd_BuitenHardePlancapaciteit, en de twee toetsen sluiten elkaar sinds #586 uit. De
+				langskomt behalve wonen, waar sinds #869 de herontwikkelingskans bepaalt welke percelen vrijkomen; de tegenhanger buiten harde plancapaciteit is VariantK/GeenSlooptotLeeftijd_BuitenHardePlancapaciteit, en de twee toetsen sluiten elkaar sinds #586 uit. De
 				leeftijd is sinds #735 die van het jongste pand in de cel. Alleen gevuld zolang er geldige plancapaciteit is, dus tot en met Advanced/PlancapaciteitGeldigTotEnMet.";
 	parameter<String>    grondproductie_kosten_Variant                       := 'Nominaal_Faktondatabase', Descr = "Welke van de zes uitkomsten van Grondproductiekosten/C het saldo gebruikt: Nominaal is de puntschatting, Low en High alleen een bandbreedte. Faktondatabase is de goedkoopste van de
 				twee bronnen, vooral via PlanProces, en staat hier vanwege het ontwikkelaarsperspectief van het saldo (#809), al zegt de bron niet wat voor exploitaties die database bevat (#846).";
@@ -129,19 +129,78 @@ container Wonen
 		, Descr = "Het jaar waarin de factor een is. De nationale isolatiestandaard en de Europese richtlijn sturen op een voorraad zonder slechte labels rond dit jaar; vanaf het begin van de periode die hier eindigt telt het label niet meer.";
 	}
 
+	container Herontwikkelingskans
+	: Descr = "De kans dat een perceel met woningen wordt herontwikkeld (#869), uit de stage-2-logit van het EconLogic-paper (VU): per zone een constante en de effecten van de waarde van herontwikkeling
+				(de inclusive value van de pakketkeuze), de verwervingskosten per hectare perceel, het perceeloppervlak zelf, het aandeel eigenaar-bewoners en sociale huur in de buurt, een
+				rijksbeschermd stads- of dorpsgezicht en de bouwperiode; de prijsvolatiliteit uit de schatting blijft weg, want die is niet significant. De kans over het venster van de schatting wordt
+				een jaarlijkse kans en per zichtjaar een cumulatieve kans, en een vaste trekking per perceel bepaalt in welk zichtjaar het perceel beschikbaar komt voor wonen
+				(Templates/VariantData_T/Herontwikkelingskans); een perceel met een rijksmonument komt nooit beschikbaar (SourceData/Omgevingsrecht/Rijksmonumenten). Het niveau komt uit de constante en is niet op de BAG geijkt."
+	, Source = "EconLogic-paper (VU, in voorbereiding), scripts 06_stage1_logit.R en 07_stage2_logit.R op de BAG van 10 juli 2026, venster 2013 tot en met 2024: specificaties base (buurten met een
+				omgevingsadressendichtheid vanaf 1000, 296.857 sites waarvan 5.676 herontwikkeld) en rural (daaronder, 602.264 sites waarvan 16.494); standaardfouten geclusterd op gemeente"
+	{
+		parameter<Float32> Venster_Jaren     := 12f, IntegrityCheck = "this > 0f", Descr = "De lengte van het venster van de schatting in jaren, 2013 tot en met 2024: de kans uit de schatting is de kans op herontwikkeling binnen dit venster, en de jaarlijkse kans volgt daaruit als een constante hazard.";
+		parameter<UInt32>  Trekking_Seed     := 869, Descr = "De seed van de vaste trekking per perceel, dezelfde in elke run en variant, zodat de uitkomst reproduceerbaar is en twee varianten dezelfde percelen vrij laten komen.";
+		parameter<String>  Erfgoed_Peildatum := '20261015', Descr = "De download van de stads- en dorpsgezichten en de rijksmonumenten die het model leest (SourceData/Omgevingsrecht/StadsEnDorpsgezichten en Rijksmonumenten): de peildatum van de bronnen van pbl-nl/model-RS-RuimtelijkeRestricties.";
+
+		container Stedelijk
+		: Descr = "De effecten op de log-odds van herontwikkeling in de stad (specificatie base), per eenheid van de term."
+		{
+			parameter<Float32> Constante           := -4.901f, Descr = "De constante: de log-odds van een perceel waarvan alle termen nul zijn, in de referentieklasse 2002 en later.";
+			parameter<Float32> InclusiveValue      := 0.680f,  Descr = "Per eenheid inclusive value van de pakketkeuze, de waarde van herontwikkeling.";
+			parameter<Float32> Verwerving_MlnPerHa := -0.0608f, Descr = "Per miljoen euro verwervingskosten per hectare bebouwd oppervlak.";
+			parameter<Float32> LnPerceel_Ha        := -0.113f, Descr = "Per eenheid log van het oppervlak van het perceel in hectare (in de schatting het oppervlak van de site, zie BaseData/Suitabilities/Wonen/Herontwikkelingskans/Perceel_Ha).";
+			parameter<Float32> EigenaarBewoners_pp := -0.0128f, Descr = "Per procentpunt eigenaar-bewoners in de buurt: wie herontwikkelt waar veel eigenaren wonen, moet van veel eigenaren kopen.";
+			parameter<Float32> SocialeHuur_pp      := -0.00338f, Descr = "Per procentpunt sociale huur in de buurt; niet significant.";
+			parameter<Float32> Erfgoed             := -0.354f, Descr = "Een rijksbeschermd stads- of dorpsgezicht.";
+			parameter<Float32> RV_MlnPerHa         := 0.1107f, Descr = "Stap 1, de pakketkeuze: per miljoen euro residuele waarde per hectare.";
+		}
+		container Landelijk
+		: Descr = "Dezelfde effecten buiten de stad (specificatie rural), met in de pakketkeuze de eigen constanten per ontwikkeltype (Ontwikkeltype/Type/ASC_Landelijk)."
+		{
+			parameter<Float32> Constante           := -5.634f;
+			parameter<Float32> InclusiveValue      := 2.086f;
+			parameter<Float32> Verwerving_MlnPerHa := -0.182f;
+			parameter<Float32> LnPerceel_Ha        := -0.551f;
+			parameter<Float32> EigenaarBewoners_pp := -0.00519f;
+			parameter<Float32> SocialeHuur_pp      := 0.00954f;
+			parameter<Float32> Erfgoed             := 0.00158f, Descr = "Niet significant.";
+			parameter<Float32> RV_MlnPerHa         := 0.117f;
+		}
+
+		container Bouwperiode
+		: Descr = "De effecten van de bouwperiode van de woning op de log-odds, ten opzichte van 2002 en later: wat voor 1966 staat gaat veel vaker dan wat erna staat, en hoe jonger hoe minder. Per zone, op naam van de klasse, zodat een verschoven klasse in Bouwperiode luid omvalt."
+		{
+			unit<UInt8> Src : nrofrows = 8
+			{
+				attribute<String>  name           : ['d_constrlt1926', 'd_constr19261950', 'd_constr19511965', 'd_constr19661973', 'd_constr19741981', 'd_constr19821991', 'd_constr19922001', 'd_constrgt2001'];
+				attribute<Float32> Coef_Stedelijk : [2.186, 1.925, 1.827, 0.868, 0.391, -0.180, -0.675, 0], Descr = "In de stad (base).";
+				attribute<Float32> Coef_Landelijk : [1.527, 1.361, 1.577, 1.090, 0.512, 0.159, -0.543, 0], Descr = "Buiten de stad (rural).";
+			}
+			attribute<Float32> Coef_Stedelijk (/Classifications/Vastgoed/Bouwperiode) := Src/Coef_Stedelijk[rlookup(/Classifications/Vastgoed/Bouwperiode/name, Src/name)], IntegrityCheck = "all(IsDefined(this))";
+			attribute<Float32> Coef_Landelijk (/Classifications/Vastgoed/Bouwperiode) := Src/Coef_Landelijk[rlookup(/Classifications/Vastgoed/Bouwperiode/name, Src/name)], IntegrityCheck = "all(IsDefined(this))";
+		}
+
+		container Ontwikkeltype
+		: Descr = "De zes ontwikkeltypen van de pakketkeuze (stap 1: k-means op de gerealiseerde nieuwbouw, op het aandeel per woningtype, de dichtheid, de FSI en de woninggrootte) met hun constante in de keuze per zone, en hoe de ontwikkelpakketten van RSopen aan die typen worden toegewezen: op woningtype, en bij appartementen en vrijstaand op de dichtheid, met de grens halverwege de clustercentra."
+		, Source = "EconLogic-paper, 04_kmeans.R en 06_stage1_logit.R, uitvoer van 10 juli 2026: de centra van de zes clusters (dichtheid in woningen per hectare: vrijstaand 10,6 en 7,5, twee-onder-een-kap 18,2, rij 35,6, appartement 52,5 en 136,4) en de constanten per type met vrijstaand als referentie, per scope: base in de stad en rural daarbuiten"
+		{
+			unit<UInt8> Type : NrOfRows = 6
+			{
+				attribute<String>  name          : ['VrijstaandTeardown', 'AppartementHoog', 'TweeOnderEenKap', 'AppartementMidden', 'Rij', 'VrijstaandGroot'];
+				attribute<Float32> ASC_Stedelijk : [0, -1.670, -0.944, -0.370, 0.221, -0.822], Descr = "De constante van het type in de pakketkeuze in de stad (scope base); vrijstaand (sloop en herbouw van een vrijstaande woning) is de referentie.";
+				attribute<Float32> ASC_Landelijk : [0, -5.059, -1.636, -2.107, -1.541, -1.213], Descr = "Dezelfde constante buiten de stad (scope rural). Daar is bijna elke herontwikkeling de herbouw van een vrijstaande woning, dus de inclusive value ligt er laag (0,83 in de steekproef tegen 1,91 in de stad), en dat hoort bij de steile rurale effecten.";
+				attribute<Float32> Dichtheid     : [10.6, 136.4, 18.2, 52.5, 35.6, 7.5], Descr = "Het clustercentrum in woningen per hectare, ter documentatie van de grenzen hieronder.";
+				container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+			}
+			parameter<Woning_ha> Grens_AppartementHoog := 94[Woning_ha], Descr = "Een appartementenpakket met deze dichtheid of meer hoort bij het hoogstedelijke type; halverwege de centra 52,5 en 136,4.";
+			parameter<Woning_ha> Grens_VrijstaandGroot := 9[Woning_ha], Descr = "Een vrijstaand pakket onder deze dichtheid hoort bij het type met de grote kavels; halverwege de centra 7,5 en 10,6.";
+		}
+	}
+
 	container Eigendom
-	: Descr = "De effecten van eigendom en verwervingskosten op de herontwikkelingskans (#869), uit de EconLogic-schatting: wie herontwikkelt waar veel eigenaar-bewoners wonen, moet van veel
-				eigenaren kopen, en dat samenvoegen kost tijd en geld. Tot #869 rekenden deze effecten om naar een opslag op de verwervingskosten; nu gaan ze in de kans die bepaalt welke percelen
-				beschikbaar komen. Voor wonen vervangt dat de zeefregel op eigendom (VariantK/BouwenInWoonlocatieNietVanGemeenteOfCorporatie)."
-	, Source = "EconLogic-paper (VU, in voorbereiding), stage-2-logit van herontwikkeling op de BAG van 10 juli 2026, specificaties base (buurten met een omgevingsadressendichtheid vanaf
-				1000) en rural (daaronder): het aandeel eigenaar-bewoners in de buurt (CBS 2012) en de verwervingskosten in miljoenen euro per hectare; aandeel koopwoningen per vierkant uit de
-				CBS-vierkantstatistiek van 100 m"
+	: Descr = "De bronnen van de termen eigendom en zone in de herontwikkelingskans (#861, #869): het jaar van de CBS-vierkantstatistiek waaruit het aandeel koopwoningen komt (BaseData/Suitabilities/Wonen/Koopaandeel) en de grens tussen stad en platteland (Stedelijkheid). De effecten zelf staan in Herontwikkelingskans."
 	{
 		parameter<String>  CBS_Vierkant_Jaar         := '2023', Descr = "Het jaar van de CBS-vierkantstatistiek waaruit het aandeel koopwoningen komt; hoort bij het basisjaar.";
-		parameter<Float32> Coef_EigenaarBewoners     := -0.013f, Descr = "Het effect van een procentpunt eigenaar-bewoners in de buurt op de log-odds van herontwikkeling, in de stad (base).";
-		parameter<Float32> Coef_Verwervingskosten    := -0.061f, Descr = "Het effect van een miljoen euro verwervingskosten per hectare op de log-odds van herontwikkeling, in de stad (base).";
-		parameter<Float32> Coef_EigenaarBewoners_Landelijk  := -0.0052f, Descr = "Het effect van een procentpunt eigenaar-bewoners buiten de stad (rural).";
-		parameter<Float32> Coef_Verwervingskosten_Landelijk := -0.182f, Descr = "Het effect van een miljoen euro verwervingskosten per hectare buiten de stad (rural); drie keer zo sterk als in de stad, dus een opslag weegt daar een derde in euro's.";
 		parameter<UInt32>  OAD_Stedelijk                    := 1000, Descr = "Vanaf welke omgevingsadressendichtheid (adressen per km2) een buurt stedelijk is: de grens van de base-specificatie, de CBS-klassegrens van matig stedelijk.";
 	}
 
@@ -151,23 +210,6 @@ container Wonen
 	, Source = "Autoriteit woningcorporaties, Onderzoeksrapport bij de Staat van de corporatiesector 2023 (Tweede Kamer 2024D05508), tabel 30: beleidswaarde per sociale verhuureenheid in 2022"
 	{
 		parameter<Eur_Woning> BeleidswaardePerWoning := 85300[Eur_Woning], Descr = "De beleidswaarde van een sociale huurwoning, landelijk gemiddeld.";
-	}
-
-	container BouwperiodeOpslag
-	: Descr = "De effecten van de bouwperiode op de herontwikkelingskans (#869), uit de EconLogic-schatting: hoe vaak een woning wordt herontwikkeld hangt meer aan haar bouwperiode dan aan haar
-				leeftijd; wat voor 1966 staat gaat veel vaker dan wat erna staat, en hoe jonger hoe minder. In de stad gelden de effecten van de base-specificatie, daarbuiten die van de
-				rural-specificatie, elk ten opzichte van 2002 en later. Tot #869 rekende een opslag deze effecten om naar euro op de verwervingskosten, met een ijkconstante per zone; dat is vervallen."
-	, Source = "EconLogic-paper (VU, in voorbereiding), stage-2-logit van herontwikkeling op de BAG van 10 juli 2026, specificaties base (stad) en rural (platteland): de bouwperiode van de
-				bestaande bebouwing ten opzichte van 2002 en later"
-	{
-		unit<UInt8> Src : nrofrows = 8, Descr = "De effecten per bouwperiode op naam, zodat een verschoven klasse in Bouwperiode luid omvalt."
-		{
-			attribute<String>  name : ['d_constrlt1926', 'd_constr19261950', 'd_constr19511965', 'd_constr19661973', 'd_constr19741981', 'd_constr19821991', 'd_constr19922001', 'd_constrgt2001'];
-			attribute<Float32> Coef : [2.186, 1.925, 1.827, 0.868, 0.391, -0.180, -0.675, 0], Descr = "Het effect van de bouwperiode op de log-odds van herontwikkeling, ten opzichte van 2002 en later, in de stad (base).";
-			attribute<Float32> Coef_Landelijk : [1.527, 1.361, 1.577, 1.090, 0.512, 0.159, -0.543, 0], Descr = "Hetzelfde effect buiten de stad (rural).";
-		}
-		attribute<Float32> Coef           (/Classifications/Vastgoed/Bouwperiode) := Src/Coef[rlookup(/Classifications/Vastgoed/Bouwperiode/name, Src/name)], IntegrityCheck = "all(IsDefined(this))";
-		attribute<Float32> Coef_Landelijk (/Classifications/Vastgoed/Bouwperiode) := Src/Coef_Landelijk[rlookup(/Classifications/Vastgoed/Bouwperiode/name, Src/name)], IntegrityCheck = "all(IsDefined(this))";
 	}
 
 	container SocialeHuur

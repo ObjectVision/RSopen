@@ -1,0 +1,108 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De herontwikkelingskans per perceel met woningen in deze variant, en per zichtjaar of het perceel beschikbaar komt voor wonen (#869)
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Herontwikkelingskans
+: Descr = "De herontwikkelingskans per perceel met woningen in deze variant (#869): de vaste termen uit BaseData/Suitabilities/Wonen/Herontwikkelingskans plus de waarde van herontwikkeling,
+			de inclusive value van de pakketkeuze over de ontwikkelpakketten van de variant (stap 1 van de schatting: de log van de som over de pakketten van exp van de residuele waarde per
+			hectare maal haar effect plus de constante van het ontwikkeltype van het pakket). Daaruit de kans over het venster van de schatting, de jaarlijkse kans en per zichtjaar de cumulatieve
+			kans tegen de vaste trekking van het perceel: een perceel komt beschikbaar voor wonen in het eerste zichtjaar waarin zijn cumulatieve kans de trekking haalt, en blijft daarna
+			beschikbaar; of het model er bouwt beslist het saldo. Zeef_T/Impl/PerceelNietAanDeBeurt zeeft voor wonen de andere percelen met woningen weg. Het niveau komt uit de constante van de
+			schatting en is niet op de BAG geijkt; de controlewaarde herontwikkeling_verwacht_per_jaar in Diagnose/ChecksBasisjaar legt het naast de BAG-sloop op winstlocaties."
+{
+	container B := /BaseData/Suitabilities/Wonen/Herontwikkelingskans;
+	container P := /ModelParameters/Wonen/Herontwikkelingskans;
+	container E := /BaseData/Suitabilities/Wonen/Herontwikkeleenheid;
+	container S := ThisVariant/Suitability/src/Wonen, Descr = "De opbrengsten en kosten per ontwikkelpakket van deze variant, dezelfde bronnen als de geschiktheid.";
+	unit<UInt32> Perceel   := B/Perceel;
+	unit<UInt8>  OP        := ='ThisVariantClassifications/Vastgoed/OP';
+	unit<UInt8>  Zichtjaar := /Classifications/Time/Zichtjaar;
+	unit<UInt8>  Type      := P/Ontwikkeltype/Type;
+
+	parameter<Float32> HaPerCel          := value(AdminDomain/NrHaPerCell, Float32);
+	parameter<Float32> OpbrengstFactor   := /ModelParameters/Wonen/Exploitatieposten/OpbrengstFactor;
+	parameter<Float32> BouwkostenFactor  := (1f + /ModelParameters/Wonen/Exploitatieposten/BijkomendeKostenOpslag) * (1f + /ModelParameters/Wonen/Exploitatieposten/WinstEnRisicoFractie), Descr = "De bouwsom met de opslagen voor bijkomende kosten en winst en risico, zoals in het saldo.";
+	parameter<String>  Opbrengstenbron   := /ModelParameters/VariantDataOntkoppeld ? 'S/Impl/ReadOpbrengsten_perOP_UNCHECKED' : 'S/Impl/CalcOpbrengsten_perOP'
+	, Descr = "Waar de opbrengst per pakket vandaan komt: ontkoppeld de tifs zonder de IntegrityCheck die elk bestand in zijn geheel leest en vasthoudt, zoals de indicator Grondexploitatie dat ook doet.";
+
+	attribute<Type> Type_rel (OP) :=
+		  OP/WP4_rel == /Classifications/Vastgoed/WP4/V/appartement      ? (OP/Dichtheid >= P/Ontwikkeltype/Grens_AppartementHoog ? P/Ontwikkeltype/Type/V/AppartementHoog : P/Ontwikkeltype/Type/V/AppartementMidden)
+		: OP/WP4_rel == /Classifications/Vastgoed/WP4/V/rijtjeswoning    ? P/Ontwikkeltype/Type/V/Rij
+		: OP/WP4_rel == /Classifications/Vastgoed/WP4/V/twee_onder_1_kap ? P/Ontwikkeltype/Type/V/TweeOnderEenKap
+		: (OP/Dichtheid < P/Ontwikkeltype/Grens_VrijstaandGroot ? P/Ontwikkeltype/Type/V/VrijstaandGroot : P/Ontwikkeltype/Type/V/VrijstaandTeardown)
+	, IntegrityCheck = "all(IsDefined(this))", Descr = "Het ontwikkeltype van de schatting waar dit pakket bij hoort, op woningtype en dichtheid (ModelParameters/Wonen/Herontwikkelingskans/Ontwikkeltype).";
+	attribute<Float32> ASC_Stedelijk (OP) := P/Ontwikkeltype/Type/ASC_Stedelijk[Type_rel], Descr = "De constante van het ontwikkeltype van dit pakket in de pakketkeuze, in de stad.";
+	attribute<Float32> ASC_Landelijk (OP) := P/Ontwikkeltype/Type/ASC_Landelijk[Type_rel], Descr = "Dezelfde constante buiten de stad.";
+
+	attribute<Bool> HeeftWoningen_Compacted (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, B/HeeftWoningen_Cel);
+	unit<UInt64> WoonCel := select_with_org_rel(HeeftWoningen_Compacted && IsDefined(E/Eenheid_rel_Compacted))
+	, Descr = "De cellen met woningen in het basisjaar op een perceel, het domein waarop de waarde van herontwikkeling wordt gerekend: een fractie van alle cellen, zodat de 53 pakketten niet over het hele land hoeven."
+	{
+		attribute<CompactedAdminDomain> Compacted_rel   := org_rel;
+		attribute<AdminDomain>          AdminDomain_rel := CompactedAdminDomain/org_rel[org_rel];
+		attribute<Perceel>              Perceel_rel     := E/Eenheid_rel_Compacted[org_rel];
+		attribute<Float32>              Sloop           := value(MakeDefined(E/Sloop_Woningen/Result[AdminDomain_rel], 0[Eur]) + MakeDefined(E/Sloop_NietWoningen/Result[AdminDomain_rel], 0[Eur]), Float32), Descr = "De sloopkosten van de cel, uitgesmeerd over het perceel; gelijk voor elk pakket, dus zonder invloed op de keuze maar wel op de waarde van herontwikkeling, zoals in de schatting.";
+		attribute<Float32>              Coef_RV         := B/Coef_RV[Perceel_rel];
+		attribute<Bool>                 IsStedelijk     := B/IsStedelijk[Perceel_rel], Descr = "De zone van het perceel van de cel, die bepaalt welke constanten de pakketkeuze gebruikt.";
+	}
+
+	container RV_MlnPerHa :=
+		for_each_nedv(
+			OP/name
+			, '(value(' + Opbrengstenbron + '/' + OP/name + '[WoonCel/AdminDomain_rel], Float32) * OpbrengstFactor'
+				+ ' - value(S/Bouwkosten/perOP/' + OP/name + '[WoonCel/Compacted_rel], Float32) * BouwkostenFactor'
+				+ ' - value(S/Grondproductiekosten/PerPakket/Totaal/' + OP/name + '/Totaal[WoonCel/AdminDomain_rel], Float32) * HaPerCel'
+				+ ' - value(S/Bodemdalingkosten/perOP/' + OP/name + '[WoonCel/Compacted_rel], Float32)'
+				+ ' - value(S/Piekbuibergingkosten/perOP/' + OP/name + '[WoonCel/Compacted_rel], Float32)'
+				+ ' - WoonCel/Sloop) / HaPerCel / 1000000f'
+			, WoonCel
+			, Float32
+		), Descr = "De residuele waarde van elk pakket op de cel in miljoen euro per hectare: de netto-opbrengst min de bouwsom met opslagen, grondproductie, bodemdaling, piekbuiberging en de sloop van wat er staat; dezelfde posten als de geschiktheid, zonder de verwerving, want die is de eigen term van de kans.";
+
+	container V := for_each_nedv(OP/name, 'WoonCel/Coef_RV * RV_MlnPerHa/' + OP/name + ' + (WoonCel/IsStedelijk ? ASC_Stedelijk[' + string(id(OP)) + '[OP]] : ASC_Landelijk[' + string(id(OP)) + '[OP]])', WoonCel, Float32), Descr = "Het nut van elk pakket in de pakketkeuze: de residuele waarde maal haar effect plus de constante van het ontwikkeltype, beide van de zone van het perceel.";
+	attribute<Float32> V_VrijstaandTeardown (WoonCel) := ='max_elem(' + AsList(Type_rel == P/Ontwikkeltype/Type/V/VrijstaandTeardown ? 'V/' + OP/name : '-1e30f', ', ') + ')';
+	attribute<Float32> V_AppartementHoog (WoonCel) := ='max_elem(' + AsList(Type_rel == P/Ontwikkeltype/Type/V/AppartementHoog ? 'V/' + OP/name : '-1e30f', ', ') + ')';
+	attribute<Float32> V_TweeOnderEenKap (WoonCel) := ='max_elem(' + AsList(Type_rel == P/Ontwikkeltype/Type/V/TweeOnderEenKap ? 'V/' + OP/name : '-1e30f', ', ') + ')';
+	attribute<Float32> V_AppartementMidden (WoonCel) := ='max_elem(' + AsList(Type_rel == P/Ontwikkeltype/Type/V/AppartementMidden ? 'V/' + OP/name : '-1e30f', ', ') + ')';
+	attribute<Float32> V_Rij (WoonCel) := ='max_elem(' + AsList(Type_rel == P/Ontwikkeltype/Type/V/Rij ? 'V/' + OP/name : '-1e30f', ', ') + ')';
+	attribute<Float32> V_VrijstaandGroot (WoonCel) := ='max_elem(' + AsList(Type_rel == P/Ontwikkeltype/Type/V/VrijstaandGroot ? 'V/' + OP/name : '-1e30f', ', ') + ')';
+	attribute<Float32> IV_Cel     (WoonCel) := log(exp(V_VrijstaandTeardown) + exp(V_AppartementHoog) + exp(V_TweeOnderEenKap) + exp(V_AppartementMidden) + exp(V_Rij) + exp(V_VrijstaandGroot)), Descr = "De inclusive value van de cel: de log van de som over de zes ontwikkeltypen van exp van het nut van het beste pakket van dat type. Per type het beste pakket en niet alle pakketten, want de schatting kent zes alternatieven en een logsom groeit met het aantal alternatieven: over alle 53 pakketten lag de inclusive value 1,8 hoger dan in de schatting (3,6 tegen 1,8). Een type zonder pakket in deze variant telt niet mee.";
+	attribute<Float32> IV         (Perceel) := MakeDefined(mean(IV_Cel, WoonCel/Perceel_rel), 0f), Descr = "De inclusive value van het perceel, gemiddeld over zijn cellen met woningen.";
+
+	attribute<Float32> LogOdds    (Perceel) := B/LogOdds_Vast + B/Coef_IV * IV, Descr = "De log-odds van herontwikkeling binnen het venster van de schatting.";
+	attribute<Float32> Kans_Venster (Perceel) := 1f / (1f + exp(0f - LogOdds)), Descr = "De kans op herontwikkeling binnen het venster van de schatting.";
+	attribute<Float32> Hazard_Jaar (Perceel) := B/HeeftWoningen && !B/IsRijksmonument ? (0f - log(1f - Kans_Venster)) / P/Venster_Jaren : 0f, Descr = "De jaarlijkse kans als constante hazard: de kans over het venster omgerekend naar een jaar; nul zonder woningen en op een perceel met een rijksmonument.";
+	parameter<Float32> VerwachtPerJaar := sum(Hazard_Jaar * float32(B/Woningen)), Descr = "De verwachte herontwikkeling per jaar in woningen op de voorraad van het basisjaar: de som van de jaarlijkse kans maal de woningen per perceel. De controlewaarde herontwikkeling_verwacht_per_jaar in Diagnose/ChecksBasisjaar, naast de sloop-nieuwbouw in de BAG 2013 tot 2024: de schatting telt elke herontwikkeling, dus de 3.023 per jaar op winstlocaties plus de vervanging van bijna 6.000 per jaar, samen ongeveer 9.000.";
+
+	attribute<Float32> Label (Perceel) := B/Label;
+	attribute<Float32> Lengte (Zichtjaar) := float32((Zichtjaar/YearRange_rel - Zichtjaar/PrevYearRange_rel) / 1[YearRange]), Descr = "De lengte van de periode tot dit zichtjaar in jaren.";
+	attribute<Float32> Krimp  (Zichtjaar) := max_elem(0f, float32((/ModelParameters/Wonen/Energielabel/KrimpJaar - Zichtjaar/PrevYearRange_rel) / 1[YearRange]) / float32((/ModelParameters/Wonen/Energielabel/KrimpJaar - /ModelParameters/Model_StartYear) / 1[YearRange]))
+	, Descr = "Het deel van het labeleffect dat aan het begin van de periode nog geldt: een in het basisjaar, lineair naar nul in KrimpJaar.";
+	attribute<String>  Term   (Zichtjaar) := 'exp(Label * ' + string(Krimp) + 'f) * ' + string(Lengte) + 'f', Descr = "De blootstelling van de periode: haar lengte maal de labelfactor aan haar begin.";
+
+	container PerZichtjaar := for_each_ne(Zichtjaar/name, 'PerZichtjaar_T(' + string(id(Zichtjaar)) + '[Zichtjaar])')
+	, Descr = "Per zichtjaar de cumulatieve kans en welke percelen beschikbaar zijn voor wonen.";
+
+	Template PerZichtjaar_T
+	{
+		parameter<Zichtjaar> Z_rel;
+		//
+		attribute<Float32> Blootstelling (Perceel) := = AsList(id(Zichtjaar) <= Z_rel ? Term : '0f', ' + ')
+		, Descr = "De som over de periodes tot en met dit zichtjaar van hun lengte maal de labelfactor, de jaren waarover de hazard geldt.";
+		attribute<Float32> Cumulatief    (Perceel) := 1f - exp(0f - Hazard_Jaar * Blootstelling), Descr = "De kans dat het perceel voor het eind van dit zichtjaar is herontwikkeld.";
+		attribute<Bool>    IsVrij        (Perceel) := B/HeeftWoningen && !B/IsRijksmonument && Cumulatief >= B/Trekking, Descr = "Komt het perceel uiterlijk in dit zichtjaar beschikbaar voor wonen? Een keer waar blijft waar, want de cumulatieve kans groeit; een perceel met een rijksmonument komt nooit vrij.";
+		attribute<Bool>    NietVrij_Compacted (CompactedAdminDomain) := HeeftWoningen_Compacted && IsDefined(E/Eenheid_rel_Compacted) && !IsVrij[E/Eenheid_rel_Compacted]
+		, Descr = "Een cel met woningen op een perceel dat in dit zichtjaar nog niet aan de beurt is; de zeef voor wonen leest dit (Zeef_T/Impl/PerceelNietAanDeBeurt). Een cel zonder perceel valt erbuiten en blijft beschikbaar.";
+		parameter<Float32> AandeelVrij := float32(sum(uint32(IsVrij))) / float32(sum(uint32(B/HeeftWoningen))), Descr = "Het aandeel van de percelen met woningen dat uiterlijk in dit zichtjaar beschikbaar is.";
+		parameter<Float32> WoningenVrij := sum(IsVrij ? float32(B/Woningen) : 0f), Descr = "De woningen van het basisjaar op de percelen die uiterlijk in dit zichtjaar beschikbaar zijn.";
+	}
+}

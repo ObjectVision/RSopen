@@ -1,0 +1,69 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De vaste termen van de herontwikkelingskans per perceel met woningen, uit de kenmerken van het basisjaar (#869)
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Herontwikkelingskans
+: Descr = "De vaste termen van de herontwikkelingskans per perceel met woningen (#869), uit de kenmerken van het basisjaar: de verwervingskosten per hectare perceel, het
+			perceeloppervlak zelf, het aandeel eigenaar-bewoners en sociale huur in de buurt, een rijksbeschermd stads- of dorpsgezicht, de bouwperiode en het energielabel van de woningen, elk met het
+			effect uit de specificatie van de zone van het perceel (ModelParameters/Wonen/Herontwikkelingskans, stad of platteland uit Stedelijkheid). Per perceel ook de vaste trekking waartegen
+			de cumulatieve kans per zichtjaar wordt gelegd, en of er een rijksmonument op staat, want dan komt het perceel nooit beschikbaar (SourceData/Omgevingsrecht/Rijksmonumenten). De waarde van herontwikkeling hangt aan de ontwikkelpakketten van de variant en staat daarom in
+			Templates/VariantData_T/Herontwikkelingskans, dat hier de kans en de beschikbaarheid per zichtjaar uit maakt. De eenheid is het kadastrale perceel van Herontwikkeleenheid; een cel
+			met woningen zonder perceel valt buiten de kans en blijft beschikbaar zoals voorheen."
+{
+	container P := /ModelParameters/Wonen/Herontwikkelingskans;
+	unit<UInt32>       Perceel     := Herontwikkeleenheid/Perceel;
+	attribute<Perceel> Eenheid_rel (AdminDomain) := Herontwikkeleenheid/Eenheid_rel;
+	unit<UInt32>       vbo         := Verwervingskosten/vbo_startjaar, Descr = "De woon-vbo's van het basisjaar, dezelfde set als de verwervingskosten, de vervanging en het energielabel.";
+	attribute<Perceel> Perceel_VBO (vbo) := Eenheid_rel[vbo/AdminDomain_rel], Descr = "Het perceel van de cel waarin de woning ligt.";
+	unit<UInt32>       Buurt       := Stedelijkheid/Buurt;
+
+	attribute<Bool>    HeeftWoningen_Cel (AdminDomain) := MakeDefined(/BaseData/StartState/StateBasisjaar/State/Wonen/Aantal_Woningen_Totaal[float32], 0f) > 0f, Descr = "Staan er in het basisjaar woningen in de cel? De cellen waarover de kans gaat.";
+	attribute<Woning>  Woningen          (Perceel)     := Herontwikkeleenheid/Woningen_Eenheid, Descr = "De woningen van het basisjaar op het perceel.";
+	attribute<Bool>    HeeftWoningen     (Perceel)     := Woningen > 0[Woning], Descr = "Een perceel met woningen in het basisjaar: alleen daar geldt de kans.";
+	attribute<Bool>    IsStedelijk       (Perceel)     := MakeDefined(mean(float32(Stedelijkheid/IsStedelijk), Eenheid_rel), 0f) >= 0.5f, Descr = "De zone van het perceel: stad als de meerderheid van zijn cellen in een stedelijke buurt ligt, anders platteland.";
+
+	attribute<Float32> Perceel_Ha          (Perceel) := float32(Herontwikkeleenheid/CellenPerEenheid) * value(AdminDomain/NrHaPerCell, Float32)
+	, Descr = "Het oppervlak van het perceel in hectare, als zijn cellen van 25 meter. De schatting rekent per site met het oppervlak van de panden die er stonden, maar haar sites zijn clusters van gemiddeld zestien woningen op 0,29 hectare en 178 vierkante meter per woning, dus met het erf erbij; per perceel geeft het perceeloppervlak dezelfde verwervingskosten per hectare als de schatting (in de stad gemiddeld 18 tegen 20 miljoen euro), de voetafdruk van de woonpanden drie keer zoveel (62).";
+	attribute<Float32> Verwerving_MlnPerHa (Perceel) := Perceel_Ha > 0f ? value(sum(Herontwikkeleenheid/Verwerving_Woningen_Cel, Eenheid_rel), Float32) / 1000000f / Perceel_Ha : 0f
+	, Descr = "De hedonische waarde van de woningen op het perceel in miljoen euro per hectare perceel, de verwervingskosten zoals de schatting ze meet.";
+	attribute<Float32> LnPerceel_Ha        (Perceel) := Perceel_Ha > 0f ? log(Perceel_Ha) : 0f, Descr = "De log van het perceeloppervlak in hectare, de omvangterm van de schatting.";
+	attribute<Float32> EigenaarBewoners_pp (Perceel) := MakeDefined(mean(Koopaandeel/Aandeel, Eenheid_rel), 0f) * 100f, Descr = "Het aandeel koopwoningen rond het perceel in procentpunten, uit de CBS-vierkanten van 100 m (Koopaandeel), als aandeel eigenaar-bewoners in de buurt.";
+
+	attribute<Woning>  SocialeHuur_Cel   (AdminDomain) := ='add(' + AsList('MakeDefined(/BaseData/StartState/StateBasisjaar/State/Wonen/' + /Classifications/Vastgoed/WP2/name + '_SocialeHuur, 0[Woning])', ' + ') + ')', Descr = "De sociale huurwoningen van het basisjaar in de cel.";
+	attribute<Woning>  Woningen_Cel      (AdminDomain) := MakeDefined(/BaseData/StartState/StateBasisjaar/State/Wonen/Aantal_Woningen_Totaal, 0[Woning]);
+	attribute<Float32> SocialeHuur_Buurt (Buurt)       := sum(Woningen_Cel, Buurt/Per_AdminDomain) > 0[Woning] ? value(sum(SocialeHuur_Cel, Buurt/Per_AdminDomain), Float32) / value(sum(Woningen_Cel, Buurt/Per_AdminDomain), Float32) * 100f : 0f, Descr = "Het aandeel sociale huur in de woningvoorraad van de buurt in procentpunten, uit de basisjaarstand.";
+	attribute<Float32> SocialeHuur_pp    (Perceel)     := MakeDefined(mean(MakeDefined(SocialeHuur_Buurt[Buurt/Per_AdminDomain], 0f), Eenheid_rel), 0f), Descr = "Het aandeel sociale huur in de buurt van het perceel in procentpunten.";
+	attribute<Bool>    Erfgoed           (Perceel)     := any(/SourceData/Omgevingsrecht/StadsEnDorpsgezichten/IsInGezicht, Eenheid_rel), Descr = "Ligt een cel van het perceel in een rijksbeschermd stads- of dorpsgezicht?";
+	attribute<Bool>    IsRijksmonument   (Perceel)     := any(/SourceData/Omgevingsrecht/Rijksmonumenten/IsRijksmonumentCel, Eenheid_rel), Descr = "Staat er op een cel van het perceel een rijksmonument? Dan komt het perceel nooit beschikbaar voor wonen (Templates/VariantData_T/Herontwikkelingskans, Hazard_Jaar en IsVrij); de rest van het perceel gaat mee, want wie sloopt koopt het perceel als geheel.";
+
+	attribute<Bool>    IsStedelijk_VBO (vbo) := Stedelijkheid/IsStedelijk[vbo/AdminDomain_rel];
+	attribute<Float32> Bouwperiode_VBO (vbo) := Vervanging/HeeftBouwjaar
+		? (IsStedelijk_VBO ? P/Bouwperiode/Coef_Stedelijk[Vervanging/Bouwperiode_rel] : P/Bouwperiode/Coef_Landelijk[Vervanging/Bouwperiode_rel])
+		: null_f, Descr = "Het effect van de bouwperiode van de woning op de log-odds van herontwikkeling, uit de specificatie van haar zone, ten opzichte van 2002 en later; null zonder bouwjaar.";
+	attribute<Float32> Bouwperiode     (Perceel) := MakeDefined(mean(Bouwperiode_VBO, Perceel_VBO), 0f), Descr = "Het bouwperiode-effect van het perceel: het gemiddelde over zijn woningen met een bouwjaar.";
+	attribute<Float32> Label           (Perceel) := MakeDefined(mean(Energielabel/Afwijking_VBO, Perceel_VBO), 0f), Descr = "Het energielabel van het perceel ten opzichte van de groepen van zijn woningen, als effect op de log-odds van sloop (Energielabel); het krimpt per zichtjaar naar nul in KrimpJaar.";
+
+	attribute<Float32> LogOdds_Vast (Perceel) := Bouwperiode + (IsStedelijk
+		? P/Stedelijk/Constante + P/Stedelijk/Verwerving_MlnPerHa * Verwerving_MlnPerHa + P/Stedelijk/LnPerceel_Ha * LnPerceel_Ha + P/Stedelijk/EigenaarBewoners_pp * EigenaarBewoners_pp + P/Stedelijk/SocialeHuur_pp * SocialeHuur_pp + P/Stedelijk/Erfgoed * float32(Erfgoed)
+		: P/Landelijk/Constante + P/Landelijk/Verwerving_MlnPerHa * Verwerving_MlnPerHa + P/Landelijk/LnPerceel_Ha * LnPerceel_Ha + P/Landelijk/EigenaarBewoners_pp * EigenaarBewoners_pp + P/Landelijk/SocialeHuur_pp * SocialeHuur_pp + P/Landelijk/Erfgoed * float32(Erfgoed))
+	, Descr = "De log-odds van herontwikkeling binnen het venster van de schatting, zonder de waarde van herontwikkeling: constante plus de vaste termen van de zone van het perceel plus het bouwperiode-effect.";
+	attribute<Float32> Coef_IV (Perceel) := IsStedelijk ? P/Stedelijk/InclusiveValue : P/Landelijk/InclusiveValue, Descr = "Het effect van de waarde van herontwikkeling (de inclusive value) in de zone van het perceel.";
+	attribute<Float32> Coef_RV (Perceel) := IsStedelijk ? P/Stedelijk/RV_MlnPerHa : P/Landelijk/RV_MlnPerHa, Descr = "Het effect van de residuele waarde per hectare in de pakketkeuze (stap 1 van de schatting) in de zone van het perceel.";
+
+	parameter<UInt32>  PercelenMetWoningen  := sum(uint32(HeeftWoningen)), Descr = "Het aantal percelen met woningen in het basisjaar, de eenheden waarover de kans gaat.";
+	parameter<UInt32>  PercelenInGezicht    := sum(uint32(HeeftWoningen && Erfgoed)), Descr = "Hoeveel daarvan in een rijksbeschermd stads- of dorpsgezicht liggen.";
+	parameter<UInt32>  PercelenMetMonument  := sum(uint32(HeeftWoningen && IsRijksmonument)), Descr = "Hoeveel daarvan een rijksmonument dragen en daarom nooit beschikbaar komen.";
+	parameter<Float32> LogOdds_Vast_Gemiddeld := mean(HeeftWoningen ? LogOdds_Vast : null_f), Descr = "De gemiddelde vaste log-odds over de percelen met woningen, zonder de waarde van herontwikkeling; ter controle van de termen.";
+
+	attribute<Float32> Trekking (Perceel) := ='rnd_uniform(' + string(P/Trekking_Seed) + ', Perceel, range(float32, 0f, 1f))'
+	, Descr = "De vaste trekking van het perceel tussen nul en een, met de seed uit ModelParameters, dus in elke run en variant dezelfde. Het perceel komt beschikbaar in het eerste zichtjaar waarin zijn cumulatieve kans deze trekking haalt; de verwachting over alle percelen is precies de som van de kansen.";
+}
