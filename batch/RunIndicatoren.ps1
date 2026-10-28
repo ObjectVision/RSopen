@@ -85,12 +85,14 @@
                             alleen de landelijke tabel leest de groenkaarten zelf terug.
       -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
 
-      Welke bestanden de export schrijft hangt af van ModelParameters/Productieprofiel (Export/generates/Set):
-      NL2120 de volledige set, RuimteVoorWoningbouw de woningbouwset. Voor de woningbouwset staan
-      -Ontkoppeld en -TabellenUitExport standaard uit: de ketens schrijven de cumulatieve indicatoren van de
-      volledige set, en de woningbouwtabel leest kolommen waarvan de kaart niet in de set zit. Wie ze toch
-      wil, geeft ze expliciet mee. De toets op de invoer eist de bergingscapaciteiten van Run4 alleen voor
-      de volledige set.
+      Welke bestanden de export schrijft hangt af van ModelParameters/Productieprofiel. NL2120 en Standaard
+      schrijven de bestanden van de indicatordomeinen die het profiel levert (ModelParameters/Indicatoren/
+      Domein): NL2120 alle domeinen, Standaard alleen wonen en werken. RuimteVoorWoningbouw, in zijn eigen
+      tak, schrijft de woningbouwset (Export/generates/Set); daar staan -Ontkoppeld en -TabellenUitExport
+      standaard uit, want de woningbouwtabel leest kolommen waarvan de kaart niet in de set zit. Wie ze toch
+      wil, geeft ze expliciet mee. De toets op de invoer eist de BGT-oppervlakken alleen bij de
+      landgebruikskaart, de bergingscapaciteiten alleen bij het domein Water, de opbrengstderving alleen bij
+      Landbouw, en de ketentifs alleen van de domeinen die het profiel levert.
 
    B. Omgevingsvariabelen die dit script zelf zet: StandAllocatieOntkoppeld=TRUE (stand uit de tifs),
       VariantDataOntkoppeld=TRUE, IndicatorenOntkoppeld (TRUE met -Ontkoppeld, anders FALSE),
@@ -163,14 +165,32 @@ function Get-BagDatum {
 
 function Get-Productieprofiel {
     # ModelParameters/Productieprofiel uit de tekst, zoals Get-VariantKolom VariantK leest. Bepaalt welke
-    # set de export schrijft, zie Templates/Indicatoren_T/Export.dms, generates/Set.
+    # indicatordomeinen de export schrijft, en in RuimteVoorWoningbouw de woningbouwset.
     $mp = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms'
     $m  = [regex]::Match((Get-Content $mp -Raw), "Productieprofiel\s*:=\s*'([^']*)'")
     if (-not $m.Success) { throw "Productieprofiel niet gevonden in $mp" }
     return $m.Groups[1].Value
 }
 
-$Set = if ((Get-Productieprofiel) -eq 'RuimteVoorWoningbouw') { 'RuimteVoorWoningbouw' } else { 'Volledig' }
+function Get-Domeinen([string]$Profiel) {
+    # Welke indicatordomeinen het profiel levert: de kolom van het profiel in de tabel Domein van
+    # ModelParameters/Indicatoren.dms, als tabel domein -> waar of onwaar.
+    $dms = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters\Indicatoren.dms'
+    $tekst = Get-Content $dms -Raw
+    $namen = [regex]::Match($tekst, "attribute<String>\s+name\s*:\s*\[(.*?)\]", 'Singleline')
+    $kolom = [regex]::Match($tekst, "attribute<Bool>\s+$Profiel\s*:\s*\[(.*?)\]", 'Singleline')
+    if (-not $namen.Success -or -not $kolom.Success) { throw "Kolom $Profiel niet gevonden in de tabel Domein van $dms" }
+    $n = @([regex]::Matches($namen.Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
+    $w = @([regex]::Matches($kolom.Groups[1].Value, '(TRUE|FALSE)') | ForEach-Object { $_.Groups[1].Value -eq 'TRUE' })
+    if ($n.Count -ne $w.Count) { throw "Tabel Domein in ${dms}: $($n.Count) namen tegen $($w.Count) waarden in de kolom $Profiel" }
+    $t = @{}
+    for ($i = 0; $i -lt $n.Count; $i++) { $t[$n[$i]] = $w[$i] }
+    return $t
+}
+
+$Profiel  = Get-Productieprofiel
+$Domeinen = Get-Domeinen $Profiel
+$Set = if ($Profiel -eq 'RuimteVoorWoningbouw') { 'RuimteVoorWoningbouw' } else { 'Domeinen' }
 if ($Set -eq 'RuimteVoorWoningbouw') {
     if (-not $PSBoundParameters.ContainsKey('Ontkoppeld'))        { $Ontkoppeld = $false }
     if (-not $PSBoundParameters.ContainsKey('TabellenUitExport')) { $TabellenUitExport = $false }
@@ -225,9 +245,12 @@ function Test-Invoer {
     $eisen += ,@('BaseData\StandBasisjaar\Wonen\*.tif',                    'stand basisjaar',            '/WriteBasedata/Generate_Run3')
     $eisen += ,@('BaseData\Vastgoed\WP2xVSSH_Proxy\*',                     'woningsubsector-proxies',    '/WriteBasedata/Generate_Run3')
     $eisen += ,@('BaseData\Vastgoed\Sloopkosten_Woningen_*.tif',           'sloopkosten',                '/WriteBasedata/Generate_Run3')
-    if ($Set -eq 'Volledig') {
-        # De woningbouwset leest geen landgebruikskaart en geen piekbuiberging, dus geen BGT-oppervlakken.
+    # Run4 maakt de BGT-oppervlakken alleen voor de landgebruikskaart en de bergingscapaciteiten alleen voor
+    # het domein Water (WriteBasedata/Impl/MakeGroenBruinBlauwVerhard en MakeWaterbergingCapaciteit).
+    if ($Domeinen['Landgebruikskaart']) {
         $eisen += ,@('BaseData\Grondgebruik\BGT\GroenOpp_*.tif',           'BGT groen, bruin, verhard',  '/WriteBasedata/Generate_Run4_IndicatorenData')
+    }
+    if ($Domeinen['Water']) {
         $eisen += ,@('BaseData\Grondgebruik\BGT\*Capaciteit_*.tif',        'BGT bergingscapaciteiten',   '/WriteBasedata/Generate_Run4_IndicatorenData')
     }
     foreach ($v in $Varianten) {
@@ -240,8 +263,8 @@ function Test-Invoer {
                 $eisen += ,@("Allocatie\${Scenario}_$standVan\Stand$j\OP_rel_*.tif", "stand $j van ${Scenario}_$standVan (variant $v)", "batch\Run2120.ps1, stap allocatie-$standVan-$j")
             }
         }
-        if ($Set -eq 'Volledig') {
-            # Alleen de landbouwindicatoren lezen de opbrengstderving; de woningbouwset heeft ze niet.
+        if ($Domeinen['Landbouw']) {
+            # Alleen de landbouwindicatoren lezen de opbrengstderving.
             $eisen += ,@("BaseData\Landbouw\WWL_Opbrengstderving\$($hydro[$v])_*.tif", "opbrengstderving van levering $($hydro[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
         }
         $eisen += ,@("VariantData\Vastgoed\Opbrengsten_perOP\$($opbr[$v])\*.tif", "opbrengsten per pakket, set $($opbr[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
@@ -262,12 +285,27 @@ function Test-Invoer {
 }
 
 function Get-KetenNamen {
-    # De namen van de ketentifs, gelezen uit de schrijfkant in Ketens.dms zodat dit script niet
-    # achterloopt als daar een keten bijkomt: elke StorageName daar is Pad+'<naam>'+Staart.
+    # De namen van de ketentifs van de domeinen die het profiel levert, gelezen uit de schrijfkant in
+    # Ketens.dms zodat dit script niet achterloopt als daar een keten bijkomt: elke StorageName daar is
+    # Pad+'<naam>'+Staart, en Ketens/Schrijf/Lijst zet ze per domein. Een tif die in geen domeinlijst staat
+    # zou Ketens/Schrijf/Alles nooit schrijven; dat is een fout in Ketens.dms en geen ontbrekend bestand.
     $dms = Join-Path (Split-Path $Cfg -Parent) 'main\Templates\Indicatoren\Ketens.dms'
     if (-not (Test-Path $dms)) { throw "Ketens.dms niet gevonden naast $Cfg" }
-    $namen = @([regex]::Matches((Get-Content $dms -Raw), "StorageName\s*=\s*`"=Pad\+'([^']+)'\+Staart`"") | ForEach-Object { $_.Groups[1].Value })
-    if ($namen.Count -eq 0) { throw "Geen ketentifs gevonden in $dms" }
+    $tekst = Get-Content $dms -Raw
+    $alle = @([regex]::Matches($tekst, "StorageName\s*=\s*`"=Pad\+'([^']+)'\+Staart`"") | ForEach-Object { $_.Groups[1].Value })
+    if ($alle.Count -eq 0) { throw "Geen ketentifs gevonden in $dms" }
+    $begin = $tekst.IndexOf('container Schrijf')
+    $eind  = $tekst.IndexOf('parameter<String> Alles_lijst', $begin)
+    if ($begin -lt 0 -or $eind -lt 0) { throw "Ketens/Schrijf/Lijst niet gevonden in $dms" }
+    $lijst = $tekst.Substring($begin, $eind - $begin)
+    $perDomein = @{}
+    foreach ($m in [regex]::Matches($lijst, "parameter<String>\s+(\w+)\s*:=(.*?);\s*\r?\n", 'Singleline')) {
+        $perDomein[$m.Groups[1].Value] = @([regex]::Matches($m.Groups[2].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value.Trim(';') })
+    }
+    $ingedeeld = @($perDomein.Values | ForEach-Object { $_ })
+    $los = @($alle | Where-Object { $ingedeeld -notcontains $_ })
+    if ($los.Count -gt 0) { throw "Ketentifs zonder domein in Ketens/Schrijf/Lijst: $($los -join ', ')" }
+    $namen = @($perDomein.Keys | Where-Object { $Domeinen[$_] } | ForEach-Object { $perDomein[$_] })
     return $namen
 }
 
@@ -296,7 +334,7 @@ $totaal = [Diagnostics.Stopwatch]::StartNew()
 $alleJaren = Get-Zichtjaren
 if ($Zichtjaren.Count -eq 0) { $Zichtjaren = @($alleJaren[-1]) }
 Write-Regel "config    : $Cfg"
-Write-Regel "set       : $Set (ModelParameters/Productieprofiel)"
+Write-Regel "profiel   : $Profiel (ModelParameters/Productieprofiel)$(if ($Set -eq 'RuimteVoorWoningbouw') { ', woningbouwset' } else { ', domeinen ' + ((@($Domeinen.Keys | Where-Object { $Domeinen[$_] }) | Sort-Object) -join ', ') })"
 Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
 Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"

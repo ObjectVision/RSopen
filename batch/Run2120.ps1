@@ -448,8 +448,8 @@ if (-not $SkipBasedata) {
     Invoke-Stap 'basedata-run3'        '/WriteBasedata/Generate_Run3'
     # Run4 (BGT-oppervlakken en -capaciteiten) is alleen voor de indicatoren en kost ruim een uur, maar
     # alleen in een projectlijn die de landgebruikskaart of het domein Water levert
-    # (ModelParameters/Indicatoren/Domein); in RuimteVoorWoningbouw is hij leeg. RunIndicatoren.ps1
-    # weigert de volledige set zonder deze bestanden.
+    # (ModelParameters/Indicatoren/Domein); in Standaard en RuimteVoorWoningbouw is hij leeg.
+    # RunIndicatoren.ps1 weigert een export met die domeinen zonder deze bestanden.
     if ($ZonderIndicatorBasedata) { Write-Regel "overslaan : basedata-indicatoren (-ZonderIndicatorBasedata)" }
     else { Invoke-Stap 'basedata-indicatoren' '/WriteBasedata/Generate_Run4_IndicatorenData' }
     Test-Dictionaries

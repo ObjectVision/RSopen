@@ -101,7 +101,7 @@ Niet voor een item dat leest wat een eerder item in dezelfde aanroep schrijft. D
 
 ### De export per bestand of per domein
 
-`RunIndicatoren.ps1` vraagt `Zichtjaren/Export/Generate_Indicatoren` en dat is de hele set, ruim tachtig bestanden per casus en zeventig minuten per variant. Wil je minder, dan hoef je daar niet omheen te bouwen: `Zichtjaren/Export/generates` heeft een parameter per uitvoerbestand en `generates/Themas` een parameter per domein (Grondgebruik, Wonen, Werken, Water, Natuur, Landbouw, Koolstof, Sloop, Tabellen).
+`RunIndicatoren.ps1` vraagt `Zichtjaren/Export/Generate_Indicatoren` en dat is de set van het productieprofiel: met `NL2120` alle domeinen, ruim tachtig bestanden per casus en zeventig minuten per variant, met `Standaard` alleen grondgebruik, wonen, werken en de tabellen. Welke domeinen een profiel levert staat in `ModelParameters/Indicatoren/Domein`; de export, de indicatortabellen (een kolom van een domein dat niet geleverd wordt blijft leeg), de ketens tussen de zichtjaren, de basedata van Run4 en de opbrengstderving in de variantdata volgen die tabel. Wil je minder, dan hoef je daar niet omheen te bouwen: `Zichtjaren/Export/generates` heeft een parameter per uitvoerbestand en `generates/Themas` een parameter per domein (Grondgebruik, Landgebruikskaart, Wonen, Werken, Water, Natuur, Landbouw, Koolstof, Sloop, Tabellen).
 
 ```powershell
 $g = '/Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/generates/'
