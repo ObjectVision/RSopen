@@ -56,19 +56,21 @@ Gemeten op 2026-09-16 met GeoDms20.17.0.m, op de code van #824 in een kopie met 
 
 Op een gedeelde LocalData is zo'n toets dus een schrijvende run; zie Toetsen terwijl een ander draait.
 
-### De resolutieronde, en waarom stoppen na die ronde niet veilig is
+### Een naamcontrole zonder te rekenen: @sourcedescr
 
-GeoDmsRun lost eerst voor alle opgevraagde items de namen op en begint pas daarna te rekenen. Die resolutieronde zet per item een regel `[progress]Item <pad>` in het log, met een `[E]`-regel erachter als een naam niet oplost (`Unknown identifier`, of `the specified item ... was not found`). De rekenronde begint met de eerste regel `{ Updating::[[<pad>]]`. Een ronde over 71 items, vooral tabelkolommen, kostte op 2026-09-16 acht seconden, inclusief het laden van de configuratie.
+GeoDmsRun lost voor een opgevraagd item eerst alle namen in de keten op en begint pas daarna te rekenen; een naam die niet oplost geeft een `[E]`-regel (`Unknown identifier`, of `the specified item ... was not found`). Wil je alleen die naamcontrole, vraag het item dan niet op maar laat het beschrijven met `@sourcedescr` (sinds GeoDMS 20.17.0): GeoDmsRun lost de keten dan op, rekent niets uit en schrijft niets. Gemeten op 2026-10-28 op een kopie van main: de allocatieketen van het laatste zichtjaar in 205 s bij 1,5 GB, de variantdata in 7 s bij 0,2 GB, met vrijwel dezelfde foutregels als een opgevraagde run tot aan het rekenen.
 
-Het proces stoppen zodra die eerste Updating-regel verschijnt is daarmee een snelle naamcontrole, maar alleen in een kopie met een eigen LocalData. De rekenronde begint in dezelfde seconde als de laatste resolutieregel, en zodra GeoDMS aan een schrijvend item in de keten begint, maakt het dat bestand opnieuw aan, niet pas als de data klaar is. Gemeten op 2026-09-17, twee keer: gestopt binnen een seconde na de eerste Updating-regel, geen `storage write` in het log, en van `Dichtheid_NieuwWonen_Y2120_WonHa_Nederland.tif` stond nog 83.874 van de 6.374.831 bytes.
+Twee dingen om te weten. GeoDmsRun eindigt ook met exit 0 als een naam niet bestaat, dus het oordeel komt uit de `[E]`-regels in het log. En de opslag die `@sourcedescr` per item noemt, is wat de keten direct leest en schrijft: achter een bestand dat de keten zelf wegschrijft kijkt hij niet verder, dus de lijst is geen volledige bronnenlijst.
 
-`scripts/resolutie.ps1` doet dit, en weigert zonder `-EigenLocalData`:
+`scripts/resolutie.ps1` doet dit, met een rem op geheugen en tijd:
 
 ```powershell
-.\.claude\skills\rs-draaien\scripts\resolutie.ps1 -EigenLocalData -Config "<kopie>\cfg\main.dms" -Items "/pad/naar/item", "/pad/naar/ander/item"
+.\.claude\skills\rs-draaien\scripts\resolutie.ps1 -Config "<kopie>\cfg\main.dms" -Items "/pad/naar/item", "/pad/naar/ander/item" -Bestanden
 ```
 
-Het leest het log met gedeelde toegang, want GeoDmsRun houdt het tijdens de run open voor schrijven en een gewone lees faalt dan. Het stopt het proces op zijn PID, toont de foutregels en noemt het item waaraan GeoDMS was begonnen; vraag dat item daarna volledig op of gooi de kopie weg. Het neemt de omgevingsvariabelen van de aanroeper over, dus zet de schakelaars zelf, want een meta-expressie kiest zijn tak daarop. En het toetst namen en domeinen, geen data.
+Stop een opgevraagd item niet op de regel `{ Updating::` in het `/L`-log. GeoDmsRun schrijft dat log gebufferd: in een proef van zeven seconden zag een lezer met gedeelde toegang de hele run nul bytes, en op 2026-10-28 kwam de Updating-regel van de variantdata pas na anderhalve minuut op schijf, toen het proces de WP5-pandtypering van heel Nederland al rekende en 90 GB had vastgelegd. Zo werkten `resolutie.ps1` en laag 3 van `batch/Preflight.py` tot die dag. Daar komt bij dat GeoDMS het bestand van een schrijvend item aan het begin van het rekenen al opnieuw aanmaakt: op 2026-09-17 stond van een tif van 6.374.831 bytes na het stoppen nog 83.874.
+
+Het script neemt de omgevingsvariabelen van de aanroeper over, dus zet de schakelaars zelf, want een meta-expressie kiest zijn tak daarop. En het toetst namen en domeinen, geen data.
 
 ### Bij een meta-expressie moet je elke tak instantieren
 

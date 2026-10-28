@@ -22,13 +22,11 @@ geeft exit 1 zodra een laag faalt.
    representatief bestand per stap, met de stap die het maakt), de plancapaciteitsgrids per zichtjaar
    en de claim-CSV van het eerste zichtjaar. Zonder deze laag stranden die pas na een uur rekenen, en
    een ontbrekend mmd meldt zich bovendien als een onbekende naam en niet als een ontbrekend bestand.
-3. Boom: lost elk productie-item op. GeoDmsRun lost eerst alle namen op en begint daarna pas te
-   rekenen; dit script stopt het proces zodra de eerste Updating-regel verschijnt en rapporteert de
-   [E]-regels uit de resolutieronde. Dat vangt een verwijzing naar een verdwenen item, zoals bij #759,
-   voordat de run begint. Deze laag draait in een wegwerpkopie van cfg met een eigen LocalData, nooit
-   op die van de werkkopie: het rekenen begint in dezelfde seconde als de laatste resolutieregel, en
-   GeoDMS leegt het bestand van een schrijvend item aan het begin van dat item. Op de gedeelde
-   LocalData zou een halfgeschreven tif van een eerdere run achterblijven.
+3. Boom: lost elk productie-item op. GeoDmsRun beschrijft de items met @sourcedescr: daarvoor lost
+   het alle namen in de keten op, met een [E]-regel voor elke naam die niet bestaat, maar het rekent
+   niets uit en schrijft niets. Dat vangt een verwijzing naar een verdwenen item, zoals bij #759,
+   voordat de run begint. Deze laag draait in een wegwerpkopie van cfg met een eigen LocalData en
+   zonder ontkoppeling.
 
 Wat laag 3 NIET vangt: een meta-expressie instantieert alleen de tak die bij de huidige schakelaars
 hoort, en een item in een Template bestaat pas na instantiatie. Een boomcontrole over alle takken
@@ -140,28 +138,21 @@ def eerste_zichtjaar(cfg: Path) -> str:
     return f"Y{m.group(1)}" if m else "Y2030"
 
 
-def draai(exe: str, cfg: Path, items: list[str], log: Path, stop_bij_updating: bool = False, max_seconden: int = 900) -> tuple[int, list[str]]:
+def draai(exe: str, cfg: Path, items: list[str], log: Path, beschrijf: bool = False, max_seconden: int = 900) -> tuple[int, list[str]]:
     """Roep GeoDmsRun aan en geef de exitcode plus de foutregels terug.
 
-    Met stop_bij_updating wordt het proces gestopt zodra de eerste Updating-regel in het log staat: dan
-    is de resolutieronde klaar en begint het rekenen. Het log wordt met gedeelde toegang gelezen, want
-    GeoDmsRun houdt het tijdens de run open voor schrijven.
+    Met beschrijf worden de items niet opgevraagd maar met @sourcedescr beschreven: GeoDmsRun lost dan
+    hun keten op en rekent niets uit. Een naam die niet bestaat staat als [E]-regel in het log, ook al
+    is de exitcode 0. Het oplossen niet stoppen bij de eerste Updating-regel in het log: GeoDmsRun
+    schrijft het log gebufferd, dus die regel staat er pas als er genoeg nieuwe regels bij zijn
+    gekomen, en tot dan rekent het proces al.
     """
     log.parent.mkdir(parents=True, exist_ok=True)
     log.unlink(missing_ok=True)
+    if beschrijf:
+        items = [x for i in items for x in ("@sourcedescr", i)]
     p = subprocess.Popen([exe, f"/L{log}", "/S1", "/S2", "/S3", str(cfg), *items],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if stop_bij_updating:
-        begin = time.time()
-        while p.poll() is None and time.time() - begin < max_seconden:
-            time.sleep(0.2)
-            try:
-                with open(log, "r", encoding="utf-8", errors="replace") as f:
-                    if "Updating::" in f.read():
-                        p.terminate()
-                        break
-            except OSError:
-                continue
     try:
         p.wait(timeout=max_seconden)
     except subprocess.TimeoutExpired:
@@ -303,9 +294,9 @@ def main(argv: list[str]) -> int:
         kopie_cfg, kopie_dir = wegwerpkopie(cfg)
         print(f"       (resolutieronde in de wegwerpkopie {kopie_dir.name}: eigen LocalData met de mmd-stores, ontkoppeling uit)")
         try:
-            # De resolutieronde loopt alle items in een aanroep; GeoDmsRun lost ze eerst allemaal op.
+            # Alle items in een aanroep, elk met @sourcedescr: opgelost, niet uitgerekend.
             toets("3_boom", "resolutie_productie_items", items, cfg_override=kopie_cfg,
-                  alleen_naamfouten=True, stop_bij_updating=True)
+                  alleen_naamfouten=True, beschrijf=True)
         finally:
             shutil.rmtree(kopie_dir, ignore_errors=True)
             shutil.rmtree(Path("C:/LocalData") / kopie_dir.name, ignore_errors=True)
