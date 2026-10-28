@@ -1,9 +1,3 @@
-REM LET OP: dit script kent het lenen van een allocatiestand NIET. Een variant die in de kolom
-REM StandVanVariant van VariantParameters/VariantK.dms naar een andere variant wijst hoeft haar
-REM allocatie niet te draaien, maar dit script alloceert haar toch. Gebruik voor een reeks
-REM batch/Run2120.ps1; die slaat een lenende variant over en toetst bovendien of de aanname
-REM eronder klopt. Zie de skill rs-draaien.
-
 REM ================================================================================
 REM
 REM Dit is RSOpen, de open source versie van het model RuimteScanner.

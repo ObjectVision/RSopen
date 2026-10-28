@@ -264,15 +264,9 @@ Een item onder `/Indicatoren/<casus>/Zichtjaren/Export/PerNederland/Tabel/...` o
 
 Let ook op het pad: de exportcontainer hangt onder `Zichtjaren`, dus `/Indicatoren/<casus>/Zichtjaren/Export/...` en niet `/Indicatoren/<casus>/Export/...`.
 
-## Een variant kan de stand van een andere lenen
+## Het lenen van een allocatiestand bestaat niet meer
 
-De kolom `StandVanVariant` in `cfg/main/VariantParameters/VariantK.dms` zegt uit welke variant de indicatorenkant de standtifs leest. Staat daar de eigen naam, dan alloceert de variant zelf; staat er een andere naam, dan leent hij de stand en hoeft zijn allocatie niet te draaien. De leeskant is precies een plek, `Templates/Indicatoren_T/StandCasus_name`, die `@CASUS@` in `AllocatieFileName` vult; `Variant_rel` blijft die van de lener, dus alle variantparameters worden gewoon van de lener gelezen.
-
-Lenen is alleen geldig als lener en uitlener op alles wat de allocatie raakt gelijk zijn. `Test-LeenAanname` in `batch/Run2120.ps1` bewaakt dat voor de eerste stap: de kolommen waarop de twee verschillen moeten precies de bekende lijst zijn, en de sector Landbouw mag niet in `SectorAllocRegio` staan, want via de landbouwgeschiktheid lopen de droogleggings- en hydrologiekolommen de allocatie in. Lenen is bovendien alleen veilig bij dezelfde `ModelParameters/Skeleton`-instellingen, en daar waarschuwt niets voor.
-
-Stand van zaken: tot 8 september 2026 leende BAU2 de stand van BAU (#730); sinds Landbouw aanstaat (#780) alloceren alle varianten zelf en wijst elke rij van `StandVanVariant` naar zichzelf. Enkele Descr's in `ModelParameters/Advanced.dms`, `Templates/Indicatoren_T.dms` en de kop van `RunAll.cmd` beschrijven nog de leensituatie; de kolom is leidend. Op een LocalData uit de leenperiode ontbreekt de map `Allocatie/WLO_hoog_BAU2`, en dat is dan geen fout: beoordeel die stand bij BAU.
-
-Wat het voor de scripts betekent: `Run2120.ps1` slaat een lenende variant over, eist dat de uitlener in dezelfde aanroep meedraait, en meldt dat in het log. `RunAll.cmd`, `RunZichtjaren.cmd` en `RunScenarios.cmd` kennen het lenen niet en alloceren zo'n variant alsnog. `RunIndicatoren.ps1` hoeft niets te weten, en `ToetsOplevering.ps1` meldt een lenende variant als INFO in plaats van FAIL op een ontbrekende allocatiemap.
+Tot #870 (oktober 2026) kon een variant via de kolom `StandVanVariant` in `VariantK.dms` de standtifs van een andere variant lezen en haar eigen allocatie overslaan; `Test-LeenAanname` in `Run2120.ps1` bewaakte de aanname eronder. Sinds Landbouw alloceert (#780) leende geen enkele variant meer, en met #870 zijn de kolom, de toets en de afgeleide namen (`StandCasus_name`, `Variant_LeentStand`) verwijderd: elke variant alloceert zelf en de indicatorenkant leest de stand onder `Casus_name`. Kom je in een oudere commit of een log een lenende variant tegen, dan is dit de verklaring.
 
 ## Een productiereeks draaien
 

@@ -304,8 +304,6 @@ Write-Regel "regio     : $IndicatorRegio$(if ($IndicatorRegio -eq 'Landschappen'
 Write-Regel "ketens    : $(if ($Ontkoppeld) { 'ontkoppeld, via tifs per zichtjaar (#824)' } else { 'in een proces, elke export rekent alle voorgaande zichtjaren mee' })"
 Write-Regel "tabellen  : $(if ($TabellenUitExport) { 'uit de geschreven kaarten, in een eigen proces na de kaarten (#824)' } else { 'levend, in hetzelfde proces als de kaarten' })"
 
-$leen      = Get-VariantKolom $Cfg 'StandVanVariant'
-function Get-StandVan([string]$v) { if ($leen[$v]) { $leen[$v] } else { $v } }
 foreach ($y in $Zichtjaren) { if ($alleJaren.IndexOf($y) -lt 0) { throw "Zichtjaar $y staat niet in de configuratie ($($alleJaren -join ', '))" } }
 if (-not $GeenToets) { Test-Invoer }
 
@@ -378,20 +376,20 @@ if ($Ontkoppeld) {
         Write-Regel "reeks     : $($reeks -join ', '), per zichtjaar een proces voor $($Varianten.Count) varianten"
         for ($i = 0; $i -lt $reeks.Count; $i++) {
             $j = $reeks[$i]
-            if ($i -gt 0) { foreach ($v in $Varianten) { Assert-Ketens "${Scenario}_$v" $reeks[$i - 1] "${Scenario}_$(Get-StandVan $v)" } }
+            if ($i -gt 0) { foreach ($v in $Varianten) { Assert-Ketens "${Scenario}_$v" $reeks[$i - 1] "${Scenario}_$v" } }
             $env:ExportZichtjaar = $j
             Invoke-Export "reeks-gebundeld-$j" @($Varianten | ForEach-Object { "/Indicatoren/${Scenario}_$_/Zichtjaren/$j/Tijdreeks" })
-            foreach ($v in $Varianten) { Assert-Ketens "${Scenario}_$v" $j "${Scenario}_$(Get-StandVan $v)" }
+            foreach ($v in $Varianten) { Assert-Ketens "${Scenario}_$v" $j "${Scenario}_$v" }
         }
     } else {
         Write-Regel "reeks     : $($reeks -join ', '), per variant en zichtjaar een proces"
         foreach ($v in $Varianten) {
             for ($i = 0; $i -lt $reeks.Count; $i++) {
                 $j = $reeks[$i]
-                if ($i -gt 0) { Assert-Ketens "${Scenario}_$v" $reeks[$i - 1] "${Scenario}_$(Get-StandVan $v)" }
+                if ($i -gt 0) { Assert-Ketens "${Scenario}_$v" $reeks[$i - 1] "${Scenario}_$v" }
                 $env:ExportZichtjaar = $j
                 Invoke-Export "reeks-$v-$j" @("/Indicatoren/${Scenario}_$v/Zichtjaren/$j/Tijdreeks")
-                Assert-Ketens "${Scenario}_$v" $j "${Scenario}_$(Get-StandVan $v)"
+                Assert-Ketens "${Scenario}_$v" $j "${Scenario}_$v"
             }
         }
     }
@@ -402,7 +400,7 @@ if ($Ontkoppeld) {
 function Assert-Voorganger([string]$v, [string]$y) {
     if (-not $Ontkoppeld) { return }
     $i = $alleJaren.IndexOf($y)
-    if ($i -gt 0) { Assert-Ketens "${Scenario}_$v" $alleJaren[$i - 1] "${Scenario}_$(Get-StandVan $v)" }
+    if ($i -gt 0) { Assert-Ketens "${Scenario}_$v" $alleJaren[$i - 1] "${Scenario}_$v" }
 }
 for ($r = 0; $r -lt $regios.Count; $r++) {
     $regio = $regios[$r]
