@@ -104,6 +104,56 @@ container Grondproductiekosten : using = "/Geography"
 				, Eur_Ha
 			), Descr = "Totaal van de geschatte kosten over alle modelvarianten voor een onzekerheidsscenario.";
 	}
+
+	container PerPakket
+	: Descr = "De grondproductiekosten per hectare per ontwikkelpakket (#847). BouwWoonrijp en PlanProces hebben de kaveldichtheid van het plan als variabele, geschat op plandichtheden (steekproef 0 tot 73 kavels per
+				hectare, gemiddeld 9): een dicht plan kost per hectare meer aan bouw- en woonrijp maken en planproces, en per woning minder. Results vult die variabele met de buurtkaart van 2018, voor elk pakket op een cel
+				dezelfde waarde, zodat een dicht pakket zijn infrastructuur per hectare te goedkoop kreeg. Hier krijgt elk pakket zijn eigen kaveldichtheid: de twee componenten van Results maal exp(coefficient maal het
+				verschil tussen de kaveldichtheid van het pakket en die van de buurtkaart), zodat een pakket met de dichtheid van de buurt precies de oude waarde houdt en de locatie bepalend blijft. Bij een eengezinspakket is
+				de kaveldichtheid de woningdichtheid, want elke woning staat op een eigen kavel; bij een meergezinspakket telt een kavel een gebouw en geen woning, en blijft de buurtkaart staan. Gelezen door
+				Suitability_Wonen_perOP_T en door de indicator KostenWoningbouw."
+	, Source = "PBL, bijlage Grondproductiekosten en transformatiepotentie, m.m.v. Fakton, versie december 2019, tabel 3: kaveldichtheid in de steekproef 0 tot 73 per hectare, gemiddeld 9"
+	{
+		parameter<String>  Onzekerheid_name := /ModelParameters/Wonen/grondproductie_kosten_Variant, Descr = "Dezelfde onzekerheidsvariant als het saldo leest, zodat de coefficient en de componenten bij elkaar horen.";
+
+		attribute<Float32> KaveldichtheidCel (AdminDomain) := ReadData/LocatieVariabelen/Kaveldichtheid, Descr = "De kaveldichtheid waarmee Results rekent: de buurtkaart van 2018 binnen een kilometer, afgetopt op Grondproductie_MaxKaveldichtheid.";
+
+		attribute<Float32> Kaveldichtheid_perOP (OP) :=
+			OP/WP2_rel == Classifications/Vastgoed/WP2/V/Eengezins
+				? min_elem(OP/Dichtheid[float32], /ModelParameters/Wonen/Grondproductie_MaxKaveldichtheid)
+				: null_f
+		, Descr = "De kaveldichtheid van het pakket in kavels per hectare: bij eengezins de woningdichtheid, afgetopt op het hoogste wat de schatting kende; bij meergezins null, en dan geldt de buurtkaart.";
+
+		parameter<Float32> Coefficient_BouwWoonrijp := ='Calculations/BouwWoonrijp/'+Onzekerheid_name+'/ParameterValue[rlookup(C/GrondproductieVariabelen/V/Kaveldichtheid2018, ReadData/BouwWoonrijp/ModelVariant/GrondproductieVariabelen_rel)]'
+		, IntegrityCheck = "IsDefined(this)"
+		, Descr = "De coefficient van de kaveldichtheid in BouwWoonrijp voor deze onzekerheidsvariant, uit dezelfde berekening als Results en met dezelfde significantietoets. De controle vangt een csv zonder die variabele.";
+		parameter<Float32> Coefficient_PlanProces   := ='Calculations/PlanProces/'+Onzekerheid_name+'/ParameterValue[rlookup(C/GrondproductieVariabelen/V/Kaveldichtheid2018, ReadData/PlanProces/ModelVariant/GrondproductieVariabelen_rel)]'
+		, IntegrityCheck = "IsDefined(this)"
+		, Descr = "Idem voor PlanProces.";
+
+		Template VoorKaveldichtheid_T
+		: Descr = "De drie componenten bij een gegeven kaveldichtheid per cel: Bovenwijks ongewijzigd, BouwWoonrijp en PlanProces maal de factor voor het verschil met de buurtkaart."
+		{
+			attribute<Float32> Kaveldichtheid (AdminDomain);
+			//
+			attribute<Eur_Ha> Totaal (AdminDomain) :=
+				='Results/Bovenwijks/'+Onzekerheid_name+
+				' + Results/BouwWoonrijp/'+Onzekerheid_name+' * exp(Coefficient_BouwWoonrijp * (Kaveldichtheid - KaveldichtheidCel))'+
+				' + Results/PlanProces/'+Onzekerheid_name+' * exp(Coefficient_PlanProces * (Kaveldichtheid - KaveldichtheidCel))';
+		}
+
+		container Totaal := for_each_ne(OP/name, 'VoorKaveldichtheid_T(MakeDefined(const(Kaveldichtheid_perOP['+string(id(OP))+'[OP]], AdminDomain), KaveldichtheidCel))')
+		, Descr = "Per ontwikkelpakket de grondproductiekosten per hectare per cel; bij een meergezinspakket vult MakeDefined de buurtkaart in.";
+
+		Template VoorOPrel_T
+		: Descr = "De grondproductiekosten per hectare per cel voor het pakket dat op die cel is gealloceerd, voor de indicator KostenWoningbouw; een cel zonder pakket krijgt de buurtkaart en dus de waarde van Results."
+		{
+			attribute<OP> OP_rel (AdminDomain);
+			//
+			container Kosten := VoorKaveldichtheid_T(MakeDefined(Kaveldichtheid_perOP[OP_rel], KaveldichtheidCel));
+			attribute<Eur_Ha> Totaal (AdminDomain) := Kosten/Totaal;
+		}
+	}
 	
 	#include<T.dms>
 }

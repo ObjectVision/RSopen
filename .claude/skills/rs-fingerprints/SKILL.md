@@ -64,7 +64,7 @@ Schrijft een gebruiker meer dan een bestand, een mmd met meer attributen of een 
 
 ## Schrijf-eenmaal-opslag
 
-`%sourceDataDir%`, dus ook `%RSo_DataDir%` en `%PrivDataDir%`, synchroniseert met Nextcloud. Daar mag een bestand wel geplaatst maar niet gewijzigd of verwijderd worden. Een item dat naar zo'n pad schrijft en al een bestand aantreft krijgt geen foutmelding: Nextcloud zet er een conflicted copy naast, met de nieuwe inhoud onder de conflicted naam en de oude onder de originele, of laat een `.<naam>.~<hex>`-restant achter, en de run eindigt met exitcode 0. Opruimen kan alleen de beheerder en dat duurt weken. Daaruit volgen drie regels.
+`%sourceDataDir%`, dus ook `%RSo_DataDir%` en `%PrivDataDir%`, synchroniseert met de Nextcloud-share van PBL. Sinds 14 oktober 2026 mag het account van Object Vision daar ook wijzigen en verwijderen. Een item dat naar zo'n pad schrijft en al een bestand aantreft, overschrijft dat bronbestand dan stil voor iedereen die het leest, en de run eindigt met exitcode 0. Claude behandelt de share daarom als alleen-lezen en schrijft er alleen naar op expliciet verzoek van de gebruiker, voor dat ene bestand of die ene map. Daaruit volgen drie regels.
 
 Wat legitiem naar de brondata schrijft, schrijft eenmaal. Zulke items heten `Write_*` of `Make*`, hebben een read-only zusteritem ernaast dat het bestand terugleest, en vuren alleen als je er expliciet om vraagt. Het bestand krijgt de vintage en een versienummer in de naam, en die versie gaat omhoog bij elke inhoudelijke wijziging aan de regel of de drempels. Zet het volledige pad als parameter in ModelParameters, zodat schrijf- en leeskant gegarandeerd dezelfde naam gebruiken.
 

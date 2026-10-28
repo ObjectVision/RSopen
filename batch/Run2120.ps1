@@ -70,8 +70,6 @@
       SectorAllocRegio             De tabel met sectoren die alloceren. Een sector aan- of
                                    uitzetten verandert het SS-nummer in alle bestandsnamen, en
                                    daarmee zijn bestaande standen onbruikbaar.
-      VariantK/StandVanVariant     (VariantParameters\VariantK.dms) Een variant die hier een andere
-                                   naam draagt, leent die stand en alloceert niet.
       Model_FirstZichtjaar, Model_FinalYear   De reeks zichtjaren.
       Natuur/Beheertype_Basisjaar_Bron  (ModelParameters\Natuur.dms) Met Heuristiek leest het basisjaar
                                    geen NBP- of MNP-kaart; de basedatastap maakt ze dan niet en de
@@ -95,7 +93,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.20.0.m\GeoDmsRun.exe',
+    [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.23.1.m\GeoDmsRun.exe',
     [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
     [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
     [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\run2120',
@@ -244,6 +242,15 @@ function Get-VariantKolom([string]$CfgPad, [string]$Kolom) {
     return $t
 }
 
+function Get-BagDatum {
+    # ModelParameters/BAG_file_date uit de tekst: de BAG-levering waaronder AfleidingPandtype/Write_WP5 de WP5-typering schrijft
+    # (BaseData\Vastgoed\BAG_<datum>_History\WP5). Een map van een andere levering telt niet, want die leest het model niet.
+    $mp = Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms'
+    $m  = [regex]::Match((Get-Content $mp -Raw), "BAG_file_date\s*:=\s*'([^']*)'")
+    if (-not $m.Success) { throw "BAG_file_date niet gevonden in $mp" }
+    return $m.Groups[1].Value
+}
+
 function Get-Productieprofiel {
     # ModelParameters/Productieprofiel uit de tekst, zoals Get-VariantKolom VariantK leest. Bepaalt onder
     # meer waar de woonclaims vandaan komen: de woningbouwkaart in RuimteVoorWoningbouw, TIGRIS elders.
@@ -279,7 +286,7 @@ function Test-Invoer {
     param([string]$Fase)   # 'allocatie' of 'variantdata'
 
     $eisen = @()
-    $eisen += ,@('BaseData\Vastgoed\VolledigeTabel_*\WP5\*.mmd',        'WP5-pandtypering',            '/WriteBasedata/Generate_Run1')
+    $eisen += ,@("BaseData\Vastgoed\BAG_$(Get-BagDatum)_History\WP5\*.mmd", 'WP5-pandtypering',            '/WriteBasedata/Generate_Run1')
     $eisen += ,@('BaseData\Grondgebruik\BBG\BBG*_25m_Modus_*.tif',      'BBG-vergridding',             '/WriteBasedata/Generate_Run2')
     $eisen += ,@('BaseData\Vastgoed\Verwervingskosten_Woningen_*.tif',  'verwervingskosten',           '/WriteBasedata/Generate_Run2')
     # NBP en MNP alleen wanneer iets ze leest, dezelfde voorwaarden als Impl/MakeNBP en Impl/MakeMNP in
@@ -441,8 +448,8 @@ if (-not $SkipBasedata) {
     Invoke-Stap 'basedata-run3'        '/WriteBasedata/Generate_Run3'
     # Run4 (BGT-oppervlakken en -capaciteiten) is alleen voor de indicatoren en kost ruim een uur, maar
     # alleen in een projectlijn die de landgebruikskaart of het domein Water levert
-    # (ModelParameters/Indicatoren/Domein); in RuimteVoorWoningbouw is hij leeg. RunIndicatoren.ps1
-    # weigert de volledige set zonder deze bestanden.
+    # (ModelParameters/Indicatoren/Domein); in Standaard en RuimteVoorWoningbouw is hij leeg.
+    # RunIndicatoren.ps1 weigert een export met die domeinen zonder deze bestanden.
     if ($ZonderIndicatorBasedata) { Write-Regel "overslaan : basedata-indicatoren (-ZonderIndicatorBasedata)" }
     else { Invoke-Stap 'basedata-indicatoren' '/WriteBasedata/Generate_Run4_IndicatorenData' }
     Test-Dictionaries
@@ -461,63 +468,7 @@ if (-not $SkipVariantData) {
 # Alles wat de allocatie leest hoort er nu te staan, hoe de fases hierboven ook zijn gelopen.
 Test-Invoer 'allocatie'
 
-function Test-LeenAanname([string]$CfgPad, [string]$Lener, [string]$Uitlener) {
-    # De aanname onder het lenen is dat de twee varianten op alles wat de allocatie raakt gelijk zijn.
-    # Deze toets keert dat om: hij eist dat de kolommen waarop ze verschillen precies de bekende zijn.
-    # Dat vangt het echte risico af, namelijk dat er ooit een zesde afwijkende rij bij komt.
-    $vk = Join-Path (Split-Path $CfgPad -Parent) 'main\VariantParameters\VariantK.dms'
-    $tekst = Get-Content $vk -Raw
-    $toegestaan = @('name','StandVanVariant','LeentStand','Label',
-                    'WinterdroogleggingK_ref','ZomerdroogleggingK_ref',
-                    'InfiltratieMaatregelK_ref','WaterbergingClaimBron')
-    $namen = @([regex]::Matches([regex]::Match($tekst,"attribute<[^>]+>\s+name\s*:\s*\[(.*?)\]",'Singleline').Groups[1].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
-    $iL = $namen.IndexOf($Lener); $iU = $namen.IndexOf($Uitlener)
-    if ($iL -lt 0 -or $iU -lt 0) { throw "variant $Lener of $Uitlener staat niet in VariantK" }
-
-    $afwijkend = @()
-    foreach ($m in [regex]::Matches($tekst, "attribute<[^>]+>\s+(\w+)\s*:\s*\[(.*?)\]", 'Singleline')) {
-        $kol = $m.Groups[1].Value
-        if ($toegestaan -contains $kol) { continue }
-        $w = @([regex]::Matches($m.Groups[2].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value })
-        if ($w.Count -eq 0) { $w = @($m.Groups[2].Value -split ',' | ForEach-Object { $_.Trim() }) }
-        if ($w.Count -le [Math]::Max($iL,$iU)) { continue }
-        if ($w[$iL] -ne $w[$iU]) { $afwijkend += "$kol ($($w[$iU]) tegen $($w[$iL]))" }
-    }
-    if ($afwijkend.Count -gt 0) {
-        Write-Regel "GESTOPT: $Lener leent de stand van $Uitlener, maar ze verschillen op kolommen die de allocatie kunnen raken:"
-        $afwijkend | ForEach-Object { Write-Host "   $_" }
-        throw "Leenaanname geschonden voor $Lener"
-    }
-
-    # Tweede voorwaarde, en die staat niet in VariantK: de gelijkheid rust erop dat de sector Landbouw
-    # niet wordt gealloceerd. Die schakelaar zit in ModelParameters/SectorAllocRegio, dus geen enkele
-    # kolomvergelijking ziet hem.
-    $mp = Join-Path (Split-Path $CfgPad -Parent) 'main\ModelParameters.dms'
-    $regels = (Get-Content $mp) | Where-Object { $_ -match "^\s*[,']" -and $_ -match "'Landbouw'" -and $_ -notmatch '^\s*//' }
-    if ($regels) {
-        Write-Regel "GESTOPT: $Lener leent de stand van $Uitlener, maar de sector Landbouw staat aan in SectorAllocRegio."
-        $regels | ForEach-Object { Write-Host "   $($_.Trim())" }
-        throw "Leenaanname geschonden: Landbouw wordt gealloceerd"
-    }
-    Write-Regel "leentoets  : $Lener mag de stand van $Uitlener lezen (geen afwijkende kolom, Landbouw uit)"
-}
-
-
-$leen = Get-VariantKolom $Cfg 'StandVanVariant'
-
 foreach ($v in $Varianten) {
-    $uitlener = $leen[$v]
-    if ($uitlener -and $uitlener -ne $v) {
-        # Deze variant leent haar stand van een andere en hoeft dus niet te alloceren. De
-        # indicatorenkant leest de tifs van de uitlener via VariantK/StandVanVariant; zie
-        # Templates/Indicatoren_T/StandCasus_name.
-        Test-LeenAanname $Cfg $v $uitlener
-        if (-not ($Varianten -contains $uitlener)) {
-            throw "Variant $v leent de stand van $uitlener, maar die staat niet in -Varianten. Draai $uitlener mee of zet StandVanVariant terug."
-        }
-        Write-Regel "overslaan : allocatie-$v, leent de stand van $uitlener"
-        continue
-    }
     # De basisjaarcontroles een keer per variant, voor de zichtjaren: ze veranderen niet met het
     # zichtjaar en horen bij dezelfde beoordeling als de diagnose per zichtjaar.
     if ($DiagnoseNaZichtjaar.Count -gt 0) {

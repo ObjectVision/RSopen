@@ -19,13 +19,15 @@ Werk in een verse kloon buiten de repo:
 git clone https://github.com/ObjectVision/RSopen.wiki.git <scratchpad>/wiki
 ```
 
-Staat er op de machine al een kloon, bijvoorbeeld in een tools-map naast de werkkopieen, gebruik die
-dan alleen om te lezen, en kijk eerst met `git fetch` en `git log origin/master..master` of hij niet
-voor- of achterloopt op de remote. Zo'n kloon is eerder een werkkopie met ongepusht werk gebleken:
-lees hem dan niet als de stand van de wiki en push hem niet zonder te vragen.
+Staat er op de machine al een kloon, bijvoorbeeld in een tools-map naast de werkkopieen, kijk dan
+eerst met `git fetch`, `git status` en `git log origin/master..master` of hij niet voor- of
+achterloopt op de remote. Zo'n kloon is eerder een werkkopie met ongepusht werk gebleken: lees hem
+dan niet als de stand van de wiki en push hem niet zonder te vragen. Is hij schoon en na een
+fast-forward gelijk met de remote, dan mag je er ook in werken, zodat er vanaf een vaste plek
+gepusht kan worden.
 
-Bewerken, committen, `git push origin master`. De remote wijzigt tussendoor doordat er ook via de
-webinterface wordt geschreven. Bij een reject: `git pull --rebase origin master` en opnieuw pushen.
+Bewerken en committen; pushen alleen als daar in de sessie om gevraagd is (`git push origin
+master`). De remote wijzigt tussendoor doordat er ook via de webinterface wordt geschreven. Bij een reject: `git pull --rebase origin master` en opnieuw pushen.
 Bij een conflict is niet standaard een kant goed: kijk per bestand welke kant de code volgt. Op een en
 dezelfde dag was de remote nieuwer voor de ene pagina en de lokale commit voor de andere. De
 commitregels staan in de skill rs-issues; let bij een rebase op een onderwerpregel die met een hekje
@@ -40,6 +42,13 @@ begint, git gooit die zonder `--cleanup=whitespace` stil weg.
 
 Variantnamen, schakelaarstanden en getallen zijn projectspecifiek. Ze horen thuis op de
 toepassingspagina's, bijvoorbeeld [[Toepassing NL2120]].
+
+Een toepassingspagina hangt aan een oplevering, niet aan de lopende code. Bovenaan staat welke
+productierun en welke tag, en instellingen, bronnen en getallen komen uit die tag; leg ze daarvoor
+naast `git show <runcommit>:cfg/...` en de tabellen van de levering, niet naast de werkkopie. Bij
+een nieuwe oplevering gaat de pagina in een keer naar de nieuwe tag. De methodepagina's volgen de
+huidige code. Een pagina die beide door elkaar haalt (een instelling van vandaag naast een getal
+van de levering) is de faalvorm: geen van beide standen is er dan nog uit af te lezen.
 
 Dat geldt ook voor welke sectoren, schakelaars en regels in de configuratie aan of uit staan. Een
 kader bovenaan een methodepagina dat zegt dat zonne-energie, verblijfsrecreatie en windenergie
@@ -77,10 +86,12 @@ Wat er wel op staat is de afweging achter een keuze, als redenering bij de metho
 is een verandering en geen niveau, omdat de volle groenpremie geen beleidsalternatief is". Die zin
 klopt ook over een jaar, een datum niet.
 
-De geschiedenis staat in het issue. Onderaan de pagina komt een korte paragraaf `## Verantwoording`
-met een regel per issue dat de methode heeft gevormd: het hekje en in een zin wat het besliste,
-zonder datum en zonder oude waarde. Wie wil weten waarom iets zo is, vindt daar de weg; de rest van
-de pagina blijft schoon.
+De geschiedenis staat in het issue. Een pagina krijgt geen lijst van issues onderaan: zo'n lijst is
+een wijzigingslog in andere vorm, groeit bij elke wijziging en helpt niemand die wil weten hoe het
+model werkt. Waar een keuze rust op een afweging die een lezer wil kunnen nalezen, of op een besluit
+of afspraak van een andere partij (Deltares, PBL, de opdrachtgever, een landschapsteam), staat het
+hekje bij die zin, tussen haakjes. Niet bij elke zin en geen stapel hekjes in een zin; de tekst
+zelf draagt de redenering.
 
 De toets per zin: staat hier een tijdstip, een vorige versie of een vergelijking met vroeger? Dan
 hoort de zin in het issue en niet op de pagina, of hij moet herschreven worden tot een uitspraak
@@ -127,7 +138,7 @@ Dat is de normale toestand, niet de uitzondering. De code verandert dagelijks, d
 Bij een verschil is de code leidend voor wat er werkelijk is gerekend. Werk de pagina bij zodra je
 het verschil vaststelt; dat is goedkoper dan het onthouden. Maar bijwerken is herschrijven, niet
 aanvullen: de alinea gaat opnieuw alsof de nieuwe werking er altijd was, en het issue dat de
-verandering bracht komt als een regel bij de verantwoording onderaan. Een kader of een zin met
+verandering bracht staat hooguit als hekje bij de zin die de keuze beschrijft. Een kader of een zin met
 "sinds" erbij zetten is de vorm die van de wiki een logboek maakt; zie Naslag, geen logboek.
 
 Twee vormen die vaak voorkomen. Een parametertabel die een waarde noemt die inmiddels anders staat,
