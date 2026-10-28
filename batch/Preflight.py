@@ -6,9 +6,9 @@ Gebruik:
 Opties:
     --cfg <pad>          de configuratie; default cfg/main.dms naast dit script
     --exe <pad>          GeoDmsRun.exe; default de versie uit batch/RunAll.cmd
-    --scenario <naam>    scenario voor de resolutieronde; default WLO_hoog
-    --variant <naam>     variant voor de resolutieronde; default BAU
-    --boom               voeg laag 3 toe (de resolutieronde). Standaard uit; zie de waarschuwing hieronder.
+    --scenario <naam>    scenario voor de naamcontrole; default WLO_hoog
+    --variant <naam>     variant voor de naamcontrole; default BAU
+    --boom               voeg laag 3 toe (de naamcontrole). Standaard uit; zie de waarschuwing hieronder.
     --uit <map>          waar het rapport komt; default <LocalData>/Preflight
 
 Drie lagen, van goedkoop naar duur, elk met een eigen exitcode-bijdrage. Het script stopt niet bij de
@@ -68,7 +68,7 @@ from pathlib import Path
 BESTANDSFOUT = ("TIFFOpen Error", "cannot open dataset", "No such file or directory", "Cannot open",
                 "cannot be opened", "Failure(4)")
 
-# Namen die een operator pas bij het rekenen aan zijn unit hangt. De resolutieronde kijkt ervoor en
+# Namen die een operator pas bij het rekenen aan zijn unit hangt. De naamcontrole kijkt ervoor en
 # meldt ze als onbekend, terwijl ze in een echte run gewoon bestaan: de allocatielogs van de
 # NL2120-productierun van 29 augustus 2026 (run2120/*allocatie-BAU-Y20*.log) bevatten geen enkele
 # foutregel, terwijl elke iteratie deze items aanroept. Districts komt van district_8 in
@@ -192,7 +192,7 @@ def wegwerpkopie(cfg: Path) -> tuple[Path, Path]:
 
     In de kopie gaan de ontkoppel-schakelaars uit. Die LocalData is leeg, en een unit die haar kolommen
     uit een mmd-storage haalt (AfleidingPandType/Results) heeft zonder dat bestand geen kolom WP5_rel;
-    de resolutie meldt dan een onbekende naam voor een bestand dat ontbreekt, niet voor code die fout is.
+    de naamcontrole meldt dan een onbekende naam voor een bestand dat ontbreekt, niet voor code die fout is.
     Met de schakelaars uit kiest elke meta-expressie de tak die rekent, en dat is de tak die in de
     configuratie staat en dus de tak die deze laag hoort te toetsen. Of de ontkoppelde bestanden er zijn
     is een vraag voor laag 2 en voor Templates/DecoupledFile_T, niet voor een naamcontrole.
@@ -292,10 +292,10 @@ def main(argv: list[str]) -> int:
         for sleutel, waarde in vervang.items():
             items = [i.replace(sleutel, waarde) for i in items]
         kopie_cfg, kopie_dir = wegwerpkopie(cfg)
-        print(f"       (resolutieronde in de wegwerpkopie {kopie_dir.name}: eigen LocalData met de mmd-stores, ontkoppeling uit)")
+        print(f"       (naamcontrole in de wegwerpkopie {kopie_dir.name}: eigen LocalData met de mmd-stores, ontkoppeling uit)")
         try:
             # Alle items in een aanroep, elk met @sourcedescr: opgelost, niet uitgerekend.
-            toets("3_boom", "resolutie_productie_items", items, cfg_override=kopie_cfg,
+            toets("3_boom", "naamcontrole_productie_items", items, cfg_override=kopie_cfg,
                   alleen_naamfouten=True, beschrijf=True)
         finally:
             shutil.rmtree(kopie_dir, ignore_errors=True)

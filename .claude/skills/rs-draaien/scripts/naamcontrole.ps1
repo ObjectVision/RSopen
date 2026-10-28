@@ -37,7 +37,7 @@
 
 .EXAMPLE
     $env:StandAllocatieOntkoppeld = 'TRUE'; $env:VariantDataOntkoppeld = 'TRUE'
-    .\resolutie.ps1 -Config 'C:\pad\naar\Toets\cfg\main.dms' -Items '/WriteVariantData/per_Variant/BAU/Generate_Run2', '/Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/generates/Generate_Alles' -Bestanden
+    .\naamcontrole.ps1 -Config 'C:\pad\naar\Toets\cfg\main.dms' -Items '/WriteVariantData/per_Variant/BAU/Generate_Run2', '/Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/generates/Generate_Alles' -Bestanden
 #>
 [CmdletBinding()]
 param(
@@ -73,7 +73,7 @@ $Config = [System.IO.Path]::GetFullPath($Config)
 if (-not (Test-Path $Config)) { throw "Config niet gevonden: $Config" }
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 
-$stam = Join-Path $LogDir ("{0}_resolutie" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
+$stam = Join-Path $LogDir ("{0}_naamcontrole" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
 $log  = "$stam.log"
 $uit  = "$stam.uitvoer.txt"
 $err  = "$stam.stderr.txt"

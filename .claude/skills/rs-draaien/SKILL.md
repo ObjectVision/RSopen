@@ -62,13 +62,13 @@ GeoDmsRun lost voor een opgevraagd item eerst alle namen in de keten op en begin
 
 Twee dingen om te weten. GeoDmsRun eindigt ook met exit 0 als een naam niet bestaat, dus het oordeel komt uit de `[E]`-regels in het log. En de opslag die `@sourcedescr` per item noemt, is wat de keten direct leest en schrijft: achter een bestand dat de keten zelf wegschrijft kijkt hij niet verder, dus de lijst is geen volledige bronnenlijst.
 
-`scripts/resolutie.ps1` doet dit, met een rem op geheugen en tijd:
+`scripts/naamcontrole.ps1` doet dit, met een rem op geheugen en tijd:
 
 ```powershell
-.\.claude\skills\rs-draaien\scripts\resolutie.ps1 -Config "<kopie>\cfg\main.dms" -Items "/pad/naar/item", "/pad/naar/ander/item" -Bestanden
+.\.claude\skills\rs-draaien\scripts\naamcontrole.ps1 -Config "<kopie>\cfg\main.dms" -Items "/pad/naar/item", "/pad/naar/ander/item" -Bestanden
 ```
 
-Stop een opgevraagd item niet op de regel `{ Updating::` in het `/L`-log. GeoDmsRun schrijft dat log gebufferd: in een proef van zeven seconden zag een lezer met gedeelde toegang de hele run nul bytes, en op 2026-10-28 kwam de Updating-regel van de variantdata pas na anderhalve minuut op schijf, toen het proces de WP5-pandtypering van heel Nederland al rekende en 90 GB had vastgelegd. Zo werkten `resolutie.ps1` en laag 3 van `batch/Preflight.py` tot die dag. Daar komt bij dat GeoDMS het bestand van een schrijvend item aan het begin van het rekenen al opnieuw aanmaakt: op 2026-09-17 stond van een tif van 6.374.831 bytes na het stoppen nog 83.874.
+Stop een opgevraagd item niet op de regel `{ Updating::` in het `/L`-log. GeoDmsRun schrijft dat log gebufferd: in een proef van zeven seconden zag een lezer met gedeelde toegang de hele run nul bytes, en op 2026-10-28 kwam de Updating-regel van de variantdata pas na anderhalve minuut op schijf, toen het proces de WP5-pandtypering van heel Nederland al rekende en 90 GB had vastgelegd. Zo werkten dit script (toen nog `resolutie.ps1`) en laag 3 van `batch/Preflight.py` tot die dag. Daar komt bij dat GeoDMS het bestand van een schrijvend item aan het begin van het rekenen al opnieuw aanmaakt: op 2026-09-17 stond van een tif van 6.374.831 bytes na het stoppen nog 83.874.
 
 Het script neemt de omgevingsvariabelen van de aanroeper over, dus zet de schakelaars zelf, want een meta-expressie kiest zijn tak daarop. En het toetst namen en domeinen, geen data.
 
@@ -140,7 +140,7 @@ In PowerShell bindt de komma sterker dan de plus. `@($g+'a', $g+'b')` wordt daar
 
 Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.23.1.m`. Niet op 20.20.0.m: daar haalde een allocatie van heel Nederland de commit-limiet van de machine (Y2030 van WLO_hoog_BAU, 586 GB toegezegd en gestopt, tegen 279 GB op 20.23.1 en 284 GB op 20.17, gemeten op 2026-10-13), en een iteratie kan er stoppen op "no read lock can be set" (ObjectVision/GeoDMS#1295). Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
 
-De versie staat op zes plekken: `geodmsversion` in `batch/RunAll.cmd`, waar `batch/Preflight.py` hem leest, de default van `-Version` in `run-item.ps1` en `resolutie.ps1`, en `-Exe` in `Run2120.ps1`, `RunIndicatoren.ps1` en `ToetsOplevering.ps1`. Controleer ze alle zes voordat je een lange run start. De versie staat niet in de fingerprint van de ontkoppelde bestanden: na een wissel blijft een bestand van de vorige versie stil in gebruik, ook waar de nieuwe versie een andere kaart zou maken. Vergelijk na een wissel met `batch/VergelijkUitvoer.py`, of zet `AlwaysRemakeDecoupledFiles` tijdelijk aan.
+De versie staat op zes plekken: `geodmsversion` in `batch/RunAll.cmd`, waar `batch/Preflight.py` hem leest, de default van `-Version` in `run-item.ps1` en `naamcontrole.ps1`, en `-Exe` in `Run2120.ps1`, `RunIndicatoren.ps1` en `ToetsOplevering.ps1`. Controleer ze alle zes voordat je een lange run start. De versie staat niet in de fingerprint van de ontkoppelde bestanden: na een wissel blijft een bestand van de vorige versie stil in gebruik, ook waar de nieuwe versie een andere kaart zou maken. Vergelijk na een wissel met `batch/VergelijkUitvoer.py`, of zet `AlwaysRemakeDecoupledFiles` tijdelijk aan.
 
 ## Geheugen: de registerknoppen staan per machine
 
