@@ -32,10 +32,14 @@ container Herontwikkelingskans
 	attribute<Bool>    IsStedelijk       (Perceel)     := MakeDefined(mean(float32(Stedelijkheid/IsStedelijk), Eenheid_rel), 0f) >= 0.5f, Descr = "De zone van het perceel: stad als de meerderheid van zijn cellen in een stedelijke buurt ligt, anders platteland.";
 
 	attribute<Float32> Perceel_Ha          (Perceel) := float32(Opstalkosten/CellenPerEenheid) * value(AdminDomain/NrHaPerCell, Float32)
-	, Descr = "Het oppervlak van het perceel in hectare, als zijn cellen van 25 meter. De schatting rekent per site met het oppervlak van de panden die er stonden, maar haar sites zijn clusters van gemiddeld zestien woningen op 0,29 hectare en 178 vierkante meter per woning, dus met het erf erbij; per perceel geeft het perceeloppervlak dezelfde verwervingskosten per hectare als de schatting (in de stad gemiddeld 18 tegen 20 miljoen euro), de voetafdruk van de woonpanden drie keer zoveel (62).";
-	attribute<Float32> Verwerving_MlnPerHa (Perceel) := Perceel_Ha > 0f ? value(sum(Opstalkosten/Verwerving_Woningen_Cel, Eenheid_rel), Float32) / 1000000f / Perceel_Ha : 0f
-	, Descr = "De hedonische waarde van de woningen op het perceel in miljoen euro per hectare perceel, de verwervingskosten zoals de schatting ze meet.";
-	attribute<Float32> LnPerceel_Ha        (Perceel) := Perceel_Ha > 0f ? log(Perceel_Ha) : 0f, Descr = "De log van het perceeloppervlak in hectare, de omvangterm van de schatting.";
+	, Descr = "Het oppervlak van het perceel in hectare, als zijn cellen van 25 meter: de eenheid waarover Opstalkosten de kosten uitsmeert, en de uitwijk voor Site_Ha op een perceel zonder voetafdruk.";
+	attribute<Float32> Voetafdruk_Ha       (Perceel) := value(sum(MakeDefined(/BaseData/StartState/StateBasisjaar/State/Wonen/Footprint, 0[meter2]), Eenheid_rel), Float32) / 10000f, Descr = "De voetafdruk van de woonpanden op het perceel in hectare, uit de voetafdruk per cel van de basisjaarstand: wat de schatting als site_sum_footprint meet.";
+	attribute<P/SiteOppervlak/Klasse> Woningklasse (Perceel) := classify(float32(Woningen), P/SiteOppervlak/Klasse/Van), Descr = "De klasse van het aantal woningen op het perceel, waarnaar de verhouding site tegen voetafdruk verschilt.";
+	attribute<Float32> SiteFactor          (Perceel) := IsStedelijk ? P/SiteOppervlak/Klasse/Factor_Stedelijk[Woningklasse] : P/SiteOppervlak/Klasse/Factor_Landelijk[Woningklasse], Descr = "Site-oppervlak gedeeld door voetafdruk, de mediaan uit de schatting voor de zone en de woningklasse van het perceel.";
+	attribute<Float32> Site_Ha             (Perceel) := Voetafdruk_Ha > 0f ? Voetafdruk_Ha * SiteFactor : Perceel_Ha, Descr = "Het oppervlak van de site zoals de schatting die meet, in hectare: de voetafdruk van de woonpanden maal de verhouding uit SiteOppervlak; op een perceel met woningen maar zonder voetafdruk het perceeloppervlak.";
+	attribute<Float32> Verwerving_MlnPerHa (Perceel) := Site_Ha > 0f ? value(sum(Opstalkosten/Verwerving_Woningen_Cel, Eenheid_rel), Float32) / 1000000f / Site_Ha : 0f
+	, Descr = "De hedonische waarde van de woningen op het perceel in miljoen euro per hectare site, de verwervingskosten zoals de schatting ze meet.";
+	attribute<Float32> LnSite_Ha           (Perceel) := Site_Ha > 0f ? log(Site_Ha) : 0f, Descr = "De log van het site-oppervlak in hectare, de omvangterm van de schatting.";
 	attribute<Float32> EigenaarBewoners_pp (Perceel) := MakeDefined(mean(Koopaandeel/Aandeel, Eenheid_rel), 0f) * 100f, Descr = "Het aandeel koopwoningen rond het perceel in procentpunten, uit de CBS-vierkanten van 100 m (Koopaandeel), als aandeel eigenaar-bewoners in de buurt.";
 
 	attribute<Woning>  SocialeHuur_Cel   (AdminDomain) := ='add(' + AsList('MakeDefined(/BaseData/StartState/StateBasisjaar/State/Wonen/' + /Classifications/Vastgoed/WP2/name + '_SocialeHuur, 0[Woning])', ' + ') + ')', Descr = "De sociale huurwoningen van het basisjaar in de cel.";
@@ -53,12 +57,11 @@ container Herontwikkelingskans
 	attribute<Float32> Label           (Perceel) := MakeDefined(mean(Energielabel/Afwijking_VBO, Perceel_VBO), 0f), Descr = "Het energielabel van het perceel ten opzichte van de groepen van zijn woningen, als effect op de log-odds van sloop (Energielabel); het krimpt per zichtjaar naar nul in KrimpJaar.";
 
 	attribute<Float32> LogOdds_Vast (Perceel) := Bouwperiode + (IsStedelijk
-		? P/Stedelijk/Constante + P/Stedelijk/Verwerving_MlnPerHa * Verwerving_MlnPerHa + P/Stedelijk/LnPerceel_Ha * LnPerceel_Ha + P/Stedelijk/EigenaarBewoners_pp * EigenaarBewoners_pp + P/Stedelijk/SocialeHuur_pp * SocialeHuur_pp + P/Stedelijk/Erfgoed * float32(Erfgoed)
-		: P/Landelijk/Constante + P/Landelijk/Verwerving_MlnPerHa * Verwerving_MlnPerHa + P/Landelijk/LnPerceel_Ha * LnPerceel_Ha + P/Landelijk/EigenaarBewoners_pp * EigenaarBewoners_pp + P/Landelijk/SocialeHuur_pp * SocialeHuur_pp + P/Landelijk/Erfgoed * float32(Erfgoed))
+		? P/Stedelijk/Constante + P/Stedelijk/Verwerving_MlnPerHa * Verwerving_MlnPerHa + P/Stedelijk/LnSite_Ha * LnSite_Ha + P/Stedelijk/EigenaarBewoners_pp * EigenaarBewoners_pp + P/Stedelijk/SocialeHuur_pp * SocialeHuur_pp + P/Stedelijk/Erfgoed * float32(Erfgoed)
+		: P/Landelijk/Constante + P/Landelijk/Verwerving_MlnPerHa * Verwerving_MlnPerHa + P/Landelijk/LnSite_Ha * LnSite_Ha + P/Landelijk/EigenaarBewoners_pp * EigenaarBewoners_pp + P/Landelijk/SocialeHuur_pp * SocialeHuur_pp + P/Landelijk/Erfgoed * float32(Erfgoed))
 	, Descr = "De log-odds van herontwikkeling binnen het venster van de schatting, zonder de waarde van herontwikkeling: constante plus de vaste termen van de zone van het perceel plus het bouwperiode-effect.";
 	attribute<Float32> Coef_IV (Perceel) := IsStedelijk ? P/Stedelijk/InclusiveValue : P/Landelijk/InclusiveValue, Descr = "Het effect van de waarde van herontwikkeling (de inclusive value) in de zone van het perceel.";
 	attribute<Float32> Coef_RV (Perceel) := IsStedelijk ? P/Stedelijk/RV_MlnPerHa : P/Landelijk/RV_MlnPerHa, Descr = "Het effect van de residuele waarde per hectare in de pakketkeuze (stap 1 van de schatting) in de zone van het perceel.";
-	attribute<Float32> Verdichtingsaandeel (Perceel) := IsStedelijk ? P/Stedelijk/Verdichtingsaandeel : P/Landelijk/Verdichtingsaandeel, Descr = "Het deel van de sloop-nieuwbouw dat in de zone van het perceel netto woningen toevoegt, de factor op de jaarlijkse kans.";
 
 	parameter<UInt32>  PercelenMetWoningen  := sum(uint32(HeeftWoningen)), Descr = "Het aantal percelen met woningen in het basisjaar, de eenheden waarover de kans gaat.";
 	parameter<UInt32>  PercelenInGezicht    := sum(uint32(HeeftWoningen && Erfgoed)), Descr = "Hoeveel daarvan in een rijksbeschermd stads- of dorpsgezicht liggen.";
