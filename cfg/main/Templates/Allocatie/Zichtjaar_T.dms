@@ -38,22 +38,38 @@ Template Zichtjaar_T
 
 		attribute<bool> WordtGesloopt (CompactedAdminDomain) := ='/VariantData/'+variant_name+'/Sloop/Totaal'
 		, Descr = "Wijkt de bestaande bebouwing in deze cel? Een verwijzing en geen eigen som: de vraag wordt beantwoord in VariantData/<variant>/Sloop, waar ook staat hoe sloop zich verhoudt tot opleggen en tot op slot zetten. Hier stond dezelfde expressie los opgeschreven, naast een tweede kopie in Templates/Indicatoren, en de twee heetten net niet hetzelfde.";
+		attribute<Bool> IsNijverheid (CompactedAdminDomain) := StateVoorAllocatie0/SubSector_rel == /Classifications/Actor/Sector/xSubsector/v/Werken_Nijverheid;
+		attribute<Bool> IsLogistiek  (CompactedAdminDomain) := StateVoorAllocatie0/SubSector_rel == /Classifications/Actor/Sector/xSubsector/v/Werken_Logistiek;
+		container BufferNijverheid := /Templates/Allocatie/Buffer_gridcel_T(IsNijverheid, /ModelParameters/Wonen/MilieuCat/Buffer_rond_Nijverheid[float64]);
+		container BufferLogistiek  := /Templates/Allocatie/Buffer_gridcel_T(IsLogistiek, /ModelParameters/Wonen/MilieuCat/Buffer_rond_Logistiek[float64]);
+		attribute<Bool> KanWonenTerug (CompactedAdminDomain) := = 'ThisVariantData/Zeef/' + name + '/Wonen/Beschikbaar'
+			+ (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector ? ' && !BufferNijverheid/proximity_res && !BufferLogistiek/proximity_res' : '')
+		, Descr = "Mag er na de sloop weer wonen komen? De zeef van wonen laat de cel toe voor minstens een pakket, en de cel ligt niet in de buffer rond nijverheid of logistiek in de stand aan het begin van het zichtjaar, dezelfde buffer die de allocatie van wonen in elke stap oplegt (SectorAllocRegio_T/RestrictiesVoorSectorenAlsGevolgVanVervuilendWerken).";
+		attribute<Bool> Herontwikkeling (CompactedAdminDomain) := = ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector
+			? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariantData/Herontwikkelingskans/PerZichtjaar/' + name + '/IsVrij_AdminDomain) && !MakeDefined(/Classifications/Actor/Sector/xSubsector/LegtCelVast[StateVoorAllocatie0/SubSector_rel], FALSE) && KanWonenTerug'
+			: 'const(FALSE, CompactedAdminDomain)'
+		, Descr = "Wordt de cel in dit zichtjaar herontwikkeld (#869)? De cel ligt op een perceel dat de herontwikkelingskans uiterlijk in dit zichtjaar vrij liet, draagt nog geen label dat hem vastlegt, en wonen mag er terugkomen (KanWonenTerug). De
+					kans is geschat op wat er in de BAG werkelijk is gesloopt en met meer woningen teruggebouwd, dus een vrij perceel wordt gesloopt voordat de allocatie begint: de woningen gaan uit de stand,
+					de restclaim van de regio stijgt met hetzelfde aantal, en de allocatie bouwt ze terug, bij voorkeur op het perceel zelf (bovenaan de ladder, vrij van de vormtoets, van de zeefdrempel en
+					van de eis van tien procent dichtheidstoename) en anders elders in de regio. Een cel waar wonen niet terug mag komen blijft staan, want de allocatie zou er niets terugbouwen. Een perceel dat in een eerder zichtjaar is geleegd en nog niet bebouwd blijft leeg en bovenaan de ladder.";
+		attribute<Bool> WordtGeleegd (CompactedAdminDomain) := (first(lowercase(Time/Zichtjaar/name)) == lowercase(name) && WordtGesloopt) || Herontwikkeling
+		, Descr = "Gaan de woningen en hun footprint in deze cel voor de allocatie van dit zichtjaar op nul? In het eerste zichtjaar door de opgelegde sloop van de variant, in elk zichtjaar door de herontwikkelingskans.";
 
 		container Wonen := 
 			for_each_nedv(
 				WP2xVSSH/name
-				, (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //om te kunnen rekenen zonder wonen als sectorAllocRegio
-					? 'WordtGesloopt
+				, (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) //om te kunnen rekenen zonder wonen als sectorAllocRegio
+					? 'WordtGeleegd
 						? 0[Woning]
 						: StateVoorAllocatie0/Wonen/'+WP2xVSSH/name
 					: 'StateVoorAllocatie0/Wonen/'+WP2xVSSH/name
 				, CompactedAdminDomain
 				, Woning
-			), Descr = "De woningvoorraad waarmee dit zichtjaar de allocatie in gaat. In het eerste zichtjaar worden de cellen uit WordtGesloopt geleegd; daarna houdt de zeef ze leeg, dus het legen hoeft maar een keer."
+			), Descr = "De woningvoorraad waarmee dit zichtjaar de allocatie in gaat. In het eerste zichtjaar worden de cellen uit WordtGesloopt geleegd, en in elk zichtjaar de cellen van de percelen die de herontwikkelingskans in dat zichtjaar vrij laat (Herontwikkeling, #869); de zeef houdt de opgelegde sloop daarna leeg, en een vrijgekomen perceel staat bovenaan de ladder tot het bebouwd is."
 		{
 			attribute<Woning>          Totaal        (CompactedAdminDomain) := ='add('+asItemList(WP2xVSSH/name)+')';
-			attribute<m2PandFootprint> Footprint     (CompactedAdminDomain) := = (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && first(lowercase(Time/Zichtjaar/name)) == lowercase(name)
-																					? 'WordtGesloopt ? 0[m2PandFootprint] : StateVoorAllocatie0/Wonen/Footprint'
+			attribute<m2PandFootprint> Footprint     (CompactedAdminDomain) := = (ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector)
+																					? 'WordtGeleegd ? 0[m2PandFootprint] : StateVoorAllocatie0/Wonen/Footprint'
 																					: 'StateVoorAllocatie0/Wonen/Footprint'; //footprint mee legen met de woningen in de gesloopte cellen (#596)
 		}
 		
@@ -593,7 +609,7 @@ Template Zichtjaar_T
 			attribute<Bool> AansluitendAanUrbanContour   (AdminDomain) := = '!BinnenUrbanContour && potential(float32(/SourceData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain || Aangroei), /Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(/ModelParameters/Wonen/Uitbreiding/AansluitStraal / 1[meter]))+'m/Flat2) > 0f'
 			, Descr = "De aansluitende schijf van dit zichtjaar (#862), rond de BRT-woonkernen aangegroeid met de modelnieuwbouw van eerdere zichtjaren.";
 			attribute<Bool> AanDeBeurt                   (AdminDomain) := = 'ThisVariantData/Herontwikkelingskans/PerZichtjaar/' + name + '/IsVrij_AdminDomain'
-			, Descr = "De cellen van de percelen die de herontwikkelingskans van wonen uiterlijk in dit zichtjaar vrij laat (#869): de bovenste as van de woonladders (VariantParameters/Tredes/impl/HerontwikkelingK), zodat de allocatie een vrijgekomen perceel bebouwt voordat zij elders uitbreidt.";
+			, Descr = "De cellen met woningen van de percelen die de herontwikkelingskans van wonen uiterlijk in dit zichtjaar vrij laat (#869): de bovenste as van de woonladders (VariantParameters/Tredes/impl/HerontwikkelingK), zodat de allocatie een vrijgekomen perceel bebouwt voordat hij elders uitbreidt.";
 			attribute<Bool> NietAanDeBeurt               (AdminDomain) := !AanDeBeurt;
 
 			container src := ThisVariantData/Trede/src
