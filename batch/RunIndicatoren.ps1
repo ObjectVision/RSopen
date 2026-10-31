@@ -255,7 +255,7 @@ function Test-Invoer {
     }
     foreach ($v in $Varianten) {
         if (-not $opbr.ContainsKey($v)) { throw "Variant $v staat niet in VariantK.dms (kolom name); bekende varianten: $($opbr.Keys -join ', ')" }
-        $standVan = if ($leen[$v]) { $leen[$v] } else { $v }
+        $standVan = $v
         foreach ($y in $Zichtjaren) {
             $tot = $alleJaren.IndexOf($y)
             if ($tot -lt 0) { throw "Zichtjaar $y staat niet in de configuratie ($($alleJaren -join ', '))" }
