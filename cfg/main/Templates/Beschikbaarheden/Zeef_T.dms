@@ -44,9 +44,11 @@ Template Zeef_T //wordt aangeroepen in Zeef_Zichtjaar_T
 	attribute<Bool>    IsRestrictief             (CompactedAdminDomain) := =
 		'OR(
 			 IsRestrictief_OokBinnenPlancapaciteit
-			,ThisVariant/Zeef/Basisjaar/'+Sector_name+'/'+Subsector_name+'/'+BasisjaarZeefItem+
+			,(Impl/IsVrijgekomenPerceel ? ThisVariant/Zeef/Basisjaar/'+Sector_name+'/'+Subsector_name+'/IsRestrictief_OpVrijgekomenPerceel : ThisVariant/Zeef/Basisjaar/'+Sector_name+'/'+Subsector_name+'/'+BasisjaarZeefItem+')'+ //op een vrijgekomen perceel (#869) geldt de basisjaarzeef als binnen harde plancapaciteit en zonder evident benut, zie Zeef_Basisjaar_T/IsRestrictief_OpVrijgekomenPerceel
 			',Impl/TeHoogBouwjaarBinnenHardePlancapaciteit'
 			',Impl/TeHoogBouwjaarBuitenHardePlancapaciteit' //De twee leeftijdstoetsen sluiten elkaar uit op harde plancapaciteit, zie Impl; cellen zonder panden hebben null PandLeeftijd en vallen bij beide op FALSE
+			',Impl/PerceelNietAanDeBeurt' //voor wonen: het perceel is in dit zichtjaar nog niet aan de beurt volgens de herontwikkelingskans (#869)
+			',Impl/WoningenOpRijksmonumentPerceel' //voor de andere sectoren: woningen op een perceel met een rijksmonument blijven staan (#869)
 			',IsRestrictief_DoorExogeenopleggen'
 			',Impl/TeOndiepVoorWaterberging'
 		')', Descr = "Is de locatie restrictief voor deze sector/subsector in dit zichtjaar?";
@@ -81,7 +83,7 @@ Template Zeef_T //wordt aangeroepen in Zeef_Zichtjaar_T
 		parameter<Bool> IsOverheidVerdikkingZeef := Sector_name == lowercase('Werken') && lowercase(Subsector_name) == lowercase('Overheid_kw_diensten'), Descr = "Dezelfde vrijstelling voor overheid en kwartaire diensten.";
 		attribute<Bool> IsVerdikkingsCel         (CompactedAdminDomain) := = IsKantoorVerdikkingZeef ? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/KantoorDominantie/IsKantoorDominant)' : IsOverheidVerdikkingZeef ? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/OverheidDominantie/IsOverheidDominant)' : 'const(FALSE, CompactedAdminDomain)', Descr = "Cel waar deze subsector in het basisjaar de werkstand domineert. Toewijzing is daar verdikking van de bestaande voorraad en geen sloop-nieuwbouw: het pand blijft staan en vult verder. Daarom
 				vervallen daar voor deze subsector de sloopleeftijd-toetsen en de IBIS-vol-toets (#668); de overige toetsen, waaronder de restricties en de milieuzonering in de basisjaar-zeef, blijven
-				gelden. Twee takken, want de twee maskers verschillen: dat voor overheid en kwartaire diensten kent een ondergrens op de celstand, dat voor kantoor niet.";
+				gelden. Twee takken, want de twee maskers verschillen, elk met een eigen dominantiedrempel en een eigen ondergrens op de celstand (VerdikkingsMinimumStand_Kantoor en VerdikkingsMinimumStand_Overheid in ModelParameters/Werken).";
 		attribute<Bool>    HeeftPandenInCelInBasisjaar             (CompactedAdminDomain) := src/HeeftPandenInCelInBasisjaar
 		, Descr = "Staat er in het basisjaar een BAG-pand in deze cel? Welke sectoren daarvoor wijken staat in GeldtPandenToets hierboven, en nergens anders (#605).";
 		attribute<Bool>    TeOndiepVoorWaterberging                (CompactedAdminDomain) := =
@@ -96,18 +98,35 @@ Template Zeef_T //wordt aangeroepen in Zeef_Zichtjaar_T
 				niets te verliezen. De toets belast daarmee uitsluitend bestaand werkgebied en raakt laagdichte subsectoren zwaarder dan hoogdichte (#709, #710); de noemer verruilen voor de stand van de
 				subsector zelf is daar niet het antwoord op, want dan verdwijnt de sloopwacht die bij #670 de enige overgebleven rem was. De noemer telt alle werkgelegenheid in bereik van deze subsector
 				(StandInBereik in PerSectorxSubsector_T, #713), niet alleen die van subsectoren die op de cel zelf mogen bouwen.";
-		attribute<Bool>    TeHoogBouwjaarBinnenHardePlancapaciteit (CompactedAdminDomain) := src/PandLeeftijd < GeenSlooptotLeeftijd_BinnenHardePlancapaciteit[float32] && Src/HeeftHardePlannenDezeSector && !IsVerdikkingsCel
+		parameter<Bool>    GeldtLeeftijdstoets := Sector_name != lowercase('Wonen'), Descr = "Gelden de twee sloopleeftijdstoetsen hieronder voor deze sector? Voor wonen niet meer: sinds #869 bepaalt de herontwikkelingskans welke percelen met woningen beschikbaar komen (PerceelNietAanDeBeurt). Voor de andere sectoren blijven ze staan, ook op een cel met woningen (VolgtWoonregelInHardePlannen).";
+		attribute<Bool>    IsVrijgekomenPerceel                    (CompactedAdminDomain) := = Sector_name == lowercase('Wonen')
+			? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ThisVariant/Herontwikkelingskans/PerZichtjaar/'+Zichtjaar_name+'/IsVrij_AdminDomain)'
+			: 'const(FALSE, CompactedAdminDomain)'
+		, Descr = "De cellen met woningen van de percelen die de herontwikkelingskans van wonen uiterlijk in dit zichtjaar vrij liet (#869), dezelfde vlag als AanDeBeurt op de woonladder en als de vrijstelling van de
+					vormtoets. De basisjaarzeef kijkt op zo'n perceel anders (IsRestrictief_OpVrijgekomenPerceel). Alleen voor wonen.";
+		attribute<Bool>    PerceelNietAanDeBeurt                   (CompactedAdminDomain) := = Sector_name == lowercase('Wonen')
+			? 'ThisVariant/Herontwikkelingskans/PerZichtjaar/'+Zichtjaar_name+'/NietVrij_Compacted'
+			: 'const(FALSE, CompactedAdminDomain)'
+		, Descr = "Een cel met woningen in het basisjaar op een perceel dat in dit zichtjaar nog niet aan de beurt is (#869): de cumulatieve herontwikkelingskans van het perceel haalt zijn vaste trekking nog niet
+					(Templates/VariantData_T/Herontwikkelingskans). Alleen voor wonen; een cel zonder woningen of zonder perceel valt erbuiten. Vervangt voor wonen de sloopleeftijdstoetsen en de labeltoets van de zeef.";
+		attribute<Bool>    VolgtWoonregelInHardePlannen            (CompactedAdminDomain) := Sector_name == lowercase('Werken') && src/HeeftWoningenBasisjaar
+		, Descr = "Een werkzeef op een cel met woningen in het basisjaar: binnen harde werkplannen geldt daar de leeftijdstoets van wonen, GeenSlooptotLeeftijd_BuitenHardePlancapaciteit, en niet die
+					van GeenSlooptotLeeftijd_BinnenHardePlancapaciteit, want werken dat de cel wint sloopt de woningen, de allocatie is celexclusief (#868).";
+		attribute<Bool>    WoningenOpRijksmonumentPerceel          (CompactedAdminDomain) := Sector_name != lowercase('Wonen') && src/HeeftWoningenBasisjaar && collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Omgevingsrecht/Rijksmonumenten/IsRijksmonumentPerceel_AdminDomain)
+		, Descr = "Een cel met woningen in het basisjaar op een perceel met een rijksmonument, voor elke sector behalve wonen (#869): de herontwikkelingskans laat zo'n perceel nooit vrij, dus de andere
+					sectoren, in de praktijk werken, mogen die woningen ook niet slopen door de cel over te nemen. Voor wonen zelf regelt PerceelNietAanDeBeurt dit.";
+		attribute<Bool>    TeHoogBouwjaarBinnenHardePlancapaciteit (CompactedAdminDomain) := GeldtLeeftijdstoets && src/PandLeeftijd < (VolgtWoonregelInHardePlannen ? GeenSlooptotLeeftijd_BuitenHardePlancapaciteit[float32] : GeenSlooptotLeeftijd_BinnenHardePlancapaciteit[float32]) && Src/HeeftHardePlannenDezeSector && !IsVerdikkingsCel
 		, Descr = "Sloopbescherming binnen harde plancapaciteit, gemaskeerd op HeeftHardePlannenDezeSector zodat deze toets en zijn buitentegenhanger elkaar uitsluiten en elk alleen gelden waar hun naam zegt
 					(#586); zonder dat masker leunde de uitkomst op de invariant dat de binnendrempel onder de buitendrempel ligt, en die werd nergens bewaakt. Deze tak is alleen gevuld zolang er geldige
 					plancapaciteit is: HeeftHardePlannenDezeSector draagt IsPlancapaciteitNogGeldig, dus na ModelParameters/Advanced/PlancapaciteitGeldigTotEnMet valt alles onder de buitentak. Cellen zonder
 					panden hebben een null PandLeeftijd en vallen bij beide toetsen op FALSE, want null < x is FALSE; dat geldt ook voor een cel zonder bekend bouwjaar (#735, guard in
 					Zeef_Basisjaar_T/Src/BouwjaarPand).";
-		attribute<Bool>    TeHoogBouwjaarBuitenHardePlancapaciteit (CompactedAdminDomain) := src/PandLeeftijd < GeenSlooptotLeeftijd_BuitenHardePlancapaciteit[float32] && !Src/HeeftHardePlannenDezeSector && !IsVerdikkingsCel
+		attribute<Bool>    TeHoogBouwjaarBuitenHardePlancapaciteit (CompactedAdminDomain) := GeldtLeeftijdstoets && src/PandLeeftijd < GeenSlooptotLeeftijd_BuitenHardePlancapaciteit[float32] && !Src/HeeftHardePlannenDezeSector && !IsVerdikkingsCel
 		, Descr = "Sloopbescherming buiten harde plancapaciteit, de strengere van de twee, gemaskeerd op harde plancapaciteit (#639). Deze toets dooft uit met de horizon: PandLeeftijd is het zichtjaar min
 					BouwjaarPand, statische basisjaardata uit de BAG, dus zodra het zichtjaar het hoogste celbouwjaar plus de drempel passeert zeeft hij niets meer weg, in deze reeks vanaf Y2080. Dat is met
 					#735 als eigenschap aanvaard: het is rekenkundig juist, de drempel ophogen verplaatst alleen het moment en wordt bij een reeks tot 2120 een sloopverbod, en de definitie van de pandleeftijd
-					verandert er niets aan. Deze regel is daarmee een overgangsrem en niet de staande rem. De staande rem op sloop is voor wonen het exploitatiesaldo
-					(Zeef_Wonen_perOP_T/MinimumExploitatieSaldo), dat niet met het zichtjaar vervaagt; voor werken bestaat die rem niet, want Geschiktheden_Werken kent geen kostenkant, en daar blijft alleen
+					verandert er niets aan. Deze regel is daarmee een overgangsrem en niet de staande rem. Voor wonen geldt hij niet meer: daar beslist de
+					herontwikkelingskans welke woningen vrijkomen (#869). Voor werken bestaat geen staande rem, want Geschiktheden_Werken kent geen kostenkant, en daar blijft alleen
 					TeKleineDichtheidsToenameSubsector over.";
 	}
 	
@@ -116,6 +135,8 @@ Template Zeef_T //wordt aangeroepen in Zeef_Zichtjaar_T
 		attribute<Float32> PandLeeftijd                            (CompactedAdminDomain) := ='float32('+substr(Zichtjaar_name, 1,4)+') - ThisVariant/Zeef/Basisjaar/'+Sector_name+'/'+Subsector_name+'/Src/BouwjaarPand', Descr = "De leeftijd van het jongste pand in de cel in het zichtjaar, leeg waar geen pand een bekend bouwjaar heeft. Het jongste pand en niet een gemiddeld pand, want de toetsen hieronder beslissen
 				over sloop van de hele cel en dan gaat elk pand erin tegen de vlakte (#735, zie BouwjaarPand). Geldt alleen voor de bestaande voorraad uit de BAG; wat het model zelf in een eerder zichtjaar
 				heeft gebouwd zit hier niet in en kent geen leeftijd, die cellen zijn permanent uitgesloten via IterSubsector_T/Beschikbaar_Init (#735).";
+		attribute<Bool>    HeeftWoningenBasisjaar                  (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, MakeDefined(/BaseData/StartState/StateBasisjaar/State/Wonen/Aantal_Woningen_Totaal[float32], 0f) > 0f)
+		, Descr = "Staan er in het basisjaar woningen in de cel? Voor de werkzeven binnen harde plannen (Impl/VolgtWoonregelInHardePlannen).";
 		attribute<Bool>    HeeftPandenInCelInBasisjaar             (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/Opleggingsmasker/HeeftPanden), Descr = "Staat er in het basisjaar een BAG-pand in deze cel van 25 meter, geheel of gedeeltelijk? Leest sinds #770 dezelfde vlag als de natuurallocatie van #661, in plaats van een eigen telling op de cel van 100 meter.";
 		
 		attribute<Bool>    HeeftHardePlannenDezeSector             (CompactedAdminDomain) := =Sector_name == lowercase('Landbouw') ? 'const(FALSE, CompactedAdminDomain)' : 'IsHardePlannenGeldigInZeef && IsPlancapaciteitNogGeldig && Plannen/Per_CompactedAdminDomain/Hard/Result/'+Sector_name+'/'+Subsector_name
@@ -132,7 +153,7 @@ Template Zeef_T //wordt aangeroepen in Zeef_Zichtjaar_T
 		attribute<ha>      PotentieleRuimte                        (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, value(potential(float32(IsBeschikbaar_Basisjaar_AdminDomain), Geography/Distmatrices_25m/pot50m/Flat2), float32) * AdminDomain/NrHaPerCell)
 		, Descr = "Beschikbare hectares in een schijf van 50 meter rond de cel: dertien cellen van 25 meter, samen 0,81 hectare (#770). De schijf beweegt met de cel mee en kent geen blokgrenzen.";
 		attribute<Bool>    GeeftOnvoldoendeRuimte_Landbouw         (CompactedAdminDomain) := PotentieleRuimte / (Geography/Distmatrices_25m/pot50m/oppervlakte * AdminDomain/NrHaPerCell) < MinimalLandAvailability_Landbouw / 1[ha]
-		, Descr = "Is het beschikbare aandeel van de schijf kleiner dan de drempel? MinimalLandAvailability_Landbouw is gedefinieerd als hectare per cel van 100 meter, dus als aandeel van een hectare; hier toegepast als aandeel van de schijf. Alleen landbouw leest dit, en die sector wordt in NL2120 niet gealloceerd, dus deze omzetting (#770) is niet op een uitkomst getoetst.";
+		, Descr = "Is het beschikbare aandeel van de schijf kleiner dan de drempel? MinimalLandAvailability_Landbouw is gedefinieerd als hectare per cel van 100 meter, dus als aandeel van een hectare; hier toegepast als aandeel van de schijf. Alleen de landbouwallocatie leest dit (#770).";
 	
 		attribute<bool>    HeeftGeenRuimteOpBedrijventerrein       (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /SourceData/Grondgebruik/IBIS/Result/IsVol_grid), Descr = "Ligt de cel op een IBIS-werklocatie die als vol telt? Sinds #770 op 25 meter, met de terreinen op AdminDomain gerasterd; tot dan op de cel van 100 meter.";
 	}

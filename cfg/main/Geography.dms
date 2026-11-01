@@ -17,7 +17,7 @@
 //
 // Studiegebied (rdc_meter): 
 //   Wordt bepaald door ModelParameters/StudyArea (standaard: Nederland).
-//   Opties: Nederland, Friesland, Noord_Holland, Utrecht – zie container StudyAreas hieronder.
+//   Opties: Nederland, of een provincie met de naam uit SourceData/RegioIndelingen/Provincie/name (zie container StudyAreas hieronder).
 //
 // Afgeleide domeinen (verderop in dit bestand):
 //   AllocDomain           : gridcellen waarop de allocatie plaatsvindt (100m of 25m, zie Advanced.dms)
@@ -34,7 +34,7 @@ container Geography: using = "Units"
 	unit<DPoint> rdc_meter_NL     := range(rdc_meter_base, point_xy(min_max/x_min_Nederland, min_max/y_min_Nederland,rdc_meter_base), point_xy(min_max/x_max_Nederland, min_max/y_max_Nederland,rdc_meter_base)), Descr = "Geografisch domain in RD-coordinaten, afgebakend tot Nederland.";
 	unit<IPoint> rdc_mm_base      := gridset(rdc_meter_NL,  point_yx(0.001, 0.001), point_yx(0.0, 0.0), ipoint), Descr = "Geografisch domain in RD-coordinaten, afgebakend tot Nederland, in millimeters (en dus integers)";
 	unit<WPoint> rdc_km_base      := gridset(rdc_meter_NL,  point_yx(1000, 1000), point_yx(0.0, 0.0), wpoint), Descr = "Geografisch domain in RD-coordinaten, afgebakend tot Nederland, in kilometers (en dus integers)";
-	unit<DPoint> rdc_meter        := =lowercase(ModelParameters/StudyArea) == 'nederland' ? 'StudyAreas/rdc_'+ModelParameters/StudyArea : 'StudyAreas/PerProv/'+ModelParameters/StudyArea+'/rdc_prov', Descr = "Geografisch domain in RD-coordinaten, gedefinieerd in meters, afgebakend op het studiegebied.";
+	unit<DPoint> rdc_meter        := =lowercase(ModelParameters/StudyArea) == 'nederland' ? 'StudyAreas/rdc_Nederland' : 'StudyAreas/rdc_Provincie', Descr = "Geografisch domain in RD-coordinaten, gedefinieerd in meters, afgebakend op het studiegebied: Nederland, of de provincie met de naam uit ModelParameters/StudyArea, gespeld als in SourceData/RegioIndelingen/Provincie/name (bijvoorbeeld Noord_Holland of Friesland).";
 	unit<IPoint> rdc_mm           := gridset(rdc_meter,  point_yx(0.001, 0.001), point_yx(0.0, 0.0), ipoint), Descr = "Geografisch domain in RD-coordinaten, afgebakend op het studiegebied, in millimeters (en dus integers)";
 	
 	// unit<FPoint> LambertEA_base   : SpatialReference = "EPSG:3035", DialogData = "ngr_layer_lea", Descr = "Geografisch domain in Lambert EA coordinaten, gedefinieerd in meters.";
@@ -56,6 +56,40 @@ container Geography: using = "Units"
 			container BoundingBoxPlus := Make_BoundingBoxPlus_T(geometry, 5000[meter_f64]);
 		}
 
+		unit<UInt32> Provincie_Omhullende
+		:	StorageName     = "='%RSo_DataDir%/RegioIndelingen/cbsgebiedsindelingen'+/ModelParameters/RegioIndelingen_CBSjaar+'.gpkg'"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "True"
+		,	SqlString       = "SELECT * FROM provincie_gegeneraliseerd"
+		,	Descr           = "De provinciegrenzen uit dezelfde CBS-gpkg als SourceData/RegioIndelingen/Provincie, hier apart gelezen voor de omhullende van rdc_Provincie. Niet via SourceData/RegioIndelingen:
+							daar is Provincie een deel van CBS/Gekozen, en die container neemt bij het opbouwen de hele jaargang over, met attributen op rasters van rdc_meter (onder meer via
+							Gemeente/NVM_2011_rel en Read_NVM_2011_COROP2022Begrenzing_shp). Een omhullende die daaruit komt laat rdc_meter van zichzelf afhangen: Invalid Recursion in UpdateMetaInfo.
+							Zonder de IJburg-aanvulling van Provincie/geometry_base; die ligt binnen de omhullende van Noord-Holland."
+		{
+			attribute<rdc_meter_base> geometry (poly);
+			attribute<String>         statnaam;
+			attribute<String>         name                       := replace(AsItemName(statnaam), 'Fryslân', 'Friesland'), Descr = "Dezelfde spelling als SourceData/RegioIndelingen/Provincie/name, zodat ModelParameters/StudyArea in beide hetzelfde betekent.";
+			parameter<rdc_meter_base> geometry_StudyArea  (poly) := geometry[rlookup(/ModelParameters/StudyArea, name)];
+		}
+		
+		unit<DPoint> rdc_Provincie             := range(rdc_meter_base
+		                                                    , Lower_Bound(Provincie_Omhullende/geometry_StudyArea)[rdc_km_base][rdc_meter_NL]
+		                                                    , (Upper_Bound(Provincie_Omhullende/geometry_StudyArea)[rdc_km_base] + point_xy(1w,1w,rdc_km_base))[rdc_meter_NL]
+		                                            )
+		, Descr = "Geografisch domain in RD-coordinaten, afgebakend tot de provincie uit ModelParameters/StudyArea, op hele kilometers zoals PerProv/<provincie>/rdc_prov. Niet via PerProv: die for_each leest
+					de provincienamen uit CBS/Gekozen terwijl rdc_meter nog wordt opgebouwd (zie Provincie_Omhullende). De grens zelf, met IJburg, komt wel uit SourceData/RegioIndelingen/Provincie; die
+					wordt pas opgezocht als rdc_meter al bestaat."
+		{
+			parameter<rdc_meter_base> geometry_base                  (poly) := SourceData/RegioIndelingen/Provincie/geometry_base[rlookup(/ModelParameters/StudyArea, SourceData/RegioIndelingen/Provincie/name)];
+			attribute<rdc_meter>      geometry          (poly, UnityDomain) := union_data(UnityDomain, geometry_base[rdc_meter]);
+			attribute<Bool>           IsStudyArea_AdminDomain (AdminDomain) := IsDefined(poly2grid(geometry, AdminDomain));
+			attribute<Bool>           IsStudyArea_AllocDomain (AllocDomain) := IsDefined(poly2grid(geometry, AllocDomain));
+			attribute<String>         name                    (UnityDomain) := const(/ModelParameters/StudyArea,UnityDomain);
+			parameter<Ha>             Areaal                                := area(geometry[0], meter2_f64)[ha];
+			
+			container BoundingBoxPlus := Make_BoundingBoxPlus_T(geometry, 5000[meter_f64]);
+		}
+		
 		container PerProv :=
 			for_each_ne(
 				SourceData/RegioIndelingen/Provincie/name
@@ -148,10 +182,10 @@ container Geography: using = "Units"
 		parameter<Float64> y_max_Nederland     := 625000d;
 	}
 	
-	parameter<Float64> x_min := = lowercase(ModelParameters/StudyArea) == 'nederland' ? 'min_max/x_min_'+/ModelParameters/StudyArea : '/Geography/StudyAreas/PerProv/'+ModelParameters/StudyArea+'/x_min';
-	parameter<Float64> x_max := = lowercase(ModelParameters/StudyArea) == 'nederland' ? 'min_max/x_max_'+/ModelParameters/StudyArea : '/Geography/StudyAreas/PerProv/'+ModelParameters/StudyArea+'/x_max';
-	parameter<Float64> y_min := = lowercase(ModelParameters/StudyArea) == 'nederland' ? 'min_max/y_min_'+/ModelParameters/StudyArea : '/Geography/StudyAreas/PerProv/'+ModelParameters/StudyArea+'/y_min';
-	parameter<Float64> y_max := = lowercase(ModelParameters/StudyArea) == 'nederland' ? 'min_max/y_max_'+/ModelParameters/StudyArea : '/Geography/StudyAreas/PerProv/'+ModelParameters/StudyArea+'/y_max';
+	parameter<Float64> x_min := Get_X(LowerBound(rdc_meter));
+	parameter<Float64> x_max := Get_X(UpperBound(rdc_meter));
+	parameter<Float64> y_min := Get_Y(LowerBound(rdc_meter));
+	parameter<Float64> y_max := Get_Y(UpperBound(rdc_meter));
 	
 	container perGridsize := for_each_ne(Gridsizes/name, 'Create_GridDomain_T('+string(Gridsizes/size)+'[float64])'), Descr = "Bevat de verschillende grid domains die gebruikt kunnen worden in het model, op basis van de verschillende gridsizes.";
 	

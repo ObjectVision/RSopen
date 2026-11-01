@@ -19,12 +19,13 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Item,
 
-    [string]$Config = "C:\ProjDir\RSopen_NL2120\cfg\main.dms",
+    # Standaard de werkkopie waarin dit script staat (.claude/skills/rs-draaien/scripts, vier mappen omhoog).
+    [string]$Config = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..")) "cfg\main.dms"),
 
     # De vaste versie voor dit project. Zet hem alleen om als je bewust op een andere
     # engine wilt toetsen; "laatst" pakt de hoogste geinstalleerde .m-build en dat
     # verschuift zodra iemand een nieuwe installeert.
-    [string]$Version = "20.17.0.m",
+    [string]$Version = "20.23.1.m",
 
     [string]$LogDir = "$env:TEMP\rsopen-check",
 

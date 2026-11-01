@@ -15,6 +15,14 @@ De oplossing is niet de container hernoemen maar de verwijzing kwalificeren: sch
 
 Uitzondering: verwijzingen die in samengestelde strings zitten zijn niet met een slash te kwalificeren. Daarom staan `PotentieleStates`, `Suitabilities` en `Beschikbaarheden` in het meervoud naast hun enkelvoudige tegenhanger.
 
+### Een gegenereerde container schermt de naam van zijn ouder af
+
+Binnen een container die `for_each_nedv` aanmaakt zoekt een ongekwalificeerde naam eerst in die container zelf. Staat daar een item met dezelfde naam als het ouderitem dat je bedoelt, dan wijst de verwijzing naar zichzelf en meldt GeoDMS Invalid Recursion, met een vervolgfout op een willekeurig ander item in de buurt (in september 2026 een `Unknown identifier org_rel` twee containers verderop). Voorbeeld: `container Delta := for_each_nedv(klassen, 'Totaal * sleutel', ...) { Totaal := add(...); }` waarbij `Totaal` in de generator het totaal van de ouder moest zijn. Geef het ouderitem een andere naam (`NaBAG`) of kwalificeer volledig.
+
+### `Diagnose.dms` heeft geen `using`
+
+De container `Diagnose` kent geen `using` voor Geography of SourceData. Een domein of item daaruit moet er volledig gekwalificeerd staan: `(/Geography/CompactedAdminDomain)` en `const(0f, /Geography/CompactedAdminDomain)`, anders `Cannot find Domain unit`. Sjablonen binnen Diagnose erven dat gebrek.
+
 ## De kale `name` in een subcontainer
 
 Een `parameter<String> name` op templateniveau werkt niet meer binnen een subcontainer die zelf een `name` erft. Voorbeeld: binnen `unit<uint64> CompactedAdminDomain := Geography/CompactedAdminDomain` levert een kale `name` de string `CompactedAdminDomain` op, want die unit heeft zelf een `name`.
@@ -125,6 +133,14 @@ Twee dingen die zo'n kanarie goedkoop maken, gemeten op 2026-09-04 met GeoDms20.
 GeoDMS werkt een leverancier bij VOORDAT het gevraagde item zelf wordt uitgerekend. Een kapotte toets valt dus om zodra zijn eigen data klaar is, niet na de hele keten: de kanarie op `Vlak/Som` in de bodemdalingkosten gaf exit 1 na 1,5 s, ruim voor de kostenketen waar hij aan hangt. Je hoeft een kanarie dus niet te ontzien omdat het gevraagde item duur is.
 
 Het log helpt niet als je de toets heel laat. Er staan alleen `Updating::`-regels voor het gevraagde item zelf en niet voor de items eronder, dus uit een geslaagde run is niet af te lezen welke toetsen zijn meegelopen. In de foutcontext staat de keten wel volledig, van `Updating::[[<gevraagd item>]]` naar `Update(<item met de toets>)`. Kapot maken is daarmee de enige manier om te zien of de haak pakt.
+
+## Een IntegrityCheck die alleen het item zelf is geeft Invalid Recursion
+
+Een booleaanse parameter die zijn eigen waarde als toets wil gebruiken, met `IntegrityCheck = "This"`, valt om met `Invalid Recursion in UpdateMetaInfo detected`. Hetzelfde voor `this`, `(This)` en de eigen naam. Zodra er een operator in de check staat, `This == TRUE` of `This && TRUE`, werkt het wel; `This == 'TIGRIS'` en `this == 1` staan daarom al zonder problemen door de configuratie.
+
+Gemeten op 2026-09-22 met GeoDms20.17.0.m in een mini-configuratie van zes parameters; de expressievorm van het item (gewoon of meta-expressie) maakt niet uit. Gevonden in `SourceData/Plancapaciteit.dms` bij `AlleBestandenAanwezig`, dat met `IntegrityCheck = "This"` op elke aanroep omviel.
+
+Schrijf `This == TRUE`, of zet de toets op een zusteritem dat het item bij naam noemt. Vergeet daarbij de haak in de rekengraaf niet (zie de twee secties hierboven): een check op een item zonder afnemer vuurt nooit.
 
 ## Een uitdraai die niet meedraait blijft stil staan
 
@@ -292,6 +308,14 @@ Denk hierbij aan de plekken waar de configuratie zelf bewust een null neerzet, z
 
 Beide helften bewijs je in seconden met een losse .dms in de scratchpad; zie de skill rs-draaien, trap 2.
 
+### `max_elem` en `min_elem` slaan een null over
+
+`max_elem(null, x)` geeft `x` en geen null, in beide volgordes; alleen als alle argumenten null zijn komt er null uit. `min_elem` doet hetzelfde. Gemeten op 2026-10-12 met GeoDms20.20.0.m op a = 1, null, 3, null en b = 0, 0, null, null: `max_elem(a, b)` en `max_elem(b, a)` geven allebei 1, 0, 3, null, terwijl `a + b` drie nullen geeft.
+
+Daarmee breekt de rekenkundige helft van hierboven precies op de plek waar je een ondergrens zet. `max_elem(netto - (voor + in), 0d)` geeft 0 zodra `in` leeg is: het verschil wordt null en de ondergrens neemt het over, zodat onbekend stil "niets meer over" wordt. Zo telde `SourceData/Grondgebruik/IBIS.dms` elk terrein met een lege uitgifte in het peiljaar als helemaal uitgegeven en dus vol. In IBIS 2024 waren dat 406 terreinen, en 18 daarvan zaten met samen 112 ha nog uitgeefbaar ten onrechte dicht voor alle werksubsectoren. Dezelfde regel zonder `max_elem`, in pbl-nl/model-RS-PlanCapaciteit, deed het omgekeerde: daar bleef de null staan, gaf `> 0` FALSE en viel het terrein uit de harde plancapaciteit.
+
+Beslis dus voor je een ondergrens zet wat een lege invoer betekent, en schrijf dat als `MakeDefined` op de invoer zelf: `max_elem(netto - (voor + MakeDefined(in, 0d)), 0d)`. Tel de nullen op de invoer en niet op de uitkomst, want de uitkomst heeft er geen meer: `NogUitgeefbaarHa` meldde nul nullen terwijl `uitgifte_in_2023` er 406 had.
+
 ### Classify laat een waarde onder de laagste klassegrens op null vallen
 
 `Classify(x, ClassBreaks)` geeft null voor elke waarde onder de laagste klassegrens, en een klassegrens die zelf `null_f` is slaat hij over. Dat is de rekenkundige helft van hierboven in een andere gedaante: `combine_data` is rekenkundig, dus een null op een van de assen maakt de hele combinatie-index null en de `rjoin` erachter geeft niets terug. Op de kaart is dat een witte cel, en die leest als een lage waarde in plaats van als een ontbrekende. Zo verloor de SOMERS-emissiekaart bij #619 percelen, en verschillend per variant: alleen de variant die de gemeten drooglegging uit de peilvakken leest kwam onder de natste grens uit, de varianten met een constante niet, zodat elk vernattingseffect een verschil van twee sommen over een ander areaal was.
@@ -365,7 +389,9 @@ De zelftoets die dit ving is die uit rs-draaien, trap 2: zet naast een handmatig
 
 ## `float32(x)` houdt de metriek vast, `x[float32]` strijkt hem weg
 
-De twee schrijfwijzen zien er inwisselbaar uit en zijn dat niet. `float32(x)` verandert alleen het waardetype en laat de eenheid staan, `x[float32]` gooit de eenheid weg. Een verhouding die je met `float32()` bouwt draagt dus de eenheden van teller en noemer mee, ook als de declaratie iets anders zegt: de metriek volgt uit de expressie en niet uit het opgegeven waardetype.
+Een cast naar een AFGELEIDE eenheid van dezelfde basis rekent wel om: `a[mton]` op een waarde in `ton`, met `mton := 1000000 * ton`, deelt door een miljoen, en `convert(a, mton)` en `value(a, mton)` doen hetzelfde. Gemeten op 2026-09-21 met GeoDms20.17.0.m op 2.000.000 ton: alle drie geven 2. Zo staat `Methaan_Cumulatief` in `Export.dms` met `[mton]` op een som in ton, en zo kan een kolom in megaton CO2-equivalent (#828) beide kanten met `[mton]` op een noemer brengen zonder een deling met een kaal getal.
+
+De twee schrijfwijzen hieronder zien er inwisselbaar uit en zijn dat niet. `float32(x)` verandert alleen het waardetype en laat de eenheid staan, `x[float32]` gooit de eenheid weg. Een verhouding die je met `float32()` bouwt draagt dus de eenheden van teller en noemer mee, ook als de declaratie iets anders zegt: de metriek volgt uit de expressie en niet uit het opgegeven waardetype.
 
 Meestal merk je dat pas ver stroomafwaarts, waar de vermenigvuldiging met de doeleenheid botst: "Values mismatch between Base Units of first argument (Job per W) and Base Units of cast target (Job)". De melding wijst naar de plek van de botsing en niet naar de deling die de eenheid meebracht, en die twee kunnen in verschillende bestanden staan.
 
@@ -523,6 +549,37 @@ Om de treeview uit te klappen moet GeoDMS weten welke items er zijn. Hangt het a
 
 De scheidslijn ligt bij de herkomst van de voorwaarde, niet bij het schakelen zelf. Een voorwaarde uit de configuratie of uit classificatiedata (een parameter in ModelParameters, `Zichtjaar_value` uit `Time/Zichtjaar`, `WaterbergingClaimActief` uit VariantK) is gratis bij uitklappen. Een voorwaarde die een allocatieresultaat of een claimsom nodig heeft kost bij uitklappen een run, hoe elegant het criterium inhoudelijk ook is. Kies bij een schakelaar daarom de configuratieparameter boven de gemeten grootheid die hetzelfde zegt. Het uitgecommentarieerde dynamische stopcriterium in `Templates/Allocatie/Iter_T.dms`, dat het aantal iteraties van de restclaim liet afhangen, staat om deze reden uit naast het actieve `StaticStopCriterium`; dat is een afgewogen keuze en geen onaf werk.
 
+## Een for_each die zijn namen uit een csv-tabel haalt, mist in 20.20 de andere kolommen
+
+Leest de namenlijst van een `for_each` een gdal.vect-tabel, een kolom of alleen het aantal rijen, en heeft de expressielijst een andere kolom van dezelfde tabel nodig, dan faalt GeoDMS 20.20 met een interne fout op die tweede kolom (`Check Failed` in `OperMisc.cpp(287)`). De tabel is dan al zonder die kolom gelezen en de kolom wordt niet meer bijgelezen. 20.17 las elke kolom als eigen taak en deed het goed. Daarna volgt `Unknown identifier` op elke naam die de for_each had moeten maken, dus de foutregels wijzen naar de lezers en niet naar de tabel.
+
+Gemeten op 2026-09-24 in `PrivData/Claims.dms`: de TIGRIS-MetaInfo levert de kolomnamen (Variable) en breedtes (Length) voor `Per_Zichtjaar_T`, en de claimgeneratie viel onder 20.20 voor elk zichtjaar om. Kolommen expliciet declareren, een alias-unit of een andere kolomnaam helpt niet; inline data wel, en ook het apart opvragen van beide kolommen in een run. De omweg in de configuratie: lees de tabel via een selectie waarvan de voorwaarde beide kolommen noemt (`select_with_org_rel(strlen(Bestand/Labour/variable) > 0 || Bestand/Labour/Length[uint32] > 0)`), zodat ze in dezelfde leesslag komen. Kies daar een OF en geen EN: een EN laat een rij zonder breedte stil wegvallen en verschuift dan de positie van elke volgende kolom. Gemeld als ObjectVision/GeoDMS#1284; haal de omweg weg zodra een release die fout niet meer heeft.
+
+## Een mmd schrijft in 20.20 een regel over de eigen opslag als regel en niet als data
+
+Sinds GeoDMS 20.20 (ObjectVision/GeoDMS#1264) schrijft een mmd-opslag een attribuut waarvan de rekenregel alleen namen onder dezelfde opslaghouder noemt niet meer als databestand. De regel komt letterlijk in `0Dictionary.dms` en de lezer rekent hem na het inlezen opnieuw uit. Het criterium is tekstueel: het kijkt naar de namen die de regel noemt en niet naar wat de lezer daar straks vindt.
+
+Dat gaat goed zolang alles wat de regel noemt zelf in de opslag staat. In `BaseData/Verdeling_VSSH.dms` zijn `eengezins_Proxy` en `meergezins_Proxy` de som van twee broertjes; 20.20 schrijft ze als `= eengezins_VrijeSector_Proxy + eengezins_SocialeHuur_Proxy` in het woordenboek, en `Read_Wonen_WP2xVSSH`, dat zijn attributen uit het woordenboek haalt, rekent ze gewoon uit. Wie de uitvoer van 20.17 en 20.20 naast elkaar legt ziet daardoor per indeling een ander woordenboek en twee databestanden minder. Dat is geen fout.
+
+Het gaat mis zodra de regel de `org_rel` van een `select_with_org_rel` of `select_with_attr_by_org_rel` noemt: die hangt onder de houder, maar de opslag bevat hem niet. 20.20 schrijft dan met exit 0 en zonder `[E]` een woordenboek zonder data, en de lezer valt om met `Unknown identifier 'org_rel'` of `reference 'org_rel' not found (as left operand of the arrow operator)`. Het bestand is onleesbaar zonder dat de schrijfstap het merkt. Gemeten op 2026-10-01 in een losse dms en gemeld als ObjectVision/GeoDMS#1288; 20.17 schreef in alle gevallen de data. Het raakt twee vormen:
+
+- een eigen regel die `org_rel` noemt, zoals `pand_bag_nr := org_rel -> pand_bag_nr` in `WritePrivData/LogistiekAanvulling.dms`;
+- een `select_with_attr_by_org_rel` als opslag, zonder enige eigen regel. 20.20 zet elke meegekopieerde kolom als `= collect_by_org_rel(org_rel, scope(.., Bron/kolom))` in het woordenboek en schrijft geen enkel databestand.
+
+Een `DisableStorage` onder de houder helpt daar niet tegen: sinds ObjectVision/GeoDMS#1245 weigert 20.20 de hele opslag met exit 1 en `DisableStorage is not supported below the MMD storage`, ook op `org_rel` en op een meegekopieerde kolom.
+
+Wat op 20.20 wel data schrijft en terugleest: een item buiten de opslag noemen (`Pand/pand_bag_nr[org_rel]` in plaats van `org_rel -> pand_bag_nr`, sinds 1 oktober 2026 in de logistieke aanvulling), of `KeepData = "True"` op het attribuut of op de houder. De schoonste vorm is een alias van de bron als houder, zonder selectie en dus zonder `org_rel`: `unit<UInt32> write_result := src` met regels die `src/...` noemen. Zo schrijft `SourceData/Vastgoed/BAG/MaakVolledigeBAG.dms` sinds #839, en zo doet BAG20_Xml2MMD in de BAG-tools het ook; de alias neemt de items van de bron niet mee in de opslag. Kijk bij elke nieuwe mmd-schrijver of een attribuut alleen namen onder zijn eigen houder noemt, lees de opslag na het schrijven in een nieuw proces terug, en haal de omweg weg zodra een release ObjectVision/GeoDMS#1288 heeft opgelost.
+
+## Van meters naar een millimetergridset kapt af
+
+De omzetting van een dpoint in RD-meters naar een ipoint-gridset, zoals `x[/Geography/rdc_mm]`, rondt niet af maar kapt af. Bij coordinaten met precies millimeters, zoals de BAG ze heeft, valt het product met duizend in de double soms net onder het gehele getal, en dan schuift het punt een millimeter. Gemeten op 2026-10-13 in GeoDMS 20.23: van tien miljoen exacte millimeterwaarden, als dichtstbijzijnde double van de decimale meterwaarde, kwamen er 100.876 in x en 97.416 in y een millimeter te laag uit.
+
+Afronden kan via een gridset die een halve cel is verschoven: `gridset(/Geography/rdc_meter, point_yx(0.001, 0.001), point_yx(-0.0005, -0.0005), ipoint)`. Afkappen in die unit is afronden in millimeters, en de getallen zijn daarna de millimeters van rdc_mm; zet ze terug met `point_yx(PointRow(p), PointCol(p), /Geography/rdc_mm)`. Een cast via het kale `ipoint` (`x[ipoint][/Geography/rdc_mm]`) herinterpreteert niet maar rekent opnieuw om en geeft andere getallen. Een polygoon kent geen optelling met een punt (`add` heeft geen variant voor dpolygon en dpoint), dus ga via `sequence2points`, rond elk punt af en bouw hem weer op met `points2polygon(punten, sequence_rel, ordinal)`; `points2sequence` geeft een arc en geen polygoon. Zo doet `SourceData/Vastgoed/BAG/MaakVolledigeBAG.dms` het met de stores van BAG20_Xml2MMD, per fileset.
+
+## Een mmd die 20.23 schrijft, leest 20.17 niet
+
+GeoDMS 20.23 schrijft in `0Dictionary.dms` `cat_range` in plaats van `range`, en geeft een attribuut in een subcontainer van de opslag (`meta`, `gebruiksdoelen`) het domein `(.)`, waar 20.17 `(..)` schreef. 20.17 zoekt dat domein dan in de container zelf en valt om met `Cannot find Domain unit .`; 20.23 leest het goed terug. Gemeten op 2026-10-13 met een opslag in de vorm van BAG20_Xml2MMD. Wat met een nieuwere versie is geschreven, lees je dus met die versie of later; voor de BAG betekent dat BAG20_Xml2MMD (vanaf 20.20), MaakVolledigeBAG en de modelruns die de VolledigeTabel lezen op 20.23 of later.
+
 ## Overerving van een container is early binding
 
 `container B := A { ... }` erft de items van A en laat je er items aan toevoegen of overschrijven. Een GEERFD item houdt echter de verwijzing naar het item uit A, ook als je dat item in B overschrijft.
@@ -550,6 +607,16 @@ rij 1: a0_b1   rij 3: a1_b1   rij 5: a2_b1
 Dat is bepalend zodra de rijvolgorde een voorrangsvolgorde is. `Trede_T` kiest met `ArgMin` de laagst genummerde klasse die waar is, dus de as die in de `combine` vooraan staat domineert de hele ladder. In `VariantParameters/Tredes/Wonen.dms` is dat `PlancapaciteitPlusStimuli`, en `IterSubsector_T` maakt de ordening bovendien strikt lexicografisch, zodat een hogere trede altijd voorgaat op elke lagere, ongeacht de geschiktheid.
 
 Wie de volgorde van de argumenten omdraait verandert dus de betekenis van de hele ladder, zonder dat er aan de cardinaliteit of aan de namen iets te zien is.
+
+### `union_data` over een grid stapelt in tegelvolgorde, `combine` telt in rijvolgorde
+
+Een attribuut op een grid-eenheid staat intern in tegels. `union_data(lut, band1, band2, ...)` plakt die tegelvolgorde achter elkaar, terwijl `combine(combo, grid)` de gridpunten in rijvolgorde nummert en `PointRow(second_rel)` en `PointCol(second_rel)` die rijvolgorde teruggeven. Wie de gestapelde waarde via de rij en kolom van de combine adresseert, leest daardoor de waarde van een ander punt. Gemeten in #837 op de WWL-relatiegrid van 301 bij 301: de gestapelde waarde stond op 4.554 van de 90.601 posities op het punt dat de sleutel zei, en de natste hoek van 99 procent schade, die op rij 300 kolom 0 hoort, zat in de stapel op rij 225 kolom 225. Exit 0 en een plausibel ogende kaart, want de waarden zijn glad; alleen de nulls van de onmogelijke helft verraadden het, op een vijfde van de landbouw.
+
+Het recept: maak een platte `unit<uint32>` in rijvolgorde (`k div kolommen`, `k mod kolommen`), leid per punt af waar zijn waarde in de opslagvolgorde staat met `rlookup(punt, union_data(., id(grid)))`, en lees de stapel via die permutatie (`SourceData/Landbouw.dms`, `wwl_k/perm`). Een puntopzoeking per band (`b<n>[punt]`) is korter maar laat GeoDmsRun omvallen zodra tientallen banden uit een netcdf vanuit meerdere threads tegelijk worden gelezen; de enkele `union_data` leest sequentieel.
+
+### GDAL spiegelt van een netcdf alleen de rij-as
+
+Een netcdf met twee oplopende coordinaatassen komt via `gdal.grid` binnen met de rij-as omgekeerd (rij 0 is de hoogste waarde van de eerste as) en de kolom-as ongewijzigd. Leid de betekenis van rij en kolom dus niet af uit een symmetrieaanname maar uit twee hoeken die verschillen. In #837 bleek `glg = 300 - kolom` gespiegeld; de natste hoek (GHG en GLG 0) ligt op rij 300 kolom 0 en de droogste op rij 0 kolom 300. Controleer een geladen grid met een klein harnas dat de vier hoeken en een punt buiten de diagonaal afdrukt, en vergelijk met een rechtstreekse lezing van het bestand (netCDF4 in Python).
 
 ## Een template kan op vier manieren aangeroepen worden
 
@@ -617,3 +684,21 @@ Loop bij een `Unknown identifier` op een gegenereerd subitem dus eerst de ontkop
 Hetzelfde patroon geldt voor een bronbestand dat in de gedeelde bronmap is hernoemd of verplaatst. Na een enkele regel `GDAL Error: cannot open dataset` volgen meldingen op namen die niets met de bron te maken hebben: `Unknown identifier 'org_rel'` in de veenketen, `'Alloc/landuse'`, en in de allocatie honderdveertig regels `Unknown identifier 'Districts'`. Zie je `Unknown identifier` op een naam die je niet hebt aangeraakt, grep het staplog dan eerst op `cannot open dataset` voordat je in de configuratie duikt. Een ontbrekend bronbestand van een variant legt bovendien elke variant plat, ook BAU: de takken in `VariantData_T` zijn data-expressies met een voorwaarde, en GeoDMS resolvet beide takken ook als de voorwaarde de ene niet kiest. Herkenbaar aan exit 1 binnen een seconde.
 
 Drie stappen. Zoek het bestand met `Get-ChildItem -Recurse -Filter '*<deel van de naam>*'` in de map achter `%sourceDataDir%` voordat je concludeert dat het weg is; die map is schrijf-eenmaal en wordt aan de bronkant opgeruimd, dus het staat vaker ergens anders dan dat het echt ontbreekt. Draai dezelfde item-aanroep in een losse cfg-kopie met de verdachte schakelaar uit: geeft dat dezelfde fout, dan is de schakelaar het niet. En vergelijk met het staplog van de vorige geslaagde run: een `grep -c` op de bestandsnaam die daar 0 gaf en nu 3 zegt dat die keten de bron eerder niet las. Haal daarna eerst de laatste commits op voordat je zelf het pad repareert, tenzij er op deze machine een productierun loopt, want een andere machine liep er waarschijnlijk eerder tegenaan.
+
+## regex_search geeft zonder treffer een ontbrekende waarde, geen lege tekst
+
+`regex_search(tekst, patroon)` geeft het gevonden stuk terug, en zonder treffer een ontbrekende waarde, niet `''`. Een toets `regex_search(t, p) == ''` is daardoor nooit waar, en `<> ''` lijkt alleen te werken omdat een ontbrekende waarde in `any` of in een selectie als onwaar telt. Toets met `IsDefined(regex_search(t, p))` en `!IsDefined(regex_search(t, p))`. `regex_match` vraagt een treffer op de hele tekst, dus `'.*(a|b).*'`. `regex_replace` geeft de tekst ongewijzigd terug als het patroon niet past; toets dus eerst met `regex_match` voordat je een groep uitleest. Een backslash in een patroon wordt in een dms-expressie ontsnapt voordat de regex hem ziet (`\\b` geeft een waarschuwing over `\b`); schrijf tekenklassen als `[0-9]` en `[ ,:.]`.
+
+Gemeten op 2026-10-08, GeoDms20.20.0.m, in pbl-nl/model-RS-PlanCapaciteit (`SourceData/Plancapaciteit/Vergunningen`): een titelfilter met `== ''` liet alle 1.690 zaken vallen, zonder melding.
+
+## Een GML-schema telt nul objecten als de klasse anders heet dan het element
+
+Een `GFS_TEMPLATE` voor GDAL moet zijn klasse noemen naar het GML-element van de objecten: `<Name>BuildingPart</Name>` bij `<ElementPath>BuildingPart</ElementPath>`. Onder een andere naam meldt `ogrinfo -so` een Feature Count van 0, terwijl `ogrinfo -al` de objecten wel toont; GeoDMS neemt die telling over en schrijft een lege store, met exit 0 en zonder `[W]`. Verder: niets voor het hoofdelement van de gfs, ook geen commentaar; en het pad naar de gfs niet met `expand(.)` in een `GDAL_Options` onder de storage zetten, want dat geeft een recursie zodra GDAL de laag leest. Zet het pad in een parameter buiten de unit.
+
+Gemeten op 2026-10-08, GeoDms20.20.0.m, op de pandlaag van de BRK Kadastrale Kaart (`SourceData/Kadaster` in pbl-nl/model-RS-PlanCapaciteit): twaalf minuten lezen voor een store zonder panden.
+
+## Een fss-tabel van een oudere GeoDMS leest polygonen als ruis
+
+Een `.fss`-store is geen uitwisselformaat over hoofdversies heen voor sequentie-attributen. `perceel.fss` van de BRK-levering 20231206 is geschreven door GeoDms 14.7; GeoDms 20.23.1.m leest daaruit `identificatie` (int64) goed, 8.271.596 rijen met de juiste eerste waarde, maar `geometry (poly)` op een dpoint-eenheid komt als ruis terug: coordinaten van 1e32, een totale oppervlakte van min 4e79 ha, en `poly2grid` levert een lege kaart. Het aantal punten per polygoon klopt wel, en er is geen foutmelding en exit 0. Dezelfde laag uit de GML-download, door GeoDms 20.20 naar een fss geschreven, leest in 20.23.1 goed. Lees bij een oude store dus de bron opnieuw of schrijf de store met de huidige versie, en toets een gelezen polygoonlaag altijd met een oppervlaktesom en een eerste geometrie voordat je erop vergridt. Herkenbaar: een scalair attribuut leest goed en een poly-attribuut geeft absurde waarden.
+
+Gemeten op 2026-10-19, GeoDms20.23.1.m, in een toetskopie van RSopen (#861, `SourceData/Vastgoed/BRK`).

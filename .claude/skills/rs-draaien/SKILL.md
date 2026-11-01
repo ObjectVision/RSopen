@@ -29,7 +29,7 @@ Gaat er toch een zware run aan, kijk dan eerst wie er kan meeliften. De meeste v
 ## Trap 1: laadt het (seconden)
 
 ```powershell
-& "C:\Program Files\ObjectVision\GeoDms20.17.0.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "<werkkopie>\cfg\main.dms" "/pad/naar/item"
+& "C:\Program Files\ObjectVision\GeoDms20.23.1.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "<werkkopie>\cfg\main.dms" "/pad/naar/item"
 ```
 
 Of via het meegeleverde script, dat de projectversie kiest, de tijd meet en de foutregels filtert:
@@ -56,19 +56,21 @@ Gemeten op 2026-09-16 met GeoDms20.17.0.m, op de code van #824 in een kopie met 
 
 Op een gedeelde LocalData is zo'n toets dus een schrijvende run; zie Toetsen terwijl een ander draait.
 
-### De resolutieronde, en waarom stoppen na die ronde niet veilig is
+### Een naamcontrole zonder te rekenen: @sourcedescr
 
-GeoDmsRun lost eerst voor alle opgevraagde items de namen op en begint pas daarna te rekenen. Die resolutieronde zet per item een regel `[progress]Item <pad>` in het log, met een `[E]`-regel erachter als een naam niet oplost (`Unknown identifier`, of `the specified item ... was not found`). De rekenronde begint met de eerste regel `{ Updating::[[<pad>]]`. Een ronde over 71 items, vooral tabelkolommen, kostte op 2026-09-16 acht seconden, inclusief het laden van de configuratie.
+GeoDmsRun lost voor een opgevraagd item eerst alle namen in de keten op en begint pas daarna te rekenen; een naam die niet oplost geeft een `[E]`-regel (`Unknown identifier`, of `the specified item ... was not found`). Wil je alleen die naamcontrole, vraag het item dan niet op maar laat het beschrijven met `@sourcedescr` (sinds GeoDMS 20.17.0): GeoDmsRun lost de keten dan op, rekent niets uit en schrijft niets. Gemeten op 2026-10-28 op een kopie van main: de allocatieketen van het laatste zichtjaar in 205 s bij 1,5 GB, de variantdata in 7 s bij 0,2 GB, met vrijwel dezelfde foutregels als een opgevraagde run tot aan het rekenen.
 
-Het proces stoppen zodra die eerste Updating-regel verschijnt is daarmee een snelle naamcontrole, maar alleen in een kopie met een eigen LocalData. De rekenronde begint in dezelfde seconde als de laatste resolutieregel, en zodra GeoDMS aan een schrijvend item in de keten begint, maakt het dat bestand opnieuw aan, niet pas als de data klaar is. Gemeten op 2026-09-17, twee keer: gestopt binnen een seconde na de eerste Updating-regel, geen `storage write` in het log, en van `Dichtheid_NieuwWonen_Y2120_WonHa_Nederland.tif` stond nog 83.874 van de 6.374.831 bytes.
+Twee dingen om te weten. GeoDmsRun eindigt ook met exit 0 als een naam niet bestaat, dus het oordeel komt uit de `[E]`-regels in het log. En de opslag die `@sourcedescr` per item noemt, is wat de keten direct leest en schrijft: achter een bestand dat de keten zelf wegschrijft kijkt hij niet verder, dus de lijst is geen volledige bronnenlijst.
 
-`scripts/resolutie.ps1` doet dit, en weigert zonder `-EigenLocalData`:
+`scripts/naamcontrole.ps1` doet dit, met een rem op geheugen en tijd:
 
 ```powershell
-.\.claude\skills\rs-draaien\scripts\resolutie.ps1 -EigenLocalData -Config "<kopie>\cfg\main.dms" -Items "/pad/naar/item", "/pad/naar/ander/item"
+.\.claude\skills\rs-draaien\scripts\naamcontrole.ps1 -Config "<kopie>\cfg\main.dms" -Items "/pad/naar/item", "/pad/naar/ander/item" -Bestanden
 ```
 
-Het leest het log met gedeelde toegang, want GeoDmsRun houdt het tijdens de run open voor schrijven en een gewone lees faalt dan. Het stopt het proces op zijn PID, toont de foutregels en noemt het item waaraan GeoDMS was begonnen; vraag dat item daarna volledig op of gooi de kopie weg. Het neemt de omgevingsvariabelen van de aanroeper over, dus zet de schakelaars zelf, want een meta-expressie kiest zijn tak daarop. En het toetst namen en domeinen, geen data.
+Stop een opgevraagd item niet op de regel `{ Updating::` in het `/L`-log. GeoDmsRun schrijft dat log gebufferd: in een proef van zeven seconden zag een lezer met gedeelde toegang de hele run nul bytes, en op 2026-10-28 kwam de Updating-regel van de variantdata pas na anderhalve minuut op schijf, toen het proces de WP5-pandtypering van heel Nederland al rekende en 90 GB had vastgelegd. Zo werkten dit script (toen nog `resolutie.ps1`) en laag 3 van `batch/Preflight.py` tot die dag. Daar komt bij dat GeoDMS het bestand van een schrijvend item aan het begin van het rekenen al opnieuw aanmaakt: op 2026-09-17 stond van een tif van 6.374.831 bytes na het stoppen nog 83.874.
+
+Het script neemt de omgevingsvariabelen van de aanroeper over, dus zet de schakelaars zelf, want een meta-expressie kiest zijn tak daarop. En het toetst namen en domeinen, geen data.
 
 ### Bij een meta-expressie moet je elke tak instantieren
 
@@ -97,9 +99,11 @@ Dit is de manier om werk te delen dat verschillende casussen gemeen hebben, zoal
 
 Kies dit boven een verzamelitem met `ExplicitSuppliers` in de configuratie wanneer de items naar gedeelde paden schrijven of wanneer niet alle casussen uit de lijst mee moeten: het verzamelitem trekt alles gelijktijdig en over de hele lijst, de commandoregel precies wat je opgeeft en na elkaar.
 
+Niet voor een item dat leest wat een eerder item in dezelfde aanroep schrijft. De namen van alle items worden opgelost voordat het eerste gaat rekenen, en GeoDMS bindt een te lezen bestand bij het laden: de lezer van een mmd die nog niet bestaat heeft geen subitems, en een tif die pas in het proces ontstaat leest als leeg. Gemeten op 2026-10-01 met de basedata van `Run2120.ps1` op een lege LocalData: `Generate_Run1`, `Generate_Run2` en `Generate_Run3` in een aanroep vielen om op `Unknown identifier 'AfleidingPandType/Results/WP5_rel'`, de lezer van de WP5-mmd die Run1 nog moest schrijven, en met die mmd al aanwezig in Run3 op de IntegrityCheck van de BBG-kaart die Run2 net had geschreven. Los opgevraagd lost `Generate_Run1` op een lege LocalData wel op; Run2 en Run3 falen alleen zolang de mmd ontbreekt. Een generatiestap en zijn lezers horen dus in aparte aanroepen, zodat elke stap de configuratie opnieuw laadt.
+
 ### De export per bestand of per domein
 
-`RunIndicatoren.ps1` vraagt `Zichtjaren/Export/Generate_Indicatoren` en dat is de hele set, ruim tachtig bestanden per casus en zeventig minuten per variant. Wil je minder, dan hoef je daar niet omheen te bouwen: `Zichtjaren/Export/generates` heeft een parameter per uitvoerbestand en `generates/Themas` een parameter per domein (Grondgebruik, Wonen, Werken, Water, Natuur, Landbouw, Koolstof, Sloop, Tabellen).
+`RunIndicatoren.ps1` vraagt `Zichtjaren/Export/Generate_Indicatoren` en dat is de set van het productieprofiel: met `NL2120` alle domeinen, ruim tachtig bestanden per casus en zeventig minuten per variant, met `Standaard` alleen grondgebruik, wonen, werken en de tabellen. Welke domeinen een profiel levert staat in `ModelParameters/Indicatoren/Domein`; de export, de indicatortabellen (een kolom van een domein dat niet geleverd wordt blijft leeg), de ketens tussen de zichtjaren, de basedata van Run4 en de opbrengstderving in de variantdata volgen die tabel. Wil je minder, dan hoef je daar niet omheen te bouwen: `Zichtjaren/Export/generates` heeft een parameter per uitvoerbestand en `generates/Themas` een parameter per domein (Grondgebruik, Landgebruikskaart, Wonen, Werken, Water, Natuur, Landbouw, Koolstof, Sloop, Tabellen).
 
 ```powershell
 $g = '/Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/generates/'
@@ -134,9 +138,9 @@ In PowerShell bindt de komma sterker dan de plus. `@($g+'a', $g+'b')` wordt daar
 
 ## Welke GeoDMS
 
-Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.17.0.m`. Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
+Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.23.1.m`. Niet op 20.20.0.m: daar haalde een allocatie van heel Nederland de commit-limiet van de machine (Y2030 van WLO_hoog_BAU, 586 GB toegezegd en gestopt, tegen 279 GB op 20.23.1 en 284 GB op 20.17, gemeten op 2026-10-13), en een iteratie kan er stoppen op "no read lock can be set" (ObjectVision/GeoDMS#1295). Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
 
-De versie staat op vier plekken: `geodmsversion` in `batch/RunAll.cmd`, de default van `-Version` in `run-item.ps1`, en `-Exe` in `Run2120.ps1` en `RunIndicatoren.ps1`. Controleer ze alle vier voordat je een lange run start.
+De versie staat op zes plekken: `geodmsversion` in `batch/RunAll.cmd`, waar `batch/Preflight.py` hem leest, de default van `-Version` in `run-item.ps1` en `naamcontrole.ps1`, en `-Exe` in `Run2120.ps1`, `RunIndicatoren.ps1` en `ToetsOplevering.ps1`. Controleer ze alle zes voordat je een lange run start. De versie staat niet in de fingerprint van de ontkoppelde bestanden: na een wissel blijft een bestand van de vorige versie stil in gebruik, ook waar de nieuwe versie een andere kaart zou maken. Vergelijk na een wissel met `batch/VergelijkUitvoer.py`, of zet `AlwaysRemakeDecoupledFiles` tijdelijk aan.
 
 ## Geheugen: de registerknoppen staan per machine
 
@@ -225,7 +229,7 @@ Neem een zelftoets op zodra je een samengestelde toets met de hand nabouwt, bijv
 
 Die twee werken niet hetzelfde. `DiagCasus` voedt een gewone parameter, dus `WLO_hoog_BAU` volstaat. `DiagJaar` voedt een meta-expressie, dus de waarde moet zelf aanhalingstekens dragen: `'Y2040'` en niet `Y2040`. Zonder die aanhalingstekens wordt het zichtjaar als itemnaam gelezen en krijg je `Unknown identifier 'Y2040'`, een melding die naar het diagnose-item wijst en niet naar de omgevingsvariabele.
 
-Een meetharnas dat een vraag uit een issue beantwoordt is tijdelijk: bouw het in een thematische container van `cfg/main/Diagnose.dms` (`Waterberging`, `Natuur`, `Groen`, `Werken` en zo verder) of als los bestand in `cfg/main/Diagnose/`, en haal het weg zodra de getallen in het issue staan. Wat blijft krijgt een thematische naam en een norm in `batch/ToetsOplevering.ps1`, en draait mee in `GenerateAll` of `GenerateBasisjaar`, of zegt in zijn Descr dat het op aanvraag is.
+Een meetharnas dat een vraag uit een issue beantwoordt is tijdelijk: bouw het in een thematische container van `cfg/main/Diagnose.dms` (`Waterberging`, `Natuur`, `Groen`, `Werken` en zo verder) of als los bestand in `cfg/main/Diagnose/`, en haal het weg zodra de getallen in het issue staan. Wat blijft krijgt een thematische naam en een norm in de kolommen `norm_onder` en `norm_boven` van `Checks` of `ChecksBasisjaar`, en draait mee in `GenerateAll` of `GenerateBasisjaar`, of zegt in zijn Descr dat het op aanvraag is.
 
 Let bij een nieuw harnas op de naamketen. Een kale naam zoekt vanuit de container omhoog en komt dan langs de items van het hoofdharnas voordat hij de wortel bereikt, dus namen als `Casus`, `Jaar`, `Variant` en `Pad_Z` binden aan het hoofdharnas zodra je ze niet zelf definieert. Verwijs naar modelcode daarom met een absoluut pad.
 
@@ -262,15 +266,9 @@ Een item onder `/Indicatoren/<casus>/Zichtjaren/Export/PerNederland/Tabel/...` o
 
 Let ook op het pad: de exportcontainer hangt onder `Zichtjaren`, dus `/Indicatoren/<casus>/Zichtjaren/Export/...` en niet `/Indicatoren/<casus>/Export/...`.
 
-## Een variant kan de stand van een andere lenen
+## Het lenen van een allocatiestand bestaat niet meer
 
-De kolom `StandVanVariant` in `cfg/main/VariantParameters/VariantK.dms` zegt uit welke variant de indicatorenkant de standtifs leest. Staat daar de eigen naam, dan alloceert de variant zelf; staat er een andere naam, dan leent hij de stand en hoeft zijn allocatie niet te draaien. De leeskant is precies een plek, `Templates/Indicatoren_T/StandCasus_name`, die `@CASUS@` in `AllocatieFileName` vult; `Variant_rel` blijft die van de lener, dus alle variantparameters worden gewoon van de lener gelezen.
-
-Lenen is alleen geldig als lener en uitlener op alles wat de allocatie raakt gelijk zijn. `Test-LeenAanname` in `batch/Run2120.ps1` bewaakt dat voor de eerste stap: de kolommen waarop de twee verschillen moeten precies de bekende lijst zijn, en de sector Landbouw mag niet in `SectorAllocRegio` staan, want via de landbouwgeschiktheid lopen de droogleggings- en hydrologiekolommen de allocatie in. Lenen is bovendien alleen veilig bij dezelfde `ModelParameters/Skeleton`-instellingen, en daar waarschuwt niets voor.
-
-Stand van zaken: tot 8 september 2026 leende BAU2 de stand van BAU (#730); sinds Landbouw aanstaat (#780) alloceren alle varianten zelf en wijst elke rij van `StandVanVariant` naar zichzelf. Enkele Descr's in `ModelParameters/Advanced.dms`, `Templates/Indicatoren_T.dms` en de kop van `RunAll.cmd` beschrijven nog de leensituatie; de kolom is leidend. Op een LocalData uit de leenperiode ontbreekt de map `Allocatie/WLO_hoog_BAU2`, en dat is dan geen fout: beoordeel die stand bij BAU.
-
-Wat het voor de scripts betekent: `Run2120.ps1` slaat een lenende variant over, eist dat de uitlener in dezelfde aanroep meedraait, en meldt dat in het log. `RunAll.cmd`, `RunZichtjaren.cmd` en `RunScenarios.cmd` kennen het lenen niet en alloceren zo'n variant alsnog. `RunIndicatoren.ps1` hoeft niets te weten, en `ToetsOplevering.ps1` meldt een lenende variant als INFO in plaats van FAIL op een ontbrekende allocatiemap.
+Tot #870 (oktober 2026) kon een variant via de kolom `StandVanVariant` in `VariantK.dms` de standtifs van een andere variant lezen en haar eigen allocatie overslaan; `Test-LeenAanname` in `Run2120.ps1` bewaakte de aanname eronder. Sinds Landbouw alloceert (#780) leende geen enkele variant meer, en met #870 zijn de kolom, de toets en de afgeleide namen (`StandCasus_name`, `Variant_LeentStand`) verwijderd: elke variant alloceert zelf en de indicatorenkant leest de stand onder `Casus_name`. Kom je in een oudere commit of een log een lenende variant tegen, dan is dit de verklaring.
 
 ## Een productiereeks draaien
 
@@ -293,13 +291,16 @@ Een batch die je vanuit een Claude-sessie start met `Start-Process` of als achte
 Start een reeks daarom via WMI, zodat het proces onder `WmiPrvSE.exe` hangt en niet onder de sessie:
 
 ```powershell
+$pw = (Get-Command pwsh.exe).Source
 $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-  CommandLine      = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<pad>\hervat.ps1"'
+  CommandLine      = "`"$pw`" -NoProfile -ExecutionPolicy Bypass -File `"<pad>\hervat.ps1`""
   CurrentDirectory = '<werkkopie>'
 }
 ```
 
-Zet de aanroep van `Run2120.ps1` met een `*>`-omleiding naar een consolelog in dat startscript, want `Win32_Process.Create` heeft geen uitvoerkanaal. Controleer daarna dat de `ParentProcessId` van het nieuwe proces bij `WmiPrvSE.exe` hoort. Hetzelfde geldt voor alles wat langer moet leven dan de sessie: een generatiestap van een uur, een reeks diagnoses.
+Gebruik pwsh 7 en niet `powershell.exe`. `Run2120.ps1` zet `$ErrorActionPreference = 'Stop'` en roept GeoDmsRun aan met `2>&1`; onder Windows PowerShell 5.1 wordt dan de eerste regel die GeoDmsRun naar stderr schrijft, zoals een gdal-fout, een afbrekende fout. Het script stopt, schiet GeoDmsRun af en schrijft geen MISLUKT en geen regel in `status.tsv`, zodat het eruitziet als een harde kill van buitenaf (2026-09-23). Geef het volle pad mee: WMI zoekt op zijn eigen PATH, en zonder pad geeft `Create` ReturnValue 9.
+
+Zet de aanroep van `Run2120.ps1` met een `*>`-omleiding naar een consolelog in dat startscript, want `Win32_Process.Create` heeft geen uitvoerkanaal, en zet er een try/catch omheen die de melding naar hetzelfde log schrijft. Controleer daarna dat de `ParentProcessId` van het nieuwe proces bij `WmiPrvSE.exe` hoort. Hetzelfde geldt voor alles wat langer moet leven dan de sessie: een generatiestap van een uur, een reeks diagnoses.
 
 Bewaak zo'n reeks niet op de grootte van het staplog. Windows werkt de mapvermelding van een bestand dat open staat om te schrijven pas bij als de schrijver het sluit of doorspoelt, dus `Get-ChildItem` toont minutenlang een verouderde omvang en een stilstandsdetector op die omvang slaat vals alarm. Meet stilstand op de processortijd van de GeoDmsRun-processen, of lees de echte lengte door het bestand met gedeelde toegang te openen (`[IO.File]::Open(pad, 'Open', 'Read', 'ReadWrite')`), en tel de `[E]`-regels in het log als tweede signaal.
 
@@ -402,9 +403,11 @@ cp -r cfg Data git.txt /pad/naar/scratchpad/RSopen_NL2120/
 
 `Data` en `git.txt` moeten mee omdat vier bronnen aan `%ProjDir%/Data` hangen: de SOMERS-datasheet, de CBS-kerncijfers per wijk en buurt, en twee classificatietabellen. Zonder die map parseert de kopie schoon met exit 0 en valt hij pas om zodra een keten de csv opent, met 49 foutregels op `cannot open dataset`.
 
+Houd het pad van de kopie kort. De langste paden onder `cfg` tellen zelf 90 tekens, en zodra een include boven de 260 van Windows komt, stopt GeoDmsRun met exit 2 en `Cannot open configuration file` op dat bestand. Met de scratchpad van een sessie in een worktree ervoor was dat op 2026-09-22 al zo, 261 tekens bij `SourceData/Energie/analysekaarten`; een map direct onder `%TEMP%\claude` past wel.
+
 De naam van de map boven `cfg` bepaalt waar `%LocalDataProjDir%` heen wijst: `%LocalDataDir%/<naam van de map boven cfg>`. Heet de kopie anders dan het project, dan vindt de configuratie de ontkoppelde bestanden niet; dat valt niet op bij het parsen maar pas als een keten er een leest. Heet hij hetzelfde, dan leest en schrijft de kopie in dezelfde LocalData als de werkkopie. `Run2120.ps1` verwijdert de omgevingsvariabele `LocalDataProjDir` juist om deze afleiding te laten werken; vertrouw op de mapnaam en niet op de variabele om de uitvoer te verleggen.
 
-Op een gedeelde LocalData is een item zonder `StorageName` opvragen niet genoeg om niets te schrijven. Een item zonder storage kan een supplier hebben die er wel een draagt, willekeurig ver de keten in, en GeoDmsRun schrijft elk storage-item dat hij moet uitrekenen. Twee voorbeelden: `SourceData/Grondgebruik/IBIS/Result/RestrictiefWonen` schrijft via de Make-tak een tif zodra een wijziging de fingerprint verandert (vraag een niveau dieper, `Calc_RestrictiefWonen`, dan blijft het lezen), en elke afnemer van de landgebruikskaart leest sinds #803 `LandgebruikskaartNL2120/Write_Result_SA` rechtstreeks, dus die kaart wordt weggeschreven zodra hij wordt uitgerekend, in elk zichtjaar. Een diagnose op een koolstofindicator voor Y2120 liep zo op 2026-09-02 via `PrevIndicatoren` negen zichtjaren terug en schreef tien landgebruikskaarten in een opleveringsmap opnieuw; ze bleken byte-identiek, dus alleen verschoven mtimes. Er is geen veilig zichtjaar: het zichtjaar bepaalt hoeveel kaarten er meekomen, niet of er wordt geschreven. De parameter `ModelParameters/LandUseMapOntkoppeld` staat nog in de configuratie maar stuurt sinds #803 niets meer.
+Op een gedeelde LocalData is een item zonder `StorageName` opvragen niet genoeg om niets te schrijven. Een item zonder storage kan een supplier hebben die er wel een draagt, willekeurig ver de keten in, en GeoDmsRun schrijft elk storage-item dat hij moet uitrekenen. Twee voorbeelden: `SourceData/Grondgebruik/IBIS/Result/MilieuzoneWonen` schrijft via de Make-tak een tif zodra een wijziging de fingerprint verandert (vraag een niveau dieper, `Calc_MilieuzoneWonen`, dan blijft het lezen), en elke afnemer van de landgebruikskaart leest sinds #803 `LandgebruikskaartNL2120/Write_Result_SA` rechtstreeks, dus die kaart wordt weggeschreven zodra hij wordt uitgerekend, in elk zichtjaar. Een diagnose op een koolstofindicator voor Y2120 liep zo op 2026-09-02 via `PrevIndicatoren` negen zichtjaren terug en schreef tien landgebruikskaarten in een opleveringsmap opnieuw; ze bleken byte-identiek, dus alleen verschoven mtimes. Er is geen veilig zichtjaar: het zichtjaar bepaalt hoeveel kaarten er meekomen, niet of er wordt geschreven. De parameter `ModelParameters/LandUseMapOntkoppeld` staat nog in de configuratie maar stuurt sinds #803 niets meer.
 
 Veiligheid komt van de bestemming van `%LocalDataProjDir%` en van niets anders. Is de uitvoer heilig, zoals een opgeleverde run, geef de map boven `cfg` dan een eigen naam en neem de kosten van het opnieuw maken van de ontkoppelde bestanden voor lief. Kan dat echt niet, behandel de run dan als schrijvend: grep vooraf de keten op `StorageName` en volg elke `:= =` meta-keuze naar de tak die werkelijk wordt gekozen, som de mtimes in de doelmap voor en na op, volg het log tijdens de run op `storage write` zodat je afbreekt in plaats van achteraf ontdekt, en toets gewijzigde bestanden met een hash tegen een schone kopie voordat je iets over schade zegt. Een integriteitscheck op een levering hoort om dezelfde reden op hashes te toetsen en niet op mtimes.
 
@@ -417,7 +420,7 @@ De restrictie- en stimulikaarten die RSopen leest als `SourceData/Restricties/<s
 Een nieuwe set in RSopen brengen gaat in vier stappen.
 
 1. Draai het restrictieproject. Het verwacht zijn brondata op `%sourceDataDir%/Ruimtelijke_Restricties`; `sourceDataDir` staat in `HKCU\Software\ObjectVision\<machinenaam>\GeoDMS` en geldt voor alle GeoDMS-projecten tegelijk. Staat de boom een niveau dieper, dan stopt de run meteen op het CBS-gebiedsindelingenbestand en faalt daarmee de hele optelling, dus toets dat pad met `Test-Path` voordat je draait. Het schrijft naar `%LocalDataProjDir%/Output/<tijdstempel>/Restricties_<sector>_<hardheid>.tif`, en de stimuli op dezelfde manier.
-2. Kopieer die map met de hand naar `%RSo_DataDir%/Beleid/Restricties/<tijdstempel>/` (stimuli naar `Beleid/Stimuli/`). De share is schrijf-eenmaal: altijd een nieuwe tijdstempelmap, nooit een bestaande overschrijven.
+2. Kopieer die map met de hand naar `%RSo_DataDir%/Beleid/Restricties/<tijdstempel>/` (stimuli naar `Beleid/Stimuli/`). De share is alleen-lezen voor Claude: dit doet de gebruiker zelf, of Claude op expliciet verzoek van de gebruiker, en altijd in een nieuwe tijdstempelmap, nooit over een bestaande heen.
 3. Zet `ModelParameters/Restricties_filedate` of `Stimuli_filedate` op de nieuwe tijdstempel en schrijf in de Descr wat er in de set anders is dan in de vorige, met het issuenummer.
 4. Laad met trap 1 het item `SourceData/Restricties` en toets het log op `[E]`: `SourceData.dms` bouwt per combinatie uit `Actor/Sector_x_ResHardheidK` een bestandsnaam op, en een ontbrekend bestand kan met exit 0 aflopen.
 

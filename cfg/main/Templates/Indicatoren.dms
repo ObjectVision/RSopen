@@ -17,7 +17,7 @@
 // die cel (m² per woning). Drukte_gecorrigeerd_groenaanbod_per_woning = Som van drukte-gecorrigeerde
 // groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het
 // aantal omliggende woningen (m² per woning). Laadt via #include: ClaimRealisatie, Gebruiksoppervlak,
-// SloopNieuwbouwWonen, Materiaalgebruik, Inbreiding, Dichtheid, Bereikbaarheid, DeltaT.
+// SloopNieuwbouwPerWoningtype, Materiaalgebruik, Inbreiding, Dichtheid, Bereikbaarheid, DeltaT.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -57,7 +57,7 @@ Template Zichtjaar_T
 			container OP_Buurt := ='ThisVariantClassifications/Vastgoed/OP_Buurt';
 		}
 		
-		parameter<string> AllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', StandCasus_name, '@JAAR@', Zichtjaar_name, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
+		parameter<string> AllocatieFileName := replace(ModelParameters/Advanced/AllocatieFileName, '@CASUS@', Casus_name, '@JAAR@', Zichtjaar_name, '@SA@', ModelParameters/StudyArea, '@SS@', string(#/Classifications/Actor/Sector/xSubsector));
 		
 		container Stand_with_path_UNCHECKED :=
 			for_each_ndvna(
@@ -260,7 +260,8 @@ Template Zichtjaar_T
 	// }
 	
 	// #include<Gebruiksoppervlak.dms>
-	#include<SloopNieuwbouwWonen.dms>
+	#include<SloopNieuwbouwPerWoningtype.dms>
+	#include<WoningvoorraadBouwjaar.dms>
 	// #include<Materiaalgebruik.dms>
 	#include<Dichtheid.dms>
 	#include<Bereikbaarheid.dms>
@@ -398,6 +399,7 @@ Template Zichtjaar_T
 	
 	#include<Verharding.dms>
 	#include<Piekbuiberging.dms>
+	#include<Regenwaterhergebruik.dms>
 	
 	container KostenPiekbuiberging
 	{
@@ -418,6 +420,11 @@ Template Zichtjaar_T
 
 		attribute<Bool> IsNieuwbouw  (AdminDomain) := KostenWoningbouw/Nieuwbouw_Ha > 0[Ha] && WaardeNabijheidGroen/Bron_Zichtjaar/IsOPCel, Descr = "De cellen waarover het saldo wordt geboekt: netto woningen erbij sinds het basisjaar, met een pakket dat het model zelf heeft ingericht. IsOPCel is dezelfde toets als bij de groenwaardering en de piekbuiberging: een gealloceerd pakket dat geen BAG-nieuwbouw is.";
 		attribute<Ha>   Nieuwbouw_Ha (AdminDomain) := IsNieuwbouw ? AdminDomain/NrHaPerCell : 0[Ha], StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Grondexploitatie_Nieuwbouw_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdalwrite.grid", Descr = "De hectares waarover het saldo is geboekt, elk voor de volle cel. De noemer van de kolom per hectare in de indicatorentabel; kleiner dan KostenWoningbouw/Nieuwbouw_Ha met precies de BAG-nieuwbouw.";
+
+		attribute<Bool> IsGealloceerdDitZichtjaar (AdminDomain) := = IsFirstAllocYear
+			? 'IsNieuwbouw'
+			: 'IsNieuwbouw && !/Classifications/Actor/Sector/xSubsector/LegtCelVast[PrevStand/SubSector_rel]'
+		, Descr = "De cellen van IsNieuwbouw die de allocatie in dit zichtjaar heeft bebouwd: aan het begin van de periode lag de cel nog niet vast, dezelfde toets als IsGealloceerd in SloopNieuwbouwPerWoningtype. Alleen op die cellen is SaldoKeuze het saldo waarop de allocatie koos; een cel van een eerder zichtjaar rekent deze indicator met de vervangingsfactor en de labelopslag van dit zichtjaar door, en die lagen anders toen de allocatie hem koos.";
 
 		container Posten
 		: Descr = "De posten van het saldo, in dezelfde volgorde als in de geschiktheid en elk voor de volle cel van het gealloceerde pakket. Alle bedragen zijn nul buiten IsNieuwbouw."
@@ -440,23 +447,49 @@ Template Zichtjaar_T
 			container      Piekbui        := ='ThisVariantData/Suitability/src/Wonen/Piekbuibergingkosten';
 			attribute<Eur> Piekbuiberging (AdminDomain) :=
 				MakeDefined(
-					  (Piekbui/PerBuurt/ExclDoorlatendGroen[Stand/OP_rel] + Piekbui/PerBuurt/DoorlatendGroen[Stand/OP_rel] * float32(/BaseData/Omgeving/NbSOPToepassingsgebied/Hoog_NL))
+					  (Piekbui/PerBuurt/ExclDoorlatendGroen[Stand/OP_rel] + Piekbui/PerBuurt/DoorlatendGroen[Stand/OP_rel] * float32(/BaseData/Omgeving/HogeGronden))
 					* float32(IsNieuwbouw) * AdminDomain/NrHaPerCell[float32]
 					, 0[Eur]
 				)
 			, Descr = "De aanlegkosten van de bergingsmaatregelen van het gealloceerde pakket (#798), dezelfde formule als Piekbuibergingkosten/perOP maar met het gealloceerde pakket in plaats van per pakket.";
 
-			attribute<Eur> Verwerving_Woningen0    (AdminDomain) := MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal, 0[Eur]), Descr = "De verwervingswaarde van de woningen die er in het basisjaar stonden, voor de funderingsafwaardering.";
-			attribute<Eur> Funderingsafwaardering  (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, Funderingsschade/Src/Waardevermindering), 0[Eur]), Descr = "Uit de indicator Funderingsschade, die dezelfde formule als de geschiktheid draagt: nul in een variant waarin de schade wordt hersteld.";
+			attribute<Eur> Verwerving_Woningen0    (AdminDomain) := ='MakeDefined(/BaseData/Suitabilities/Wonen/Opstalkosten/PerZichtjaar/'+Zichtjaar_name+'/Verwerving_Woningen/Result, 0[Eur])'
+			, Descr = "De verwervingskosten van de woningen, uitgesmeerd over het perceel zoals in de geschiktheid: de hedonische waarde min de korting voor corporatiebezit, maal de vervangingsfactor van dit zichtjaar (#861, #859).";
+			attribute<Eur> Funderingsafwaardering  (AdminDomain) := = VariantParameters/VariantK/FunderingschadeWordtHersteld[Variant_rel]
+				? 'const(0[Eur], AdminDomain)'
+				: 'min_elem(MakeDefined(/BaseData/Suitabilities/Wonen/Opstalkosten/Funderingsschade/Result, 0[Eur]), Verwerving_Woningen0) * Funderingsschade/Src/Verdiscontering/Factor'
+			, Descr = "De afwaardering voor funderingsschade zoals in de geschiktheid: de schade uitgesmeerd over het perceel, begrensd op de verwervingskosten hierboven; nul in een variant waarin de schade wordt hersteld.";
 			attribute<Eur> Verwerving_Woningen     (AdminDomain) := max_elem(Verwerving_Woningen0 - Funderingsafwaardering, 0[Eur]);
-			attribute<Eur> Verwerving_NietWoningen (AdminDomain) := MakeDefined(/BaseData/Suitabilities/Wonen/Verwervingskosten/Niet_Woningen/Totaal, 0[Eur]);
+			attribute<Eur> Verwerving_NietWoningen (AdminDomain) := MakeDefined(/BaseData/Suitabilities/Wonen/Opstalkosten/Verwerving_NietWoningen/Result, 0[Eur]), Descr = "Uitgesmeerd over het perceel, zoals in de geschiktheid.";
 			attribute<Eur> Verwerving_Grond        (AdminDomain) := = /ModelParameters/Wonen/Grondwaarde/GrondwaardeInSaldo
 				? 'Verwerving_Woningen0 > 0[Eur] ? 0[Eur] : MakeDefined(/ModelParameters/Wonen/Grondwaarde/PerKlasse[/BaseData/StartState/Bodemstatistiek/gg_CBS] * AdminDomain/NrHaPerCell, 0[Eur])'
 				: 'const(0[Eur], AdminDomain)'
 			, Descr = "De grond zelf (#787), alleen waar geen woning staat, want de grond onder een woning zit al in de WOZ.";
-			attribute<Eur> Verwerving (AdminDomain) := float32(IsNieuwbouw) * (Verwerving_Woningen + Verwerving_NietWoningen + Verwerving_Grond), Descr = "Dezelfde drie delen als Verwervingskosten/Totaal in de geschiktheid.";
-			attribute<Eur> Sloop      (AdminDomain) := float32(IsNieuwbouw) * (MakeDefined(/BaseData/Suitabilities/Wonen/Sloopkosten/Totaal, 0[Eur]) + MakeDefined(/BaseData/Suitabilities/Wonen/Sloopkosten/Totaal_niet_woningen, 0[Eur])), Descr = "Woningen en niet-woningen, zoals Sloopkosten/Totaal in de geschiktheid.";
+			attribute<Eur> Verwerving (AdminDomain) := float32(IsNieuwbouw) * (Verwerving_Woningen + Verwerving_NietWoningen + Verwerving_Grond), Descr = "Dezelfde drie delen als Verwervingskosten/Totaal in de geschiktheid, uitgesmeerd over het perceel en met de vervangingsfactor en de corporatiekorting, maar zonder de opslagen naar koopaandeel, bouwperiode en energielabel (#799).";
+			attribute<Eur> Sloop      (AdminDomain) := float32(IsNieuwbouw) * (MakeDefined(/BaseData/Suitabilities/Wonen/Opstalkosten/Sloop_Woningen/Result, 0[Eur]) + MakeDefined(/BaseData/Suitabilities/Wonen/Opstalkosten/Sloop_NietWoningen/Result, 0[Eur])), Descr = "Woningen en niet-woningen, uitgesmeerd over het perceel zoals Sloopkosten/Totaal in de geschiktheid (#861).";
 		}
+
+		container PerPerceel
+		: Descr = "De nabouw van het saldo per perceel van de geschiktheid (Templates/Suitabilities/Suitability_Wonen_perOP_T, PerPerceel, #861) over de cellen die de allocatie in dit zichtjaar op een
+					perceel met een pand heeft bebouwd: hun gemiddelde Saldo min de verwerving en de sloop van de rest van het perceel, verdeeld over die cellen. Exact waar de allocatie in dit
+					zichtjaar elke cel van het perceel met hetzelfde pakket heeft bebouwd; nam de allocatie een deel, dan weet de indicator niet welke cellen beschikbaar waren en is het een
+					benadering. De kaart Saldo blijft per cel en draagt op een deels bebouwd perceel alleen het deel van de verwerving dat over de gebouwde cellen is uitgesmeerd."
+		{
+			unit<UInt32>       Perceel     := /BaseData/Suitabilities/Wonen/Opstalkosten/Perceel;
+			attribute<Perceel> Eenheid_rel (AdminDomain) := /BaseData/Suitabilities/Wonen/Opstalkosten/Eenheid_rel;
+			attribute<Bool>    OpEenheid   (AdminDomain) := IsDefined(Eenheid_rel) && /BaseData/Suitabilities/Wonen/Opstalkosten/HeeftOpstal[Eenheid_rel] && IsGealloceerdDitZichtjaar, Descr = "Cel die de allocatie in dit zichtjaar heeft bebouwd, op een perceel met een pand.";
+			attribute<Eur>     Opstal      (AdminDomain) := Posten/Verwerving - float32(IsNieuwbouw) * Posten/Verwerving_Grond + Posten/Sloop, Descr = "De verwerving en de sloop van het opstal op een gealloceerde cel, zoals Opstal in de geschiktheid.";
+			attribute<UInt32>  Gealloceerd (Perceel)     := sum_uint32(OpEenheid, Eenheid_rel), Descr = "Het aantal cellen van het perceel dat de allocatie in dit zichtjaar heeft bebouwd.";
+			attribute<Bool>    IsHeel      (Perceel)     := uint64(Gealloceerd) == /BaseData/Suitabilities/Wonen/Opstalkosten/CellenPerEenheid && max(OpEenheid ? uint32(Stand/OP_rel) : null_u, Eenheid_rel) == min(OpEenheid ? uint32(Stand/OP_rel) : null_u, Eenheid_rel), Descr = "Heeft de allocatie in dit zichtjaar elke cel van het perceel met hetzelfde pakket bebouwd? Dan is de nabouw exact.";
+			attribute<Eur>     SaldoPerceel (Perceel)    := mean(OpEenheid ? Saldo : null_f[Eur], Eenheid_rel) - mean(OpEenheid ? Opstal : null_f[Eur], Eenheid_rel) * (float32(/BaseData/Suitabilities/Wonen/Opstalkosten/CellenPerEenheid) - float32(Gealloceerd)) / float32(Gealloceerd), Descr = "Het saldo per gealloceerde cel van het perceel als geheel.";
+		}
+		attribute<Eur> SaldoKeuze (AdminDomain) := PerPerceel/OpEenheid ? PerPerceel/SaldoPerceel[PerPerceel/Eenheid_rel] : Saldo
+		, Descr = "Het saldo waarop de allocatie koos: Saldo, en op een perceel met een pand het saldo van het perceel als geheel (PerPerceel). Het laagste SaldoKeuze van de cellen waar die nabouw exact is hoort op of boven de zeefdrempel VariantK/MinimumExploitatieSaldo te liggen; zie Saldo_Min_BovenDrempel. Geen uitvoer.";
+		attribute<Bool> OpVrijgekomenPerceel (AdminDomain) := ='/VariantData/'+Variant_name+'/Herontwikkelingskans/PerZichtjaar/'+Zichtjaar_name+'/IsVrij_AdminDomain', Descr = "Een cel van een perceel dat de herontwikkelingskans uiterlijk in dit zichtjaar vrij liet (#869): daar geldt de zeefdrempel niet, dus zo'n cel telt niet mee in Saldo_Min.";
+		attribute<Bool> IsExact (AdminDomain) := IsGealloceerdDitZichtjaar && !OpVrijgekomenPerceel && (!PerPerceel/OpEenheid || PerPerceel/IsHeel[PerPerceel/Eenheid_rel]), Descr = "Een cel die de allocatie in dit zichtjaar heeft bebouwd, niet op een vrijgekomen perceel, en waar SaldoKeuze precies het saldo is waarop de allocatie koos: buiten een perceel met een pand, of op een perceel dat in dit zichtjaar helemaal met een pakket is bebouwd.";
+		parameter<Eur> Saldo_Min := min(IsExact ? SaldoKeuze : null_f[Eur]), Descr = "Het laagste saldo waarop de allocatie in dit zichtjaar koos, over de cellen van dit zichtjaar waar de nabouw exact is.";
+		parameter<Eur> Saldo_Min_BovenDrempel := Saldo_Min - VariantParameters/VariantK/MinimumExploitatieSaldo[Variant_rel]
+		, Descr = "Hoeveel het laagste saldo waarop de allocatie in dit zichtjaar koos boven de zeefdrempel ligt, de toets van #799: nul of positief, want de zeef laat geen cel onder de drempel door; negatief betekent dat deze nabouw een andere post rekent dan de geschiktheid. Alleen de cellen van dit zichtjaar tellen, zie IsGealloceerdDitZichtjaar. De controlewaarde grondexploitatie_min_boven_drempel in Diagnose/Checks.";
 
 		attribute<Eur> Saldo (AdminDomain) :=
 			IsNieuwbouw
@@ -466,17 +499,56 @@ Template Zichtjaar_T
 		, StorageType = "gdalwrite.grid"
 		, Descr = "Het exploitatiesaldo van het gealloceerde pakket, in euro per cel voor de volle cel. Negatief is een tekort dat elders gedekt moet worden, positief een overschot. Leeg buiten de cellen met nieuwbouw, zodat de kaart de nul van een gebouwde cel kan onderscheiden van een cel waar niets is gebeurd.";
 
+		container PostenNieuwbouw
+		: Descr = "De negen posten op de voet van het saldo (#828): nul buiten IsNieuwbouw, zodat ze per regio optellen tot Saldo. Posten zelf draagt die voet niet voor de drie posten uit KostenWoningbouw, want
+					die tellen ook de BAG-nieuwbouw van #550, waarover geen saldo is geboekt; daarom tellen de geleverde kolommen KostenWoningbouw_Bouwkosten, _Regulier en _MeerkostenBodemdaling niet op tot
+					Grondexploitatie_Saldo. Vier posten schrijven een tif voor de tabelrun met ModelParameters/TabellenUitExport: opbrengsten, piekbuiberging, verwerving en sloop; de andere vijf zijn in Lees
+					uit de tifs van KostenWoningbouw en Nieuwbouw_Ha af te leiden, met dezelfde opslagen als hier."
+		{
+			parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Grondexploitatie_Post_@V@_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif', Descr = "De vier tifs; @V@ is de post.";
+
+			attribute<Eur> Opbrengsten      (AdminDomain) := float32(IsNieuwbouw) * Posten/Opbrengsten, StorageName = "=replace(StorageStr, '@V@', 'Opbrengsten')", StorageType = "gdalwrite.grid";
+			attribute<Eur> Bouwsom          (AdminDomain) := float32(IsNieuwbouw) * Posten/Bouwsom;
+			attribute<Eur> BijkomendeKosten (AdminDomain) := float32(IsNieuwbouw) * Posten/BijkomendeKosten;
+			attribute<Eur> WinstEnRisico    (AdminDomain) := float32(IsNieuwbouw) * Posten/WinstEnRisico;
+			attribute<Eur> Grondproductie   (AdminDomain) := float32(IsNieuwbouw) * Posten/Grondproductie;
+			attribute<Eur> Bodemdaling      (AdminDomain) := float32(IsNieuwbouw) * Posten/Bodemdaling;
+			attribute<Eur> Piekbuiberging   (AdminDomain) := Posten/Piekbuiberging, StorageName = "=replace(StorageStr, '@V@', 'Piekbuiberging')", StorageType = "gdalwrite.grid", Descr = "Draagt de voet al in Posten.";
+			attribute<Eur> Verwerving       (AdminDomain) := Posten/Verwerving,     StorageName = "=replace(StorageStr, '@V@', 'Verwerving')",     StorageType = "gdalwrite.grid", Descr = "Idem.";
+			attribute<Eur> Sloop            (AdminDomain) := Posten/Sloop,          StorageName = "=replace(StorageStr, '@V@', 'Sloop')",          StorageType = "gdalwrite.grid", Descr = "Idem.";
+		}
+
 		// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
 		container Lees
 		: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
 		{
 			attribute<Eur> Saldo (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Grondexploitatie_Saldo_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
 			attribute<Ha> Nieuwbouw_Ha (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Grondexploitatie_Nieuwbouw_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			// De negen posten (#828): vier uit hun eigen tif, de andere vijf afgeleid uit Nieuwbouw_Ha en de tifs van KostenWoningbouw, met dezelfde opslagen als in Posten.
+			attribute<Eur> Post_Opbrengsten      (AdminDomain) : StorageName = "=replace(PostenNieuwbouw/StorageStr, '@V@', 'Opbrengsten')",    StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> Post_Piekbuiberging   (AdminDomain) : StorageName = "=replace(PostenNieuwbouw/StorageStr, '@V@', 'Piekbuiberging')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> Post_Verwerving       (AdminDomain) : StorageName = "=replace(PostenNieuwbouw/StorageStr, '@V@', 'Verwerving')",     StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> Post_Sloop            (AdminDomain) : StorageName = "=replace(PostenNieuwbouw/StorageStr, '@V@', 'Sloop')",          StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Bool> IsNieuwbouw          (AdminDomain) := Nieuwbouw_Ha > 0[Ha];
+			attribute<Eur> Post_Bouwsom          (AdminDomain) := float32(IsNieuwbouw) * KostenWoningbouw/Lees/Bouwkosten;
+			attribute<Eur> Post_BijkomendeKosten (AdminDomain) := Post_Bouwsom * /ModelParameters/Wonen/Exploitatieposten/BijkomendeKostenOpslag;
+			attribute<Eur> Post_WinstEnRisico    (AdminDomain) := (Post_Bouwsom + Post_BijkomendeKosten) * /ModelParameters/Wonen/Exploitatieposten/WinstEnRisicoFractie;
+			attribute<Eur> Post_Grondproductie   (AdminDomain) := float32(IsNieuwbouw) * KostenWoningbouw/Lees/Regulier;
+			attribute<Eur> Post_Bodemdaling      (AdminDomain) := float32(IsNieuwbouw) * KostenWoningbouw/Lees/MeerkostenBodemdaling;
 		}
 		container Live
 		{
 			attribute<Eur> Saldo        (AdminDomain) := Grondexploitatie/Saldo;
 			attribute<Ha>  Nieuwbouw_Ha (AdminDomain) := Grondexploitatie/Nieuwbouw_Ha;
+			attribute<Eur> Post_Opbrengsten      (AdminDomain) := PostenNieuwbouw/Opbrengsten;
+			attribute<Eur> Post_Bouwsom          (AdminDomain) := PostenNieuwbouw/Bouwsom;
+			attribute<Eur> Post_BijkomendeKosten (AdminDomain) := PostenNieuwbouw/BijkomendeKosten;
+			attribute<Eur> Post_WinstEnRisico    (AdminDomain) := PostenNieuwbouw/WinstEnRisico;
+			attribute<Eur> Post_Grondproductie   (AdminDomain) := PostenNieuwbouw/Grondproductie;
+			attribute<Eur> Post_Bodemdaling      (AdminDomain) := PostenNieuwbouw/Bodemdaling;
+			attribute<Eur> Post_Piekbuiberging   (AdminDomain) := PostenNieuwbouw/Piekbuiberging;
+			attribute<Eur> Post_Verwerving       (AdminDomain) := PostenNieuwbouw/Verwerving;
+			attribute<Eur> Post_Sloop            (AdminDomain) := PostenNieuwbouw/Sloop;
 		}
 		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
 		, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
@@ -517,6 +589,7 @@ Template Zichtjaar_T
 		
 		unit<uint8>  OP           := = Zichtjaar_name+'/impl/StandVar/OP';
 		unit<uint8>  OPSubklasseK := Classifications/Grondgebruik/OPSubklasseK;
+		unit<uint8>  InrichtingstypeK := Classifications/Grondgebruik/InrichtingstypeK;
 		unit<uint32> Regio        := = Regio_ref;
 		container    OP_Buurt     := = Zichtjaar_name+'/impl/StandVar/OP_Buurt';
 		
@@ -592,20 +665,26 @@ Template Zichtjaar_T
 							
 							parameter<string> SrcRef := OPSubklasseK/SrcRef[id];
 							
-							parameter<float32> NDVI       := = 'OPSubklasseK/NDVI_'+NDVI_variant_ref+'[id]';
-							parameter<float32> NDVI_NbSOP := = 'OPSubklasseK/NDVI_NbSOP_'+NDVI_variant_ref+'[id]';
+							attribute<float32> NDVI (InrichtingstypeK) := ='union_data(InrichtingstypeK, '+AsItemList('OPSubklasseK/NDVI_'+NDVI_variant_ref+'_'+InrichtingstypeK/name+'[id]')+')', Descr = "De NDVI van deze subklasse per inrichtingstype.";
 							
-							attribute<float32> NDVI_OP0      (OP) := = '(OP_Buurt/Terreinoppervlakte/Totaal/'+SrcRef+'[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32]) * '+string(NDVI)+'[float32]';
-							attribute<float32> NDVI_NbSOP_OP (OP) := = '(OP_Buurt/Terreinoppervlakte/Totaal/'+SrcRef+'[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32]) * '+string(NDVI_NbSOP)+'[float32]';
-							attribute<float32> NDVI_OP       (OP) := OP/IsNbSOP ? NDVI_NbSOP_OP : NDVI_OP0;
+							attribute<float32> Aandeel (OP) := = '(OP_Buurt/Terreinoppervlakte/Totaal/'+SrcRef+'[float32] / OP_Buurt/Terreinoppervlakte/Totaal[float32])', Descr = "Het aandeel van deze subklasse in de buurt van het pakket.";
+							attribute<float32> NDVI_OP (OP) := Aandeel * NDVI[OP/Inrichtingstype_rel];
 						}
 					}
 				}
 				
-				// #608: nieuwe woonbouw (OP_rel gezet, alleen op nieuw/BAG-nieuwbouw) -> OP-compositie NDVI;
-				// veranderde cel met sector-alloc (bv. nieuw werken) -> platte sector-NDVI; veranderd naar
-				// exogene natuur -> beheertype-NDVI; onveranderd -> echte basisjaar-LGN-waarde (delta = 0).
-				attribute<float32> Src                          (AdminDomain) := ='IsDefined(SrcSrc/UitGrondgebruikOPAlloc/Result) ? SrcSrc/UitGrondgebruikOPAlloc/Result : (IsVeranderd && IsDefined(SrcSrc/UitGrondgebruikAlloc)) ? SrcSrc/UitGrondgebruikAlloc : (IsVeranderd && IsDefined(SrcSrc/UitGrondgebruikExogeen)) ? SrcSrc/UitGrondgebruikExogeen : BaseYear/NDVI/SrcSrc';
+				attribute<Bool> Uitgesloten_Alloc   (AdminDomain) := = IsStartYear ? 'const(FALSE, AdminDomain)' : 'LGNKlasse/ndvi_excl[ThisVariantClassifications/Actor/Sector/LGNKlasse_rel[Stand/Sector_rel]]'
+				, Descr = "Valt de LGN-klasse van de gealloceerde sector buiten de groenindex, zoals water? Dezelfde uitsluiting als in het basisjaar (BaseYear/NDVI/SrcSrc), zodat nieuw water niet met een lage groenindex meetelt waar bestaand water niet meetelt.";
+				attribute<Bool> Uitgesloten_Exogeen (AdminDomain) := = IsStartYear ? 'const(FALSE, AdminDomain)' : '/Classifications/Grondgebruik/LandgebruikType/ndvi_excl[Stand/Landgebruik_Type]'
+				, Descr = "Idem voor het type in de stand-administratie, zoals water, kwelder of duin.";
+
+				// #608: nieuwe woonbouw van het model (OP_rel gezet) -> OP-compositie NDVI; veranderde cel met sector-alloc
+				// (bv. nieuw werken) -> platte sector-NDVI; veranderd naar exogene natuur -> beheertype-NDVI; onveranderd ->
+				// echte basisjaar-LGN-waarde (delta = 0). Een veranderde cel met een klasse of type buiten de groenindex
+				// wordt leeg, net als in het basisjaar. BAG-nieuwbouw houdt de waarneming van het basisjaar, net als de
+				// verharding en de groenfracties (#550): LGN en BGT zijn van na het basisjaar en zien die woningen al.
+				attribute<float32> Src                          (AdminDomain) := ='WaardeNabijheidGroen/Bron_Zichtjaar/IsBAGnieuwbouwWonen ? BaseYear/NDVI/SrcSrc : IsDefined(SrcSrc/UitGrondgebruikOPAlloc/Result) ? SrcSrc/UitGrondgebruikOPAlloc/Result : (IsVeranderd && IsDefined(SrcSrc/UitGrondgebruikAlloc)) ? (Uitgesloten_Alloc ? null_f : SrcSrc/UitGrondgebruikAlloc) : (IsVeranderd && IsDefined(SrcSrc/UitGrondgebruikExogeen)) ? (Uitgesloten_Exogeen ? null_f : SrcSrc/UitGrondgebruikExogeen) : BaseYear/NDVI/SrcSrc'
+				, Descr = "De groenindex van de cel in dit zichtjaar: de inrichting van het gealloceerde pakket, de LGN-klasse van de gealloceerde sector of het nieuwe type, en anders de waarneming van het basisjaar. Een BAG-nieuwbouwcel houdt die waarneming, want LGN en BGT van na het basisjaar zien die woningen al (#550).";
 				attribute<float32> Result                       (AdminDomain) := = replace(CalcStrNDVI, '@', 'Src'), StorageName = "=replace(StorageStr, '@V@', 'NDVI_500m')", StorageType = "gdalwrite.grid", Descr = "De groenindex van deze cel, gemiddeld over een straal van 500 meter.";
 				attribute<float32> VeranderingTovPrevZichtjaar  (AdminDomain) := Result - PrevZichtjaar/NDVI/Result, Descr = "Verandering van de groenindex op deze locatie sinds het vorige zichtjaar.";
 				attribute<float32> VeranderingOpLocatie         (AdminDomain) := Result - BaseYear/NDVI/Result, StorageName = "=replace(StorageStr, '@V@', 'NDVI_VeranderingOpLocatie')", StorageType = "gdalwrite.grid", Descr = "Verandering van de groenindex op deze locatie sinds het basisjaar. Dit is wat een zittende bewoner merkt: nul zolang er in de omgeving niets verandert.";
@@ -652,7 +731,9 @@ Template Zichtjaar_T
 	container Funderingsschade
 	{
 		container Src
-		: Descr = "Zelfde formules als in de suitability (Suitability_Wonen_perOP_T/Verwervingskosten/Funderingsschade), maar met de ongemaskeerde woningwaarde. De suitability-versie is per OP vermenigvuldigd met IsBeschikbaar_zichtjaar; daardoor zou het indicatortotaal van de Waardevermindering afhangen van de beschikbaarheid van een willekeurig gekozen OP."
+		: Descr = "Dezelfde formules als in de geschiktheid (Suitability_Wonen_perOP_T/Verwervingskosten/Funderingsschade), maar begrensd op de hedonische waarde van de woningen in de cel zelf: zonder
+					het beschikbaarheidsmasker per pakket, dat het totaal zou laten afhangen van een willekeurig gekozen pakket, en zonder de uitsmering over het perceel en de opslagen van de geschiktheid
+					(#861, #860), want de schade valt op de woning en de opslagen zijn geen geld."
 		{
 			attribute<Eur> k            (CompactedAdminDomain) := /SourceData/Vastgoed/Funderingsschade/per_pand/k, Descr = "Funderingsschade per cel: per-pand-toerekening k_i, na per-woning-cap (P99) en herverdeling binnen de buurt, uitgesmeerd via de toedelingsmatrix.";
 			attribute<Eur> Woningwaarde (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Wonen/Verwervingskosten/Woningen/Totaal), Descr = "Verwervingswaarde van de bestaande woningen per cel, zonder OP-beschikbaarheidsmasker; cap voor de waardevermindering.";
@@ -855,8 +936,10 @@ Template Zichtjaar_T
 		attribute<Bool> IsVeenDeelgebied     (AdminDomain) := !/SourceData/RegioIndelingen/Waterbergingsregio/IsRestRegio[/SourceData/RegioIndelingen/Waterbergingsregio/Per_AdminDomain]
 		, Descr = "Ligt de cel in een van de acht veen-deelgebieden waarvoor Deltares een waterbergingsopgave levert (#575)? Buiten die deelgebieden is de claim nul, dus dit vlaggetje hoort niets af te snijden; het staat er om de indicator te begrenzen tot waar hij over gaat.";
 
-		attribute<Bool> IsWaterbergingsCel   (AdminDomain) := Stand/Sector_rel == /Classifications/Actor/Sector/V/Waterberging
-		, Descr = "Cel die aan de sector Waterberging is toegewezen. Stand/Sector_rel houdt de toewijzing van eerdere perioden vast, dus dit is cumulatief ten opzichte van het basisjaar.";
+		attribute<Bool> IsWaterbergingsCel   (AdminDomain) := = ModelParameters/SectorAllocRegio/Uq_Sectors/HasWaterbergingSector
+														? 'Stand/Sector_rel == /Classifications/Actor/Sector/V/Waterberging'
+														: 'const(FALSE, AdminDomain)'
+		, Descr = "Cel die aan de sector Waterberging is toegewezen. Stand/Sector_rel houdt de toewijzing van eerdere perioden vast, dus dit is cumulatief ten opzichte van het basisjaar. Zonder de sector in ModelParameters/SectorAllocRegio bestaat Sector/V/Waterberging niet en is dit overal onwaar.";
 
 		attribute<Bool> NieuweNatuur         (AdminDomain) := WordtGesloopt && KrijgtOplegging
 		, Descr = "Oorzaak een: de cel wordt leeggemaakt en er komt nieuwe natuur of water voor in de plaats (#519). Sinds de sloop de sloopkaart van de levering volgt (#620) is dit de doorsnede van de oplegging en WordtGesloopt; die snede houdt de indicator vrij van dubbeltelling.";

@@ -11,8 +11,9 @@
 // tekstbestand schrijft, per casus en zichtjaar; ChecksBasisjaar doet hetzelfde voor grootheden van het
 // basisjaar, een keer per casus. De thematische containers eronder schrijven de uitdraaien die niet in een
 // getal passen. Casus en zichtjaar komen uit de omgevingsvariabelen DiagCasus en DiagJaar. Aanroep:
-// GenerateAll per zichtjaar en GenerateBasisjaar per casus, allebei vanuit batch/Run2120.ps1; het oordeel
-// velt batch/ToetsOplevering.ps1, die de bestanden leest.
+// GenerateAll per zichtjaar en GenerateBasisjaar per casus, allebei vanuit batch/Run2120.ps1. De norm van een
+// regel staat in de kolommen norm_onder en norm_boven, en Uitvoer schrijft per casus en zichtjaar een csv met
+// het oordeel, die batch/ToetsOplevering.ps1 leest (#833).
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -20,7 +21,7 @@ container Diagnose
 : Descr = "Het controleharnas: schrijft per casus en zichtjaar een set controlewaarden naar losse tekstbestanden onder %LocalDataProjDir%/Diagnose, en daarnaast de thematische uitdraaien die niet
 			in een getal passen. Alles wat hier staat draait mee in GenerateAll of GenerateBasisjaar, behalve wat de Descr van zijn container als op aanvraag aanmerkt; wie zo'n uitdraai leest
 			controleert de mtime tegen de eigen run, want een oude uitdraai blijft staan. Een harnas dat een vraag uit een issue beantwoordt is tijdelijk en gaat weg zodra het issue dicht is,
-			de meting staat dan in het issue; wat blijft heeft een thematische naam en, waar het een controlewaarde is, een norm in batch/ToetsOplevering.ps1."
+			de meting staat dan in het issue; wat blijft heeft een thematische naam en, waar het een controlewaarde is, een norm in norm_onder en norm_boven van Checks of ChecksBasisjaar."
 {
 	parameter<String> Casus   := replace_value(expand(., '%env:DiagCasus%'), 'env:DiagCasus', 'WLO_hoog_NbSGenuanceerd');
 	parameter<String> Jaar    := =replace_value(expand(., '%env:DiagJaar%'),  'env:DiagJaar',  quote('Y'+string(ModelParameters/Model_FirstZichtjaar)))
@@ -33,12 +34,40 @@ container Diagnose
 	parameter<String> Pad_B := '/Diagnose/Basisjaar/', Descr = "De container Basisjaar hieronder, het pad van de rijen in ChecksBasisjaar.";
 	parameter<String> Pad_D := '/Diagnose/', Descr = "Dit harnas zelf, voor rijen in Checks die een parameter uit een thematische container lezen.";
 
+	container Voorwaarde
+	: Descr = "Wanneer een controle zinvol is, als korte namen voor de kolom vereist van Checks en voor de uitdraaien die buiten die tabel staan. Een sector die niet in ModelParameters/SectorAllocRegio staat,
+				of een indicatordomein dat de projectlijn niet levert (ModelParameters/Indicatoren/Domein), zet een controle op null en een uitdraai op een regel niet_van_toepassing, zodat een run met
+				alleen wonen en werken dit harnas zonder fouten doorloopt; batch/ToetsOplevering.ps1 telt beide als niet van toepassing."
+	{
+		parameter<Bool> MetWonen           := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector;
+		parameter<Bool> MetWerken          := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector;
+		parameter<Bool> MetWaterberging    := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWaterbergingSector;
+		parameter<Bool> MetVerblijfsrecreatie := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector;
+		parameter<Bool> WonenOpNVM         := /ModelParameters/SectorAllocRegio/AllocRegio_name[first(/ModelParameters/SectorAllocRegio/WonenAllocRegio/org_rel)] == 'NVM'
+		, Descr = "Alloceert wonen als eerste op NVM? Alleen dan bestaat de claimrealisatie van wonen per NVM-regio waar claimreal_NVM_woningen naar kijkt. Zonder wonen is de opzoeking leeg en de vergelijking onwaar.";
+		parameter<Bool> ProvincieAlsAllocRegio := any(lowercase(/ModelParameters/SectorAllocRegio/Uq_AllocRegios/AllocRegio_name) == lowercase('Provincie'))
+		, Descr = "Is de provincie een allocatieregio? Alleen dan bestaat de claimrealisatie per provincie waar claimreal_Provincie_banen naar kijkt. In NL2120 komt hij mee met de landbouw; een projectlijn zonder landbouw, zoals Space for Energy, heeft hem niet.";
+		parameter<Bool> DomeinGrondgebruik := /ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Grondgebruik];
+		parameter<Bool> DomeinWonen        := /ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Wonen];
+		parameter<Bool> DomeinWater        := /ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Water];
+		parameter<Bool> DomeinNatuur       := /ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Natuur];
+		parameter<Bool> DomeinKoolstof     := /ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Koolstof];
+		parameter<Bool> DomeinSloop        := /ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Sloop];
+		parameter<Bool> DomeinLandgebruikskaart := /ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Landgebruikskaart];
+
+		parameter<String> Zonder_Wonen        := 'niet_van_toepassing;de sector Wonen doet in deze run niet mee';
+		parameter<String> Zonder_Werken       := 'niet_van_toepassing;de sector Werken doet in deze run niet mee';
+		parameter<String> Zonder_Waterberging := 'niet_van_toepassing;de sector Waterberging doet in deze run niet mee';
+		parameter<String> Zonder_DomeinLandgebruikskaart := 'niet_van_toepassing;deze projectlijn levert de landgebruikskaart niet';
+		parameter<String> Zonder_DomeinWater  := 'niet_van_toepassing;deze projectlijn levert het indicatordomein Water niet, of wonen of werken doet niet mee';
+	}
+
 	// De vier kolommen hieronder en nrofrows moeten met de hand in de pas blijven. Een lijst die LANGER is
 	// dan het domein valt luid om (DoArrayAssignment: Index N out of range); een lijst die KORTER is wordt
 	// stil met nulls aangevuld en de uitdraai ziet er dan normaal uit. De IntegrityCheck op elke lijst vangt
 	// dat tweede geval. Hij staat inline op de data, want een check op een aparte parameter geeft Invalid
 	// Recursion in UpdateMetaInfo; zie de skill geodms-valkuilen.
-	unit<uint32> Checks : nrofrows = 46
+	unit<uint32> Checks : nrofrows = 56
 	{
 		//                        pad, aggregatie, item
 		//   pad: Z = onder het zichtjaar van de indicatoren, V = variantdata, A = allocatie, D = een parameter in dit harnas
@@ -66,6 +95,11 @@ container Diagnose
 			,'sloop_zondermasker_veen', 'sloop_zondermasker_buiten'
 			,'sloop_opslot_geen_natuur_veen', 'sloop_opslot_geen_natuur_kust', 'sloop_opslot_geen_natuur_rivieren'
 			,'waterberging_regios_met_tekort', 'groenwaarde_lek_eur', 'verharding_cellen_gedaald', 'ijburg2_woningen_groei'
+			,'koolstof_keten_null_cellen', 'koolstof_vastlegging_keten_min', 'koolstof_afboeking_keten_max'
+			,'woningtype_eengezins_afwijking'
+			,'claimreal_NVM_onder_alarm', 'grondbalans_rest_fractie'
+			,'piekbui_opgave_mln_m3', 'piekbui_aanbod_op_wbcellen_mln_m3', 'piekbui_aanbod_sluiting_mln_m3'
+			,'grondexploitatie_min_boven_drempel'
 		], IntegrityCheck = "all(IsDefined(this))";
 
 		attribute<String> pad :
@@ -88,6 +122,11 @@ container Diagnose
 			,'V','V'
 			,'V','V','V'
 			,'D','D','D','D'
+			,'D','D','D'
+			,'D'
+			,'D', 'D'
+			,'D', 'D', 'D'
+			,'Z'
 		], IntegrityCheck = "all(IsDefined(this))";
 
 		attribute<String> aggr :
@@ -110,6 +149,11 @@ container Diagnose
 			,'p','p'
 			,'p','p','p'
 			,'p','p','p','p'
+			,'p','p','p'
+			,'p'
+			,'p', 'p'
+			,'p', 'p', 'p'
+			,'p'
 		], IntegrityCheck = "all(IsDefined(this))";
 
 		attribute<String> item :
@@ -126,47 +170,194 @@ container Diagnose
 			,'SloopAlsGevolgVanWaterbergingVeen/Uitkoopkosten', 'SloopAlsGevolgVanWaterbergingVeen/Sloopkosten'
 			,'SterfteAfnameDoorGroenToename/Zichtjaar/Sterfte/AfnameCumulatief_Totaal', 'CarbonStorageSequestration/Write_CO2Flow_TovBasisjaar', 'CarbonStorageSequestration/Write_CO2Ongedekt_Cumulatief', 'SOMERS_CO2_laagveen/Emissies/Mediaan/Write_Result_SA'
 			,'Bouwregime/OpSlotDoorLandschap', 'Sloop/Verschil/Woningen_OpSlotMaarGeenNatuur', 'ExogeenOpleggen/IsOpgelegd'
-			,'GroenNabijheid/Prijsopslag_perWP4/vrijstaand', 'GroenNabijheid/Prijsopslag_perWP4/vrijstaand'
+			,'Impl/GroenNabijheid/Prijsopslag_perWP4/vrijstaand', 'Impl/GroenNabijheid/Prijsopslag_perWP4/vrijstaand'
 			,'Sloop/Verschil/Woningen_NatuurMaarNietOpSlot', 'Sloop/Verschil/Opp_OpSlotMaarGeenNatuur', 'Sloop/Verschil/Opp_NatuurMaarNietOpSlot'
 			,'Sloop/Verschil/Woningen_OpSlotZonderSloopbedoeling', 'Sloop/Verschil/Woningen_ZonderMasker'
 			,'Sloop/Verschil/Woningen_ZonderMasker_InVeenlevering', 'Sloop/Verschil/Woningen_ZonderMasker_Buiten'
 			,'Sloop/Verschil/Woningen_Veen', 'Sloop/Verschil/Woningen_Kust', 'Sloop/Verschil/Woningen_Rivieren'
 			,'Waterberging/Volume/RegiosMetTekort', 'Groen/Groenwaarde/LekBedrag_eur', 'Verharding/Cellen_Gedaald', 'Wonen/IJburg2_WoningenGroei'
+			,'Koolstof/KetenNull', 'Koolstof/VastleggingKetenMin', 'Koolstof/AfboekingKetenMax'
+			,'Wonen/WoningtypeEengezins/Afwijking'
+			,'Claims/NVM_OnderAlarm', 'Grondbalans/RestFractie'
+			,'Piekbuiberging/Opgave_mln_m3', 'Piekbuiberging/AanbodOpWbCellen_mln_m3', 'Piekbuiberging/AanbodSluiting_mln_m3'
+			,'Grondexploitatie/Saldo_Min_BovenDrempel'
 		], IntegrityCheck = "all(IsDefined(this))";
+
+		// vereist: namen uit Voorwaarde, met && te combineren; leeg is altijd.
+		attribute<String> vereist :
+		[
+			 'MetWonen', 'MetWerken'
+			,'MetWonen', 'MetWerken'
+			,'WonenOpNVM', 'MetWerken && ProvincieAlsAllocRegio', 'MetWaterberging'
+			,'DomeinGrondgebruik', 'DomeinLandgebruikskaart'
+			,'DomeinNatuur', 'DomeinNatuur', 'DomeinNatuur'
+			,'MetWaterberging', 'MetWaterberging && DomeinLandgebruikskaart'
+			,'MetWonen', 'DomeinWater', 'DomeinNatuur'
+			,'MetWonen', 'DomeinNatuur'
+			,'DomeinSloop', 'DomeinSloop'
+			,'MetWaterberging && DomeinSloop', 'MetWaterberging && DomeinSloop'
+			,'DomeinNatuur', 'DomeinKoolstof', 'DomeinKoolstof', 'DomeinKoolstof'
+			,'', '', ''
+			,'MetWonen', 'MetWonen'
+			,'', '', ''
+			,'', ''
+			,'', ''
+			,'', '', ''
+			,'MetWaterberging', 'DomeinNatuur', 'DomeinWater', 'MetWonen'
+			,'DomeinKoolstof', 'DomeinKoolstof', 'DomeinKoolstof'
+			,'MetWonen'
+			,'WonenOpNVM', 'DomeinLandgebruikskaart'
+			,'DomeinWater && MetWonen && MetWerken', 'DomeinWater && MetWonen && MetWerken', 'DomeinWater && MetWonen && MetWerken'
+			,'MetWonen'
+		], IntegrityCheck = "all(IsDefined(this))"
+		, Descr = "Onder welke voorwaarde uit Voorwaarde de rij zinvol is. Een rij die niet geldt schrijft null en rekent zijn item niet uit, zodat een verwijzing naar een sector die niet meedoet niet tot een onbekende naam leidt.";
+
+		// De norm van elke rij (#833): leeg is aan die kant geen grens, twee keer leeg is een waarde zonder norm, die wel in de csv staat maar
+		// geen oordeel krijgt. Waarom een norm deze waarde heeft staat in de Descr van het item dat de rij noemt, of hieronder bij de rij.
+		//   claimreal_NL: de landelijke realisatie, ruimer voor banen want werken kan niet slopen waar de claim onder de stand ligt.
+		//   claimreal_NVM_onder_alarm: het aantal NVM-regio's onder de alarmdrempel van Claims; ruim boven wat een gewone levering
+		//     geeft, zodat spreiding geen alarm geeft en een verdubbeling wel.
+		//   piekbui_opgave_mln_m3: de opgave hangt aan het basisjaar en is in elke variant en elk zichtjaar dezelfde, 497,023 mln m3.
+		//   woningtype_eengezins_afwijking: de ruimte boven nul is voor wat de hogere allocatieregio's vrij kiezen; zonder quotum per
+		//     woningtype ligt de waarde ruim boven de grens (#847).
+		//   grondexploitatie_min_boven_drempel: het laagste saldo waarop de allocatie koos, van de cellen die de allocatie in dit zichtjaar heeft bebouwd min de
+		//     zeefdrempel hoort nul of positief te zijn; de ondergrens laat een paar euro afronding toe in float32 (#799).
+		attribute<String> norm_onder :
+		[
+			 '', ''
+			,'0.99', '0.99'
+			,'', '', ''
+			,'', ''
+			,'', '', ''
+			,'', ''
+			,'', '', ''
+			,'', ''
+			,'', ''
+			,'', ''
+			,'', '', '', ''
+			,'', '', ''
+			,'', ''
+			,'', '', ''
+			,'', ''
+			,'', ''
+			,'', '', ''
+			,'0', '0', '1', '1'
+			,'0', '-0.01', ''
+			,'0'
+			,'0', '0'
+			,'497.013', '0', '0'
+			,'-10'
+		], IntegrityCheck = "all(IsDefined(this))";
+
+		attribute<String> norm_boven :
+		[
+			 '', ''
+			,'1.01', '1.06'
+			,'', '', ''
+			,'', ''
+			,'', '', ''
+			,'', ''
+			,'', '', ''
+			,'', ''
+			,'', ''
+			,'', ''
+			,'', '', '', ''
+			,'', '', ''
+			,'', ''
+			,'', '', ''
+			,'', ''
+			,'', ''
+			,'', '', ''
+			,'0', '1000', '', ''
+			,'0', '', '0.01'
+			,'0.10'
+			,'15', '0.005'
+			,'497.033', '0', '0.001'
+			,''
+		], IntegrityCheck = "all(IsDefined(this))";
+
+		attribute<Float64> Ondergrens := float64(norm_onder), Descr = "Leeg wordt null, want float64 op een lege tekst geeft null.";
+		attribute<Float64> Bovengrens := float64(norm_boven);
+
+		attribute<Bool> Actief := ='union_data(., '+AsList(vereist == '' ? 'TRUE' : 'Voorwaarde/' + replace(vereist, ' && ', ' && Voorwaarde/'), ',')+')';
 	}
 
-	unit<uint32> ChecksBasisjaar : nrofrows = 6
+	unit<uint32> ChecksBasisjaar : nrofrows = 12
 	, Descr = "Controlewaarden van het basisjaar, een keer per casus via GenerateBasisjaar en niet per zichtjaar: ze veranderen niet met het zichtjaar en kosten samen ruim een minuut. Dezelfde
-				kolommen als Checks; pad B is de container Basisjaar hieronder, waar de rekenregel per rij staat."
+				kolommen als Checks; pad B is de container Basisjaar hieronder, waar de rekenregel per rij staat. De bandbreedtes van de eerste zes zijn ruim genoeg voor een nieuwe BAG-jaargang en krap
+				genoeg om een losgeraakte keten (een nul) of een dubbeltelling van tienden te zien."
 	{
-		attribute<String> name : ['basisjaar_woningen', 'basisjaar_banen', 'hogegronden_ha', 'bouwperiode_term', 'verwerving_nietwoon_mld', 'verblijfsrecreatie_stand_tov_trend'], IntegrityCheck = "all(IsDefined(this))";
-		attribute<String> pad  : ['B', 'B', 'B', 'B', 'B', 'B'], IntegrityCheck = "all(IsDefined(this))";
-		attribute<String> aggr : ['p', 'p', 'p', 'p', 'p', 'p'], IntegrityCheck = "all(IsDefined(this))";
-		attribute<String> item : ['Woningen', 'Banen', 'HogeGronden_ha', 'BouwperiodeTerm', 'Verwervingskosten_NietWoon_mld', 'Verblijfsrecreatie_StandTovTrend'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> name : ['basisjaar_woningen', 'basisjaar_banen', 'hogegronden_ha', 'bouwperiode_term', 'verwerving_nietwoon_mld', 'verblijfsrecreatie_stand_tov_trend', 'bouwjaar_telling_tov_stand', 'cellen_buiten_nl_indeling', 'vervanging_per_jaar', 'brk_pandcellen_met_perceel', 'brk_uitsmering_behoud', 'herontwikkeling_verwacht_per_jaar'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> pad  : ['B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> aggr : ['p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> item : ['Woningen', 'Banen', 'HogeGronden_ha', 'BouwperiodeTerm', 'Verwervingskosten_NietWoon_mld', 'Verblijfsrecreatie_StandTovTrend', 'BouwjaarTelling', 'CellenBuitenNL', 'VervangingPerJaar', 'BRK_PandcellenMetPerceel', 'BRK_UitsmeringBehoud', 'HerontwikkelingVerwachtPerJaar'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> norm_onder : ['8000000', '8500000',  '1750000', '-0.15', '250', '0', '0.999', '0', '5100', '0.95', '0.999', '2000'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> norm_boven : ['8500000', '10000000', '1900000', '-0.05', '900', '1', '1.001', '0', '6900', '1', '1.001', '6000'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<Float64> Ondergrens := float64(norm_onder);
+		attribute<Float64> Bovengrens := float64(norm_boven);
+		attribute<String> vereist : ['', '', '', '', '', 'MetVerblijfsrecreatie', '', '', 'MetWonen', 'MetWonen', 'MetWonen', 'MetWonen'], IntegrityCheck = "all(IsDefined(this))", Descr = "Als vereist in Checks.";
+		attribute<Bool>   Actief := ='union_data(., '+AsList(vereist == '' ? 'TRUE' : 'Voorwaarde/' + replace(vereist, ' && ', ' && Voorwaarde/'), ',')+')';
 	}
 
 	container Resultaten :=
 		for_each_ne(
 			Checks/name
-			, 'Check_T('+quote(Checks/name)+', '+quote(Checks/pad)+', '+quote(Checks/aggr)+', '+quote(Checks/item)+')'
+			, 'Check_T('+quote(Checks/name)+', '+quote(Checks/pad)+', '+quote(Checks/aggr)+', '+quote(Checks/item)+', '+(Checks/Actief ? 'TRUE' : 'FALSE')+')'
 		);
 
 	container ResultatenBasisjaar :=
 		for_each_ne(
 			ChecksBasisjaar/name
-			, 'Check_T('+quote(ChecksBasisjaar/name)+', '+quote(ChecksBasisjaar/pad)+', '+quote(ChecksBasisjaar/aggr)+', '+quote(ChecksBasisjaar/item)+')'
+			, 'Check_T('+quote(ChecksBasisjaar/name)+', '+quote(ChecksBasisjaar/pad)+', '+quote(ChecksBasisjaar/aggr)+', '+quote(ChecksBasisjaar/item)+', '+(ChecksBasisjaar/Actief ? 'TRUE' : 'FALSE')+')'
 		);
 
+	parameter<String> UitvoerBestand          := '%LocalDataProjDir%/Diagnose/'+Casus+'_'+Jaar+'_checks.csv';
+	parameter<String> UitvoerBestandBasisjaar := '%LocalDataProjDir%/Diagnose/'+Casus+'_Basisjaar_checks.csv';
+	container Uitvoer          := Uitvoer_T(Checks,          '/Diagnose/Resultaten/',          UitvoerBestand);
+	container UitvoerBasisjaar := Uitvoer_T(ChecksBasisjaar, '/Diagnose/ResultatenBasisjaar/', UitvoerBestandBasisjaar);
+
+	Template Uitvoer_T
+	: Descr = "De controlewaarden van een tabel als een csv met naam, waarde, ondergrens, bovengrens en oordeel (#833), zodat batch/ToetsOplevering.ps1 de normen niet hoeft te kennen. Oordeel is
+				PASS of FAIL voor een rij met een norm, NVT voor een rij die in deze run niet geldt (Voorwaarde), GEEN_NORM voor een waarde zonder norm en GEEN_GETAL als een rij met een norm geen
+				getal oplevert. De losse tekstbestanden per rij blijven, want de csv leest ze."
+	{
+		unit<uint32>      Rijen;
+		parameter<String> ResultatenPad;
+		parameter<String> Bestand;
+		//
+
+		unit<uint32> Beoordeling := Rijen
+		{
+			attribute<String>  waarde     := ='union_data(., '+AsItemList(ResultatenPad+Rijen/name+'/Waarde')+')';
+			attribute<Float64> getal      := float64(waarde), Descr = "Null voor null en voor tekst; een lijst per regio geeft het eerste getal, maar zo'n rij heeft geen norm.";
+			attribute<Bool>    HeeftNorm  := IsDefined(Rijen/Ondergrens) || IsDefined(Rijen/Bovengrens);
+			attribute<Bool>    BinnenNorm := (IsNull(Rijen/Ondergrens) || getal >= Rijen/Ondergrens) && (IsNull(Rijen/Bovengrens) || getal <= Rijen/Bovengrens);
+			attribute<String>  oordeel    := !Rijen/Actief ? 'NVT' : !HeeftNorm ? 'GEEN_NORM' : IsNull(getal) ? 'GEEN_GETAL' : BinnenNorm ? 'PASS' : 'FAIL';
+		}
+
+		unit<uint32> Tabel := Rijen
+		, StorageName = "=Bestand"
+		, StorageType = "gdalwrite.vect"
+		{
+			attribute<String>  naam       := Rijen/name;
+			attribute<String>  waarde     := Beoordeling/waarde;
+			attribute<Float64> ondergrens := Rijen/Ondergrens;
+			attribute<Float64> bovengrens := Rijen/Bovengrens;
+			attribute<String>  oordeel    := Beoordeling/oordeel;
+		}
+	}
+
 	parameter<String> GenerateAll := 'Klaar'
-	, ExplicitSuppliers = "=AsList('Resultaten/'+Checks/name+'/Waarde', ';')+';/Diagnose/grondbalans_bestemmingen;/Diagnose/Piekbuiberging/Dekking;/Diagnose/Waterberging/PerRegio;/Diagnose/Natuur/Veen/realisatie;/Diagnose/Natuur/Veen/terugkoppeling;/Diagnose/Natuur/Veen/perdeelgebied;/Diagnose/Natuur/Veen/perbouwsteen;/Diagnose/Natuur/Veen/waterkaart;/Diagnose/Claims/Wonen;/Diagnose/Claims/Werken'"
+	, ExplicitSuppliers = "=AsList('Resultaten/'+Checks/name+'/Waarde', ';')+';/Diagnose/grondbalans_bestemmingen;/Diagnose/Piekbuiberging/Dekking;/Diagnose/Waterberging/PerRegio;/Diagnose/Natuur/Veen/realisatie;/Diagnose/Natuur/Veen/terugkoppeling;/Diagnose/Natuur/Veen/perdeelgebied;/Diagnose/Natuur/Veen/perbouwsteen;/Diagnose/Natuur/Veen/waterkaart;/Diagnose/Claims/Wonen;/Diagnose/Claims/Werken;/Diagnose/Wonen/WoningtypeEengezins/PerRegio;/Diagnose/Uitvoer/Tabel/oordeel'"
 	, Descr = "Rekent in een aanroep alle controlewaarden van het zichtjaar uit en schrijft ze weg: de tabel Checks, plus de uitdraaien die een reeks gelabelde waarden uit verschillende items in
 				een regel zetten en daarom niet als rij in die tabel passen. De paden staan volledig gekwalificeerd, want een ongekwalificeerde naam zou stil naar een gelijknamig item hogerop
 				oplossen zodra dit item wordt hernoemd of verplaatst. batch/Run2120.ps1 draait per zichtjaar uitsluitend dit item en batch/ToetsOplevering.ps1 leest de bestanden (#729). De vijf
 				uitdraaien van Natuur/Veen staan erbij omdat de onderrealisatie van de veenopgave aan team Veen wordt teruggekoppeld (#761); in een run zonder veenlevering kosten ze niets, want
-				IsVanToepassing zet ze dan op een regel tekst.";
+				IsVanToepassing zet ze dan op een regel tekst. Een rij of uitdraai waarvan de sector of het indicatordomein in deze run niet meedoet (Voorwaarde) schrijft null of
+				niet_van_toepassing in plaats van te rekenen.";
 
 	parameter<String> GenerateBasisjaar := 'Klaar'
-	, ExplicitSuppliers = "=AsList('ResultatenBasisjaar/'+ChecksBasisjaar/name+'/Waarde', ';')"
+	, ExplicitSuppliers = "=AsList('ResultatenBasisjaar/'+ChecksBasisjaar/name+'/Waarde', ';')+';/Diagnose/UitvoerBasisjaar/Tabel/oordeel'"
 	, Descr = "De tegenhanger van GenerateAll voor de tabel ChecksBasisjaar: een keer per casus, voor de zichtjaren, vanuit batch/Run2120.ps1. De bestanden dragen Basisjaar in plaats van het zichtjaar in
 				de naam.";
 
@@ -176,13 +367,15 @@ container Diagnose
 		parameter<String> pad;
 		parameter<String> aggr;
 		parameter<String> item;
+		parameter<Bool>   Actief;
 		//
 
 		parameter<String> VolPad := (pad == 'Z' ? /Diagnose/Pad_Z : pad == 'V' ? /Diagnose/Pad_V : pad == 'A' ? /Diagnose/Pad_A : pad == 'B' ? /Diagnose/Pad_B : /Diagnose/Pad_D) + item;
 		parameter<String> JaarLabel := pad == 'B' ? 'Basisjaar' : /Diagnose/Jaar, Descr = "Basisjaarcontroles dragen geen zichtjaar in de bestandsnaam, want ze gelden voor de hele reeks.";
 
 		parameter<String> Expr :=
-			  aggr == 'p' ? 'string(value('+VolPad+', float32))'
+			  !Actief ? quote('null')
+			: aggr == 'p' ? 'string(value('+VolPad+', float32))'
 			: aggr == 's' ? 'string(sum(value('+VolPad+', float32)))'
 			: aggr == 'b' ? 'string(sum(uint32('+VolPad+')))'
 			: aggr == 'c' ? 'string(sum(uint32(IsDefined('+VolPad+'))))'
@@ -203,7 +396,7 @@ container Diagnose
 	, StorageType = "str"
 	, Descr = "De negen waterbergingsregio's in de volgorde van de unit, dus de volgorde van de shapefile met de restregio erachter, plus de vlag die zegt welke de restregio is. Nodig om claimreal_Waterberging te kunnen lezen: die uitdraai gebruikt AsList en dat slaat de null-waarden over, dus een regio zonder opgave verschijnt er niet in en de posities schuiven op. Zonder deze lijst is niet te zeggen welke regio bij welk getal hoort.";
 
-	parameter<String> grondbalans_bestemmingen := =('
+	parameter<String> grondbalans_bestemmingen := = !/Diagnose/Voorwaarde/DomeinLandgebruikskaart ? quote(/Diagnose/Voorwaarde/Zonder_DomeinLandgebruikskaart) : ('
 		  '+quote('verdwenen_vruchtbaar_ha;')+'      + string(sum(float32('+Pad_Z+'Grondgebruik/Verandering/VerdwenenVruchtbareLandbouw)) * float32(/Geography/AdminDomain/NrHaPerCell))
 		+ '+quote(';verstedelijking_vruchtbaar_ha;')+' + string('+Pad_Z+'Grondgebruik/Verandering/VerstedelijkingOpVruchtbareLandbouwgronden/Per_NL)
 		+ '+quote(';nieuwenatuur_vruchtbaar_ha;')+'    + string('+Pad_Z+'Grondgebruik/Verandering/NieuweNatuurOpVruchtbareLandbouwgronden/Per_NL)
@@ -215,11 +408,35 @@ container Diagnose
 	, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_grondbalans_bestemmingen.txt'", StorageType = "str"
 	, Descr = "Sluit de verdwenen vruchtbare landbouw op de drie bestemmingen? Met de oude definitie (klasse A, ongeacht vorig gebruik) telden de bestemmingen samen op tot meer dan het verlies. Zie #634.";
 
+	container Grondbalans
+	: Descr = "Waar de verdwenen vruchtbare landbouw heen gaat, de regel grondbalans_rest_fractie in Checks. Elke cel met verlies krijgt een bestemming, in deze volgorde: een stedelijke sector, ook
+				binnen bestaand bebouwd gebied, waterberging, natuur en water volgens de landgebruikskaart; wat overblijft is de rest en hoort nul te zijn. De drie geleverde indicatoren
+				*OpVruchtbareLandbouwgronden sluiten niet en hoeven dat ook niet: verstedelijking telt daar alleen buiten bestaand bebouwd gebied, en de natuurtypen van water (rivier, beek,
+				stilstaand water) zijn op de kaart water en geen natuur."
+	{
+		parameter<String>  V  := /Diagnose/Pad_Z+'Grondgebruik/Verandering/';
+		parameter<String>  LU := '/Classifications/Grondgebruik/LU_NL2120/';
+		parameter<Float64> Ha := value(/Geography/AdminDomain/NrHaPerCell, float64);
+		attribute<Bool> Verlies      (/Geography/AdminDomain) := =V+'VerdwenenVruchtbareLandbouw';
+		attribute<Bool> Stedelijk    (/Geography/AdminDomain) := ='Verlies && /Classifications/Actor/Sector/IsStedelijk['+/Diagnose/Pad_Z+'Sector_rel]';
+		attribute<Bool> Waterberging (/Geography/AdminDomain) := ='Verlies && !Stedelijk && '+V+'WaterbergingVeen';
+		attribute<Bool> Natuur       (/Geography/AdminDomain) := ='Verlies && !Stedelijk && !Waterberging && '+LU+'IsNatuur['+V+'LU_MT_Zichtjaar]';
+		attribute<Bool> Water        (/Geography/AdminDomain) := ='Verlies && !Stedelijk && !Waterberging && !Natuur && '+LU+'IsWater['+V+'LU_MT_Zichtjaar]';
+		attribute<Bool> Rest         (/Geography/AdminDomain) := Verlies && !Stedelijk && !Waterberging && !Natuur && !Water;
+		parameter<Float64> Verlies_ha := sum(float64(Verlies)) * Ha;
+		parameter<Float64> Rest_ha    := sum(float64(Rest)) * Ha;
+		parameter<Float64> RestFractie := Verlies_ha > 0d ? Rest_ha / Verlies_ha : 0d
+		, Descr = "Het deel van de verdwenen vruchtbare landbouw zonder bestemming; nul als de kaart en de stand dezelfde cellen kennen.";
+		parameter<String>  PerBestemming := 'verlies_ha;' + string(Verlies_ha) + ';stedelijk_ha;' + string(sum(float64(Stedelijk)) * Ha) + ';waterberging_ha;' + string(sum(float64(Waterberging)) * Ha)
+			+ ';natuur_ha;' + string(sum(float64(Natuur)) * Ha) + ';water_ha;' + string(sum(float64(Water)) * Ha) + ';rest_ha;' + string(Rest_ha)
+		, Descr = "De indeling zelf, om een rest te kunnen lezen; niet in GenerateAll.";
+	}
+
 	container Claims
 	: Descr = "De claimrealisatietoets van de indicatorenkant uitgelezen, wonen en werken; al_gehaald wijst de regio's aan waar de claim al voor de allocatie was gehaald en de realisatie dus niet
 				anders dan boven 1 kan uitkomen. In GenerateAll."
 	{
-		parameter<String> Wonen := =('
+		parameter<String> Wonen := = !/Diagnose/Voorwaarde/MetWonen ? quote(/Diagnose/Voorwaarde/Zonder_Wonen) : ('
 			  '+quote('regios;')+'      + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_Regios)
 			+ '+quote(';al_gehaald;')+'  + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_AlGehaald)
 			+ '+quote(';telt_mee;')+'    + string('+Pad_Z+'ClaimRealisatie_Toets/Nr_TeltMee)
@@ -234,7 +451,14 @@ container Diagnose
 		')
 		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_claimtoets.txt'", StorageType = "str";
 
-		parameter<String> Werken := =('string('+Pad_Z+'ClaimRealisatie_Toets_Werken/Samenvatting)')
+		parameter<Float32> AlarmdrempelNVM := 0.99f
+		, Descr = "De alarmdrempel voor de realisatie per NVM-regio, strenger dan de modelnorm ModelParameters/Advanced/ClaimRealisatie_NormOnder (0,98): een levering wordt strenger beoordeeld dan
+					de allocatie zichzelf beoordeelt, en de rij heet daarom alarm en niet norm.";
+		parameter<UInt32> NVM_OnderAlarm := ='sum(uint32(value('+/Diagnose/Pad_Z+'ClaimRealisatie/Per_AllocRegio/NVM/InDezeStudie/Aantal_Woningen_Totaal, float32) > 0f && value('+/Diagnose/Pad_Z+'ClaimRealisatie/Per_AllocRegio/NVM/InDezeStudie/Aantal_Woningen_Totaal, float32) < AlarmdrempelNVM))'
+		, Descr = "Het aantal NVM-regio's met een realisatie boven nul en onder AlarmdrempelNVM, de regel claimreal_NVM_onder_alarm in Checks. Een aantal en geen minimum: het minimum zakt vanzelf naarmate
+					de reeks vordert, want de claim groeit door terwijl de ruimte opraakt.";
+
+		parameter<String> Werken := = !/Diagnose/Voorwaarde/MetWerken ? quote(/Diagnose/Voorwaarde/Zonder_Werken) : ('string('+Pad_Z+'ClaimRealisatie_Toets_Werken/Samenvatting)')
 		, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_claimtoets_werken.txt'", StorageType = "str";
 	}
 
@@ -272,7 +496,7 @@ container Diagnose
 			attribute<Bool> IsCel_9b (/Geography/AdminDomain) := IsBestaandWater[Veen/Bouwsteen_rel];
 
 			attribute<float32> Volume_Cel (/Geography/AdminDomain) := MakeDefined(float32(/BaseData/Suitabilities/Waterberging/Diepte), 0f) * float32(/Geography/AdminDomain/NrMeter2PerCell)
-			, Descr = "De bergbare waterschijf maal het celoppervlak, dus m3 per cel. Leest hetzelfde item als de bergingscapaciteit in Templates/Densities/DichtheidZichtjaar_T en de geschiktheid, inclusief de bovengrens Maximum_Waterschijf; cellen daarboven tellen als nul.";
+			, Descr = "De bergbare waterschijf maal het celoppervlak, dus m3 per cel. Leest hetzelfde item als de bergingscapaciteit per cel in Templates/PotentieleStates/PerSectorxSubsector_T (#770), de capaciteit per hectare in Templates/Densities/DichtheidZichtjaar_T en de geschiktheid, inclusief de bovengrens Maximum_Waterschijf; cellen daarboven tellen als nul.";
 
 			parameter<Bool> HeeftVeenlevering := /VariantParameters/VariantK/HeeftLandschapslevering[rlookup(/Diagnose/Variant, /VariantParameters/VariantK/name)]
 			, Descr = "Draait deze casus de veenbouwstenen? Uit VariantK/Landschap_Levering en niet uit de casusnaam, zodat een tweede variant met dezelfde levering vanzelf meetelt.";
@@ -288,7 +512,7 @@ container Diagnose
 			attribute<float32> Areaal_9b (R) := =HeeftVeenlevering ? 'Calc_Areaal_9b' : 'const(0f, R)';
 		}
 
-		parameter<String> PerRegio := =('
+		parameter<String> PerRegio := = !/Diagnose/Voorwaarde/MetWaterberging ? quote(/Diagnose/Voorwaarde/Zonder_Waterberging) : ('
 			  '+quote('waterbergingsregio;benodigde_berging_m3;berging_uit_nieuw_water_9a_m3;nieuw_water_9a_min_benodigd_m3;areaal_nieuw_water_9a_ha;aangewezen_berging_m3;aangewezen_min_benodigd_m3;berging_uit_bestaand_water_9b_m3;areaal_bestaand_water_9b_ha|')+' + AsList(
 				/SourceData/RegioIndelingen/Waterbergingsregio/label + '+quote(';')+'
 				+ string('+Pad_Z+'ClaimRealisatie/Per_AllocRegio/Waterbergingsregio/Impl/MaxClaims/meter3_Waterberging) + '+quote(';')+'
@@ -328,7 +552,7 @@ container Diagnose
 
 			attribute<bool> IsDiepGenoeg (/Geography/CompactedAdminDomain) :=
 				collect_by_cond(/Geography/CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Waterberging/IsDiepGenoeg)
-			, Descr = "Haalt de cel de Minimum_Waterschijf? Zo niet, dan is de geschiktheid exact 0 en staat de cel onderaan de rij, maar hij blijft alloceerbaar.";
+			, Descr = "Haalt de cel de Minimum_Waterschijf? Zo niet, dan sluit de zeef de cel uit (Zeef_T/TeOndiepVoorWaterberging) en is de geschiktheid 0.";
 
 			attribute<Regio> Regio_rel (/Geography/CompactedAdminDomain) := /SourceData/RegioIndelingen/Waterbergingsregio/Per_CompactedAdminDomain;
 
@@ -360,7 +584,7 @@ container Diagnose
 		}
 
 		container Diepte
-		: Descr = "Op aanvraag. Splitst de gerealiseerde berging naar cellen die de Minimum_Waterschijf wel en niet halen. Cellen die hem niet halen krijgen geschiktheid 0, maar dat sluit ze niet uit; ze tellen wel met hun volle volume mee in de claimrealisatie. Wat hier bij te_ondiep staat is berging die op papier meetelt maar er fysiek niet in past."
+		: Descr = "Op aanvraag. Splitst de gerealiseerde berging naar cellen die de Minimum_Waterschijf wel en niet halen. Cellen die hem niet halen sluit de zeef uit (Zeef_T/TeOndiepVoorWaterberging); wat hier bij te_ondiep staat hoort dus nul te zijn, en is anders berging die op papier meetelt maar er fysiek niet in past."
 		{
 			parameter<String> PadLaatste := '/Allocatie/'+/Diagnose/Casus+'/Zichtjaren/'+/Diagnose/Jaar+'/Sequences/Seq_0/SectorAllocRegios/Waterbergingsregio_Waterberging/Iters_Normaal/Iter_'+string(/ModelParameters/Default_NrOfIters - 1b)+'/';
 
@@ -764,9 +988,11 @@ container Diagnose
 
 	container Piekbuiberging
 	: Descr = "Waar de dekkingsgraad van de piekbuiberging vandaan komt, uitgesplitst naar de mechanismen die er samen in zitten (#720, #741, #746, #757). Dekking hangt aan GenerateAll en
-				batch/ToetsOplevering.ps1 leest het bestand piekbuiberging_<casus>_<jaar>.txt."
+				batch/ToetsOplevering.ps1 leest het bestand piekbuiberging_<casus>_<jaar>.txt voor de dekkingsgraad; de getallen met een norm staan als rijen piekbui_* in Checks."
 	{
-		attribute<Bool>   IsWbCel (/Geography/AdminDomain) := =''+/Diagnose/Pad_Z+'Stand/Sector_rel == /Classifications/Actor/Sector/V/Waterberging';
+		attribute<Bool>   IsWbCel (/Geography/AdminDomain) := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWaterbergingSector
+															? /Diagnose/Pad_Z+'Stand/Sector_rel == /Classifications/Actor/Sector/V/Waterberging'
+															: 'const(FALSE, /Geography/AdminDomain)';
 
 		parameter<String> Pad_A_Aanbod := /Diagnose/Pad_Z+'Piekbuiberging/Aanbod/WaarAllocatieHeeftPlaatsgevonden/';
 		parameter<String> Pad_G_Aanbod := /Diagnose/Pad_Z+'Piekbuiberging/Aanbod/WaarGeenAllocatieHeeftPlaatsgevonden/';
@@ -776,9 +1002,13 @@ container Diagnose
 		{
 			attribute<String> pad: ['OpDaken/Resultaat','OpOverigVerhardUitgeefbaar/Resultaat','OpVerhardOpenbaar/Resultaat','OpGrasUitgeefbaar/Resultaat','OpGrasOpenbaar/Resultaat','OpOverigGroen/Resultaat','OpWater/Resultaat'], IntegrityCheck = "all(IsDefined(this))";
 		}
+		parameter<Float64> Opgave_mln_m3           := ='sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/Opgave)) / 1e6', Descr = "De regel piekbui_opgave_mln_m3 in Checks; dezelfde som als opgave in Dekking.";
+		parameter<Float64> AanbodOpWbCellen_mln_m3 := ='sum(IsWbCel ? float64('+/Diagnose/Pad_Z+'Piekbuiberging/Aanbod/Totaal) : 0d) / 1e6', Descr = "De regel piekbui_aanbod_op_wbcellen_mln_m3: bergingscellen tellen niet mee in de dekking, dus nul.";
+		parameter<Float64> AanbodSluiting_mln_m3   := ='abs(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/Aanbod)) + sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/AanbodBuitenUrbanContour)) - sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/Aanbod/Totaal))) / 1e6'
+		, Descr = "De regel piekbui_aanbod_sluiting_mln_m3: het aanbod binnen plus buiten bestaand bebouwd gebied hoort het totaal te zijn; een gat wijst op de begrenzing of een null in BBGSamengesteld.";
 		parameter<String> AlleZevenGedefinieerd := AsList('IsDefined('+Pad_A_Aanbod+'Wonen/'+MaatregelTerm/pad+')', ' && ');
 
-		parameter<String> Dekking := =(
+		parameter<String> Dekking := = !(/Diagnose/Voorwaarde/DomeinWater && /Diagnose/Voorwaarde/MetWonen && /Diagnose/Voorwaarde/MetWerken) ? quote(/Diagnose/Voorwaarde/Zonder_DomeinWater) : (
 			  quote('maat;mln_m3')
 			+ ' + ' + quote('|opgave;')                 + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/PerGrid/Opgave)) / 1e6)'
 			+ ' + ' + quote('|aanbod_totaal;')          + ' + string(sum(float64('+/Diagnose/Pad_Z+'Piekbuiberging/Aanbod/Totaal)) / 1e6)'
@@ -942,10 +1172,60 @@ container Diagnose
 		parameter<Float32> IJburg2_WoningenGroei := =('sum(/SourceData/RegioIndelingen/LMSSubzone/IsIJburg2_AdminDomain ? MakeDefined(float32('+/Diagnose/Pad_Z+'Stand/Aantal_Woningen_Totaal), 0f) - MakeDefined(float32('+PadB+'Aantal_Woningen_Totaal), 0f) : 0f)')
 		, Descr = "Woningen erbij op IJburg2 sinds het basisjaar, de regel ijburg2_woningen_groei in Checks. Nieuw land zonder brondata, waar het exploitatiesaldo een proxy op de mediaan van IJburg1 is;
 					nul of negatief betekent dat er niets is gebouwd, precies het geval dat de tie-break in Suitability_Wonen_perOP_T moest afvangen.";
+
+		container WoningtypeEengezins
+		: Descr = "Het aandeel per woningtype in de eengezinsnieuwbouw van het model in de periode tot dit zichtjaar, naast het gebouwde aandeel waar het quotum naar stuurt, per regio van de eerste
+					allocatieregio van wonen (#847). Afwijking is de regel woningtype_eengezins_afwijking in Checks; PerRegio schrijft de tabel en staat in GenerateAll. Het model telt zonder BAG-nieuwbouw,
+					zoals SloopNieuwbouwPerWoningtype."
+		{
+			unit<UInt32>      Regio := /BaseData/StartState/WoningtypeEengezins/RegioUnit;
+			unit<UInt8>       Groep := /ModelParameters/Wonen/WoningtypeEengezins/Groep;
+			parameter<String> A     := '/BaseData/StartState/WoningtypeEengezins/Aandeel/';
+
+			container Model :=
+				for_each_nedv(
+					Groep/name
+					, 'sum(value('+/Diagnose/Pad_Z+'SloopNieuwbouwPerWoningtype/Nieuwbouw/'+Groep/WP4_name+' - '+/Diagnose/Pad_Z+'SloopNieuwbouwPerWoningtype/Vervanging/PerType/'+Groep/WP4_name+', float32), Regio/Per_AdminDomain)'
+					, Regio
+					, Float32
+				), Descr = "De eengezinsnieuwbouw van het model per groep en regio, zonder de vervanging van de bestaande voorraad (#859), die het quotum niet stuurt.";
+			attribute<Float32> ModelTotaal (Regio) := ='add('+AsItemList('Model/'+Groep/name)+')';
+
+			attribute<Float32> Afwijking_Regio (Regio) := ='0.5f * ('+AsList('abs(Model/'+Groep/name+' / ModelTotaal - '+A+Groep/name+')', ' + ')+')'
+			, Descr = "Per regio de helft van de som van de absolute verschillen tussen het aandeel in de modelnieuwbouw en het gebouwde aandeel: nul bij dezelfde verdeling, een als ze niets gemeen hebben.";
+			parameter<Float32> Afwijking := sum(MakeDefined(Afwijking_Regio, 0f) * ModelTotaal) / sum(ModelTotaal)
+			, Descr = "Het met de modelnieuwbouw gewogen gemiddelde van Afwijking_Regio, zodat een regio die alles rij bouwt niet wegvalt tegen een die te veel vrijstaand bouwt.";
+
+			attribute<Float32> ModelNL (Groep) := ='union_data(Groep, '+AsItemList('sum(Model/'+Groep/name+') / sum(ModelTotaal)')+')', Descr = "Het landelijke aandeel per groep in de eengezinsnieuwbouw van het model.";
+
+			attribute<String> Regel (Regio) := ='Regio/name + '+quote(';')+' + string('+A+'AantalGebouwd) + '+quote(';')+' + string(ModelTotaal)'
+				+ AsList(' + '+quote(';')+' + string('+A+Groep/name+')', '')
+				+ AsList(' + '+quote(';')+' + string(MakeDefined(Model/'+Groep/name+' / ModelTotaal, 0f))', '');
+			parameter<String> Tabel := 'regio;gebouwd_eengezins;model_eengezins' + AsList(';gebouwd_'+Groep/name, '') + AsList(';model_'+Groep/name, '') + '|' + AsList(Regel, '|')
+				+ '|NL;' + string(sum(/BaseData/StartState/WoningtypeEengezins/AantalNL)) + ';' + string(sum(ModelTotaal))
+				+ AsList(';' + string(/BaseData/StartState/WoningtypeEengezins/AandeelNL), '')
+				+ AsList(';' + string(ModelNL), '');
+			parameter<String> PerRegio := = !/Diagnose/Voorwaarde/MetWonen ? quote(/Diagnose/Voorwaarde/Zonder_Wonen) : 'Tabel'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_woningtype_eengezins.txt'", StorageType = "str"
+			, Descr = "Per regio het aantal gebouwde eengezinswoningen in de basisperiode, de eengezinsnieuwbouw van het model, het gebouwde aandeel per groep en het aandeel in het model; de laatste regel is landelijk, met het werkelijk gebouwde landelijke aandeel.";
+		}
+	}
+
+	container Koolstof
+	: Descr = "Of de ketens van de cumulatieve vastlegging en afboeking (#758) heel zijn, de regels koolstof_* in Checks. De optelling in de exporttabel, vastlegging min afboeking min oxidatie is
+				CO2Flow_TovBasisjaar, is per constructie nul omdat de oxidatie sinds het basisjaar als het saldo min de twee ketens is gedefinieerd; die som bewijst niets. Wat wel kan breken is de
+				keten zelf: een ontbrekende of verouderde ketentif maakt de cumulatieve kaart null of te klein. KetenNull telt de cellen in het studiegebied waar een van de twee cumulatieve kaarten
+				null is en hoort nul te zijn. VastleggingKetenMin is per cel de cumulatieve vastlegging min de vastlegging van deze periode, dus de stand aan het begin van de periode, en het minimum
+				daarvan hoort niet onder nul te komen; AfboekingKetenMax is hetzelfde voor de afboeking met het teken om en hoort niet boven nul te komen. In het eerste zichtjaar zijn die twee precies nul."
+	{
+		parameter<String>  P := /Diagnose/Pad_Z+'CarbonStorageSequestration/Zichtjaar/CO2/';
+		parameter<UInt32>  KetenNull           := =('sum(uint32(/Geography/rdc_meter/IsStudyArea_AdminDomain && !(IsDefined('+P+'Cumulatief/Vastlegging) && IsDefined('+P+'Cumulatief/Afboeking))))');
+		parameter<Float32> VastleggingKetenMin := =('min(value('+P+'Cumulatief/Vastlegging, float32) - value('+P+'PerBron/Vastlegging, float32))');
+		parameter<Float32> AfboekingKetenMax   := =('max(value('+P+'Cumulatief/Afboeking, float32) - value('+P+'PerBron/Afboeking, float32))');
 	}
 
 	container Basisjaar
-	: Descr = "Grootheden van het basisjaar met een referentiewaarde, de rijen van ChecksBasisjaar; de norm per rij staat in batch/ToetsOplevering.ps1. Ze lezen de basisjaarstand en BaseData en
+	: Descr = "Grootheden van het basisjaar met een referentiewaarde, de rijen van ChecksBasisjaar; de norm per rij staat in die tabel. Ze lezen de basisjaarstand en BaseData en
 				hangen niet aan een zichtjaar."
 	{
 		parameter<String>  PadB := '/Indicatoren/'+/Diagnose/Casus+'/Basisjaar/Stand/';
@@ -964,6 +1244,26 @@ container Diagnose
 		parameter<Float64> Verwervingskosten_NietWoon_mld := sum(float64(float32(/BaseData/Suitabilities/Wonen/Verwervingskosten/Niet_Woningen/Calc))) / 1e9
 		, Descr = "De verwervingskosten van het bestaande niet-woon vastgoed in miljard euro (#674). Vraagt Calc op en niet de ontkoppelde tif, zodat de IntegrityCheck bij Niet_Woningen/Calc meevuurt en
 					een verouderd bestand hier niet binnenvalt.";
+
+		parameter<Float32> BouwjaarTelling := =('value(/Indicatoren/'+/Diagnose/Casus+'/Basisjaar/WoningvoorraadBouwjaar/Geteld_Per_NL, float32) / value(/Indicatoren/'+/Diagnose/Casus+'/Basisjaar/WoningvoorraadBouwjaar/Stand_Per_NL, float32)')
+		, Descr = "De woningen van het basisjaar opnieuw geteld uit de BAG, gedeeld door de basisjaarstand (#836); wijkt het af van 1, dan komt het aandeel per bouwjaarklasse uit een andere BAG dan de stand.";
+		parameter<UInt32>  CellenBuitenNL  := sum(uint32(/Geography/rdc_meter/IsStudyArea_AdminDomain && IsNull(/SourceData/RegioIndelingen/NL/Per_AdminDomain_Fijn)))
+		, Descr = "Cellen van het studiegebied buiten de NL-indeling van de indicatorentabellen (#748); hoort nul te zijn, anders meten een som over de tabel en een som over de kaart iets anders.";
+
+		parameter<Float32> VervangingPerJaar := /BaseData/Suitabilities/Wonen/Vervanging/VerwachtPerJaar
+		, Descr = "De verwachte vervanging van bestaande woningen per jaar op de voorraad van het basisjaar (#859): de som van de jaarlijkse vervangingskans per bouwperiode over de woon-vbo's. De norm is
+					de band rond wat de kansen in ModelParameters/Wonen/Vervanging op de voorraad per bouwperiode van de BAG-levering 20260710 geven; buiten de band betekent een verschoven klasse, een
+					andere vbo-set of een gewijzigde kans.";
+
+		parameter<Float32> BRK_PandcellenMetPerceel := /BaseData/Suitabilities/Wonen/Opstalkosten/AandeelPandcellenMetPerceel
+		, Descr = "Het aandeel van de cellen met een BAG-pand met een kostenpost dat een kadastraal perceel heeft (#861). Een pand staat altijd op een perceel, dus dit hoort dicht bij een te liggen; een
+					lagere waarde betekent een lege of verschoven perceelkaart, en dan smeert de woongeschiktheid niets uit zonder dat iets anders faalt.";
+		parameter<Float64> BRK_UitsmeringBehoud := ='/BaseData/Suitabilities/Wonen/Opstalkosten/PerZichtjaar/Y'+string(/ModelParameters/Model_FirstZichtjaar)+'/Verwerving_Woningen/Behoud'
+		, Descr = "Het totaal van de verwervingskosten van woningen na de uitsmering over het perceel gedeeld door het totaal ervoor, voor het eerste zichtjaar (#861); hoort een te zijn op afronding na, anders verliest of verdubbelt de uitsmering kosten.";
+		parameter<Float32> HerontwikkelingVerwachtPerJaar := =/Diagnose/Pad_V + 'Herontwikkelingskans/VerwachtPerJaar'
+		, Descr = "De verwachte herontwikkeling per jaar in woningen op de voorraad van het basisjaar (#869): de som over de percelen met woningen van de jaarlijkse herontwikkelingskans maal hun woningen, voor de variant
+					van de casus. De norm is een band rond de verdichtende sloop-nieuwbouw in de BAG 2013 tot 2024, ongeveer 3.000 woningen per jaar, want de kans is geschat op alleen de sloop-nieuwbouw die netto woningen toevoegt; het niveau is niet geijkt, dus een waarde buiten de band is een bevinding
+					over de vertaling van de schatting naar de percelen van het model en geen reden voor een constante.";
 
 		parameter<String>  Logies := '/BaseData/StartState/PandFootprint/PerYear_AdminDomain/Y'+string(/ModelParameters/Model_StartYear)+'/pand_met_vbo/PerGebruiksdoel_corr/logies/';
 		parameter<String>  Trend  := '/BaseData/StartState/Verblijfsrecreatie_Trends/DataPrep/ReadData_BAG/Y'+string(/ModelParameters/BAG_RecentYear)+'/PerRegio/Objecten';

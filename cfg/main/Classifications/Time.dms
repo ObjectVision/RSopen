@@ -13,12 +13,12 @@
 
 container Time
 {
-	unit<Int16> TigrisJaar: NrOfRows = 5
-	, Descr = "De jaren waarvoor de TIGRIS-levering wordt ingelezen: de vier geleverde zichtjaren en sinds #667 het claimbasisjaar 2023, nodig om de claim als groei te kunnen uitdrukken in plaats van als
+	unit<Int16> TigrisJaar: NrOfRows = 8
+	, Descr = "De jaren waarvoor de TIGRIS-levering wordt ingelezen: de geleverde jaren van 2030 tot en met 2060 per vijf jaar, zodat een zichtjaar op het vijfjaarsraster zijn eigen TIGRIS-jaar leest en niet tussen twee jaren interpoleert, en sinds #667 het claimbasisjaar 2023, nodig om de claim als groei te kunnen uitdrukken in plaats van als
 				niveau. Het jaartal moet gelijk zijn aan ModelParameters/Model_StartYear, want de stand waar de claim tegen wordt afgezet komt uit datzelfde jaar. De bronbestanden staan in
 				%PrivDataDir%/Claims/TXL_<datum>/<scenario>_LMS/2023."
 	{
-		attribute<YearRange> Jaar: [2023, 2030, 2040, 2050, 2060];
+		attribute<YearRange> Jaar: [2023, 2030, 2035, 2040, 2045, 2050, 2055, 2060];
 		attribute<String> name             := 'Y' + string(Jaar), DialogType = "LabelText";
 		attribute<Bool>   IsClaimBasisjaar := Jaar == ModelParameters/Model_StartYear
 		, Descr = "Welke rij het claimbasisjaar is. Precies een rij hoort dat te zijn.";
@@ -29,34 +29,67 @@ container Time
 	}
 	
 	
-	unit<UInt8> ModelJaar_StartPlusSecond: NrOfRows = 2
+	unit<UInt8> ModelJaar_Basisjaar := cat_range(0b, 1b)
+	, Descr = "Het basisjaar (Model_StartYear). Dit is geen zichtjaar: er wordt niet naartoe gealloceerd, het vormt het vertrekpunt."
 	{
-		attribute<YearRange> YearRange_rel := union_data(., ModelParameters/Model_StartYear, ModelParameters/Model_FirstZichtjaar);
+		attribute<YearRange> YearRange_rel := union_data(., ModelParameters/Model_StartYear);
 		attribute<String>    name          := 'Y' + string(YearRange_rel);
 	}
 	
-	parameter<UInt32> NumberOfMiddleModelDecades := (UInt32(ModelParameters/Model_FinalYear) - UInt32(ModelParameters/Model_FirstZichtjaar)) / 10 - 1;
+	parameter<UInt32> NrOfZichtjaren := (UInt32(ModelParameters/Model_FinalYear) - UInt32(ModelParameters/Model_FirstZichtjaar)) / UInt32(ModelParameters/Model_ZichtjaarInterval) + 1
+	, Descr = "Aantal zichtjaren, van Model_FirstZichtjaar tot en met Model_FinalYear met stappen van Model_ZichtjaarInterval. De IntegrityCheck op Model_ZichtjaarInterval borgt dat Model_FinalYear precies op dit raster valt.";
 	
-	unit<UInt8> ModelJaar_DynamicMiddle := cat_range(0b, uint8(NumberOfMiddleModelDecades))
+	unit<UInt8> ModelJaar_Zichtjaren := cat_range(0b, uint8(NrOfZichtjaren))
+	, Descr = "De zichtjaren op een regelmatig raster. De eerste stap (basisjaar naar Model_FirstZichtjaar) wijkt af van de rest en is daarom niet in dit raster opgenomen."
 	{
-		attribute<YearRange> YearRange_rel := (UInt32(ModelParameters/Model_FirstZichtjaar) + (uint32(id(.))+1)*10)[YearRange];
+		attribute<YearRange> YearRange_rel := (UInt32(ModelParameters/Model_FirstZichtjaar) + uint32(id(.)) * UInt32(ModelParameters/Model_ZichtjaarInterval))[YearRange];
 		attribute<String>    name          := 'Y' + string(YearRange_rel);
 	}
 	
-	unit<UInt8> ModelJaar_FinalYear := cat_range(0b, 1b)
+	unit<UInt8> ModelJaar := union_unit_uint8(ModelJaar_Basisjaar, ModelJaar_Zichtjaren)
 	{
-		attribute<YearRange> YearRange_rel := union_data(., ModelParameters/Model_FinalYear);
-		attribute<String>    name          := 'Y' + string(YearRange_rel);
-	}
-	
-	unit<UInt8> ModelJaar := union_unit_uint8(ModelJaar_StartPlusSecond, ModelJaar_DynamicMiddle, ModelJaar_FinalYear)
-	{
-		attribute<YearRange> YearRange_rel := union_data(., ModelJaar_StartPlusSecond/YearRange_rel, ModelJaar_DynamicMiddle/YearRange_rel, ModelJaar_FinalYear/YearRange_rel);
+		attribute<YearRange> YearRange_rel := union_data(., ModelJaar_Basisjaar/YearRange_rel, ModelJaar_Zichtjaren/YearRange_rel);
 		attribute<String>    name          := 'Y' + string(YearRange_rel);
 		attribute<Bool>      IsFirst       := id(.) == 0b;
 		attribute<Bool>      IsLast        := id(.) == last(id(.));
 		attribute<String>    PrevName      := IsFirst ? first(name) : name[id(.) - min_elem( id(.), 1b)];
 		attribute<YearRange> PrevYear      := rjoin(lowercase(PrevName), lowercase(name), YearRange_rel);
+		
+		// TIGRIS-interpolatie (pbl-nl/model-RSopen#37, #42): op ModelJaar en niet op Zichtjaar, omdat de claims sinds #667 over ClaimJaar
+		// (= ModelJaar, dus inclusief het claimbasisjaar) worden geaggregeerd. Voor het basisjaar en voor elk zichtjaar dat op een
+		// TIGRIS-jaar valt zijn Voor en Na gelijk en is het gewicht 0, dus dan is de berekening gelijk aan die zonder interpolatie.
+		attribute<uint16>  TIGRIS_Jaar_value := min_elem(YearRange_rel[uint16], ModelParameters/Advanced/FromWhichDoWeKeepTIGRISconstant)
+		, IntegrityCheck = "all(This >= min(TigrisJaar/Jaar)[uint16])"
+		, Descr = "Het modeljaar zoals TIGRIS het ziet: geklemd op FromWhichDoWeKeepTIGRISconstant, zodat latere zichtjaren de claims van dat jaar overnemen. Aan de onderkant wordt niet geklemd maar afgekeurd: voor een zichtjaar dat voor het eerste TIGRIS-jaar ligt bestaan geen claims, en klemmen zou daar stilzwijgend de claims van het eerste TIGRIS-jaar opleveren. Faalt deze check, dan staat Model_FirstZichtjaar of FromWhichDoWeKeepTIGRISconstant te laag.";
+		attribute<uint16>  TIGRIS_Jaar_Voor  := max(ModelJaarxTigrisJaar/Jaar_ifVoor, ModelJaarxTigrisJaar/first_rel);
+		attribute<uint16>  TIGRIS_Jaar_Na    := min(ModelJaarxTigrisJaar/Jaar_ifNa,   ModelJaarxTigrisJaar/first_rel);
+		// De aftrekkingen staan bewust per term in float32. In uint16 zou de teller onderlopen zodra een
+		// zichtjaar voor TIGRIS_Jaar_Voor ligt, en GeoDMS sluit de ternary niet kort: de else-tak wordt ook
+		// doorgerekend wanneer Voor en Na gelijk zijn. De IntegrityCheck hierboven vangt die situatie af met
+		// een begrijpelijke melding, maar de berekening zelf hoort er niet op te klappen.
+		attribute<Float32> TIGRIS_Gewicht_Na := TIGRIS_Jaar_Na == TIGRIS_Jaar_Voor
+												? 0f
+												: (float32(TIGRIS_Jaar_value) - float32(TIGRIS_Jaar_Voor)) / (float32(TIGRIS_Jaar_Na) - float32(TIGRIS_Jaar_Voor))
+		, Descr = "Gewicht van TIGRIS_Jaar_Na in de lineaire interpolatie; het gewicht van TIGRIS_Jaar_Voor is 1 min dit getal.";
+		
+		unit<UInt32> ModelJaarxTigrisJaar := combine(., TigrisJaar)
+		, Descr = "Hulpunit om per modeljaar de omliggende TIGRIS-jaren te vinden."
+		{
+			attribute<uint16> ModelJaar_value  := TIGRIS_Jaar_value[first_rel];
+			attribute<uint16> TigrisJaar_value := TigrisJaar/Jaar[second_rel][uint16];
+			// De twee kanten zijn bewust NIET symmetrisch.
+			// Aan de bovenkant krijgen TIGRIS-jaren voor het zichtjaar de hoogste waarde mee, zodat een zichtjaar
+			// na het laatste TIGRIS-jaar op dat laatste jaar klemt. Dat is precies wat
+			// FromWhichDoWeKeepTIGRISconstant bedoelt: vanaf dat jaar blijven de claims constant.
+			// Aan de onderkant wordt juist niet geklemd maar null teruggegeven. Voor een zichtjaar dat voor het
+			// eerste TIGRIS-jaar ligt bestaan geen claims, en klemmen zou daar stilzwijgend de claims van het
+			// eerste TIGRIS-jaar opleveren. Door null te geven wordt TIGRIS_Jaar_Voor ongedefinieerd, verwijst
+			// SrcStr_Voor in Claims_TargetUnits_T naar een niet bestaand item en breekt de run af, net als voor
+			// de invoering van interpolatie. De IntegrityCheck op TIGRIS_Jaar_value geeft daarbij de leesbare
+			// melding; die check alleen is niet genoeg, want hij blijkt niet elke aanroep af te breken.
+			attribute<uint16> Jaar_ifVoor := TigrisJaar_value <= ModelJaar_value ? TigrisJaar_value : (0/0)[uint16];
+			attribute<uint16> Jaar_ifNa   := TigrisJaar_value >= ModelJaar_value ? TigrisJaar_value : max(TigrisJaar/Jaar)[uint16];
+		}
 	}
 	
 	unit<UInt8> Zichtjaar := = ModelParameters/AlleenEindjaar ? 'select_with_org_rel(ModelJaar/IsLast)' : 'select_with_org_rel(not(ModelJaar/IsFirst))'
@@ -74,6 +107,12 @@ container Time
 		attribute<String> PrevState  := IsFirstZichtjaar ? 'StartState_metBAGnieuwbouw' : PrevName+'/StateNaAllocatie';
 		
 		container V := for_each_nedv(name, 'value('+string(id(.))+', ..)', void, .);
+	
+		
+		attribute<uint16>  TIGRIS_Jaar_value := ModelJaar/TIGRIS_Jaar_value[ModelJaar_rel];
+		attribute<uint16>  TIGRIS_Jaar_Voor  := ModelJaar/TIGRIS_Jaar_Voor[ModelJaar_rel];
+		attribute<uint16>  TIGRIS_Jaar_Na    := ModelJaar/TIGRIS_Jaar_Na[ModelJaar_rel];
+		attribute<Float32> TIGRIS_Gewicht_Na := ModelJaar/TIGRIS_Gewicht_Na[ModelJaar_rel];
 	}
 	
 	unit<UInt8> ClaimJaar := ModelJaar

@@ -29,6 +29,18 @@ Geen vetgedrukte tekst in de lopende tekst. Vet is alleen voor kopjes, niet voor
 
 Geen gedachtenstreepjes, dus geen em dash of en dash als leesteken. Herschrijf de zin, of gebruik een komma, een dubbele punt of een punt. Deze regel geldt ook buiten issues: in commit messages, documentatie en antwoorden in de chat.
 
+Schrijf voor een collega die het model kent maar niet weet wat er in de sessie gebeurde. Vanuit PBL kwam in oktober 2026 de klacht dat de commits niet te volgen waren: telegramstijl, eigen jargon en reeksen kale getallen. Dus volledige zinnen met een werkwoord, geen namen die alleen in de sessie bestaan (een toetskopie als RSeig3, "de stand van de eigendomsproef"), een getal met wat het is en waartegen het staat, en een reeks getallen in een tabel met labels of in het issue. Een regel, cel of indicator is "hij" of "het", niet "zij".
+
+Een commitboodschap: onderwerpregel onder de 70 tekens, want Visual Studio en GitHub kappen daarna af. De body zegt in een paar zinnen wat er veranderde, waarom, en wat het oplevert, met een verwijzing naar het issue; de meetparagraaf hoort in het issue. Geen harde enter binnen een alinea, alleen een witregel tussen alinea's, want elk scherm breekt zelf af. Geen vaste aanwijzingen voor de volgende sessie ("maak de variantdata opnieuw"); die staan in `rs-fingerprints` en `rs-draaien`.
+
+```
+#861 Sloop: opslag op de verwervingskosten naar bouwperiode
+
+Het model sloopte genoeg woningen, maar te vaak jonge. In werkelijkheid worden woningen uit 1951 tot 1965 het vaakst gesloopt. Jongere woningen krijgen nu een opslag op hun verwervingskosten en oudere een kleine korting, naar hoe vaak ze in werkelijkheid gesloopt worden. De bedragen komen uit de schatting van het EconLogic-paper.
+
+In een proefrun voor Noord-Holland tot 2040 is nu 22 procent van de gesloopte woningen van 1966 of later, tegen 43 procent zonder de opslag en 21 procent in de BAG. De metingen staan in #861.
+```
+
 ## Verwijzen met hekje
 
 Schrijf altijd `#634`, nooit "issue 634" of alleen "634". GitHub herkent alleen de vorm met hekje. Zonder hekje verschijnt de commit niet in de tijdlijn van het issue en moet de koppeling met de hand gelegd worden.
@@ -38,8 +50,7 @@ In een commit message begint de onderwerpregel met het issuenummer, gevolgd door
 ```
 #620 Kansrijke woningbouwlocaties opgenomen in de trede voor wonen
 
-De trede leest nu BBGPlusKansrijkWoningbouw in plaats van BBG, zodat de
-kansrijke locaties meetellen bij de afweging.
+De trede leest nu BBGPlusKansrijkWoningbouw in plaats van BBG, zodat de kansrijke locaties meetellen bij de afweging.
 ```
 
 Hoort een commit bij geen enkel issue, dan begint de onderwerpregel gewoon met de beschrijving. Raakt hij meerdere issues, zet het belangrijkste nummer vooraan en noem de rest in de body.
@@ -125,6 +136,25 @@ Toets het verschil dus altijd tegen HEAD en niet tegen de index. `git diff HEAD 
 Controleer achteraf altijd met `git show --stat <commit>`, en niet met `git diff --cached --stat`: dat totaal kan plausibel ogen terwijl er regels van een ander in zitten, want het zegt niets over herkomst. Staat er een bestand in dat jij niet hebt aangeraakt, dan hing je boom aan een verouderde basis of heeft de padvorm de werkkopie gepakt. Dat is de goedkoopste kanarie voor allebei de fouten. Loop bij twijfel de toegevoegde regels langs, of grep op een naam die niet van jou kan zijn.
 
 Let op de blinde vlek bij untracked bestanden: `git diff` geeft daar niets, en een lege diff leest als schoon terwijl het hele bestand meegaat bij `git add`. In een gedeeld diagnosebestand kan dan werk van een andere sessie in je commit belanden; dat is op 2026-08-28 gebeurd met de container D703 in Diagnose667.dms. Bekijk voor een nieuw bestand dus altijd de volledige inhoud, of `git diff --cached` na het stagen, voordat je commit.
+
+### De hoofdkopie bijwerken vanuit een worktree
+
+Werk je in een worktree, dan staat de projectbranch in de hoofdkopie en loopt die achter zodra jij pusht. Bijwerken is jouw werk en niet dat van de gebruiker, maar het gaat over een werkkopie buiten je eigen map: de automodus weigert daar wijzigende git-opdrachten als onomkeerbaar, dus reken op een toestemmingsvraag, en gooi nooit een ongecommitte wijziging van een ander weg om een pull mogelijk te maken.
+
+Het recept dat andermans gestagede werk heel laat:
+
+```bash
+git -C <hoofdkopie> pull --rebase --autostash origin NL2120
+```
+
+De autostash zet de ongecommitte wijziging opzij en weer terug, met een entry die git zelf beheert, dus hij botst niet met de gedeelde stash-stapel. Raakt jouw commit hetzelfde bestand op aangrenzende regels, dan komt die wijziging terug als conflict (`UU`) en blijft de entry staan. Los het conflict met de hand op en bewaar beide kanten, zet het bestand met `git add` terug in de index zoals het stond, en laat de entry pas los nadat je de inhoud hebt gezien:
+
+```bash
+git -C <hoofdkopie> stash list --format='%gd %H %gs'
+git -C <hoofdkopie> stash drop stash@{0}
+```
+
+Toets de SHA tegen de regel `Created autostash:` uit de rebase voordat je dropt, want de stapel is gedeeld. Draai daarna een parse-check op de hoofdkopie (skill rs-draaien, trap 1): een met de hand opgelost conflict in een dms-bestand hoort te laden voordat je het laat staan.
 
 ### BOM en regeleindes bij een scriptbewerking
 

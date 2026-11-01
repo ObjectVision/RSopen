@@ -24,8 +24,8 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		#include<BAG_nieuwbouw.dms> //nieuwbouw vanaf model jaar tot recent jaar
 		#include<Landgebruik.dms>
 		#include<Bodemstatistiek.dms>
-		#include<Eigendom.dms>
 		#include<Verdeling_VSSH.dms>
+		#include<WoningtypeEengezins.dms> //het gebouwde aandeel per woningtype binnen eengezins, voor het quotum in de woonallocatie (#847)
 		#include<AlternatieveLISA.dms>
 		#include<VerzorgendBijWonen.dms> //banen per woning in bestaand woongebied, grondslag voor het verzorgend werken in een woon-OP (#710)
 		#include<VerblijfsrecreatieTrends.dms> //trends berekening tbv claims
@@ -226,16 +226,48 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 			? Classifications/Landschap/BasiskaartNatuurlijkSysteemNederlandK/IsHoogNederland[SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/BNSN_rel_AdminDomain]
 			: NietOverstroombaar
 		, Descr = "Hoge gronden: de pleistocene helft van de Basiskaart Natuurlijk Systeem Nederland (#698); welke hoofdklasse aan welke kant valt staat als kolom IsHoogNederland in de classificatie. De
-					fysische geografie en niet de diepte, omdat de vier lezers bodem- en grondwatervragen stellen: welke NbS-ontwikkelpakketten waar mogen landen (HNL groen, LNL water, via
-					NbSOPToepassingsgebied/Hoog_NL), of pakketgroen als naaldbos of loofbos in de koolstofindicator telt (#699), of doorlatend groen in de waterbergingsindicator infiltreert, en de trede
+					fysische geografie en niet de diepte, omdat de vier lezers bodem- en grondwatervragen stellen: welke ontwikkelpakketten waar mogen landen (via
+					Toepassingsgebied/Hoog_NL en Laag_NL), of pakketgroen als naaldbos of loofbos in de koolstofindicator telt (#699), of doorlatend groen in de waterbergingsindicator infiltreert, en de trede
 					IsHoogNL; de overstromingskant wordt in de zeef apart op de werkelijke diepte getoetst. Waar de basiskaart geen hoofdklasse geeft, vooral grote wateren en de rand langs kust en grens, valt
 					hij terug op NietOverstroombaar.";
 		
-		container NbSOPToepassingsgebied
+		unit<UInt32> GroteKern := select_with_org_rel(/SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Populatie >= /ModelParameters/Wonen/StedelijkVrijstaandEGVS_MinimumInwonersKern)
+		, Descr = "De bebouwde gebieden met minstens StedelijkVrijstaandEGVS_MinimumInwonersKern inwoners, uit de CBS-vierkanten zoals Populatie ze telt."
+		{
+			attribute<rdc_meter> geometry (poly) := /SourceData/RegioIndelingen/BegrenzingBebouwdGebied/geometry[org_rel];
+		}
+		unit<UInt32> RandBebouwdGebied := geos_split_polygon(GroteKern/geometry)
+		, Descr = "De vlakken van de grote kernen, los van elkaar, met de rand van het stedelijke vrijstaande pakket eromheen; dezelfde opbouw als de buffers rond de bebouwde gebieden in SourceData/RegioIndelingen."
+		{
+			attribute<rdc_meter> Buffer (poly) := geos_buffer_multi_polygon(geometry, float64(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_UrbanContourBuffer / 1[meter]), 4b);
+		}
+		attribute<Bool> Calc_BebouwdGebiedMetRand (AdminDomain) := IsDefined(poly2grid(RandBebouwdGebied/Buffer, AdminDomain)), Descr = "De grote kernen met hun rand, vergrid; de buffer bevat het vlak zelf. Het bufferen kost ruim een halve minuut, daarom ontkoppeld.";
+		parameter<String> FileName_BebouwdGebiedMetRand := '%LocalDataProjDir%/BaseData/Omgeving/BebouwdGebiedMetRand_'+/ModelParameters/BegrenzingBebouwdGebied_jaar+'_'+string(uint32(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_UrbanContourBuffer / 1[meter]))+'m_kern'+string(uint32(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_MinimumInwonersKern))+'_'+/ModelParameters/StudyArea+'_'+/ModelParameters/Advanced/AdminDomain_ref+'.tif'
+		, Descr = "Het pad staat als eigen parameter en niet alleen als StorageName, omdat DecoupledFile_T het pad als gegeven nodig heeft.";
+		parameter<String> Fingerprint_BebouwdGebiedMetRand :=
+			  'bbg_boundary_year=' + /ModelParameters/BegrenzingBebouwdGebied_jaar
+			+ ';buffer_m='         + string(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_UrbanContourBuffer / 1[meter])
+			+ ';min_inwoners_kern=' + string(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_MinimumInwonersKern)
+			+ ';inwoners=CBS_vierkanten_Y2023'
+			+ ';zone=grote_kernen_met_rand'
+			+ ';quad_segments=4'
+			+ ';admin_grid='       + /ModelParameters/Advanced/AdminDomain_ref
+			+ ';study_area='       + /ModelParameters/StudyArea
+		, Descr = "De invoeren die de tif bepalen: het peiljaar van de begrenzing, de bufferbreedte, de inwonergrens en de jaargang van de inwoners, de afbakening (alleen de grote kernen), het aantal segmenten per kwartcirkel van de buffer, het raster en het studiegebied.";
+		container       Decoupling_BebouwdGebiedMetRand := /Templates/DecoupledFile_T(FileName_BebouwdGebiedMetRand, Fingerprint_BebouwdGebiedMetRand, 'Write_BebouwdGebiedMetRand');
+		attribute<Bool> Write_BebouwdGebiedMetRand (AdminDomain) := Calc_BebouwdGebiedMetRand, StorageName = "=FileName_BebouwdGebiedMetRand", StorageType = "tif", Descr = "Schrijft de kaart eenmalig weg, zonder zijbestand; dat volgt via Make_BebouwdGebiedMetRand.";
+		attribute<Bool> Make_BebouwdGebiedMetRand  (AdminDomain) := Write_BebouwdGebiedMetRand, ExplicitSuppliers = "Decoupling_BebouwdGebiedMetRand/Write_Fingerprint", Descr = "Maakt het bestand en daarna het zijbestand; vraag dit item en niet Write_BebouwdGebiedMetRand.";
+		attribute<Bool> Read_BebouwdGebiedMetRand  (AdminDomain) : StorageName = "=FileName_BebouwdGebiedMetRand", StorageType = "tif", StorageReadOnly = "TRUE";
+		attribute<Bool> BebouwdGebiedMetRand       (AdminDomain) := = Decoupling_BebouwdGebiedMetRand/MayReuse ? 'Read_BebouwdGebiedMetRand' : 'Make_BebouwdGebiedMetRand', Descr = "De stedelijke zone: het bebouwde gebied van de grote kernen met hun rand, ontkoppeld; het toepassingsgebied BebouwdGebiedMetRand leest dit item (#847).";
+		
+		container Toepassingsgebied
+		: Descr = "De kaarten waar de kolom Toepassingsgebied van de OP-tabel naar verwijst; een pakket landt alleen waar zijn kaart waar is, en Overal is overal waar."
 		{
 			attribute<bool> Hoog_NL (AdminDomain) := Omgeving/HogeGronden;
 			attribute<bool> Laag_NL (AdminDomain) := !Hoog_NL;
 			attribute<bool> Overal  (AdminDomain) := Hoog_NL || Laag_NL;
+			attribute<bool> BebouwdGebiedMetRand (AdminDomain) := Omgeving/BebouwdGebiedMetRand, Descr = "De stedelijke zone: het bebouwde gebied van de kernen vanaf StedelijkVrijstaandEGVS_MinimumInwonersKern met een rand van ModelParameters/Wonen/StedelijkVrijstaandEGVS_UrbanContourBuffer, voor een pakket dat in en direct om de stad hoort, zoals het stedelijke vrijstaande pakket (#847).";
+			attribute<bool> BuitenBebouwdGebiedMetRand (AdminDomain) := !BebouwdGebiedMetRand, Descr = "Alles buiten de stedelijke zone, ook de bebouwde kom van de kleinere kernen; voor het dorpse vrijstaande pakket, zodat de twee vrijstaande pakketten nergens met elkaar concurreren (#847).";
 		}
 
 
@@ -309,9 +341,11 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. bbg_year kiest de landgebruikskaart waar IsGrootWater uit komt en via de CBSKlasse-alias de
 					klassenlijst; buffer_m staat als vaste waarde, want de potential kiest zijn kernel via het itempad; grootwater_flags is de klassenvlag IsGrootWater per CBS-klasse, want een gewijzigde vlag
 					verandert de uitkomst zonder de bestandsnaam te raken; alloc_grid vangt dat 25m tegenover 100m een ander bestand onder dezelfde naam oplevert.";
-		container       Decoupling_GrootWater1500mBuffer := /Templates/DecoupledFile_T(FileName_GrootWater1500mBuffer, Fingerprint_GrootWater1500mBuffer);
+		container       Decoupling_GrootWater1500mBuffer := /Templates/DecoupledFile_T(FileName_GrootWater1500mBuffer, Fingerprint_GrootWater1500mBuffer, 'Write_GrootWater1500mBuffer');
 		attribute<Bool> Calc_GrootWater1500mBuffer       (AdminDomain) := ='potential(float32(StartState/Bodemstatistiek/IsGrootWater), /Geography/Distmatrices_'+AdminDomain_ref_short+'/pot1500m/Flat2) > 0f', Descr = "1.5km buffer rond groot water (meren en grote rivieren)";
-		attribute<Bool> Make_GrootWater1500mBuffer       (AdminDomain) := Calc_GrootWater1500mBuffer, StorageName = "=FileName_GrootWater1500mBuffer", StorageType = "tif", ExplicitSuppliers = "Decoupling_GrootWater1500mBuffer/Write_Fingerprint", Descr = "Schrijft de buffer eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan een container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Bool> Write_GrootWater1500mBuffer      (AdminDomain) := Calc_GrootWater1500mBuffer, StorageName = "=FileName_GrootWater1500mBuffer", StorageType = "tif", Descr = "Schrijft de buffer eenmalig weg, zonder zijbestand; dat volgt via Make_GrootWater1500mBuffer.";
+		attribute<Bool> Make_GrootWater1500mBuffer       (AdminDomain) := Write_GrootWater1500mBuffer, ExplicitSuppliers = "Decoupling_GrootWater1500mBuffer/Write_Fingerprint"
+		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_GrootWater1500mBuffer, want alleen langs deze weg ontstaat de fingerprint (#837).";
 		attribute<Bool> Read_GrootWater1500mBuffer        (AdminDomain) : StorageName = "=FileName_GrootWater1500mBuffer", StorageType = "tif", StorageReadOnly = "TRUE";
 		attribute<Bool> GrootWater1500mBuffer             (AdminDomain) := = Decoupling_GrootWater1500mBuffer/MayReuse ? 'Read_GrootWater1500mBuffer' : 'Make_GrootWater1500mBuffer', Descr = "1.5km buffer rond groot water (meren en grote rivieren), ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_GrootWater1500mBuffer/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
 
@@ -326,110 +360,14 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. n2k_date staat als vaste waarde omdat de datum hard in het pad van
 					SourceData/Omgevingsrecht/EU/Natura2000_2024 zit; komt daar een nieuwe levering, pas dan ook deze sleutel aan. buffer_m staat als vaste waarde, want de potential kiest zijn kernel via het
 					itempad. De buffer sluit groot water uit, dus de volledige fingerprint van GrootWater1500mBuffer telt hier genest mee.";
-		container       Decoupling_N2K1000mBuffer := /Templates/DecoupledFile_T(FileName_N2K1000mBuffer, Fingerprint_N2K1000mBuffer);
+		container       Decoupling_N2K1000mBuffer := /Templates/DecoupledFile_T(FileName_N2K1000mBuffer, Fingerprint_N2K1000mBuffer, 'Write_N2K1000mBuffer');
 		attribute<Bool> Calc_N2K1000mBuffer       (AdminDomain) := N2K1000mBuffer0 && !GrootWater1500mBuffer, Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water";
-		attribute<Bool> Make_N2K1000mBuffer       (AdminDomain) := Calc_N2K1000mBuffer, StorageName = "=FileName_N2K1000mBuffer", StorageType = "tif", ExplicitSuppliers = "Decoupling_N2K1000mBuffer/Write_Fingerprint", Descr = "Schrijft de buffer eenmalig weg. Write_Fingerprint hangt als ExplicitSupplier aan dit Make-item zelf en niet aan een container, zodat het zijbestand ook meekomt wanneer een run dit item rechtstreeks aanspreekt.";
+		attribute<Bool> Write_N2K1000mBuffer      (AdminDomain) := Calc_N2K1000mBuffer, StorageName = "=FileName_N2K1000mBuffer", StorageType = "tif", Descr = "Schrijft de buffer eenmalig weg, zonder zijbestand; dat volgt via Make_N2K1000mBuffer.";
+		attribute<Bool> Make_N2K1000mBuffer       (AdminDomain) := Write_N2K1000mBuffer, ExplicitSuppliers = "Decoupling_N2K1000mBuffer/Write_Fingerprint"
+		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_N2K1000mBuffer, want alleen langs deze weg ontstaat de fingerprint (#837).";
 		attribute<Bool> Read_N2K1000mBuffer               (AdminDomain) : StorageName = "=FileName_N2K1000mBuffer", StorageType = "tif", StorageReadOnly = "TRUE";
 		attribute<Bool> N2K1000mBuffer                    (AdminDomain) := = Decoupling_N2K1000mBuffer/MayReuse ? 'Read_N2K1000mBuffer' : 'Make_N2K1000mBuffer', Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water, ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_N2K1000mBuffer/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
 		
-		container Fractie_VerhardGroen_PerBuurtType
-		{
-			attribute<meter2> GroenOpp   (AdminDomain) := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/GroenOpp_AdminDomain;
-			attribute<meter2> WaterOpp   (AdminDomain) := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/WaterOpp_AdminDomain;
-			attribute<meter2> BruinOpp   (AdminDomain) := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/BruinOpp_AdminDomain;
-			attribute<meter2> VerhardOpp (AdminDomain) := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData/VerhardOpp_AdminDomain;
-			attribute<meter2> Check      (AdminDomain) := add(GroenOpp, WaterOpp, BruinOpp, VerhardOpp) - AdminDomain/NrHaPerCell[meter2];
-			
-			unit<uint32> NettoBuurt := /SourceData/Vastgoed/Rudifun/Netto_Buurt
-			{
-				attribute<meter2>  Opp_geom                      := area(geometry, meter2_f64)[meter2];
-				attribute<meter2>  GroenOpp                      := sum(../GroenOpp, Per_AdminDomain);
-				attribute<meter2>  WaterOpp                      := sum(../WaterOpp, Per_AdminDomain);
-				attribute<meter2>  BruinOpp                      := sum(../BruinOpp, Per_AdminDomain);
-				attribute<meter2>  VerhardOpp                    := sum(../VerhardOpp, Per_AdminDomain);
-				attribute<meter2>  TotalOpp                      := GroenOpp + WaterOpp + BruinOpp + VerhardOpp;
-				
-				attribute<float32> FractieGroen                  := GroenOpp / TotalOpp;
-				attribute<float32> FractieWater                  := WaterOpp / TotalOpp;
-				attribute<float32> FractieBruin                  := BruinOpp / TotalOpp;
-				attribute<float32> FractieVerhard                := VerhardOpp / TotalOpp;
-				
-				attribute<.> Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
-			}
-			
-			unit<uint32> BrutoBuurt := /SourceData/Vastgoed/Rudifun/Bruto_Buurt
-			{
-				attribute<meter2>  Opp_geom                      := area(geometry, meter2_f64)[meter2];
-				attribute<meter2>  GroenOpp                      := sum(../GroenOpp, Per_AdminDomain);
-				attribute<meter2>  WaterOpp                      := sum(../WaterOpp, Per_AdminDomain);
-				attribute<meter2>  BruinOpp                      := sum(../BruinOpp, Per_AdminDomain);
-				attribute<meter2>  VerhardOpp                    := sum(../VerhardOpp, Per_AdminDomain);
-				attribute<meter2>  TotalOpp                      := GroenOpp + WaterOpp + BruinOpp + VerhardOpp;
-				
-				attribute<float32> FractieGroen                  := GroenOpp / TotalOpp;
-				attribute<float32> FractieWater                  := WaterOpp / TotalOpp;
-				attribute<float32> FractieBruin                  := BruinOpp / TotalOpp;
-				attribute<float32> FractieVerhard                := VerhardOpp / TotalOpp;
-				
-				attribute<.> Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
-			}
-			
-			unit<uint32> TarraBuurt := /SourceData/Vastgoed/Rudifun/Bruto_Buurt
-			{
-				attribute<meter2>     GroenOpp                   := max_elem(BrutoBuurt/GroenOpp - NettoBuurt/GroenOpp[NettoBuurt_rel], 0f);
-				attribute<meter2>     WaterOpp                   := max_elem(BrutoBuurt/WaterOpp - NettoBuurt/WaterOpp[NettoBuurt_rel], 0f);
-				attribute<meter2>     BruinOpp                   := max_elem(BrutoBuurt/BruinOpp - NettoBuurt/BruinOpp[NettoBuurt_rel], 0f);
-				attribute<meter2>     VerhardOpp                 := max_elem(BrutoBuurt/VerhardOpp - NettoBuurt/VerhardOpp[NettoBuurt_rel], 0f);
-				attribute<meter2>     TotalOpp                   := GroenOpp + WaterOpp + BruinOpp + VerhardOpp;
-				
-				attribute<float32>    FractieGroen               := GroenOpp / TotalOpp;
-				attribute<float32>    FractieWater               := WaterOpp / TotalOpp;
-				attribute<float32>    FractieBruin               := BruinOpp / TotalOpp;
-				attribute<float32>    FractieVerhard             := VerhardOpp / TotalOpp;
-				attribute<float32>    Check                      := add(FractieGroen, FractieWater, FractieBruin, FractieVerhard);
-				
-				attribute<.> Per_AdminDomain (AdminDomain) := poly2grid(geometry, AdminDomain);
-				
-				attribute<NettoBuurt> NettoBuurt_rel             := rlookup(BU_CODE, NettoBuurt/BU_CODE);
-				attribute<Provincie>  Provincie_rel              := rlookup(PV_CODE, Provincie/statcode);
-				
-				attribute<float32>    Mean_FractieGroen_Prov     (Provincie) := mean(FractieGroen, Provincie_rel);
-				attribute<float32>    Mean_FractieWater_Prov     (Provincie) := mean(FractieWater, Provincie_rel);
-				attribute<float32>    Mean_FractieBruin_Prov     (Provincie) := mean(FractieBruin, Provincie_rel);
-				attribute<float32>    Mean_FractieVerhard_Prov   (Provincie) := mean(FractieVerhard, Provincie_rel);
-				
-				parameter<float32> Mean_FractieGroen   := mean(FractieGroen[Per_AdminDomain]);
-				parameter<float32> Mean_FractieWater   := mean(FractieWater[Per_AdminDomain]);
-				parameter<float32> Mean_FractieBruin   := mean(FractieBruin[Per_AdminDomain]);
-				parameter<float32> Mean_FractieVerhard := mean(FractieVerhard[Per_AdminDomain]); // inclusief pandfootprint (voor zover relevant in tarra buurten)
-			}
-			
-			container FractiesHoofdklassenPerBNSN := for_each_ne(Classifications/Grondgebruik/HoofdklasseK/name, 'HoofdklasseT('+string(id(Classifications/Grondgebruik/HoofdklasseK))+'[Classifications/Grondgebruik/HoofdklasseK])');
-			
-			Template HoofdklasseT
-			{
-				parameter<uint8> HoofdklasseK_id;
-				//
-				
-				container FractiePerBNSN :=
-					for_each_nedv(
-						Landschap/BasiskaartNatuurlijkSysteemNederlandK/name,
-						replace(
-							'mean(
-								SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/BNSN_rel_AdminDomain == Landschap/BasiskaartNatuurlijkSysteemNederlandK/v/'+Landschap/BasiskaartNatuurlijkSysteemNederlandK/name+' 
-									? TarraBuurt/Fractie@[TarraBuurt/Per_AdminDomain]
-									: null_f
-							)',
-							'@', Classifications/Grondgebruik/HoofdklasseK/name[HoofdklasseK_id]
-						)
-						, void
-						, float32
-					)
-				{
-					attribute<float32> Map (Landschap/BasiskaartNatuurlijkSysteemNederlandK) := = 'union_data(Landschap/BasiskaartNatuurlijkSysteemNederlandK,'+AsItemList('FractiePerBNSN/'+Landschap/BasiskaartNatuurlijkSysteemNederlandK/name)+')';
-				}
-			}
-		}
 	}
 	
 	#include<Suitabilities.dms>
