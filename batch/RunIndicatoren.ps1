@@ -460,6 +460,11 @@ for ($r = 0; $r -lt $regios.Count; $r++) {
         $stappen += [pscustomobject]@{ Wat = 'Zichtjaren/Export/generates/Generate_Kaarten'; UitExport = 'FALSE'; Naam = "kaarten-$regio" }
         $stappen += [pscustomobject]@{ Wat = 'Zichtjaren/Export/generates/Themas/Tabellen';  UitExport = 'TRUE';  Naam = "tabellen-$regio" }
     }
+    if ($Profiel -eq 'Veenweide' -and -not $alleenTabel) {
+        # De invoer van de peiloptimalisatie van veenweide (PostAllocAnalyses/Landbouw/PeilOptimalisatie): de NPV van de landbouw
+        # en de CO2-kosten van SOMERS. Ze staan niet in de export, dus een eigen proces na de kaarten.
+        $stappen += [pscustomobject]@{ Wat = 'Zichtjaren/Export/generates/PeilOptimalisatie/Invoer'; UitExport = 'FALSE'; Naam = "peilinvoer-$regio" }
+    }
     foreach ($stap in $stappen) {
         $env:TabellenUitExport = $stap.UitExport
         if ($Gebundeld) {
