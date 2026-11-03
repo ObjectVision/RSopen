@@ -331,7 +331,8 @@ function Assert-Ketens([string]$casus, [string]$jaar, [string]$standVan) {
 }
 
 $totaal = [Diagnostics.Stopwatch]::StartNew()
-$alleJaren = Get-Zichtjaren
+# @() houdt een lijst met een zichtjaar een lijst; anders wordt hij een tekst en pakken IndexOf en [0..0] de eerste letter
+$alleJaren = @(Get-Zichtjaren)
 if ($Zichtjaren.Count -eq 0) { $Zichtjaren = @($alleJaren[-1]) }
 Write-Regel "config    : $Cfg"
 Write-Regel "profiel   : $Profiel (ModelParameters/Productieprofiel)$(if ($Set -eq 'RuimteVoorWoningbouw') { ', woningbouwset' } else { ', domeinen ' + ((@($Domeinen.Keys | Where-Object { $Domeinen[$_] }) | Sort-Object) -join ', ') })"
