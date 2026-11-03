@@ -1,30 +1,63 @@
+REM ================================================================================
+REM
+REM Dit is RSOpen, de open source versie van het model RuimteScanner.
+REM Het script wordt uitgegeven onder GNU-GPL licentie.
+REM
+REM RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving,
+REM i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+REM Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+REM Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+REM Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+REM
+REM Start een volledige RSopen modelrun: stelt paden en GeoDMS-versie in, vraagt of basedata hergebruikt kan
+REM worden en of alleen het eindjaar berekend moet worden, en roept daarna de deelscripts (PrepareBasedata,
+REM RunScenarios, RunVariantData) aan.
+REM
+REM ================================================================================
 
 REM ========== PARAMETER INSTELLINGEN ================
-set geodmsversion=GeoDms18.2.2
+REM De geinstalleerde GeoDMS, niet de build uit Visual Studio. Die laatste is een bewegend doel:
+REM hij wordt opnieuw gecompileerd zonder dat de configuratie verandert, en een run kan dan
+REM halverwege op een andere engine draaien dan waarmee hij begon.
+set geodmsversion=GeoDms20.23.1.m
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
-REM set exe_dir=C:\dev\GeoDms\bin\Release\x64
+REM set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
-set LocalDataProjDir=C:\LocalData\RSopen
+REM Moet meebewegen met de naam van de werkkopie: GeoDMS leidt dit pad anders zelf af uit LocalDataDir plus de
+REM configuratienaam. Stond tot #714 op C:\LocalData\RSopen, een map die in deze werkkopie niet bestaat.
+set LocalDataProjDir=C:\LocalData\RSopen_NL2120
 
 set MT_FLAGS=/S1 /S2 /S3
+
+REM Overrulet ModelParameters/StandAllocatieOntkoppeld. Dit is een BATCH-instelling: hij bepaalt of de allocatie
+REM per zichtjaar een eigen GeoDmsRun-proces krijgt (TRUE) of dat alle zichtjaren in een proces gaan (FALSE).
+REM TRUE  begrenst het geheugengebruik per proces en maakt doorstarten na een fout mogelijk.
+REM FALSE is sneller omdat de stand niet via tif heen en weer gaat, maar vraagt wel dat het geheugen de hele
+REM       keten in een keer aankan, en bij een fout begin je opnieuw bij het basisjaar.
+set StandAllocatieOntkoppeld=TRUE
 
 set CurrentDir=%CD%
 CD ..
 set ProjDir=%CD%
 CD %CurrentDir%
-
-set RSO_BOERVARIANT_NAME=RationeleBoer
-
 REM ========= EINDE PARAMETER INSTELLINGEN ===========
 
 REM deletes the old log file; each run adds the timed version to it.
 del log\log.txt
 
-set AlleenEindjaar=TRUE
+REM Default is sequentieel doorrekenen, dus alle zichtjaren. De padafhankelijkheid doet dan mee, en dat is
+REM nodig voor onder meer de geschiktheid voor wonen: die gebruikt de natuur en het water die aan het begin
+REM van een zichtjaar liggen, en dat kan alleen als de tussenliggende zichtjaren echt doorgerekend worden (#637).
+REM Geef J als eerste argument mee om toch alleen het eindjaar te rekenen.
+set AlleenEindjaar=FALSE
 
-if "%1%" equ "" CHOICE /M "Wil je alleen eindjaar uitrekenen, dus 2030 en 2040 overslaan?"
-if ErrorLevel 2 set AlleenEindjaar=FALSE
+if "%1%" neq "" goto zichtjarenKeuzeGemaakt
+CHOICE /M "Wil je alleen het eindjaar uitrekenen, dus de tussenliggende zichtjaren overslaan?"
+if ErrorLevel 2 goto zichtjarenKeuzeGemaakt
+set AlleenEindjaar=TRUE
+:zichtjarenKeuzeGemaakt
+if "%1%" equ "J" set AlleenEindjaar=TRUE
 if "%1%" equ "N" set AlleenEindjaar=FALSE
 
 if "%2%" equ ""  CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
@@ -49,30 +82,41 @@ call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run2
 echo "ErrorLevel is " %ErrorLevel% 
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
-REM deze ontkoppelde dat is nodig voor de indicatoren.
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3_IndicatorenData
-echo "ErrorLevel is " %ErrorLevel% 
+REM Run3 maakt de stand van het basisjaar, de woningsubsector-proxies, de sloopkosten, de werken-geschiktheid,
+REM de waterbergingsnormen, de afstandskernels, de zonneladder, de verblijfsrecreatietrends en de claims in LocalData. Zonder deze stap
+REM strandt elke claim op een onbekende naam in plaats van op een ontbrekend bestand, want een mmd levert zijn
+REM kolommen uit de dictionary in het bestand.
+call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3
+echo "ErrorLevel is " %ErrorLevel%
 if %ErrorLevel% NEQ 0 goto ErrorEnd
+
+REM Run4 maakt alleen wat de INDICATOREN nodig hebben en is voor een allocatierun niet nodig; zie
+REM batch/RunIndicatoren.ps1, dat deze stap als eis noemt.
+REM call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run4_IndicatorenData
+REM echo "ErrorLevel is " %ErrorLevel% 
+REM if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 
 :runPrepareVariantdata
 
 REM deletes the old VariantData folder.
-REM rmdir %LocalDataProjDir%\VariantData /s /q 
+REM rmdir %LocalDataProjDir%\VariantData /s /q
 
-set RSO_VARIANT_NAME=BAU
+set RSL_VARIANT_NAME=BAU
 call ..\batch\RunVariantData.cmd
 
-REM set RSO_VARIANT_NAME=WBS
+REM set RSL_VARIANT_NAME=Intensiveren
+REM call ..\batch\RunVariantData.cmd
+
+REM set RSL_VARIANT_NAME=Transformeren
 REM call ..\batch\RunVariantData.cmd
 
 :runScenarios
 
-
-set RSO_SCENARIO_NAME=WLO_Hoog
+set RSL_SCENARIO_NAME=WLO_hoog
 call ..\batch\RunScenarios.cmd
 
-REM set RSO_SCENARIO_NAME=WLO_Laag
+REM set RSL_SCENARIO_NAME=WLO_Laag
 REM call ..\batch\RunScenarios.cmd
 
 

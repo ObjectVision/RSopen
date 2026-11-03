@@ -1,10 +1,26 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Op AdminDomain niveau wordt de geschiktheid en beschikbaarheid opgehaald/bepaald. Is land unit i beschikbaar
+// en niet al eerder dit of vorige zichtjaren gealloceerd, en niet niet nog een additionele restrictie door wind
+// allocatie? Wat is de toegestane dichtheid D voor deze subsector per land unit i, check nog eens op
+// beschikbaarheid.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 Template IterSubsector_T
 {
 	//
 	parameter<Subsector> id;
-	unit<UInt8> Subsector;
-	container StateVoorAllocatie;
-	container Context0;
+	unit<UInt8>          Subsector;
+	container            StateVoorAllocatie;
+	container            Context0;
 	//
 	
 	container Context := Context0
@@ -12,68 +28,110 @@ Template IterSubsector_T
 		container ThisSubsector := ..;
 	}
 	
-	parameter<String> name               := Subsector/name[id];
-	parameter<String> Subsector_pathname := Subsector/Sector_name_Thisname[id];
-	parameter<String> Zichtjaar_name     := Context/ThisZichtjaar/name;
-	parameter<String> AllocRegio_name    := Context/ThisSectorAllocRegio/AllocRegio_name;
+	parameter<String> name                      := Subsector/name[id];
+	parameter<String> Subsector_name            := Subsector/name[id], Descr = "Dezelfde waarde als name hierboven, maar onder een naam die niet door de eigen-naam-eigenschap van een subcontainer wordt afgeschermd. Binnen CompactedAdminDomain levert een kale name de containernaam op en niet de subsector, dus alles wat daar de subsectornaam nodig heeft gebruikt deze parameter.";
+	parameter<String> Subsector_pathname        := Subsector/Sector_name_Thisname[id];
+	parameter<String> Zichtjaar_name            := Context/ThisZichtjaar/name;
+	parameter<String> AllocRegio_name           := Context/ThisSectorAllocRegio/AllocRegio_name;
 	
-	unit<UInt32> TredeK := = 'VariantData/Trede/SectorxSubsectoren/'+Subsector_pathname+'/impl/Klasse';
+	parameter<Bool>   IsPlancapaciteitNogGeldig := ='uint32('+substr(Zichtjaar_name, 1, 4)+') <= uint32(/ModelParameters/Advanced/PlancapaciteitGeldigTotEnMet)', Descr = "Dezelfde vervaldatum als in Templates/Beschikbaarheden/Zeef_T, hier voor de trede (#739).";
+	parameter<String> TredeWortel               := 'Context/ThisZichtjaar/Impl/TredeDynamischeUrbanContour'
+	, Descr = "Waar de trede-opbouw van dit zichtjaar staat (#749): de opbouw in dit zichtjaar zelf, waarin het bebouwd gebied is aangegroeid met een schijf rond wat er in eerdere zichtjaren is gealloceerd; de statische opbouw in VariantData is het startpunt.";
+
+	parameter<Bool>   PlancapaciteitVervallen   := !IsPlancapaciteitNogGeldig;
+	parameter<String> TredeContainer            := PlancapaciteitVervallen ? 'SectorxSubsectoren_ZonderPlancapaciteit' : 'SectorxSubsectoren'
+	, Descr = "Welke van de twee trede-opbouwen dit zichtjaar gebruikt (#739): de opbouw op de volle bron, of die op de bron waarin de plancapaciteit is platgelegd. De tredes worden
+				zichtjaaronafhankelijk gebouwd, dus staan beide opbouwen klaar en valt de keuze hier, zoals Zeef_T/BasisjaarZeefItem dat voor de zeef doet (#682); tot en met
+				PlancapaciteitGeldigTotEnMet in ModelParameters/Advanced wijst dit naar SectorxSubsectoren.";
+
+	parameter<String> TredeSrc                  := PlancapaciteitVervallen ? 'src_ZonderPlancapaciteit' : 'src'
+	, Descr = "Dezelfde keuze een laag lager, voor de tweede plek waar plancapaciteit voorrang geeft: SubsectorKeuzePrioriteit hieronder, de keuze tussen werksubsectoren die dezelfde cel boven hun zaaglijn hebben. Na de vervaldatum leest die de bron waarin geen cel in een plan ligt, zodat de prioriteit terugvalt op de stimuli en op de bestaande kantoorcel.";
+
+	unit<UInt32>      TredeK                    := = TredeWortel+'/'+TredeContainer+'/'+Subsector_pathname+'/impl/Klasse';
 	
 	unit<uint64> CompactedAdminDomain := Geography/CompactedAdminDomain
 	, Descr = "Op AdminDomain niveau wordt de geschiktheid en beschikbaarheid opgehaald/bepaald."
 	{
-		attribute<Bool>    Beschikbaar                := = 'PotentieleState/'+Zichtjaar_name+'/per_SectorxSubsectoren/'+Subsector_pathname+'/IsBeschikbaar_zichtjaar 
-																&& !(IsDefined(StateVoorAllocatie/SubSector_rel)) 
-																&& !RestrictiesVoorSectorenAlsGevolgVanWind/Restrictief_voor_beperkt_kwestbare_gebouwen 
-																&& !ExtraRestrictieDoorNieuwVervuilendWerken 
-																&& !ExtraRestrictieDoorHuidigeZonneweide'
-																, Descr = "Is land unit i beschikbaar en niet al eerder dit of vorige zichtjaren gealloceerd, en niet niet nog een additionele restrictie door wind allocatie?";
-		attribute<Float32> PotentieleStateNaAllocatie := = 'PotentieleState/'+Zichtjaar_name+'/per_SectorxSubsectoren/'+Subsector_pathname+'/Zichtjaar * float32(Beschikbaar)', Descr = "Wat is de toegestane dichtheid D voor deze subsector per land unit i, check nog eens op beschikbaarheid.";
+		attribute<Bool>         Beschikbaar_Init                            := = 'ThisVariantData/PotentieleState/'+Zichtjaar_name+'/per_SectorxSubsectoren/'+Subsector_pathname+'/IsBeschikbaar_zichtjaar
+		                                                                       && !/Classifications/Actor/Sector/xSubsector/LegtCelVast[StateVoorAllocatie/SubSector_rel]
+		                                                                       && !RestrictiesVoorSectorenAlsGevolgVanWind/Restrictief_voor_beperkt_kwestbare_gebouwen
+		                                                                       && !ExtraRestrictieDoorNieuwVervuilendWerken
+		                                                                       && !ExtraRestrictieVoorVervuilendWerkNabijWonen
+		                                                                       && !ExtraRestrictieDoorHuidigeZonneweide', Descr = "Is land unit i beschikbaar: niet al in dit of een vorig zichtjaar vastgelegd, en geen aanvullende restrictie door de windallocatie? De term over SubSector_rel is meer dan een filter: wat het
+		                                                                       model eenmaal heeft gebouwd blijft de rest van de reeks onbeschikbaar, want dat label wordt nooit gewist, zodat modelnieuwbouw onbeperkt beschermd is terwijl de bestaande voorraad in de zeef
+		                                                                       een aflopende bescherming kent (#735). De toets loopt langs LegtCelVast en niet langs IsDefined, want landbouw wordt elk zichtjaar opnieuw gealloceerd en legt zijn cellen niet vast (#803).
+		                                                                       Wie de onbeperkte bescherming wil opheffen moet meer meenemen dan deze regel: OP_rel, SubSector_rel, Zichtjaar_T/FootprintEindejaars/GealloceerdDitZichtjaar en
+		                                                                       Indicatoren/SloopNieuwbouwPerWoningtype leunen op de invariant dat een cel hoogstens een keer wordt gealloceerd, en de verwervings- en sloopkosten van modelnieuwbouw zijn nul; zie #735.";
 		
-		parameter<bool>    IsSubsectorZelfVervuilendWerk            := lowercase(name) == lowercase('nijverheid') || lowercase(name) == lowercase('logistiek'), Descr = "Rond vervuilende werk locaties een buffer zodat daar bijv geen woningen of winkels komen."; 
-		attribute<bool>    ExtraRestrictieDoorNieuwVervuilendWerken := =IsSubsectorZelfVervuilendWerk ? 'const(FALSE, .)' : 'RestrictiesVoorSectorenAlsGevolgVanVervuilendWerken/IsNietToegestaan', Descr = "Rond vervuilende werk locaties een buffer zodat daar bijv geen woningen of winkels komen.";
+		attribute<Bool>         Beschikbaar_NaAfgewezenClusters             := ='Beschikbaar_Init && NOT('+Context/PrevItername+'/Allocatie/IsAfgewezen_Cumulatief)'
+		, Descr = "Een afgewezen cel blijft de rest van deze sector-allocregio uitgesloten. Twee mildere varianten zijn geprobeerd en allebei afgevallen, zie ObjectVision/RSopen#643: terugkomen zodra er een gealloceerde buur is laat de allocatie volledig vastlopen, en terugkomen zodra de erosiedrempel gehaald zou worden levert per saldo niets op.";
+		attribute<Bool>         Beschikbaar                                 := = Context/ThisIter_rel >= ModelParameters/Advanced/IterVanafWaarWeAfgewezenCellenUitsluitenInAlloc
+		                                                                       ? 'Beschikbaar_NaAfgewezenClusters'
+		                                                                       : 'Beschikbaar_Init';
+	
+		attribute<Float32>      PotentieleStateNaAllocatie                  := = 'ThisVariantData/PotentieleState/'+Zichtjaar_name+'/per_SectorxSubsectoren/'+Subsector_pathname+'/Zichtjaar * float32(Beschikbaar)', Descr = "Wat is de toegestane dichtheid D voor deze subsector per land unit i, check nog eens op beschikbaarheid.";
+		
+		parameter<bool>         IsSubsectorZelfVervuilendWerk               := lowercase(Subsector_name) == lowercase('nijverheid') || lowercase(Subsector_name) == lowercase('logistiek'), Descr = "Rond vervuilende werk locaties een buffer zodat daar bijv geen woningen of winkels komen.";
+		parameter<bool>         IsSubsectorMilieuOngevoelig                 := lowercase(Subsector_pathname) == lowercase('Waterberging/Totaal'), Descr = "Waterberging is geen milieugevoelige functie en mag dus wel direct naast nieuw vervuilend werk landen; de generieke vervuilend-werkbuffer geldt daar niet.";
+		attribute<bool>         ExtraRestrictieDoorNieuwVervuilendWerken    := =IsSubsectorZelfVervuilendWerk || IsSubsectorMilieuOngevoelig ? 'const(FALSE, .)' : 'RestrictiesVoorSectorenAlsGevolgVanVervuilendWerken/IsNietToegestaan', Descr = "Rond vervuilende werk locaties een buffer zodat daar bijv geen woningen of winkels komen.";
+		attribute<bool>         ExtraRestrictieVoorVervuilendWerkNabijWonen := =IsSubsectorZelfVervuilendWerk ? 'RestrictiesVoorSectorenAlsGevolgVanVervuilendWerken/NietToegestaanVoor'+Subsector_name : 'const(FALSE, .)', Descr = "Omgekeerde milieuzonering: nieuwe nijverheid en logistiek houden zelf afstand tot bestaand en eerder gealloceerd wonen, met dezelfde VNG-bufferafstand als andersom.";
+	
+		parameter<bool>         IsWerkenSubsector                           := lowercase(substr(Subsector_pathname, 0, 7)) == lowercase('Werken/'), Descr = "Werken-subsectoren gebruiken de geschiktheid uit het zichtjaar (Zichtjaar_T/Impl/WerkenGeschiktheid, #647); die valt in het eerste zichtjaar terug op de statische kaart.";
+		attribute<Float32>      Geschiktheid_Statisch                       := = IsWerkenSubsector
+		                                                                       ? 'Context/ThisZichtjaar/Impl/WerkenGeschiktheid/PerSector/'+Subsector_name+'/Totaal_raw'
+		                                                                       : 'ThisVariantData/Suitability/'+Zichtjaar_name+'/'+Subsector_pathname, Descr = "Geschiktheid S_ij zonder beschikbaarheidsmask, zodat deze keten iteratie-invariant is en GeoDMS haar via expressie-identiteit deelt over alle iteraties en blokken, zoals bij wonen
+		                                                                                   (IterSubsector_T_Wonen sorteert de ongemaskeerde Geschiktheid_MaxElem_OP_sub); de beschikbaarheid telt alleen mee in de eindterm Geschiktheid. Voor werken het raw-nut en niet de
+		                                                                                   MNL-kans: binnen een subsector telt alleen de rangorde, en de MNL-noemer drukt cellen die voor meerdere sectoren aantrekkelijk zijn ten onrechte omlaag; de sectorconcurrentie
+		                                                                                   wordt apart beslist. Nodata is in Totaal_raw null (nooit kandidaat, #599). Elke nieuwe term die Context/PrevItername of StateVoorAllocatie aanraakt breekt de deling en kost tientallen
+		                                                                                   seconden per iteratie.";
+		attribute<Float32>      SubsectorKeuzePrioriteit                    := = IsWerkenSubsector
+		                                                                       ? (lowercase(Subsector_name) == lowercase('Zak_dienstverlening') ? 'ThisVariantData/Trede/'+TredeSrc+'/BinnenBestaandKantoor[AdminDomain_rel] ? 4f : ' : '')
+		                                                                       + (lowercase(Subsector_name) == lowercase('Overheid_kw_diensten') ? 'ThisVariantData/Trede/'+TredeSrc+'/BinnenBestaandeInstelling[AdminDomain_rel] ? 4f : ' : '')
+		                                                                       + 'ThisVariantData/Trede/'+TredeSrc+'/BinnenHardePlancapaciteitWerken_'+Subsector_name+'[AdminDomain_rel] ? 3f
+		                                                                           : ThisVariantData/Trede/'+TredeSrc+'/BinnenZachtePlancapaciteitWerken_'+Subsector_name+'[AdminDomain_rel] ? 2f
+		                                                                           : ThisVariantData/Trede/'+TredeSrc+'/BinnenStimuliWerken[AdminDomain_rel] ? 1f : 0f'
+		                                                                       : 'const(0f, .)', Descr = "Plancapaciteit- en stimuliprioriteit van deze cel voor deze subsector (KanOp-gefilterd): 3 binnen harde plannen, 2 binnen zachte plannen, 1 binnen stimuli, 0 anders; 4 voor een bestaande
+																			dominante kantoorcel bij zakelijke dienstverlening (#668) of een bestaande dominante voorzieningencel bij overheid en kwartaire diensten, zodat de subsector zijn eigen cellen
+																			vasthoudt in de subsectorkeuze. Uniform over de zes werksubsectoren, dus bruikbaar in de onderlinge vergelijking waar de tredescores zelf niet vergelijkbaar zijn; zonder deze
+																			prioriteit kan een subsector zonder plannen een cel afpakken van een subsector met harde plannen.";
+		attribute<Float32>      Geschiktheid_VoorSubsectorKeuze             := = IsWerkenSubsector
+		                                                                       ? 'IsDefined(Geschiktheid_Cleaned) ? SubsectorKeuzePrioriteit + Context/ThisZichtjaar/Impl/WerkenGeschiktheid/PerSector/'+Subsector_name+'/Totaal : null_f'
+		                                                                       : 'Geschiktheid_Cleaned', Descr = "Score voor de keuze tussen subsectoren die dezelfde cel boven hun zaaglijn hebben (Iter_Allocatie ArgMax). Voor werken lexicografisch: eerst de plancapaciteit-prioriteit, daarbinnen de MNL-kans (die ligt in [0,1), dus de prioriteit domineert). Zo kan een subsector met lage trede maar hoge kans niet langer een cel afpakken van een subsector met harde plannen daar.";
+		attribute<Float32>      Geschiktheid_Cleaned                        := Geschiktheid_Statisch == 0f ? null_f : Geschiktheid_Statisch, Descr = "Als de geschiktheid 0 is, willen we dit undefined hebben. Sorteert sinds de hoist de statische geschiktheid, dus ook cellen die (nog) niet beschikbaar zijn krijgen een rang; hun eindscore blijft 0 via de mask in Geschiktheid, en de zaaglijn weegt met het al gemaskeerde PotentieleStateNaAllocatie, dus de selectie onder beschikbare cellen is gelijk aan voorheen.";
+		attribute<UInt32>       Geschiktheid_Ordered                        := invert(index(Geschiktheid_Cleaned))[uint32], Descr = "In het allocatie proces moet de geschiktheid gesorteerd worden, zodat er greedy vanaf de meest geschikte locatie gealloceerd wordt.";
+		parameter<Uint64>       Geschiktheid_Ordered_range                  := Uint64(max(Geschiktheid_Ordered)+100), Descr = "Wat is de maximale geschiktheid, plus een getal wat er voor zorgt dat er later geen dubbele waarden kunnen voorkomen.";
+		attribute<UInt32>       TredeScore                                  := (#TredeK - 1) - collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TredeK/Per_AdminDomain)
+																, Descr = "Tredes introduceren een volgordelijkheid in groepen cellen, zodat onafhankelijk van de geschiktheid sommige groepen cellen boven andere geplaatst worden, bijvoorbeeld dichtbij een
+																		OV-knooppunt. Hier wordt die volgorde voorbereid, met een check of de maximale waarde van een trede kleiner of gelijk is aan de cardinaliteit van de tredes. De IntegrityCheck toetst exact de
+																		term die hierboven wordt afgetrokken, TredeK/Per_AdminDomain over CompactedAdminDomain, en niet de AllocDomain-variant: dat zijn verschillende verzamelingen cellen, en een toets op de andere
+																		kan slagen terwijl de aftrekking onder nul gaat en in UInt32 omslaat (#605).", IntegrityCheck = "max(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TredeK/Per_AdminDomain)) < #TredeK";
+		attribute<Uint64>       Geschiktheid                                := Uint64(Beschikbaar) * (Uint64(TredeScore) * Geschiktheid_Ordered_range + Uint64(Geschiktheid_Ordered)), Descr = "Hier wordt de sorteerde geschiktheid gecombineerd met de tredescores tot een aangepaste geschiktheid in groepen per trede.";
+		attribute<Bool>         LigtBovenAfkapgrens                         := Geschiktheid > AllocRegio/Afkapgrens[AllocRegio/per_CompactedAdminDomain], Descr = "Wil deze subsector de cel in deze iteratie hebben? De geschiktheid ligt boven de zaaglijn van de regio; Iter_Allocatie kiest daarna tussen de subsectoren.";
 	}
 
-	
-	unit<uint64> CompactedAllocDomain := Geography/CompactedAllocDomain
-	, Descr = "Allocatie geschiedt uiteindelijk op AllocDomain, dus hier worden een aantal aggregaties gemaakt."
-	{
-		attribute<Float32> PotentieleStateNaAllocatie := sum(CompactedAdminDomain/PotentieleStateNaAllocatie, CompactedAdminDomain/CompactedAllocDomain_rel), Descr = "Aggregatie van AdminDomain D_ij naar AllocDomain.";
-		attribute<Float32> Geschiktheid_Beschikbaar   := = 'VariantData/Suitability/'+Zichtjaar_name+'/'+Subsector_pathname+' * Modus(CompactedAdminDomain/Beschikbaar, CompactedAdminDomain/CompactedAllocDomain_rel)[float32]', Descr = "Geschiktheid S_ij waar beschikbaar, dmv aggregatie van beschikbaarheid op AdminDomain naar AllocDomain op basis van modus.";
-		attribute<Float32> Geschiktheid_Cleaned       := Geschiktheid_Beschikbaar == 0f ? null_f : Geschiktheid_Beschikbaar, Descr = "Als de geschiktheid 0 is, willen we dit undefined hebben.";
-		attribute<UInt32>  Geschiktheid_Ordered       := invert(index(Geschiktheid_Cleaned))[uint32], Descr = "In het allocatie proces moet de geschiktheid gesorteerd worden, zodat er greedy vanaf de meest geschikte locatie gealloceerd wordt.";
-		parameter<UInt32>  Geschiktheid_Ordered_range := max(Geschiktheid_Ordered)+100, Descr = "Wat is de maximale geschiktheid, plus een getal wat er voor zorgt dat er later geen dubbele waarden kunnen voorkomen.";
-		attribute<UInt32>  TredeScore                 := (#TredeK -1) - collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain)
-															, Descr = "Tredes introduceren een volgordelijkheid in groepen cellen. Zodat onafhankelijk van de geschiktheid sommige groepen cellen boven andere geplaatst moeten worden.
-																		Bijvoorbeeld dichtbij een OV-knooppunt. Hier wordt deze volgordelijkheid voorbereid. Met een check of de maximale waarde van een trede wel kleiner of gelijk is aan de cardinaliteit van de tredes. Is dit niet het geval, dan moet je meer onderzoek uitvoeren.", IntegrityCheck = "max(collect_by_cond(CompactedAllocDomain, AllocDomain/IsCompactedDomain, TredeK/Per_AllocDomain)) < #TredeK";
-		
-		//deze geschiktheid is landsdekkend, en dus locaties die niet beschikbaar zijn zitten er nog in. En niet beshcikbare locaties binnen een trede worden dan hoger gekozen dan anderen. Terwijl die later toch weer afvallen. Daar moeten we voor corrigeren, anders alloceert ie nooit wat.
-		attribute<Float32> Geschiktheid               := IsDefined(Geschiktheid_Cleaned)[float32] * (float32(TredeScore) * float32(Geschiktheid_Ordered_range) + float32(Geschiktheid_Ordered)), Descr = "Hier wordt de sorteerde geschiktheid gecombineerd met de tredescores tot een aangepaste geschiktheid in groepen per trede.";
-	}
-	
 	unit<UInt32> AllocRegio := Context/ThisSectorAllocRegio/AllocRegio
 	{
-		attribute<float32> Stand := ='sum(StateVoorAllocatie/'+Subsector_pathname+', Per_CompactedAdminDomain)';
-		attribute<Float32> Claim := = replace(
-			'VariantData/Claims/@Z@/SectorAllocRegios/@AS@/@S@'+AllocRegio_StudyArea_orgrel,
-			'@Z@' , Zichtjaar_name,
-			'@AS@', Context/ThisSectorAllocRegio/name,
-			'@S@' , Context/ThisSubsector/name
-		);
-		attribute<Float32> RestClaim := Claim - Stand, Descr = "Hier de restclaim C_jr bepaald, door van de claim voor deze regio en subsector de stand voor deze allocatie stap af te trekken.";
-	
-		attribute<Ha>     Beschikbaar            := sum_uint32(CompactedAdminDomain/Beschikbaar, Per_CompactedAdminDomain)[float32] * AdminDomain/NrHaPerCell, Descr = "Aggregatie van beschikbaarheid in AdminDomain middels R_ir uitgedrukt in hectare.";
-		attribute<Bool>   GeenRuimteOfRestclaim  := Beschikbaar == 0[ha] || RestClaim <= 0[float32], Descr = "Is geen ruimte in deze regio, of er geen of een negatieve restclaim?";
-		attribute<UInt32> MaxGeschiktheid        := max(CompactedAllocDomain/Geschiktheid, AllocRegio/Per_CompactedAllocDomain)[uint32], Descr = "Wat is de maximale geschiktheid in deze regio?";
-		parameter<UInt32> MaxGeschiktheid_value  := max(CompactedAllocDomain/Geschiktheid)[uint32], Descr = "Overall maximale geschiktheid.";
+		attribute<Float32> RestClaim             := = replace(
+		                                                'ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/@AS@/@S@'+AllocRegio_StudyArea_orgrel+' - sum(StateVoorAllocatie/@SP@, Per_CompactedAdminDomain)',
+		                                                '@Z@' , Zichtjaar_name,
+		                                                '@AS@', Context/ThisSectorAllocRegio/name,
+		                                                '@S@' , Context/ThisSubsector/name,
+		                                                '@SP@', Subsector_pathname
+		                                            ), Descr = "Hier de restclaim C_jr bepaald, door van de claim voor deze regio en subsector de stand voor deze allocatie stap af te trekken.";
 		
-		attribute<UInt32> Afkapgrens0 := MaxGeschiktheid_value - nth_element_weighted(                // omkering
-				MaxGeschiktheid_value - CompactedAllocDomain/Geschiktheid[uint32],                    // rank
-				max_elem(RestClaim, 0f),                                                              // target
-				CompactedAllocDomain/PotentieleStateNaAllocatie,                                      // weight, hier geen potentiele delta gebruikt; evt sloop van deze subsector heralloceren we in volgende iteraties
-				Per_CompactedAllocDomain                                                              // R_ir
-		), Descr = "hier wordt de zaaglijn Z_ij bepaald.";
+		attribute<Ha>      Beschikbaar           := sum_uint32(CompactedAdminDomain/Beschikbaar, Per_CompactedAdminDomain)[float32] * AdminDomain/NrHaPerCell, Descr = "Aggregatie van beschikbaarheid in AdminDomain middels R_ir uitgedrukt in hectare.";
+		attribute<Bool>    GeenRuimteOfRestclaim := Beschikbaar == 0[ha] || RestClaim <= 0[float32], Descr = "Is geen ruimte in deze regio, of er geen of een negatieve restclaim?";
 		
-		attribute<UInt32> Afkapgrens := GeenRuimteOfRestclaim ? null_u : MakeDefined(Afkapgrens0, MaxGeschiktheid), Descr = "Als er uberhaupt geen ruimte of restclaim is voor deze regio, dan mag de zaaglijn undefined zijn. Anders neem je de zaaglijn. Echter, de zaaglijn kan undefined zijn als de niet genoeg cellen beschikbaar zijn om de claim te realisteren. In dat geval wordt de zaagzlijn zo gezet dat alle cellen daarin vallen.";
+		attribute<Uint64>  MaxGeschiktheid       := max(CompactedAdminDomain/Geschiktheid, collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, AllocRegio/Per_AdminDomain)), Descr = "Wat is de maximale geschiktheid in deze regio?";
+		parameter<Uint64>  MaxGeschiktheid_value := max(CompactedAdminDomain/Geschiktheid), Descr = "Overall maximale geschiktheid.";
+		
+		attribute<Uint64>  Afkapgrens0           := MaxGeschiktheid_value - nth_element_weighted(                // omkering
+		                                                    MaxGeschiktheid_value - CompactedAdminDomain/Geschiktheid,                            // rank
+		                                                    max_elem(RestClaim, 0f),                                                              // target
+		                                                    CompactedAdminDomain/PotentieleStateNaAllocatie,                                      // weight, hier geen potentiele delta gebruikt; evt sloop van deze subsector heralloceren we in volgende iteraties
+		                                                    collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Per_AdminDomain) // R_ir
+		                                            ), Descr = "hier wordt de zaaglijn Z_ij bepaald.";
+		
+		attribute<Uint64>  Afkapgrens            := GeenRuimteOfRestclaim ? null_u64 : MakeDefined(Afkapgrens0, 0u64), Descr = "Als er uberhaupt geen ruimte of restclaim is voor deze regio, dan mag de zaaglijn undefined zijn. Anders neem je de zaaglijn. Echter, de zaaglijn kan undefined zijn als de niet genoeg cellen beschikbaar zijn om de claim te realisteren. In dat geval wordt de zaagzlijn zo gezet dat alle cellen daarin vallen.";
 	}
 }

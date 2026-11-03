@@ -2,10 +2,10 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision B.V. en VU Vrije Universiteit Amsterdam.
-// Opdrachtgever/ontwikkelaar PBL: Bart Rijken
-// Contactpersoon/ontwikkelaar Object Vision B.V.: Jip Claassens (jclaassens@objectvision.nl)
-// Contacpersoon PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
 // Met deze file kunnen de zgn VariantData (Data die specifiek zijn voor Varianten en relatief veel rekentijd kosten om te produceren) worden geexporteerd.
 // De Data worden weggeschreven naar de LocalDataDir. Het model gaat er default vanuit dat het deze 'ontkoppelde' Data kan gebruiken, en dus niet hoeft te (her)genereren.
@@ -15,10 +15,66 @@
 
 container WriteVariantData : using = "Classifications;Geography"
 {
-	parameter<String> Generate_Run1 := 'Ready', ExplicitSuppliers = "Impl/Suitability_Opbrengsten_perOP", Descr = "Activeer dit item om alle te ontkoppelen variant data te genereren.";
+	container per_Variant :=
+		for_each_ne(
+			/VariantParameters/VariantK/name
+			, 'per_Variant_T('+string(id(/VariantParameters/VariantK))+'[uint8])'
+		);
 	
-	container Impl 
+	Template per_Variant_T
 	{
-		parameter<String> Suitability_Opbrengsten_perOP := 'Ready', ExplicitSuppliers = "VariantData/Suitability/Src/Wonen/Impl/WriteOpbrengsten_perOP/GenerateAll";
+		//
+		parameter<VariantParameters/VariantK> Variant_rel;
+		//
+		
+		parameter<string> Variant_name                    := VariantParameters/VariantK/name[Variant_rel];
+		parameter<Bool>   Variant_HeeftLandschapslevering := VariantParameters/VariantK/HeeftLandschapslevering[Variant_rel]
+		, Descr = "Leest deze variant de landschapsleveringen, en heeft ze dus een veenbouwsteenkaart om weg te schrijven? Langs de kolom op Variant_rel en niet langs VariantK/V op de naam. Een ExplicitSuppliers is een tekstexpressie, dus een pad met een schuine streep erin dat naast een tekststuk staat wordt daar als een deling gelezen.";
+
+		parameter<String> Generate_Run1                   :=
+			 Impl/EvidentBenut + ';' + 
+			 Impl/Veenbouwstenen
+		, Descr = "Maakt de EvidentBenut-tifs voor deze variant. Sinds EvidentBenut per variant staat is dit weer echt variantwerk. Strikt genomen is deze stap optioneel geworden: vraagt de allocatie de EvidentBenut op terwijl er geen geldig bestand ligt, dan rekent en schrijft hij hem alsnog. Je roept dit dus alleen apart aan om de dure stap op een gekozen moment te laten gebeuren en om vroeg te falen.";
+
+		parameter<String> Generate_Run2                   :=
+			 Impl/Suitability_Opbrengsten_perOP + ';' +
+			 Impl/OpbrengstenDerving_Dynamisch  + ';' + 
+			 Impl/Ontwikkelpakketten
+		, Descr = "Activeer dit item om alle te ontkoppelen variant data te genereren.";
+
+		container Impl
+		{
+			parameter<Bool>   LeestOpbrengstderving         := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector || /ModelParameters/Indicatoren/Domein/Actief[/ModelParameters/Indicatoren/Domein/V/Landbouw]
+			, Descr = "Leest iets de opbrengstderving van de landbouwgewassen? De landbouwgeschiktheid als de sector Landbouw alloceert, en de landbouwindicatoren als de projectlijn het domein Landbouw levert (ModelParameters/Indicatoren/Domein).";
+			parameter<String> OpbrengstenDerving_Dynamisch  := 'Ready'
+			, ExplicitSuppliers = "=LeestOpbrengstderving ? '/SourceData/Landbouw/Yield_Reduction/OpbrengstenDerving_Dynamisch/'+Variant_name+'/Generate' : ''"
+			, Descr = "De opbrengstderving per gewas onder de hydrologielevering van deze variant (WWL), alleen als LeestOpbrengstderving; anders blijft de lijst leeg.";
+		
+			parameter<String> EvidentBenut                  := 'Ready'
+			, ExplicitSuppliers = "=ModelParameters/SectorAllocRegio/Uq_Sectors/HasZonSector
+											? 'VariantData/'+Variant_name+'/EvidentBenut/Make_IsEvidentBenut_AdminDomain;VariantData/'+Variant_name+'/EvidentBenut/Make_IsEvidentBenutZon_AdminDomain'
+											: 'VariantData/'+Variant_name+'/EvidentBenut/Make_IsEvidentBenut_AdminDomain'"
+			, Descr = "De zon-variant komt er alleen bij wanneer de zonsector meedraait.";
+
+			parameter<String> Ontwikkelpakketten            := 'Ready'
+			, ExplicitSuppliers = "='VariantParameters/Ontwikkelpakketten/NettoBuurt/PerVariant/'+Variant_name+'/OP/Checks/UitgeefbaarBovenVoetafdruk;VariantParameters/Ontwikkelpakketten/NettoBuurt/PerVariant/'+Variant_name+'/Controle'"
+			, Descr = "Toetst de ontwikkelpakketten van deze variant voordat er opbrengstentifs van worden gemaakt. De assertie zelf staat bij de tabel, in Ontwikkelpakketten/NettoBuurt/OPTabel_T container Checks,
+						en zegt daar wat er misgaat als hij faalt. Ernaast staat NettoBuurt/PerVariant/<variant>/Controle, de controle die bij het aanvullingsblok van de variant hoort, als dat blok er een
+						heeft. Geen uitzondering voor een variant die haar stand leent, anders dan bij de twee items hieronder: die slaan werk over dat de uitlenende variant al doet, terwijl deze toets niets
+						kost en over de eigen OP-set van deze variant gaat, die van de uitlenende kan verschillen.";
+
+			parameter<String> Veenbouwstenen                := 'Ready'
+			, ExplicitSuppliers = "=Variant_HeeftLandschapslevering
+									? 'VariantData/'+Variant_name+'/NatuurLevering/Landschap/Veen/Write_Bouwsteenkaart'
+									: ''"
+			, Descr = "Schrijft de kaart met de gealloceerde veenbouwsteen weg, voor team effectbepaling (#764). Alleen een variant met een veenlevering heeft er een, dus voor de andere blijft de lijst leeg. De
+						kaartnaam draagt de variantnaam (Veen_T/Bouwsteenkaart_Pad), dus elke variant met een levering schrijft haar eigen bestand. Hier en niet in een eigen batchstap, omdat een uitlevering die
+						alleen op verzoek ontstaat er in een productierun niet is; de kaart is variantwerk en hoort in dezelfde stap als de andere variantdata.";
+
+			parameter<String> Suitability_Opbrengsten_perOP := 'Ready'
+			, ExplicitSuppliers = "='VariantData/'+Variant_name+'/Suitability/Src/Wonen/Impl/WriteOpbrengsten_perOP/GenerateAll'"
+			, Descr = "De opbrengstentifs per ontwikkelpakket, onder de setnaam van OpbrengstenVariant_Wonen in VariantK. Varianten die een set delen, zoals BAU en BAU2, schrijven dezelfde bestanden elk een keer.";
+
+		}
 	}
 }

@@ -2,10 +2,10 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision B.V. en VU Vrije Universiteit Amsterdam.
-// Opdrachtgever/ontwikkelaar PBL: Bart Rijken
-// Contactpersoon/ontwikkelaar Object Vision B.V.: Jip Claassens (jclaassens@objectvision.nl)
-// Contacpersoon PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl) 
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
 // Deze file specificeert:
 // - het te evalueren (omgevings)scenario, de (beleids)Variant en daarmee de casus (= combinatie van scenario en Variant);
@@ -14,27 +14,26 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-container RSopen : IntegrityCheck = "GeoDMSVersion() >= 17.0904" //vanwege geos operatoren, phasecontainer, 
+container RSopen_NL2120 : IntegrityCheck = "=GeoDMSVersion() >= 17.0904 ? 'TRUE' : 'Deze_error_geeft_aan_dat_je_een_nieuwere_GeoDMS_versie_moet_gebruiken'" //vanwege geos operatoren, phasecontainer, 
 {
-	parameter<string> Scenario_name           := replace_value(expand(., '%env:RSO_SCENARIO_NAME%')          , 'env:RSO_SCENARIO_NAME'          , 'WLO_hoog');      // WLO_laag,WLO_hoog
-	parameter<string> Variant_name            := replace_value(expand(., '%env:RSO_VARIANT_NAME%')           , 'env:RSO_VARIANT_NAME'           , 'BAU');           // BAU, WBS
-	parameter<string> Boervariant_name        := replace_value(expand(., '%env:RSO_BOERVARIANT_NAME%')       , 'env:RSO_BOERVARIANT_NAME'       , 'RationeleBoer'); // RationeleBoer, IntermediateBoer, ConservatieveBoer
-	parameter<string> BeregeningScenario_name := replace_value(expand(., '%env:RSO_BEREGENINGSCENARIO_NAME%'), 'env:RSO_BEREGENINGSCENARIO_NAME', 'B1_Beregening_allepercelen_ongelim'); // 'A_GeenBeregening','B1_Beregening_allepercelen_ongelim','B2_Beregening_percelenmetinstal_ongelim'
-	
-	parameter<string> Casus_name := Scenario_name+'_'+Variant_name;
-	
-	parameter<Classifications/Modellering/ScenarioK> Scenario_rel := ='Classifications/Modellering/ScenarioK/V/'+Scenario_name;
-	parameter<VariantParameters/VariantK>             Variant_rel := ='VariantParameters/VariantK/V/'+Variant_name;
-	parameter<Classifications/Actor/BoerVariantK> BoerVariant_rel := ='Classifications/Actor/BoerVariantK/V/'+Boervariant_name;
-	
 	#include <Units.dms>
 	#include <Geography.dms>
+	container geometries
+	: Descr = "De RD-unit waar de mmd-stores van BAG20_Xml2MMD uit de BAG-tools naar verwijzen; een mmd-dictionary noemt units buiten de store bij hun absolute pad, en die stores noemen /geometries/rdc. Gelijk aan Geography/rdc_meter, dus de coordinaten worden als RD-meters gelezen (#839)."
+	{
+		unit<DPoint> rdc := /Geography/rdc_meter;
+		unit<IPoint> rdc_mm := /Geography/rdc_mm, Descr = "De millimetereenheid van de compacte stores van Xml2MMD (de VolledigeTabel van de BAG): de tussenversies noemen /geometries/rdc_mm, de definitieve stores /Geography/rdc_mm, en zo laden beide.";
+	}
 	
 	#include <ModelParameters.dms>
 	#include <VariantParameters.dms>
 	
 	#include <Classifications.dms>
-	container CaseClassifications := Templates/CaseClassificationsT(Scenario_name, Variant_name);
+	container CaseClassifications := 
+		for_each_ne(
+			VariantParameters/VariantK/name
+			,'Templates/Classificaties/CaseClassifications_T('+string(id(VariantParameters/VariantK))+'[uint8])'
+		);
 	
 	#include <PrivData.dms>
 	#include <SourceData.dms>
@@ -48,15 +47,22 @@ container RSopen : IntegrityCheck = "GeoDMSVersion() >= 17.0904" //vanwege geos 
 	
 	#include <Templates.dms>
 	
-	container CommitChecks
+	#include <Preflight.dms>
+	
+	container CommitChecks: Descr = "Verzameling van evaluatie-triggers die de volledige berekeningsketen afdwingen via ExplicitSuppliers.
+										Elke parameter evalueert pas naar 'Ready' nadat alle genoemde ExplicitSuppliers succesvol zijn berekend.
+										Dit mechanisme wordt gebruikt om snel te kunnen kijken of het model nog werkt alvorens wijzigingen te committen.
+										Niet geschikt voor productieruns."
 	{
-		parameter<string> MaakBaseData             := 'Ready', ExplicitSuppliers = "/WriteBaseData/Generate_Run1";
-		parameter<string> MaakVariantData          := 'Ready', ExplicitSuppliers = "/WriteVariantData/Generate_Run1";
-		parameter<string> MaakAllocatieY2050       := 'Ready', ExplicitSuppliers = "/Allocatie/Zichtjaren/Y2050/Impl/Generate";
+		parameter<string> MaakBaseData1               := 'Ready', ExplicitSuppliers = "/WriteBaseData/Generate_Run1";
+		parameter<string> MaakBaseData2               := 'Ready', ExplicitSuppliers = "/WriteBaseData/Generate_Run2";
+		parameter<string> MaakVariantData1            := 'Ready', ExplicitSuppliers = "=AsList('WriteVariantData/per_Variant/'+VariantParameters/VariantK/name+'/Generate_Run1',';')";
+		parameter<string> MaakVariantData2            := 'Ready', ExplicitSuppliers = "=AsList('WriteVariantData/per_Variant/'+VariantParameters/VariantK/name+'/Generate_Run2',';')";
+		parameter<string> MaakAllocatieFirstZichtjaar := 'Ready', ExplicitSuppliers = "=AsList('Allocatie/'+Classifications/Modellering/AllCases/Label+'/Zichtjaren/'+first(Classifications/Time/Zichtjaar/name)+'/Impl/Generate',';')";
 		
-		parameter<string> ClaimRealisatie_Prov_Min := 'Ready', ExplicitSuppliers = "=AsList('/Indicatoren/Y2060/ClaimRealisatie/Per_AllocRegio/Provincie/MinClaim_realisatie/'+CaseClassifications/StandVar/Claims_sub/name, ';')";
-		parameter<string> ClaimRealisatie_Prov_Max := 'Ready', ExplicitSuppliers = "=AsList('/Indicatoren/Y2060/ClaimRealisatie/Per_AllocRegio/Provincie/MaxClaim_realisatie/'+CaseClassifications/StandVar/Claims_sub/name, ';')";
-		parameter<string> ClaimRealisatie_Prov     := 'Ready', ExplicitSuppliers = "=AsList('/Indicatoren/Y2060/ClaimRealisatie/Per_AllocRegio/Provincie/Claim_realisatie/Wonen/'+Classifications/Vastgoed/WP2xVSSH/name, ';')+';'+AsList('/Indicatoren/Y2060/ClaimRealisatie/Per_AllocRegio/Provincie/Claim_realisatie/Werken/'+Classifications/Actor/Jobs6/name, ';')+';'+AsList('/Indicatoren/Y2060/ClaimRealisatie/Per_AllocRegio/Provincie/Claim_realisatie/Verblijfsrecreatie/'+Classifications/Actor/VerblijfsrecreatieK/Sector_name, ';')";
+		parameter<string> ClaimRealisatie_Prov_Min    := 'Ready', ExplicitSuppliers = "=AsList('/Indicatoren/'+first(Classifications/Modellering/AllCases/Label)+'/Zichtjaren/'+first(Classifications/Time/Zichtjaar/name)+'/ClaimRealisatie/Per_AllocRegio/Provincie/MinClaim_realisatie/'+CaseClassifications/BAU/StandVar/Claims_sub/name, ';')";
+		parameter<string> ClaimRealisatie_Prov_Max    := 'Ready', ExplicitSuppliers = "=AsList('/Indicatoren/'+first(Classifications/Modellering/AllCases/Label)+'/Zichtjaren/'+first(Classifications/Time/Zichtjaar/name)+'/ClaimRealisatie/Per_AllocRegio/Provincie/MaxClaim_realisatie/'+CaseClassifications/BAU/StandVar/Claims_sub/name, ';')";
+		parameter<string> ClaimRealisatie_Prov        := 'Ready', ExplicitSuppliers = "=AsList('/Indicatoren/'+first(Classifications/Modellering/AllCases/Label)+'/Zichtjaren/'+first(Classifications/Time/Zichtjaar/name)+'/ClaimRealisatie/Per_AllocRegio/Provincie/Claim_realisatie/all', ';')";
 	}
 	
 	// Settings
@@ -64,18 +70,34 @@ container RSopen : IntegrityCheck = "GeoDMSVersion() >= 17.0904" //vanwege geos 
 	#include <ExportSettings.dms>
 	
 	// For debug purposes
-	container Desktops 
-	{
-		container x;
-	}
+	// container Desktops 
+	// {
+	// 	container x;
+	// }
 	
+	#include <Diagnose.dms> //het controleharnas: de tabellen Checks en ChecksBasisjaar en de thematische uitdraaien
 	#include <WritePrivData.dms>
 	#include <WriteBaseData.dms>
 	#include <WriteVariantData.dms>
+	
 	container WriteAllocatie
+	: Descr = "Debug folder, om snel vanuit de GUI een hele casus door te kunnen rekenen. Elke casus heeft zelf een Impl/Generate_LastZichtjaar; dit is alleen een snelkoppeling naar de casus waar meestal aan gewerkt wordt."
 	{
-		// parameter<string> Write_2030 := /Allocatie/Zichtjaren/Y2030/impl/Generate;
-		// parameter<string> Write_2040 := /Allocatie/Zichtjaren/Y2040/impl/Generate;
-		parameter<string> Write_2050 := /Allocatie/Zichtjaren/Y2050/impl/Generate;
+		// parameter<string> Write_LastYear := /Allocatie/WLO_hoog_BAU/Impl/Generate_LastZichtjaar;
+		parameter<string> Write_LastYear := /Allocatie/WLO_hoog_NbSGenuanceerder/Impl/Generate_LastZichtjaar;
+		// parameter<string> Write_LastYear := /Allocatie/WLO_hoog_NbSGenuanceerd/Impl/Generate_LastZichtjaar;
+	}
+
+	container BatchOndersteuning
+	: Descr = "Hulpmiddel voor de batchscripts. De zichtjaren volgen uit ModelParameters/Model_FirstZichtjaar, Model_ZichtjaarInterval en Model_FinalYear, maar een cmd-script kan die set niet zelf uitlezen.
+				Daarom schrijft Zichtjaren de namen als een spatiegescheiden regel weg, zodat RunZichtjaren.cmd erover kan itereren.
+				Dit is bewust ALLEEN een uitleesmechanisme: het bevat geen enkele keuze over hoe de batch moet draaien. Die keuzes horen in de batch thuis, die de configuratie via omgevingsvariabelen overrult (zie ModelParameters/AlleenEindjaar en ModelParameters/StandAllocatieOntkoppeld) en dus zelf weet hoeveel processen hij moet starten."
+	{
+		parameter<string> ZichtjarenBestand := replace_value(expand(., '%env:RSO_ZICHTJARENFILE%'), 'env:RSO_ZICHTJARENFILE', '%LocalDataProjDir%/Allocatie/Zichtjaren.txt')
+		, Descr = "Pad waar de zichtjaarlijst heen geschreven wordt. RunZichtjaren.cmd zet de omgevingsvariabele RSO_ZICHTJARENFILE zodat beide kanten gegarandeerd hetzelfde pad gebruiken.";
+
+		parameter<string> Zichtjaren := asList(/Classifications/Time/Zichtjaar/name, ' ')
+		, StorageName = "=ZichtjarenBestand", StorageType = "str"
+		, Descr = "De zichtjaren, spatiegescheiden en op volgorde, bijvoorbeeld: Y2030 Y2040 Y2050 Y2060. Bij AlleenEindjaar op TRUE bevat deze lijst alleen het eindjaar, want dan bestaan de tussenliggende zichtjaren niet in de boom.";
 	}
 }

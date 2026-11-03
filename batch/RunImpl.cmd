@@ -1,3 +1,19 @@
+REM ================================================================================
+REM
+REM Dit is RSOpen, de open source versie van het model RuimteScanner.
+REM Het script wordt uitgegeven onder GNU-GPL licentie.
+REM
+REM RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving,
+REM i.s.m Object Vision en VU Vrije Universiteit Amsterdam.
+REM Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+REM Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+REM Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+REM
+REM Generieke wrapper voor het aanroepen van GeoDmsRun.exe met een opgegeven DMS-container. Legt de starttijd
+REM vast, voert de berekening uit en schrijft het resultaat naar het logbestand.
+REM
+REM ================================================================================
+
 echo off
 REM for /f "tokens=2 delims==." %%I in ('"wmic os get localdatetime /value"') do set "TS=%%I"
 REM set "TIMESTAMP=%TS:~0,8%-%TS:~8,6%"

@@ -1,11 +1,27 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Bepaal de woningwaarde per OP (i.e. nieuwbouw) De totale prijs van alle woningen in deze AdminDomain voor deze
+// OP De prijs per woning in deze AdminDomain voor deze OP, met een minimum van de gemiddelde prijs per woning in
+// Nederland voor deze WP4
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 Template Woningwaarde_OP_T
 : Descr = "Bepaal de woningwaarde per OP (i.e. nieuwbouw)"
 {
 	parameter<OP> OP_id;
 	//
 	
-	unit<UInt8> OP := CaseClassifications/Vastgoed/OP;  
-	
+	unit<UInt8> OP       := ='ThisVariantClassifications/Vastgoed/OP';
+	container   OP_Buurt := ='ThisVariantClassifications/Vastgoed/OP_Buurt';
+		
 	parameter<String>     WP2_name                        := OP/WP2_name[OP_id];
 	parameter<String>     VSSH_name                       := OP/VSSH_name[OP_id];
 	parameter<String>     WP4_name                        := OP/WP4_name[OP_id];
@@ -13,7 +29,7 @@ Template Woningwaarde_OP_T
 	attribute<Eur>        Prijs_OP          (AdminDomain) := OP/Dichtheid[OP_id] * Prijs_perWoning * AdminDomain/NrHaPerCell, Descr = "De totale prijs van alle woningen in deze AdminDomain voor deze OP";
 	
 	attribute<Eur_Woning> Prijs_perWoning   (AdminDomain) := ='Prijs_perWoning0 * ModelParameters/Wonen/WoningPrijsVerandering_'+ModelParameters/NVM_coeff_Year+'_naar_'+string(ModelParameters/Model_StartYear);
-	attribute<Eur_Woning> Prijs_perWoning0  (AdminDomain) := MakeDefined(Prijs_perWoning00, max(Prijs_perWoning00))[Eur_Woning], Descr = "De prijs per woning in deze AdminDomain voor deze OP, met een minimum van de gemiddelde prijs per woning in Nederland voor deze WP4";
+	attribute<Eur_Woning> Prijs_perWoning0  (AdminDomain) := MakeDefined(Prijs_perWoning00, mean(Prijs_perWoning00))[Eur_Woning], Descr = "De prijs per woning in deze AdminDomain voor deze OP; cellen zonder locatiedata krijgen de gemiddelde prijs per woning in Nederland voor deze OP (#595).";
 	attribute<Float32>    Prijs_perWoning00 (AdminDomain) := =
 		replace(
 			'(exp('
@@ -22,28 +38,29 @@ Template Woningwaarde_OP_T
 //				Woonpand
 				'+ '+string(OP/IsHoogbouw[OP_id])+'[float32]                  * MakeDefined(@C@/d_highrise, 0f)' // kenmerk uit ontwikkelpakket
 				'+ log('+string(OP/Woonoppervlakte_woning[OP_id])+'[float32]) * @C@/lnsize'                      // kenmerk uit ontwikkelpakket             SIZE == WOONOPP
-				'+ log('+string(OP/InDezeBuurt/Tuinoppervlakte[OP_id])+'[float32]) * MakeDefined(@C@/lnlotsize, 0f)'  // kenmerk uit ontwikkelpakket. LOTSIZE == TUIN OPP
+				'+ log('+string(OP_Buurt/Perceeloppervlakte[OP_id])+'[float32])  * MakeDefined(@C@/lnlotsize, 0f)'  // kenmerk uit ontwikkelpakket. LOTSIZE == PERCEEL (uitgeefbaar per woning, incl. voetafdruk): de coefficient is geschat op perceel, niet op tuin (#628). Geen guard nodig: het perceel is minstens de voetafdruk, want FractieUitgeefbaar >= GSI wordt afgedwongen in OPTabel_T
 				'+ '+string(OP/Aant_kamers[OP_id])+'[float32]                 * @C@/nrooms'                       // idem
 				'+ 1f                                                         * @C@/d_maintgood'                 // wordt 100% voorondersteld bij nieuw te bouwen Woningen
 				'+ 1f                                                         * @C@/Y'+ModelParameters/NVM_coeff_Year+ // in alle gevallen gaat het om nieuwbouw
 				'+ 1f                                                         * @C@/d_constrgt2001'              // in alle gevallen gaat het om nieuwbouw
 				
-//				Locatie
-				'+ '+string(OP/Weging_Amenities[OP_id])+'[float32]  * @LOC@/UAI_dynamisch                                * @C@/UAI_2021' //wegingsfactor voor amenities uit ontwikkelpakket maal de UAI van de locatie mail de coëfficiënt voor UAI
-				'+ '+string(OP/Weging_NatNiv[OP_id])+'[float32]     * log(value(@LOC@/tt_500kinhab_min,float32))         * @C@/lntt_500k_inw' //wegingsfactor voor nationale niveaus (proxy Randstad-NietRandstad) uit ontwikkelpakket maal de reistijd naar 500k inwoners maal de coëfficiënt voor reistijd naar 500k inwoners
-				'+ '+string(OP/Weging_NatOV[OP_id])+'[float32]      * log(value(@LOC@/tt_Trainstation_2006_min,float32)) * @C@/lntt_stations' //wegingsfactor voor nationale OV (proxy voor grotere steden) uit ontwikkelpakket maal de reistijd naar het dichtstbijzijnde station maal de coëfficiënt voor reistijd naar station
-				'+ '+string(OP/Weging_GroenNabij[OP_id])+'[float32] * value(@LOC@/BBG_groen_100mbuff,float32)            * @C@/d_groennabij' // wegingsfactor voor groen nabij uit ontwikkelpakket maal de hoeveelheid groen binnen 100m buffer maal de coëfficiënt voor groen nabij
-				
-//				Diff mean (correctie weging aanpassing)
-				'- sum((@LOC@/UAI_dynamisch                                * @C@/UAI_2021                    *('+string(OP/Weging_Amenities[OP_id])+'[float32]  - 1f)) * VariantData/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32]) / sum(VariantData/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32])'  //diff_mean_amenities
-				'- sum((log(value(@LOC@/tt_500kinhab_min,float32))         * @C@/lntt_500k_inw               *('+string(OP/Weging_NatNiv[OP_id])+'[float32]     - 1f)) * VariantData/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32]) / sum(VariantData/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32])'  //diff_mean_natniv
-				'- sum((log(value(@LOC@/tt_Trainstation_2006_min,float32)) * @C@/lntt_stations          *('+string(OP/Weging_NatOV[OP_id])+'[float32]      - 1f)) * VariantData/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32]) / sum(VariantData/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32])'  //diff_mean_natov
-				'- sum((value(@LOC@/BBG_groen_100mbuff,float32)            * @C@/d_groennabij                *('+string(OP/Weging_GroenNabij[OP_id])+'[float32] - 1f)) * VariantData/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32]) / sum(VariantData/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32])'  //diff_mean_groennabij
+//				Locatie 
+				'+ '+string(OP/Weging_Amenities[OP_id])+'[float32]         * value(@LOC@/UAI_2012_network,float32)              * @C@/uai_2012' //wegingsfactor amenities uit ontwikkelpakket maal de UAI (netwerk 2012, 0-100) van de locatie maal de coÃ«fficiÃ«nt voor UAI
+				'+ '+string(OP/Weging_NatNiv[OP_id])+'[float32]            * log(value(@LOC@/tt_500kinhab_min,float32))         * @C@/lntt_500k_2024' //wegingsfactor nationale niveaus uit ontwikkelpakket maal de reistijd naar 500k inwoners (2024) maal de coÃ«fficiÃ«nt
+				'+ '+string(OP/Weging_NatOV[OP_id])+'[float32]             * log(value(@LOC@/tt_OVknooppunten_min,float32))     * @C@/lntt_ovknoop' //wegingsfactor nationale OV uit ontwikkelpakket maal de reistijd naar het dichtstbijzijnde OV-knooppunt (2026) maal de coÃ«fficiÃ«nt
+//				Groen/water uit het statische LGN-basisjaarraster (RSopen #566/#481); geen OP-weging, dus ook geen diff-mean-correctie. MakeDefined: oudere estimates-sets zonder fr-termen geven dan 0-bijdrage i.p.v. null-prijzen. De prijs per OP blijft op het basisjaar staan; de allocatie corrigeert hem per zichtjaar voor de natuur en het water die er aan het begin van dat zichtjaar liggen (#637, zie Templates/Allocatie/Zichtjaar_T/Impl/GroenNabijheid). Zo blijven deze kaarten variantdata en hoeven ze niet per casus en per zichtjaar opnieuw gerekend te worden.
+				'+ value(@LOC@/fr_natuur_tot2500m,float32)                 * MakeDefined(@C@/fr_natuur_tot2500m, 0f)'
+				'+ value(@LOC@/fr_water_500m,float32)                      * MakeDefined(@C@/fr_water_500m, 0f)'
+
+//				Diff mean (correctie weging aanpassing) 
+				'- sum((value(@LOC@/UAI_2012_network,float32)              * @C@/uai_2012                   *('+string(OP/Weging_Amenities[OP_id])+'[float32]  - 1f)) * ThisVariant/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32]) / sum(ThisVariant/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32])'  //diff_mean_amenities
+				'- sum((log(value(@LOC@/tt_500kinhab_min,float32))         * @C@/lntt_500k_2024             *('+string(OP/Weging_NatNiv[OP_id])+'[float32]     - 1f)) * ThisVariant/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32]) / sum(ThisVariant/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32])'  //diff_mean_natniv
+				'- sum((log(value(@LOC@/tt_OVknooppunten_min,float32))     * @C@/lntt_ovknoop               *('+string(OP/Weging_NatOV[OP_id])+'[float32]      - 1f)) * ThisVariant/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32]) / sum(ThisVariant/Zeef/Basisjaar/Wonen/'+WP2_name+'_'+VSSH_name+'/IsBeschikbaar_AdminDomain[float32])'  //diff_mean_natov
 			'))'
 			
-			,'@C@',   'BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4_name+'/Result'
-			,'@RAT@', 'BaseData/Suitabilities/Wonen/RegionalAvgCharacteristics/perWP4/RegionalAvgCharacteristics'
-			,'@LOC@', 'SourceData/Diversen/Per_AdminDomain'
+			,'@C@',   '/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4_name+'/Result'
+			,'@RAT@', '/BaseData/Suitabilities/Wonen/RegionalAvgCharacteristics/perWP4/RegionalAvgCharacteristics'
+			,'@LOC@', '/SourceData/Diversen/Per_AdminDomain'
 		);
 	
 	attribute<Float32> Prijs_perWoning_zWeging  (AdminDomain) := ='Prijs_perWoning_zWeging0 * ModelParameters/Wonen/WoningPrijsVerandering_'+ModelParameters/NVM_coeff_Year+'_naar_'+string(ModelParameters/Model_StartYear);
@@ -55,22 +72,23 @@ Template Woningwaarde_OP_T
 //				Woonpand
 				'+ '+string(OP/IsHoogbouw[OP_id])+'[float32]                  * MakeDefined(@C@/d_highrise, 0f)' // kenmerk uit ontwikkelpakket
 				'+ log('+string(OP/Woonoppervlakte_woning[OP_id])+'[float32]) * @C@/lnsize'     // kenmerk uit ontwikkelpakket
-				'+ log('+string(OP/InDezeBuurt/Tuinoppervlakte[OP_id])+'[float32]) * MakeDefined(@C@/lnlotsize, 0f)'  // perceeloppervlak gemiddeld in NL voor betreffend WoningType
+				'+ log('+string(OP_Buurt/Perceeloppervlakte[OP_id])+'[float32]) * MakeDefined(@C@/lnlotsize, 0f)'  // idem regel 41: perceel, niet tuin (#628)
 				'+ '+string(OP/Aant_kamers[OP_id])+'[float32]                 * @C@/nrooms'     // idem voor aantal kamers etc.
 				'+ 1f                                                         * @C@/d_maintgood' // wordt 100% voorondersteld bij nieuw te bouwen Woningen
 				'+ 1f                                                         * @C@/Y'+ModelParameters/NVM_coeff_Year+ // in alle gevallen gaat het om nieuwbouw
 				'+ 1f                                                         * @C@/d_constrgt2001' // in alle gevallen gaat het om nieuwbouw
 				
-//				Locatie
-				'+ @LOC@/UAI_dynamisch                                        * @C@/UAI_2021'
-				'+ log(value(@LOC@/tt_500kinhab_min,float32))                 * @C@/lntt_500k_inw'
-				'+ log(value(@LOC@/tt_Trainstation_2006_min,float32))         * @C@/lntt_stations'
-				'+ value(@LOC@/BBG_groen_100mbuff,float32)                    * @C@/d_groennabij'
-				
+//				Locatie 
+				'+ value(@LOC@/UAI_2012_network,float32)                      * @C@/uai_2012'
+				'+ log(value(@LOC@/tt_500kinhab_min,float32))                 * @C@/lntt_500k_2024'
+				'+ log(value(@LOC@/tt_OVknooppunten_min,float32))             * @C@/lntt_ovknoop'
+				'+ value(@LOC@/fr_natuur_tot2500m,float32)                    * MakeDefined(@C@/fr_natuur_tot2500m, 0f)'
+				'+ value(@LOC@/fr_water_500m,float32)                         * MakeDefined(@C@/fr_water_500m, 0f)'
+
 			'))'
 			
-			,'@C@',   'BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4_name+'/Result'
-			,'@RAT@', 'BaseData/Suitabilities/Wonen/RegionalAvgCharacteristics/perWP4/RegionalAvgCharacteristics'
-			,'@LOC@', 'SourceData/Diversen/Per_AdminDomain'
+			,'@C@',   '/BaseData/Suitabilities/Wonen/PrijsIndex/ReadCoefficients_WP4/'+WP4_name+'/Result'
+			,'@RAT@', '/BaseData/Suitabilities/Wonen/RegionalAvgCharacteristics/perWP4/RegionalAvgCharacteristics'
+			,'@LOC@', '/SourceData/Diversen/Per_AdminDomain'
 		);
 }

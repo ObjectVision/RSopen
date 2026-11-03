@@ -1,0 +1,159 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Schatting van de grondproductiekosten voor verschillende bouwtypen op basis van een set van modelvarianten.
+// Drempelwaarde voor de p-waarde waaronder een coëfficiënt als significant wordt beschouwd. 1 als er anders
+// gebouwd moet worden ivm draagkracht of kwel, anders 0 Laadt via #include: C, T.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Grondproductiekosten : using = "/Geography"
+, Descr = "Grondproductiekosten per hectare, de grondexploitatie zonder verwerving, als som van drie componenten: BouwWoonrijp en PlanProces uit regressies op ruim driehonderd grondexploitaties
+			(exploitatieplannen, de database van Fakton en meerjarenperspectieven van grote gemeenten), Bovenwijks als steekproefgemiddelde. Kaveldichtheid en reistijd staan lineair in de exponent, de
+			plangebiedomvang logaritmisch; de controlevariabelen krijgen de waarden die de bijlage voorschrijft, met BronFakton als keuze in C/Onzekerheid2. Waar de invulling buiten de steekproef zou
+			treden begrenzen parameters in ModelParameters/Wonen haar. De regressies verklaren 7 tot 16 procent van de spreiding tussen plannen (#809, #846)."
+, Source = "PBL, bijlage Grondproductiekosten en transformatiepotentie, m.m.v. Fakton, versie december 2019, in %RSo_DataDir%/Vastgoed/Grondproductiekosten_2023_v2; regressies als csv SchattingDec19,
+			december 2019; correspondentie PBL en Fakton, september 2018"
+{
+	parameter<Float32> Significatie_threshold := /ModelParameters/Werken/Grondproductie_significatie_threshold, Descr = "Drempelwaarde voor de p-waarde waaronder een coëfficiënt als significant wordt beschouwd.";
+	
+	#include<C.dms>
+	
+	container ReadData := for_each_ne(C/GrondproductieModelVarianten/name, 'T/ReadData('+string(id(C/GrondproductieModelVarianten))+'[C/GrondproductieModelVarianten])')
+	{
+		container LocatieVariabelen
+		{
+			attribute<Float32> AndersBouwen         (AdminDomain) :=
+				= !VariantParameters/VariantK/BodemdalingkostenInSaldo[Variant_rel]
+					? '/SourceData/Bodem/DraagkrachtKwel/AndersBouwen[AdminDomain/rdc_100m_rel][float32]'
+					: 'const(0f, AdminDomain)'
+			, Descr = "1 als er anders gebouwd moet worden ivm draagkracht of kwel, anders 0. Op nul in de varianten waar BodemdalingkostenInSaldo aanstaat (#505): de dummy blijft dan als variabele bestaan, zodat
+						de rlookup naar de schattings-csv blijft kloppen, maar draagt niets bij omdat de coefficient met nul wordt vermenigvuldigd. De naam is niet vrij te kiezen: hij is de sleutel waarmee
+						C/GrondproductieVariabelen via rlookup de kolom variabele uit de Fakton-schattingen opzoekt, en een rlookup die niets vindt geeft null. Niet te verwarren met het anders bouwen uit de
+						landschapstypen (BouwregimeK en BouwwijzeK, #614): dit is een landsdekkende expert-judgementkaart uit 2019 over draagkracht en kwel, en hij werkt als kosten en niet als restrictie, in een
+						semi-log model maal 2,22 op BouwWoonrijp en 1,47 op PlanProces waar de dummy 1 is.";
+			attribute<Float32> AfstandLocatus       (AdminDomain) := (/SourceData/Vastgoed/AfstandLocatus_src = 0f ? 1f : /SourceData/Vastgoed/AfstandLocatus_src < 0f ? 50000f : /SourceData/Vastgoed/AfstandLocatus_src)[AdminDomain/rdc_100m_rel], Descr = "Afstand in meters tot de dichtstbijzijnde Locatus winkel (minimaal 1m, maximaal 50km)";
+			attribute<Float32> Kaveldichtheid       (AdminDomain) := min_elem(/SourceData/Diversen/Per_AdminDomain/Kaveldichtheid[float32], /ModelParameters/Wonen/Grondproductie_MaxKaveldichtheid)
+			, Descr = "Kavels per hectare binnen een kilometer van de cel, afgetopt op Grondproductie_MaxKaveldichtheid, het hoogste wat de schattingssteekproef kende. Lineair in de exponent, dus elke 29 kavels
+						per hectare verdubbelen BouwWoonrijp en PlanProces, en zonder plafond extrapoleert de bronkaart, die tot 217 loopt, ver buiten de data.";
+			attribute<Float32> OmvangPlangebied     (AdminDomain) := const(/ModelParameters/Wonen/Grondproductie_OmvangPlangebied / 1[ha], AdminDomain)
+			, Descr = "Omvang van het plangebied in hectare uit de eigen parameter ModelParameters/Wonen/Grondproductie_OmvangPlangebied, en niet uit de clusterparameters, die ook de allocatie sturen (#809);
+						gaat logaritmisch de regressie in, zoals in de schatting.";
+			attribute<min>     Reistijd5kInw        (AdminDomain) := convert(/SourceData/Diversen/Per_AdminDomain/Reistijd5kInw, min), Descr = "Reistijd per auto naar 5.000 inwoners in minuten, de eenheid van de schatting; de bronkaart staat in seconden (#505). Op zee en
+						buitenland is de kaart NaN en maakt de null de hele component null: voor de allocatie zonder gevolg, maar een statistiek over het hele domein meet daardoor iets anders dan een binnen bebouwd gebied.";
+		}
+	}
+	
+	container Calculations := 
+		for_each_ne(
+			C/Combi/name,
+			'T/CalculateCosts('+
+				string(id(C/Combi))+'[C/Combi],
+				ReadData/'+C/Combi/GrondproductieModelVarianten_name+'/ModelVariant,
+				ReadData/'+C/Combi/GrondproductieModelVarianten_name+'/ModelVariant/estimate,
+				ReadData/'+C/Combi/GrondproductieModelVarianten_name+'/ModelVariant/stderror,
+				ReadData/'+C/Combi/GrondproductieModelVarianten_name+'/ModelVariant/pvalue,'+
+				quote(C/Onzekerheid1/CalcStr[C/Onzekerheid/first_rel[C/Combi/second_rel]])+','+
+				quote(C/Onzekerheid2/name[C/Onzekerheid/second_rel[C/Combi/second_rel]])+
+			')'
+		), Descr = "Berekening van de grondproductiekosten voor elke combinatie van component en onzekerheidsvariant."
+	{
+		container Totaal :=
+			for_each_ind(
+				'nedv',
+				C/Onzekerheid/name,
+				replace(
+					'add('+asItemList(C/GrondproductieModelVarianten/name+'/@V@/Kosten')+')',
+					'@V@', C/Onzekerheid/name
+				),
+				AdminDomain, Eur_Ha
+			), Descr = "Totaal van de drie componenten per onzekerheidsvariant.";
+	}
+	
+	container Results :=
+		for_each_ind(
+			'nedvc'
+			,C/Combi/name
+			, 'Calculations/'+C/Combi/name+'/Kosten * /ModelParameters/Wonen/PrijsIndex_Bouwkosten_2017_naar_'+string(/ModelParameters/Model_StartYear)
+			, AdminDomain
+			, Eur_Ha
+			, 'Classified/'+C/Combi/name+'/Target_9K/ClassBreaks'
+		), Descr = "De componenten op het prijspeil van Model_StartYear, met de bouwkostenindex vanaf 2017. De definitieve schatting heeft geen boekjaardummy, dus haar prijspeil is het gemiddelde van de
+					boekjaren in de steekproef; de bijlage noemt die niet, en omdat exploitatieplannen pas sinds de Wro van 2008 bestaan ligt dat gemiddelde waarschijnlijk voor 2017 (#846)."
+	{
+		container Statistics := for_each_ne(C/Combi/name, 'T/Statistics('+quote(C/Combi/GrondproductieModelVarianten_name)+','+string(C/Combi/second_rel)+'[C/Onzekerheid])')
+		, Descr = "Statistieken van de geschatte kosten per component en scenario, per extent. Gebruik alleen BinnenUrbanContour. De extents Totaal en BuitenUrbanContour maskeren met Src gedeeld door
+					float32(IsExtent), dus door nul waar de cel niet meetelt, en de percentielen die daaruit komen zijn niet de percentielen van de bedoelde cellen; om dezelfde reden is het gemiddelde over het
+					hele domein van Results/PlanProces geen kostenwaarde. Wie de post wil beoordelen neemt de mediaan binnen bebouwd gebied.";
+		
+		container Totaal :=
+			for_each_ind(
+				'nedv'
+				,C/Onzekerheid/name
+				,replace(
+					'add('+asItemList(C/GrondproductieModelVarianten/name+'/@V@')+')'
+					,'@V@', C/Onzekerheid/name
+				)
+				,AdminDomain
+				, Eur_Ha
+			), Descr = "Totaal van de geschatte kosten over alle modelvarianten voor een onzekerheidsscenario.";
+	}
+
+	container PerPakket
+	: Descr = "De grondproductiekosten per hectare per ontwikkelpakket (#847). BouwWoonrijp en PlanProces hebben de kaveldichtheid van het plan als variabele, geschat op plandichtheden (steekproef 0 tot 73 kavels per
+				hectare, gemiddeld 9): een dicht plan kost per hectare meer aan bouw- en woonrijp maken en planproces, en per woning minder. Results vult die variabele met de buurtkaart van 2018, voor elk pakket op een cel
+				dezelfde waarde, zodat een dicht pakket zijn infrastructuur per hectare te goedkoop kreeg. Hier krijgt elk pakket zijn eigen kaveldichtheid: de twee componenten van Results maal exp(coefficient maal het
+				verschil tussen de kaveldichtheid van het pakket en die van de buurtkaart), zodat een pakket met de dichtheid van de buurt precies de oude waarde houdt en de locatie bepalend blijft. Bij een eengezinspakket is
+				de kaveldichtheid de woningdichtheid, want elke woning staat op een eigen kavel; bij een meergezinspakket telt een kavel een gebouw en geen woning, en blijft de buurtkaart staan. Gelezen door
+				Suitability_Wonen_perOP_T en door de indicator KostenWoningbouw."
+	, Source = "PBL, bijlage Grondproductiekosten en transformatiepotentie, m.m.v. Fakton, versie december 2019, tabel 3: kaveldichtheid in de steekproef 0 tot 73 per hectare, gemiddeld 9"
+	{
+		parameter<String>  Onzekerheid_name := /ModelParameters/Wonen/grondproductie_kosten_Variant, Descr = "Dezelfde onzekerheidsvariant als het saldo leest, zodat de coefficient en de componenten bij elkaar horen.";
+
+		attribute<Float32> KaveldichtheidCel (AdminDomain) := ReadData/LocatieVariabelen/Kaveldichtheid, Descr = "De kaveldichtheid waarmee Results rekent: de buurtkaart van 2018 binnen een kilometer, afgetopt op Grondproductie_MaxKaveldichtheid.";
+
+		attribute<Float32> Kaveldichtheid_perOP (OP) :=
+			OP/WP2_rel == Classifications/Vastgoed/WP2/V/Eengezins
+				? min_elem(OP/Dichtheid[float32], /ModelParameters/Wonen/Grondproductie_MaxKaveldichtheid)
+				: null_f
+		, Descr = "De kaveldichtheid van het pakket in kavels per hectare: bij eengezins de woningdichtheid, afgetopt op het hoogste wat de schatting kende; bij meergezins null, en dan geldt de buurtkaart.";
+
+		parameter<Float32> Coefficient_BouwWoonrijp := ='Calculations/BouwWoonrijp/'+Onzekerheid_name+'/ParameterValue[rlookup(C/GrondproductieVariabelen/V/Kaveldichtheid2018, ReadData/BouwWoonrijp/ModelVariant/GrondproductieVariabelen_rel)]'
+		, IntegrityCheck = "IsDefined(this)"
+		, Descr = "De coefficient van de kaveldichtheid in BouwWoonrijp voor deze onzekerheidsvariant, uit dezelfde berekening als Results en met dezelfde significantietoets. De controle vangt een csv zonder die variabele.";
+		parameter<Float32> Coefficient_PlanProces   := ='Calculations/PlanProces/'+Onzekerheid_name+'/ParameterValue[rlookup(C/GrondproductieVariabelen/V/Kaveldichtheid2018, ReadData/PlanProces/ModelVariant/GrondproductieVariabelen_rel)]'
+		, IntegrityCheck = "IsDefined(this)"
+		, Descr = "Idem voor PlanProces.";
+
+		Template VoorKaveldichtheid_T
+		: Descr = "De drie componenten bij een gegeven kaveldichtheid per cel: Bovenwijks ongewijzigd, BouwWoonrijp en PlanProces maal de factor voor het verschil met de buurtkaart."
+		{
+			attribute<Float32> Kaveldichtheid (AdminDomain);
+			//
+			attribute<Eur_Ha> Totaal (AdminDomain) :=
+				='Results/Bovenwijks/'+Onzekerheid_name+
+				' + Results/BouwWoonrijp/'+Onzekerheid_name+' * exp(Coefficient_BouwWoonrijp * (Kaveldichtheid - KaveldichtheidCel))'+
+				' + Results/PlanProces/'+Onzekerheid_name+' * exp(Coefficient_PlanProces * (Kaveldichtheid - KaveldichtheidCel))';
+		}
+
+		container Totaal := for_each_ne(OP/name, 'VoorKaveldichtheid_T(MakeDefined(const(Kaveldichtheid_perOP['+string(id(OP))+'[OP]], AdminDomain), KaveldichtheidCel))')
+		, Descr = "Per ontwikkelpakket de grondproductiekosten per hectare per cel; bij een meergezinspakket vult MakeDefined de buurtkaart in.";
+
+		Template VoorOPrel_T
+		: Descr = "De grondproductiekosten per hectare per cel voor het pakket dat op die cel is gealloceerd, voor de indicator KostenWoningbouw; een cel zonder pakket krijgt de buurtkaart en dus de waarde van Results."
+		{
+			attribute<OP> OP_rel (AdminDomain);
+			//
+			container Kosten := VoorKaveldichtheid_T(MakeDefined(Kaveldichtheid_perOP[OP_rel], KaveldichtheidCel));
+			attribute<Eur_Ha> Totaal (AdminDomain) := Kosten/Totaal;
+		}
+	}
+	
+	#include<T.dms>
+}

@@ -1,0 +1,81 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De kengetallen en de hoeveelheden achter de kosten van bouwen op een bodemdalingsgevoelige
+// ondergrond (#505). Beide zijn variantonafhankelijk en staan daarom in BaseData; de berekening zelf
+// staat in Templates/Suitabilities/Bodemdalingkosten_T en wordt zowel per ontwikkelpakket als per cel
+// aangeroepen.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Bodemdalingkosten
+: Descr = "De invoer voor de kosten van bouwen op een bodemdalingsgevoelige ondergrond: de tarieven uit bijlage E van het landelijk afwegingskader bodemdalingbestendige nieuwbouw en de vier
+			hoeveelheidskaarten waarin die tarieven zijn uitgedrukt (SourceData/Bodem/Bodemdalingbestendig, #505). Hier staat alleen de invoer; de rekenkern staat in
+			Templates/Suitabilities/Bodemdalingkosten_T, zodat dezelfde formules per ontwikkelpakket voor het exploitatiesaldo en een keer per cel voor de indicator kunnen draaien.", Source = "Deltares en Sweco, Landelijk afwegingskader bodemdalingbestendige nieuwbouw, 11211556-001-BGS-0001, 23 maart 2026, bijlage E"
+{
+	container Hoeveelheden
+	: Descr = "De vier geleverde kaarten op AdminDomain, plus de grootheid die daaruit volgt."
+	{
+		attribute<meter> Ophoogdikte           (AdminDomain) := /SourceData/Bodem/Bodemdalingbestendig/Ophoogdikte[AdminDomain/rdc_100m_rel],           Descr = "Benodigde ophoogdikte zand voor integraal ophogen.";
+		attribute<meter> Heipaallengte         (AdminDomain) := /SourceData/Bodem/Bodemdalingbestendig/Heipaallengte[AdminDomain/rdc_100m_rel],         Descr = "Benodigde heipaallengte, in de levering afgekapt op de klasse boven 14 meter.";
+		attribute<meter> AfgraafdiepteDrijvend (AdminDomain) := /SourceData/Bodem/Bodemdalingbestendig/AfgraafdiepteDrijvend[AdminDomain/rdc_100m_rel], Descr = "Af te graven diepte voor aquatisch bouwen.";
+		attribute<meter> DikteEPS              (AdminDomain) := /SourceData/Bodem/Bodemdalingbestendig/DikteEPS[AdminDomain/rdc_100m_rel],              Descr = "Dikte van de EPS-laag bij een leeflaag van 30 cm.";
+		attribute<meter> AfgraafdiepteEPS      (AdminDomain) := /SourceData/Bodem/Bodemdalingbestendig/AfgraafdiepteEPS[AdminDomain/rdc_100m_rel],      Descr = "De af te graven laag bij licht ophoogmateriaal, meetkundig afgeleid als de laagdikte plus 10 cm.";
+
+		attribute<Bool>  HeeftEPS (AdminDomain) := IsDefined(DikteEPS), Descr = "Waar de EPS-kaart niets zegt is alternatief D niet beschikbaar. De kaart dekt 32.635 km2.";
+
+		attribute<meter> Overstromingsdiepte (AdminDomain) := MakeDefined(/BaseData/Omgeving/Overstromingsdiepte, 0[meter])
+		,	Descr = "De waterdiepte ter plaatse, nul waar de kaart niets geeft; dezelfde kaart als de zeef leest, het elementgewijze maximum van de drie LIWO-kaarten. Hier tussen de bodemdalingskaarten omdat hij
+					van dezelfde soort is als Ophoogdikte: allebei increments op het huidige maaiveld, dus optelbaar en vergelijkbaar, zodat Bodemdalingkosten_T/Ophoging het maximum van de twee kan nemen.
+					Zonder afbakening, want of er tegen het water wordt opgehoogd hangt af van de bouwwijze van het ontwikkelpakket, en die begrenzing gebeurt in het sjabloon (#681).";
+
+		attribute<Eur_m2> Paaltarief (AdminDomain) :=
+			  Heipaallengte <  1.2[meter] ? 0[Eur_m2]
+			: Heipaallengte <= 5.0[meter] ? Kengetallen/Paal_kort
+			: Kengetallen/Paal_permeter * (Heipaallengte / 1[meter])
+		,	Descr = "De heipaalstaffel uit Tabel E-1: onder 1,2 meter gratis, van 1,2 tot 5 meter een vast bedrag, daarboven evenredig met de lengte. In Tabel E-1 staat de staffel als bedrag per heipaal en in
+					E-3 tot en met E-7 met dezelfde getallen als bedrag per m2, en het rapport geeft nergens hoeveel palen er per m2 nodig zijn; de staffel wordt daarom overal als bedrag per m2 gelezen, wat de
+					tabellen consistent maakt en voor een rijtjeswoning op palen in de goede orde uitkomt. Zie de aannamelijst bij #505.";
+	}
+
+	container Kengetallen := /ModelParameters/Wonen/Bodemdalingkosten
+	, Descr = "De tarieven staan in ModelParameters/Wonen/Bodemdalingkosten; deze verwijzing houdt de lezers op Src/Kengetallen.";
+
+	container Tarief
+	: Descr = "Het tarief per m2 dat van de locatie afhangt, dus van de vier kaarten. Staat hier en niet in het sjabloon, zodat het maar een keer over het domein wordt uitgerekend en niet opnieuw voor elk van de 53 ontwikkelpakketten."
+	{
+		attribute<Eur_m2> OphogenBodemdaling (AdminDomain) := Kengetallen/Ophogen_permeter * (Hoeveelheden/Ophoogdikte / 1[meter]), Descr = "Het ophoogtarief voor alleen de bodemdalingsopgave. Sinds #681 leest geen enkel alternatief dit nog: A en B rekenen met Bodemdalingkosten_T/Tarief_Ophogen, dat ook de ophoging tegen het water meeneemt en daarvoor het pakket moet kennen. Blijft staan als ijkpunt bij de diagnose.";
+		attribute<Eur_m2> OphogenC           (AdminDomain) := const(Kengetallen/Ophogen_permeter * (Kengetallen/OphoogdikteAlternatiefC / 1[meter]), AdminDomain);
+		attribute<Eur_m2> OphogenRef         (AdminDomain) := const(Kengetallen/Ophogen_permeter * (Kengetallen/OphoogdikteReferentie   / 1[meter]), AdminDomain);
+		attribute<Eur_m2> Paal               (AdminDomain) := Hoeveelheden/Paaltarief;
+		attribute<Eur_m2> EPS                (AdminDomain) :=
+			  Kengetallen/EPS_afgraven_permeter * (Hoeveelheden/AfgraafdiepteEPS / 1[meter])
+			+ Kengetallen/EPS_permeter          * (Hoeveelheden/DikteEPS         / 1[meter])
+			+ Kengetallen/Afdeklaag_permeter    * (Kengetallen/EPS_afdeklaag     / 1[meter]);
+		attribute<Eur_m2> AfgravenD   (AdminDomain) := Kengetallen/Afgraven_permeter * (Hoeveelheden/AfgraafdiepteDrijvend / 1[meter]), Descr = "Afgraven voor open water bij drijvend bouwen.";
+		attribute<Eur_m2> VerhardingE (AdminDomain) := = Kengetallen/AlternatiefE_TeltVerhardingApart ? 'const(Kengetallen/Verharding, AdminDomain)' : 'const(0[Eur_m2], AdminDomain)';
+	}
+
+	container Beschikbaar
+	: Descr = "Welke alternatieven op deze plek mogen meedoen in de keuze. Hangt van de locatie af en niet van het ontwikkelpakket, dus ook dit staat buiten het sjabloon."
+	{
+		parameter<Bool>  A := TRUE, Descr = "Integraal ophogen is de referentie en doet altijd mee.";
+		parameter<Bool>  B := /ModelParameters/Wonen/Bodemdaling_AlternatiefToegestaan_B;
+		parameter<Bool>  E := /ModelParameters/Wonen/Bodemdaling_AlternatiefToegestaan_E;
+		parameter<Bool>  F := /ModelParameters/Wonen/Bodemdaling_AlternatiefToegestaan_F;
+
+		attribute<Bool>  C (AdminDomain) := /ModelParameters/Wonen/Bodemdaling_AlternatiefToegestaan_C && Hoeveelheden/Ophoogdikte <= Kengetallen/OphoogdikteAlternatiefC
+		,	Descr = "Ophogen met een vaste 1,20 meter zand voldoet alleen waar integraal ophogen met niet meer dan 1,20 meter toe kan; waar meer nodig is haalt dit alternatief de eisen niet, en de kaart die dat
+					aangeeft (Figuur 3-6 van het rapport) is niet geleverd. Gevolg is dat C nooit wint: waar hij mag, is integraal ophogen per definitie niet duurder. Blijft staan omdat het rapport zes
+					alternatieven kent en de zeef er later op kan gaan sturen.";
+
+		attribute<Bool>  D (AdminDomain) := /ModelParameters/Wonen/Bodemdaling_AlternatiefToegestaan_D && Hoeveelheden/HeeftEPS
+		,	Descr = "Licht ophoogmateriaal vraagt de EPS-kaart, en die dekt niet het hele land.";
+	}
+}

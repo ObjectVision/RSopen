@@ -1,0 +1,137 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Indicator kosten werklocaties (#727): wat de overstromingsmaatregel kost op de plekken waar het model
+// nieuwe werklocaties heeft neergezet.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container KostenWerklocaties
+: Descr = "Wat de overstromingsmaatregel kost op de cellen waar het model een werksubsector heeft neergezet (#727). Een smallere post dan KostenWoningbouw: wonen heeft een exploitatiesaldo waarin de
+			hele bijlage-E-doorrekening meedraait en de allocatie stuurt, werken heeft alleen een geschiktheidskaart uit een logit, dus dit is een verantwoordingsgetal: als de schade-indicator krediet
+			geeft voor een maatregel, hoort de rekening van diezelfde maatregel er zichtbaar naast te staan (#681, kosten en baten aan dezelfde conditie). Erin zit de extra ophoging tegen het water,
+			tegen het ophoogtarief van bijlage E, het enige kengetal uit dat rapport dat niet van de inrichting van een woonbuurt afhangt. Er niet in: de bodemdalingsopgave zelf, die voor werken nergens
+			wordt beprijsd; de overige inrichtingselementen van bijlage E, waarvoor een verdeling nodig is die het rapport voor bedrijventerreinen niet geeft; en een eigen tarief per bouwwijze, want net
+			als aan de wonen-kant in Bodemdalingkosten_T/Ophoging wordt de benodigde ophoging afgerekend op de gekozen bouwwijze en niet op de constructie die daarbij hoort. Wordt dat aan de wonen-kant
+			rechtgezet, dan hoort deze post mee te bewegen."
+{
+	container Src := /BaseData/Suitabilities/Wonen/Bodemdalingkosten
+	, Descr = "De kengetallen en de hoeveelheidskaarten van bijlage E. De containernaam zegt Wonen om historische redenen, maar de inhoud is variantonafhankelijk en functieonafhankelijk: het zijn tarieven per m2 en kaarten van de ondergrond.";
+
+	attribute<Bool> IsWerklocatie (AdminDomain) := Impl/StandVar/Subsector/Sector_rel[Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Werken && !Overstromingsschade/Grondgebruik/Zichtjaar/IsBAGnieuwbouwWerken
+	, Descr = "Heeft de allocatie op deze cel een werksubsector neergezet? Zelfde toets als Verharding/Werken/AllocatieHeeftPlaatsgevonden, min de BAG-nieuwbouwcellen: daar komt de subsector uit de
+			waarneming en niet uit het model, en daar geeft de schade-indicator ook geen krediet. De verzameling waarop de maatregel wordt betaald is dezelfde die in de schade-indicator krediet krijgt:
+			SchadevrijeDiepte_Werken is buiten deze cellen nul.";
+
+	attribute<meter> SchadevrijeDiepte (AdminDomain) := Overstromingsschade/Grondgebruik/Zichtjaar/SchadevrijeDiepte_Werken
+	, Descr = "Hoeveel water de gekozen bouwwijze van de gealloceerde werksubsector buiten het pand houdt. Letterlijk hetzelfde item dat de schadefunctie verschuift, zodat de rekening niet van het krediet kan afwijken.";
+
+	attribute<meter> Ophoging_ZonderMaatregel (AdminDomain) := Src/Hoeveelheden/Ophoogdikte
+	, Descr = "Wat de bodemdaling hier sowieso al aan ophoging vraagt, ook zonder overstromingsmaatregel. Dit is het nulpunt van deze post: alleen wat het water daar bovenop vraagt is een kostenpost van de maatregel.";
+
+	attribute<meter> Ophoging (AdminDomain) := max_elem(Ophoging_ZonderMaatregel, min_elem(Src/Hoeveelheden/Overstromingsdiepte, MakeDefined(SchadevrijeDiepte, 0[meter])))
+	, Descr = "Hoeveel moet het maaiveld hier omhoog met de maatregel erbij? Exact de formule van Bodemdalingkosten_T/Ophoging: het maximum van wat de bodemdaling vraagt en wat nodig is om boven het water uit te komen, begrensd op wat de gekozen bouwwijze aankan. Het maximum en niet de som, want wie tot de diepste van de twee ophoogt voldoet aan allebei.";
+
+	attribute<meter> Ophoging_Extra (AdminDomain) := max_elem(Ophoging - Ophoging_ZonderMaatregel, 0[meter])
+	, Descr = "Het deel van de ophoging dat aan het water is toe te schrijven. Nul waar de bodemdaling toch al dieper ophoogde dan het water vraagt, en nul waar de subsector geen maatregel neemt.";
+
+	attribute<Eur_m2> Tarief_ExtraOphoging (AdminDomain) := Src/Kengetallen/Ophogen_permeter * (Ophoging_Extra / 1[meter]) * Src/Kengetallen/Opslag
+	, Descr = "Het tarief per m2 terrein voor de extra ophoging, met dezelfde opslag van 19 procent voor algemene kosten, uitvoeringskosten en winst en risico die het rapport op alle aanlegkosten legt.";
+
+	attribute<Ha> Werklocatie_Ha (AdminDomain) := IsWerklocatie ? AdminDomain/NrHaPerCell : 0[Ha]
+	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_Werklocatie_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Het oppervlak waarover deze post wordt geboekt: elke cel waar een werksubsector staat, voor zijn volle celoppervlak. Zelfde grofheid als Nieuwbouw_Ha in KostenWoningbouw, en om dezelfde reden: het kengetal is per m2 terrein en niet per baan of per m2 pand.";
+
+	attribute<meter2> Werklocatie_m2 (AdminDomain) := IsWerklocatie ? AdminDomain/NrMeter2PerCell : 0[meter2]
+	, Descr = "Hetzelfde oppervlak in m2, want het tarief staat per m2.";
+
+	attribute<Eur> MeerkostenOverstroming (AdminDomain) := MakeDefined(Tarief_ExtraOphoging * Werklocatie_m2, 0[Eur])
+	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenOverstroming_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "De rekening van de overstromingsmaatregel op deze werkcel, nominaal in het zichtjaar.";
+
+	attribute<Eur_m2> Tarief_Bodemdaling (AdminDomain) := Src/Kengetallen/Ophogen_permeter * (Ophoging_ZonderMaatregel / 1[meter]) * Src/Kengetallen/Opslag
+	, Descr = "Het tarief per m2 terrein voor de ophoging die de bodemdaling sowieso vraagt, het nulpunt van Tarief_ExtraOphoging, met dezelfde opslag.";
+	attribute<Eur> MeerkostenBodemdaling (AdminDomain) := MakeDefined(Tarief_Bodemdaling * Werklocatie_m2, 0[Eur])
+	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenBodemdaling_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	, StorageType = "gdalwrite.grid"
+	, Descr = "Wat de bodemdaling aan ophoging kost op de gealloceerde werklocaties, nominaal (#828): de ophoogdikte van bijlage E tegen het ophoogtarief met dezelfde opslag, over hetzelfde oppervlak. Alleen
+				het zandpakket, want de overige inrichtingselementen van KostenWoningbouw/MeerkostenBodemdaling kent de bron voor bedrijventerreinen niet; een contante waarde is een keten en komt als erom
+				gevraagd wordt.";
+
+	// #651: ophogen is een eenmalige uitgave bij aanleg, en de post is cumulatief sinds het basisjaar. De NCW wordt
+	// daarom per periode opgebouwd, net als bij KostenWoningbouw: alleen wat er in deze periode bijkwam krijgt de
+	// factor van dit zichtjaar, opgeteld bij de NCW van het vorige zichtjaar.
+	attribute<Ha> Werklocatie_Ha_dezePeriode (AdminDomain) := = IsFirstAllocYear
+		? 'Werklocatie_Ha'
+		: 'max_elem(Werklocatie_Ha - PrevIndicatoren/KostenWerklocaties/Werklocatie_Ha, 0[Ha])'
+	, Descr = "Hectares die in deze periode werklocatie zijn geworden. Begrensd op nul: een cel die weer leegloopt geeft geen negatieve aanlegkosten terug.";
+
+	attribute<Eur> MeerkostenOverstroming_NCW (AdminDomain) := = IsFirstAllocYear
+		? 'MakeDefined(Tarief_ExtraOphoging * convert(Werklocatie_Ha_dezePeriode, meter2), 0[Eur]) * Verdiscontering/Factor'
+		: 'MakeDefined(Tarief_ExtraOphoging * convert(Werklocatie_Ha_dezePeriode, meter2), 0[Eur]) * Verdiscontering/Factor + PrevIndicatoren/KostenWerklocaties/MeerkostenOverstroming_NCW'
+	, StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenOverstroming_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'"
+	, StorageType = "gdalwrite.grid";
+
+	// -- de bron van de aggregaties: levend, of teruggelezen uit de export (#824); zie KostenWoningbouw voor de opzet --
+	container Lees
+	: Descr = "De posten van dit zichtjaar teruggelezen uit de tifs die de items hierboven schrijven, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers, dus een hernoeming daar hoort hier mee te gaan."
+	{
+		attribute<Eur> MeerkostenOverstroming (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenOverstroming_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> MeerkostenOverstroming_NCW (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenOverstroming_NCW_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Ha> Werklocatie_Ha (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_Werklocatie_Ha_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Eur> MeerkostenBodemdaling (AdminDomain) : StorageName = "='%LocalDataProjDir%/Indicatoren/'+Casus_name+'/KostenWerklocaties_MeerkostenBodemdaling_'+Zichtjaar_name+'_Eur_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	}
+	container Live
+	{
+		attribute<Eur> MeerkostenOverstroming     (AdminDomain) := KostenWerklocaties/MeerkostenOverstroming;
+		attribute<Eur> MeerkostenOverstroming_NCW (AdminDomain) := KostenWerklocaties/MeerkostenOverstroming_NCW;
+		attribute<Ha>  Werklocatie_Ha             (AdminDomain) := KostenWerklocaties/Werklocatie_Ha;
+		attribute<Eur> MeerkostenBodemdaling      (AdminDomain) := KostenWerklocaties/MeerkostenBodemdaling;
+	}
+	container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
+	, Descr = "Waar de aggregaties hun per-celposten vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
+
+	parameter<Eur> MeerkostenOverstroming_Per_NL     := sum(Bron/MeerkostenOverstroming);
+	parameter<Eur> MeerkostenOverstroming_NCW_Per_NL := sum(Bron/MeerkostenOverstroming_NCW);
+	parameter<Ha>  Werklocatie_Ha_Per_NL             := sum(Bron/Werklocatie_Ha), Descr = "Controlegetal: over hoeveel hectare dit bedrag is geboekt.";
+	parameter<Eur> MeerkostenBodemdaling_Per_NL      := sum(Bron/MeerkostenBodemdaling);
+
+	unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
+
+	container Per_Regio
+	: Descr = "De post per regio van de indicatorentabellen, gestuurd door ModelParameters/Advanced/IndicatorRegio_ref."
+	{
+		attribute<Eur> MeerkostenOverstroming     (Regio) := sum(KostenWerklocaties/Bron/MeerkostenOverstroming,     Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> MeerkostenOverstroming_NCW (Regio) := sum(KostenWerklocaties/Bron/MeerkostenOverstroming_NCW, Regio/Per_AdminDomain_Fijn);
+		attribute<Ha>  Werklocatie_Ha             (Regio) := sum(KostenWerklocaties/Bron/Werklocatie_Ha,             Regio/Per_AdminDomain_Fijn);
+		attribute<Eur> MeerkostenBodemdaling      (Regio) := sum(KostenWerklocaties/Bron/MeerkostenBodemdaling,      Regio/Per_AdminDomain_Fijn);
+	}
+
+	container Per_NL
+	: Descr = "Dezelfde drie posten landsdekkend. Bestaat sinds #705, zodat de landelijke indicatorentabel ze langs hetzelfde pad kan lezen als de regionale: alleen de containernaam verschilt. De waarden zelf stonden er al als losse parameters hierboven."
+	{
+		parameter<Eur> MeerkostenOverstroming     := MeerkostenOverstroming_Per_NL;
+		parameter<Eur> MeerkostenOverstroming_NCW := MeerkostenOverstroming_NCW_Per_NL;
+		parameter<Ha>  Werklocatie_Ha             := Werklocatie_Ha_Per_NL;
+		parameter<Eur> MeerkostenBodemdaling      := MeerkostenBodemdaling_Per_NL;
+	}
+
+	parameter<String> Controle :=
+		  'Kosten werklocaties, ' + Casus_name + ', ' + Zichtjaar_name + '\n'
+		+ '  werklocatie over               ' + string(Werklocatie_Ha_Per_NL / 1[Ha])                    + ' hectare\n'
+		+ '  meerkosten overstroming mln    ' + string(MeerkostenOverstroming_Per_NL     / 1e6[Eur])     + '\n'
+		+ '  idem in NCW mln                ' + string(MeerkostenOverstroming_NCW_Per_NL / 1e6[Eur])     + '\n'
+		+ '  hectare met extra ophoging     ' + string(sum(float32(Ophoging_Extra > 0[meter]) * float32(Werklocatie_Ha / 1[Ha]))) + '\n'
+		+ '  gemiddelde extra ophoging m    ' + string(sum(float32(Ophoging_Extra / 1[meter]) * float32(Werklocatie_Ha / 1[Ha])) / sum(float32(Werklocatie_Ha / 1[Ha]))) + '\n'
+	,	StorageName = "='%LocalDataProjDir%/Diagnose/KostenWerklocaties_'+Casus_name+'_'+Zichtjaar_name+'.txt'"
+	,	StorageType = "str"
+	,	Descr = "Controlewaarden voor #727, zodat de orde van grootte zonder kaartviewer te lezen is.";
+}

@@ -2,10 +2,10 @@
 //
 // Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
 //
-// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision B.V. en VU Vrije Universiteit Amsterdam.
-// Opdrachtgever/ontwikkelaar PBL: Bart Rijken
-// Contactpersoon/ontwikkelaar Object Vision B.V.: Jip Claassens (jclaassens@objectvision.nl)
-// Contacpersoon PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 //
 // Deze file specificeert een selectie aan default opties die virtuele projectontwikkelaars hebben t.a.v. de stedenbouwkiundige inrichting van gridcellen (AlocDomain) nieuw woongebied 
 // Bron: expert judgement PBL
@@ -14,34 +14,103 @@
 
 container NettoBuurt
 {
+	parameter<UInt32> nrAttr := 28
+	, Descr = "Het aantal tekstvelden per rij in de OP-brontabellen. Een keer gedefinieerd, gelezen door OPTabel_T en door de Range van elk bronblok; bij een nieuwe kolom schuift alles hier tegelijk.";
+
+	parameter<UInt8> AantalDefaultRijen := uint8(#DefaultElements / nrAttr)
+	, Descr = "Het aantal default-rijen. Elke set zet de rijen van een aanvullingsblok hierachter, dus een rijnummer vanaf deze waarde is een aanvulling; zie OPTabel_T/OP/IsAanvulling.";
+
+	#include<OPTabel_T.dms>
 	#include<Default_src.dms>
+	#include<PerVariant_src.dms>
 	
-	unit<UInt8> Default := Default_src
+	container PerVariant := 
+		for_each_ne(
+			VariantK/name
+			, 'PerVariant_T('+quote(VariantK/name)+')'
+		);
+
+	Template SetUitBronblok_T
+	: Descr = "De OP-set die hoort bij een bronblok uit PerVariant_src.dms: de default-rijen met de rijen van dat blok erachter, geparst met OPTabel_T. Dezelfde opbouw als PerVariant_T maakt voor een
+				variant, maar zonder VariantK: een bronblok bestaat in elke projectlijn, ook waar de bijbehorende variant niet in VariantK staat. Gebruikt door de controle op een bronblok in PerVariant_src.dms, die
+				zo de bronblokken leest en niet de OP-sets van twee varianten (ObjectVision/RSopen #838)."
 	{
-		container InUitgeefbaarExPandfootprint := T(/Variant_name, Default_src/InUitgeefbaarExPandfootprint, .);
-		container InOpenbaar                   := T(/Variant_name, Default_src/InOpenbaar, .);
-		container InNettoBuurt                 := InNettoBuurt_T(., InUitgeefbaarExPandfootprint, InOpenbaar);
-		container InDezeBuurt                  := InNettoBuurt;
+		parameter<String> Bronblok;
+		//
+
+		unit<UInt32> ElementsSamen := ='union_unit(DefaultElements, '+Bronblok+'Elements)'
+		, Descr = "De tekstvelden van de default-rijen met die van het bronblok erachter, in dezelfde volgorde als PerVariant_T ze samenvoegt."
+		{
+			attribute<String> Text := ='union_data(., DefaultElements/Text, '+Bronblok+'Elements/Text)';
+		}
+
+		container Tabel := OPTabel_T(ElementsSamen), Descr = "De geparste set; alle kolommen en controles van OPTabel_T gelden hier net zo goed als bij een variant.";
+		unit<UInt8> OP := Tabel/OP;
 	}
-	
-	Template T: Descr = "Hier voeren we variant-specifieke factoren door op de default"
+
+	Template PerVariant_T: Descr = "De OP-set van een variant plus de variant-specifieke factoren daarop. Sinds #721 is de set de default plus de eigen rijen van de variant: VariantK/OP_Aanvulling noemt het bronblok uit
+				PerVariant_src.dms dat achter de default-rijen wordt gevoegd, of geen. De union gebeurt op de tekstvelden, zodat OPTabel_T alle kolommen en controles maar een keer hoeft te kennen; BAU en
+				BAU2 wijzen direct naar Default."
 	{
+		//
 		parameter<String> Variant_name;
-		container Src;
-		unit<UInt8> SrcUnit;
+		//
 		
-		attribute<Float32> Verhard             (SrcUnit) := = 'min_elem(Src/Verhard * VariantK/VerhardingTovDefault[VariantParameters/VariantK/V/'+Variant_name+'], 1f)';
-		attribute<Float32> GroenEnWaterEnBruin (SrcUnit) := 1f - Verhard;
-		attribute<Float32> Groen               (SrcUnit) := Src/Groen / add(Src/Groen, Src/Water, Src/Bruin) * GroenEnWaterEnBruin;
-		attribute<Float32> Water               (SrcUnit) := Src/Water / add(Src/Groen, Src/Water, Src/Bruin) * GroenEnWaterEnBruin;
-		attribute<Float32> Bruin               (SrcUnit) := 1f - Verhard - Groen - Water;
+		parameter<VariantK> Variant_rel := rlookup(variant_name, VariantK/name);
+		parameter<String>   Aanvulling  := VariantK/OP_Aanvulling[Variant_rel];
+
+		unit<UInt32> ElementsSamen := ='union_unit(DefaultElements, '+Aanvulling+'Elements)'
+		, Descr = "De tekstvelden van de default-rijen met de eigen rijen van deze variant erachter. Voor OP_Aanvulling geen is dit de union met het lege blok; die tak leest niemand, want OP wijst dan direct naar Default."
+		{
+			attribute<String> Text := ='union_data(., DefaultElements/Text, '+Aanvulling+'Elements/Text)';
+		}
+
+		container EigenTabel := OPTabel_T(ElementsSamen)
+		, Descr = "De geparste set van deze variant. De eigen rijen nummeren aansluitend op de default-rijen; zie de rijnummer-waarschuwing in PerVariant_src.dms.";
+
+		unit<UInt8> OP := = Aanvulling == 'geen' ? 'Default' : 'EigenTabel/OP'
+		, Descr = "De OP-set van deze variant: exact Default waar niets wordt aangevuld, anders default plus eigen rijen.";
 		
-		attribute<Float32> Gras    (SrcUnit) := MakeDefined(Src/Gras   / Src/Groen * Groen, 0f);
-		attribute<Float32> Struik  (SrcUnit) := MakeDefined(Src/Struik / Src/Groen * Groen, 0f);
-		attribute<Float32> Boom    (SrcUnit) := MakeDefined(Src/Boom   / Src/Groen * Groen, 0f);
+		parameter<String> Controle := 'Ready'
+		, ExplicitSuppliers = "=MakeDefined(Bronblokcontroles/Toets[rlookup(Aanvulling, Bronblokcontroles/Blok)], '')"
+		, Descr = "De controle die bij het aanvullingsblok van deze variant hoort, als dat blok er een heeft; zie Bronblokcontroles in PerVariant_src.dms. WriteVariantData hangt hem aan de
+					variantdata van deze variant, dus een variant rekent alleen de controle van zijn eigen blok.";
+
+		unit<UInt8> InUitgeefbaarExPandfootprint  := OP/InUitgeefbaarExPandfootprint
+		{
+			unit<uint8> src := OP/InUitgeefbaarExPandfootprint;
+			
+			attribute<Float32> Verhard              := = 'min_elem(src/Verhard * VariantK/VerhardingTovDefault[VariantK/V/'+Variant_name+'], 1f)';
+			attribute<Float32> GroenEnWaterEnBruin  := 1f - Verhard;
+			attribute<Float32> Groen                := MakeDefined(Src/Groen / add(Src/Groen, Src/Water, Src/Bruin) * GroenEnWaterEnBruin, 0f);
+			attribute<Float32> Water                := MakeDefined(Src/Water / add(Src/Groen, Src/Water, Src/Bruin) * GroenEnWaterEnBruin, 0f);
+			attribute<Float32> Bruin                := 1f - Verhard - Groen - Water;
+			
+			attribute<Float32> Gras                 := MakeDefined(Src/Gras   / Src/Groen * Groen, 0f);
+			attribute<Float32> Struik               := MakeDefined(Src/Struik / Src/Groen * Groen, 0f);
+			attribute<Float32> Boom                 := MakeDefined(Src/Boom   / Src/Groen * Groen, 0f);
+		}
+		
+		unit<UInt8> InOpenbaar := OP/InOpenbaar
+		{
+			unit<uint8> src := OP/InOpenbaar;
+			
+			attribute<Float32> Verhard              := = 'min_elem(src/Verhard * VariantK/VerhardingTovDefault[VariantK/V/'+Variant_name+'], 1f)';
+			attribute<Float32> GroenEnWaterEnBruin  := 1f - Verhard;
+			attribute<Float32> Groen                := Src/Groen / add(Src/Groen, Src/Water, Src/Bruin) * GroenEnWaterEnBruin;
+			attribute<Float32> Water                := Src/Water / add(Src/Groen, Src/Water, Src/Bruin) * GroenEnWaterEnBruin;
+			attribute<Float32> Bruin                := 1f - Verhard - Groen - Water;
+			
+			attribute<Float32> Gras                 := MakeDefined(Src/Gras   / Src/Groen * Groen, 0f);
+			attribute<Float32> Struik               := MakeDefined(Src/Struik / Src/Groen * Groen, 0f);
+			attribute<Float32> Boom                 := MakeDefined(Src/Boom   / Src/Groen * Groen, 0f);
+		}
+		
+		container Buurt := Buurt_T(OP, InUitgeefbaarExPandfootprint, InOpenbaar)
+		, Descr = "De inrichting van de netto buurt in vierkante meters, per pakket van deze variant.";
 	}
 	
-	Template InNettoBuurt_T: Descr = "Hier zetten we de fracties om in meter2"
+	Template Buurt_T: Descr = "Hier zetten we de fracties om in meter2"
 	{
 		//
 		unit<UInt8> SrcUnit;
@@ -100,7 +169,7 @@ container NettoBuurt
 		
 		container PerWoning
 		{
-			container Src := InNettoBuurt;
+			container Src := Buurt;
 			
 			attribute<m2_Woning> Terreinoppervlakte (SrcUnit) := Src/Terreinoppervlakte[meter2] / (SrcUnit/Dichtheid * 1[ha])
 			{
@@ -161,8 +230,8 @@ container NettoBuurt
 			attribute<Float32> Totaal (SrcUnit) := add(Gras, Boom, Struik);
 		}
 		
-		attribute<Perceeloppervlak>        PerceeloppervlakteTotaal (SrcUnit) := Terreinoppervlakte/Uitgeefbaar[Perceeloppervlak], Descr = "De totale perceeloppervlakte in m2, inclusief de footprint van de woning en het aandeel van de buitenruimte dat bij de woning hoort"; //Nog in template stoppen. Wordt nu twee keer berekend op zelfde manier, voor netto en bruto buurt
-		attribute<Perceeloppervlak_Woning> Perceeloppervlakte       (SrcUnit) := PerceeloppervlakteTotaal / (SrcUnit/Dichtheid * 1[ha])[Woning], Descr = "De totale perceeloppervlakte per woning in m2, inclusief de footprint van de woning en het aandeel van de buitenruimte dat bij de woning hoort"; //Nog in template stoppen. Wordt nu twee keer berekend op zelfde manier, voor netto en bruto buurt
+		attribute<Perceeloppervlak>        PerceeloppervlakteTotaal (SrcUnit) := Terreinoppervlakte/Uitgeefbaar[Perceeloppervlak], Descr = "De totale perceeloppervlakte in m2, inclusief de footprint van de woning en het aandeel van de buitenruimte dat bij de woning hoort";
+		attribute<Perceeloppervlak_Woning> Perceeloppervlakte       (SrcUnit) := PerceeloppervlakteTotaal / (SrcUnit/Dichtheid * 1[ha])[Woning], Descr = "De totale perceeloppervlakte per woning in m2, inclusief de footprint van de woning en het aandeel van de buitenruimte dat bij de woning hoort";
 		
 		attribute<m2_Woning>  Tuinoppervlakte  (SrcUnit) := Terreinoppervlakte/Uitgeefbaar/Buitenruimte / (SrcUnit/Dichtheid * 1[ha])[Woning], Descr = "De tuinoppervlakte per woning in m2, dus exclusief de footprint van de woning.";
 		// attribute<meter2>     GroenOppervlakte (SrcUnit) := FractiesGroen/Totaal * Terreinoppervlakte, Descr = ""; // Zelfde als /VariantParameters/Ontwikkelpakketten/NettoBuurt/Default/InNettoBuurt/Terreinoppervlakte/Totaal/Groen
@@ -178,14 +247,28 @@ container NettoBuurt
 		
 		unit<UInt8> OP_sub := select_with_org_rel(WP2xVSSH_rel == OP/WP2xVSSH_rel)
 		{
-			attribute<String>        name            := OP/name[org_rel];
-			attribute<String>        Label           := name, DialogType = "LabelText";
-			attribute<Bool>          IsHoogbouw      := OP/IsHoogbouw[org_rel];
-			attribute<Woning_ha>     Dichtheid       := OP/Dichtheid[org_rel];
-			attribute<m2BVO_Woning>  BVOPerWoning    := OP/BVOPerWoning[org_rel];
-			attribute<Vastgoed/WP2>  WP2_rel         := const(Vastgoed/WP2xVSSH/first_rel[WP2xVSSH_rel], .);
-			attribute<String>        WP2_name        := Vastgoed/WP2/name[WP2_rel];
-			attribute<String>        WP2xVSSH_name   := OP/WP2xVSSH_name[org_rel];
+			attribute<String>       name                       := OP/name[org_rel];
+			attribute<String>       Label                      := name, DialogType = "LabelText";
+			attribute<Bool>         IsHoogbouw                 := OP/IsHoogbouw[org_rel];
+			attribute<Woning_ha>    Dichtheid                  := OP/Dichtheid[org_rel];
+			attribute<m2BVO_Woning> BVOPerWoning               := OP/BVOPerWoning[org_rel];
+			attribute<Vastgoed/WP2> WP2_rel                    := const(Vastgoed/WP2xVSSH/first_rel[WP2xVSSH_rel], .);
+			attribute<String>       WP2_name                   := Vastgoed/WP2/name[WP2_rel];
+			attribute<String>       WP2xVSSH_name              := OP/WP2xVSSH_name[org_rel];
+			attribute<Bool>         IsAanvulling               := OP/IsAanvulling[org_rel];
+			attribute<string>       Toepassingsgebied_ref      := OP/Toepassingsgebied_ref[org_rel];
+
+			container Bouwwijze
+			: Descr = "Doorgifte van de toegestane bouwwijzen uit de OP-tabel naar deze subset, zodat de zeef er per pakket een parameter uit kan lezen (#723)."
+			{
+				container Toegestaan :=
+					for_each_nedv(
+						  /Classifications/Modellering/BouwwijzeK/name
+						, 'OP/Bouwwijze/Toegestaan/' + /Classifications/Modellering/BouwwijzeK/name + '[org_rel]'
+						, ..
+						, bool
+					);
+			}
 			
 			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
 		}

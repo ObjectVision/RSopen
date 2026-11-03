@@ -1,0 +1,76 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De potentiele state per subsector binnen een zichtjaar.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template PerSectorxSubsector_T
+: Descr = "Template voor het berekenen van de potentiele state per subsector."
+{
+	parameter<Sector/xSubsector> id;
+	parameter<String> Zichtjaar_name;
+	container Density;
+	//
+	
+	attribute<Bool>    IsBeschikbaar_basisjaar   (CompactedAdminDomain) := = 'Zeef/Basisjaar/'+Sector/xSubsector/name[id]+'/IsBeschikbaar';
+	attribute<Bool>    IsBeschikbaar_zichtjaar   (CompactedAdminDomain) := = 'Zeef/'+Zichtjaar_name+'/SectorxSubsectoren/'+Sector/xSubsector/name[id]+'/IsBeschikbaar';
+	attribute<Float32> BAG_nieuwbouw             (CompactedAdminDomain) := = lowercase(Sector/xSubsector/Sector_name[id]) == lowercase('landbouw') 
+																				? 'const(0f, CompactedAdminDomain)'
+																				: '/BaseData/StartState/BAG_nieuwbouw/'+Sector/xSubsector/name[id]+'';
+	
+	attribute<Float32> Basisjaar     (CompactedAdminDomain) := ='StateBasisjaar/'+Sector/xSubsector/name[id]+ ' * float32(IsBeschikbaar_basisjaar)';
+
+	parameter<String>  ValUnit_ref := Sector/xSubsector/ValUnit_ref[id], Descr = "De eenheid van de stand van deze subsector: Job, Woning, meter3, MW of Ha.";
+	unit<Float32>      ValUnit     := = ValUnit_ref;
+
+	parameter<Bool> IsKantoorVerdikking   := lowercase(Sector/xSubsector/Sector_name[id]) == lowercase('Werken') && lowercase(Sector/xSubsector/Subsector_name[id]) == lowercase('Zak_dienstverlening'), Descr = "Geldt de potentieelvloer van #668 voor deze subsector? Alleen zakelijke dienstverlening.";
+	parameter<Bool> IsOverheidVerdikking  := lowercase(Sector/xSubsector/Sector_name[id]) == lowercase('Werken') && lowercase(Sector/xSubsector/Subsector_name[id]) == lowercase('Overheid_kw_diensten'), Descr = "Geldt de potentieelvloer voor overheid en kwartaire diensten? Alleen die subsector.";
+	parameter<Bool> HeeftVerdikkingsvloer := IsKantoorVerdikking || IsOverheidVerdikking, Descr = "Krijgt deze subsector uberhaupt een vloer? Bepaalt of PotentieelMetVloer de max_elem doet; zonder vloer blijft dat het kale potentieel.";
+	parameter<Bool> IsWaterberging        := lowercase(Sector/xSubsector/Sector_name[id]) == lowercase('Waterberging');
+
+	attribute<ValUnit> Potentieel (CompactedAdminDomain) := = IsWaterberging
+		? 'value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, MakeDefined((/BaseData/Suitabilities/Waterberging/Diepte * AdminDomain/NrMeter2PerCell)[float32], 0f)), ValUnit)'
+		: 'Density/Per_CompactedAllocDomain/'+Zichtjaar_name+'/SectorxSubsectoren/'+Sector/xSubsector/name[id]+'/Zichtjaar[CompactedAdminDomain/CompactedAllocDomain_rel] * AdminDomain/NrHaPerCell'
+	, Descr = "Het potentieel van de cel, in de eenheid van de stand. Voor wonen en werken is dat de dichtheid van de hectare waarin de cel ligt, maal zijn oppervlak van 0,0625 hectare: die dichtheid is
+				een omgevingsgemiddelde op het schattingsgrid van 100 meter en wordt hier uitgesmeerd, en dat is de richting die mag. Voor waterberging is het de bergbare waterschijf van de cel zelf maal
+				625 m2, dus m3 per cel (#770); een hectaregemiddelde zou een toegelaten cel niet zijn eigen volume geven maar dat van zijn buren, inclusief de cellen die de zeef er per cel uithaalt,
+				waardoor de bergingsboekhouding per cluster niet op de kaart sluit. Cellen zonder schijf tellen nul. De eenheid moet meekomen: de allocatie zeeft met nth_element_weighted, en dat eist dat
+				het gewicht dezelfde metriek draagt als de claim; een cast naar kale float32 breekt daar de zaaglijn van elke subsector (zie de valkuil over float32(x) tegenover x[float32]).";
+
+	attribute<ValUnit> Vloer (CompactedAdminDomain) := = IsKantoorVerdikking
+		? 'value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/KantoorDominantie/WerkBanenWaarKantoorDominant) / (1f + VariantParameters/VariantK/m2BVO_job_Kantoor_groeifactor[VariantParameters/VariantK/V/'+Variant_name+']), ValUnit)'
+		: IsOverheidVerdikking
+		? 'value(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Omgeving/OverheidDominantie/WerkBanenWaarOverheidDominant) * /ModelParameters/Werken/VerdikkingsFactor_Overheid, ValUnit)'
+		: 'const(0[ValUnit], CompactedAdminDomain)'
+	, Descr = "Potentieelvloer voor bestaande kantoorcellen (#668): op een cel van 25 meter waar kantoor de werkstand domineert geldt minimaal de eigen werkstand maal de verdikkingsfactor, de capaciteit
+				die bureaudeling in situ vrijspeelt. De factor is 1 gedeeld door (1 plus de groeifactor van de kantoorcoefficient), zodat de vloer altijd boven de stand van de cel ligt en door de
+				dichtheidsdrempel in de zeef komt. Elders nul, zodat max_elem daar niets doet. Een celgrootheid en daarom hier en niet in de dichtheid op 100 meter (#770): op de hectare uitgesmeerd haalde
+				een pandcel de saldotoets per cel nooit, terwijl de lege buurcellen de vloer kregen zonder dominant te zijn. De tweede tak doet hetzelfde voor overheid en kwartaire diensten, apart omdat de
+				factor een andere herkomst heeft: bij kantoor volgt hij uit de kantoorcoefficient en beweegt hij mee per variant, hier is het een waargenomen verdikkingstempo dat als parameter vastligt
+				(ModelParameters/Werken/VerdikkingsFactor_Overheid).";
+
+	attribute<ValUnit> PotentieelMetVloer (CompactedAdminDomain) := = HeeftVerdikkingsvloer ? 'max_elem(Potentieel, Vloer)' : 'Potentieel';
+
+	attribute<Float32> Zichtjaar                          (CompactedAdminDomain) := PotentieelMetVloer * float32(IsBeschikbaar_zichtjaar);
+	attribute<Float32> Zichtjaar_BeschikbaarheidBasisjaar (CompactedAdminDomain) := PotentieelMetVloer * float32(IsBeschikbaar_basisjaar);
+	attribute<Float32> StandInBereik                      (CompactedAdminDomain) := = 'Per_Sector/'+Sector/xSubsector/Sector_name[id]+'/Basisjaar_Ongemaskeerd * float32(IsBeschikbaar_basisjaar)'
+	, Descr = "Alle werkgelegenheid in de cel op het deel dat voor deze subsector beschikbaar is, en dus precies wat er bij een overname door deze subsector gesloopt wordt (#713). Niet
+				Per_Sector/Basisjaar, dat per subsector op de eigen beschikbaarheid maskeert: dan tellen de banen niet mee van subsectoren die op deze cel restrictief staan, terwijl die bij een overname wel
+				sneuvelen, zodat de cel leeg oogt en de sloopwacht gratis passeert; en teller en noemer lopen dan over verschillend deeloppervlak, zodat een subsector banen aangerekend krijgt op deelcellen
+				waar hij zelf niet mag bouwen, wat vooral de subsectoren met een smalle beschikbaarheid trof.";
+	attribute<Float32> Result                    (CompactedAdminDomain) := Zichtjaar_BeschikbaarheidBasisjaar - StandInBereik
+	, Descr = "Het saldo van een overname door deze subsector per cel van 25 meter: wat de subsector er neerzet tegen wat er dan sneuvelt. Op de cel waarop de allocatie kiest (#508, #770), want dat is de cel die bij een overname wordt gesloopt. Zie Zeef_T/Impl/TeKleineDichtheidsToenameSubsector.";
+	attribute<Float32> StateSectorVoorAllocatie (CompactedAdminDomain) := StandInBereik
+	, Descr = "De basisjaarstand van de hele sector in de cel, voor zover in bereik van deze subsector, en daarmee de noemer van TovStateVoorAllocatie. Staat apart zodat de zeef het greenfieldgeval (stand
+				nul) expliciet kan uitzonderen in plaats van op de uitkomst van de nuldeling te leunen (Zeef_T/Impl/TeKleineDichtheidsToenameSubsector, #709). Voor de grondslag zie StandInBereik en #713.
+				Per cel van 25 meter (#770).";
+	attribute<Float32> TovStateVoorAllocatie    (CompactedAdminDomain) := Result / StateSectorVoorAllocatie, Descr = "De potentiele dichtheidstoename van de subsector in deze cel, als aandeel van de stand die er nu staat. Null waar niets staat; de zeef zondert dat geval expliciet uit.";
+
+}
