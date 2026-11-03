@@ -7,7 +7,8 @@ Gebruik bij een merge vanuit NL2120 naar dgwb-veenweide: neem eerst de NL2120-ve
 
 BAU is de eerste kolom van NL2120 (BAU). WBS is diezelfde kolom met de afwijkingen in WBS hieronder: de instellingen waarop
 WBS in de veenweidetak van februari 2026 van BAU afweek en die in NL2120 nog bestaan. Per parameterrij blijven zo twee waarden
-over, zowel in de [ ... ]-lijsten als in de union_data(., ...)-aanroepen; NrOfRows wordt 2. Descr-teksten blijven ongemoeid.
+over, zowel in de [ ... ]-lijsten als in de union_data(., ...)-aanroepen; NrOfRows wordt 2. Descr-teksten blijven ongemoeid, op
+de zinnen in DESCR na, die in veenweide niet meer kloppen.
 Regeleinden blijven zoals ze zijn. Het script is idempotent: op een bestand met twee kolommen verandert het niets.
 """
 import re
@@ -31,18 +32,25 @@ WBS = {
     'WinterdroogleggingK_ref':                       "'_0'",
     'ZomerdroogleggingK_ref':                        "'_0_4'",
     'InfiltratieMaatregelK_ref':                     "'AWIS'",
+    # De grondwaterstanden voor de opbrengstderving: de levering WBS, de BAU-stand met de vaste stand van veenbouwsteen 1 op de
+    # percelen die WBS vernat (SourceData/Water/Grondwaterstanden/WBS), totdat Deltares grondwaterstanden bij vernatting levert.
+    'Hydrologie_Levering':                           "'WBS'",
     'ReserverenVoorRivierAfvoer_ref':                "'Transformatief'",  # in februari 'Ruim'; in NL2120 heet die keuze Transformatief
     'EvidentBenutVariant_Wonen':                     "'Transformeren'",   # in februari 'WBS', dat in EvidentBenut gelijk was aan Transformeren
     'EvidentBenutVariant_Werken':                    "'Transformeren'",
     'EvidentBenutVariant_Verblijfsrecreatie':        "'Transformeren'",
 }
 # Niet meer te zetten in NL2120, zie het issue over de gaten in veenweide:
-#   Hydrologie_Levering: WBS leest de grondwaterstanden van BAU, want er is nog geen levering bij vernatting; BAU2 van NL2120 leest
-#   de referentiestanden (R2050BP18), een ander klimaat en geen vernatting
 #   Trede_Variant 'WBS': de werkentrede van WBS leunde op de eigendomslaag, die NL2120 heeft geschrapt (#874)
 #   Claim_agrarisch_Variant 'claims_ggvee_minfractie': verdwenen met het voedermodel (#780)
 #   MaatregelKanAangepastBouwenZijn, Waterbeheeroptie, RVF_beleidsscenario: uit NL2120 verwijderd
 LABEL_WBS = "'WaterEnBodemSturend'"
+
+# Descr-zinnen van NL2120 die in veenweide niet meer kloppen, met wat er in de plaats komt.
+DESCR = [
+    ('en NbSGenuanceerd) en SourceData/Water/Grondwaterstanden kent dezelfde drie plus de referentie van het basisjaar.',
+     'en NbSGenuanceerd, in veenweide ook WBS) en SourceData/Water/Grondwaterstanden kent dezelfde vier plus de referentie van het basisjaar.'),
+]
 
 
 def split_top(s):
@@ -97,8 +105,8 @@ def verwerk(tekst):
             uit += ['// BAU EN WBS:',
                     '//   Veenweide vergelijkt per peilgebied BAU en WBS (waterbodemsturend, PostAllocAnalyses/Landbouw/PeilOptimalisatie). BAU is de',
                     '//   BAU van NL2120; WBS wijkt af in de bouwbeperkingen op natte, slappe en zettingsgevoelige grond, de drooglegging en de',
-                    '//   infiltratiemaatregel (#501), de reservering voor rivierafvoer en evident benut. Deze tabel komt uit batch/VariantK_Veenweide.py,',
-                    '//   toegepast op de tabel van NL2120.',
+                    '//   infiltratiemaatregel (#501), de grondwaterstanden voor de opbrengstderving, de reservering voor rivierafvoer en evident',
+                    '//   benut. Deze tabel komt uit batch/VariantK_Veenweide.py, toegepast op de tabel van NL2120.',
                     '//']
             continue
         if sla_alinea_over:
@@ -107,6 +115,8 @@ def verwerk(tekst):
                 uit.append(r)
             continue
         r = re.sub(r'(unit<UInt8> VariantK: NrOfRows = )\d+', r'\g<1>2', r)
+        for oud, nieuw in DESCR:
+            r = r.replace(oud, nieuw)
         m = re.match(r'^\s*attribute<[^>]+>\s*(\w+)\s*:\s*\[', r)
         if m:
             i = m.end() - 1
