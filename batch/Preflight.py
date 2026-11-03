@@ -6,9 +6,9 @@ Gebruik:
 Opties:
     --cfg <pad>          de configuratie; default cfg/main.dms naast dit script
     --exe <pad>          GeoDmsRun.exe; default de versie uit batch/RunAll.cmd
-    --scenario <naam>    scenario voor de resolutieronde; default WLO_hoog
-    --variant <naam>     variant voor de resolutieronde; default BAU
-    --boom               voeg laag 3 toe (de resolutieronde). Standaard uit; zie de waarschuwing hieronder.
+    --scenario <naam>    scenario voor de naamcontrole; default WLO_hoog
+    --variant <naam>     variant voor de naamcontrole; default BAU
+    --boom               voeg laag 3 toe (de naamcontrole). Standaard uit; zie de waarschuwing hieronder.
     --uit <map>          waar het rapport komt; default <LocalData>/Preflight
 
 Drie lagen, van goedkoop naar duur, elk met een eigen exitcode-bijdrage. Het script stopt niet bij de
@@ -22,13 +22,11 @@ geeft exit 1 zodra een laag faalt.
    representatief bestand per stap, met de stap die het maakt), de plancapaciteitsgrids per zichtjaar
    en de claim-CSV van het eerste zichtjaar. Zonder deze laag stranden die pas na een uur rekenen, en
    een ontbrekend mmd meldt zich bovendien als een onbekende naam en niet als een ontbrekend bestand.
-3. Boom: lost elk productie-item op. GeoDmsRun lost eerst alle namen op en begint daarna pas te
-   rekenen; dit script stopt het proces zodra de eerste Updating-regel verschijnt en rapporteert de
-   [E]-regels uit de resolutieronde. Dat vangt een verwijzing naar een verdwenen item, zoals bij #759,
-   voordat de run begint. Deze laag draait in een wegwerpkopie van cfg met een eigen LocalData, nooit
-   op die van de werkkopie: het rekenen begint in dezelfde seconde als de laatste resolutieregel, en
-   GeoDMS leegt het bestand van een schrijvend item aan het begin van dat item. Op de gedeelde
-   LocalData zou een halfgeschreven tif van een eerdere run achterblijven.
+3. Boom: lost elk productie-item op. GeoDmsRun beschrijft de items met @sourcedescr: daarvoor lost
+   het alle namen in de keten op, met een [E]-regel voor elke naam die niet bestaat, maar het rekent
+   niets uit en schrijft niets. Dat vangt een verwijzing naar een verdwenen item, zoals bij #759,
+   voordat de run begint. Deze laag draait in een wegwerpkopie van cfg met een eigen LocalData en
+   zonder ontkoppeling.
 
 Wat laag 3 NIET vangt: een meta-expressie instantieert alleen de tak die bij de huidige schakelaars
 hoort, en een item in een Template bestaat pas na instantiatie. Een boomcontrole over alle takken
@@ -70,7 +68,7 @@ from pathlib import Path
 BESTANDSFOUT = ("TIFFOpen Error", "cannot open dataset", "No such file or directory", "Cannot open",
                 "cannot be opened", "Failure(4)")
 
-# Namen die een operator pas bij het rekenen aan zijn unit hangt. De resolutieronde kijkt ervoor en
+# Namen die een operator pas bij het rekenen aan zijn unit hangt. De naamcontrole kijkt ervoor en
 # meldt ze als onbekend, terwijl ze in een echte run gewoon bestaan: de allocatielogs van de
 # NL2120-productierun van 29 augustus 2026 (run2120/*allocatie-BAU-Y20*.log) bevatten geen enkele
 # foutregel, terwijl elke iteratie deze items aanroept. Districts komt van district_8 in
@@ -83,7 +81,7 @@ OPERATOR_SUBITEM = ("Unknown identifier 'Districts'",)
 # ontbreekt, in plaats van na een uur rekenen om te vallen op "Unknown identifier". De lijst is een
 # ondergrens en geen inventaris. Paden zijn relatief aan de LocalData van deze werkkopie.
 BASEDATA = [
-    ("BaseData/Vastgoed/VolledigeTabel_*/WP5/*.mmd",         "WP5-pandtypering",        "/WriteBaseData/Generate_Run1"),
+    ("BaseData/Vastgoed/BAG_{bag}_History/WP5/*.mmd",        "WP5-pandtypering",        "/WriteBaseData/Generate_Run1"),
     ("BaseData/Grondgebruik/BBG/BBG*_25m_Modus_*.tif",       "BBG-vergridding",         "/WriteBaseData/Generate_Run2"),
     ("BaseData/Vastgoed/Verwervingskosten_Woningen_*.tif",   "verwervingskosten",       "/WriteBaseData/Generate_Run2"),
     ("BaseData/StandBasisjaar/Wonen/*.tif",                  "stand basisjaar",         "/WriteBaseData/Generate_Run3"),
@@ -92,7 +90,9 @@ BASEDATA = [
     ("BaseData/Suitabilities/Werken_raw_*.tif",              "werken-geschiktheid",     "/WriteBaseData/Generate_Run3"),
 ]
 
-PROFIEL_ITEMS = ["/Preflight/Profiel/Schrijf", "/Preflight/Profiel/Afwijkingen"]
+# Het profiel zelf eerst: zijn IntegrityCheck noemt de profielen die deze tak kent, en vuurt alleen als
+# de parameter zelf wordt opgevraagd, niet als de domeintabel of de profieltabel hem leest.
+PROFIEL_ITEMS = ["/ModelParameters/Productieprofiel", "/Preflight/Profiel/Schrijf", "/Preflight/Profiel/Afwijkingen"]
 INVOER_ITEMS = ["/Preflight/Invoer/Plancapaciteit", "/Preflight/Invoer/Claims"]
 # De items die RunAll.cmd, RunVariantData.cmd en RunZichtjaren.cmd opvragen, in die volgorde.
 BOOM_ITEMS = [
@@ -118,8 +118,17 @@ def exe_uit_runall() -> str:
     """De GeoDMS-versie die RunAll.cmd zet, zodat de preflight niet op een andere versie toetst."""
     tekst = (projdir() / "batch" / "RunAll.cmd").read_text(encoding="utf-8", errors="replace")
     m = re.search(r"^set geodmsversion=(\S+)", tekst, re.M)
-    versie = m.group(1) if m else "GeoDms20.17.0.m"
+    versie = m.group(1) if m else "GeoDms20.23.1.m"
     return rf"C:\Program Files\ObjectVision\{versie}\GeoDmsRun.exe"
+
+
+def bag_datum(cfg: Path) -> str:
+    """BAG_file_date uit ModelParameters.dms: de levering waaronder de WP5-typering staat (BaseData/Vastgoed/BAG_<datum>_History/WP5)."""
+    tekst = (cfg.parent / "main" / "ModelParameters.dms").read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"BAG_file_date\s*:=\s*'([^']*)'", tekst)
+    if not m:
+        raise SystemExit("BAG_file_date niet gevonden in ModelParameters.dms")
+    return m.group(1)
 
 
 def eerste_zichtjaar(cfg: Path) -> str:
@@ -129,28 +138,21 @@ def eerste_zichtjaar(cfg: Path) -> str:
     return f"Y{m.group(1)}" if m else "Y2030"
 
 
-def draai(exe: str, cfg: Path, items: list[str], log: Path, stop_bij_updating: bool = False, max_seconden: int = 900) -> tuple[int, list[str]]:
+def draai(exe: str, cfg: Path, items: list[str], log: Path, beschrijf: bool = False, max_seconden: int = 900) -> tuple[int, list[str]]:
     """Roep GeoDmsRun aan en geef de exitcode plus de foutregels terug.
 
-    Met stop_bij_updating wordt het proces gestopt zodra de eerste Updating-regel in het log staat: dan
-    is de resolutieronde klaar en begint het rekenen. Het log wordt met gedeelde toegang gelezen, want
-    GeoDmsRun houdt het tijdens de run open voor schrijven.
+    Met beschrijf worden de items niet opgevraagd maar met @sourcedescr beschreven: GeoDmsRun lost dan
+    hun keten op en rekent niets uit. Een naam die niet bestaat staat als [E]-regel in het log, ook al
+    is de exitcode 0. Het oplossen niet stoppen bij de eerste Updating-regel in het log: GeoDmsRun
+    schrijft het log gebufferd, dus die regel staat er pas als er genoeg nieuwe regels bij zijn
+    gekomen, en tot dan rekent het proces al.
     """
     log.parent.mkdir(parents=True, exist_ok=True)
     log.unlink(missing_ok=True)
+    if beschrijf:
+        items = [x for i in items for x in ("@sourcedescr", i)]
     p = subprocess.Popen([exe, f"/L{log}", "/S1", "/S2", "/S3", str(cfg), *items],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if stop_bij_updating:
-        begin = time.time()
-        while p.poll() is None and time.time() - begin < max_seconden:
-            time.sleep(0.2)
-            try:
-                with open(log, "r", encoding="utf-8", errors="replace") as f:
-                    if "Updating::" in f.read():
-                        p.terminate()
-                        break
-            except OSError:
-                continue
     try:
         p.wait(timeout=max_seconden)
     except subprocess.TimeoutExpired:
@@ -190,7 +192,7 @@ def wegwerpkopie(cfg: Path) -> tuple[Path, Path]:
 
     In de kopie gaan de ontkoppel-schakelaars uit. Die LocalData is leeg, en een unit die haar kolommen
     uit een mmd-storage haalt (AfleidingPandType/Results) heeft zonder dat bestand geen kolom WP5_rel;
-    de resolutie meldt dan een onbekende naam voor een bestand dat ontbreekt, niet voor code die fout is.
+    de naamcontrole meldt dan een onbekende naam voor een bestand dat ontbreekt, niet voor code die fout is.
     Met de schakelaars uit kiest elke meta-expressie de tak die rekent, en dat is de tak die in de
     configuratie staat en dus de tak die deze laag hoort te toetsen. Of de ontkoppelde bestanden er zijn
     is een vraag voor laag 2 en voor Templates/DecoupledFile_T, niet voor een naamcontrole.
@@ -275,7 +277,8 @@ def main(argv: list[str]) -> int:
 
     toets("1_profiel", "sleutelparameters", PROFIEL_ITEMS)
 
-    ontbreekt = [(o, stap) for patroon, o, stap in BASEDATA if not list(localdata().glob(patroon))]
+    bag = bag_datum(cfg)
+    ontbreekt = [(o, stap) for patroon, o, stap in BASEDATA if not list(localdata().glob(patroon.format(bag=bag)))]
     t = time.time()
     melding = "; ".join(f"{o} ontbreekt, maak met {stap}" for o, stap in ontbreekt)
     regels.append({"laag": "2_invoer", "toets": "basedata", "oordeel": "FAIL" if ontbreekt else "PASS",
@@ -289,11 +292,11 @@ def main(argv: list[str]) -> int:
         for sleutel, waarde in vervang.items():
             items = [i.replace(sleutel, waarde) for i in items]
         kopie_cfg, kopie_dir = wegwerpkopie(cfg)
-        print(f"       (resolutieronde in de wegwerpkopie {kopie_dir.name}: eigen LocalData met de mmd-stores, ontkoppeling uit)")
+        print(f"       (naamcontrole in de wegwerpkopie {kopie_dir.name}: eigen LocalData met de mmd-stores, ontkoppeling uit)")
         try:
-            # De resolutieronde loopt alle items in een aanroep; GeoDmsRun lost ze eerst allemaal op.
-            toets("3_boom", "resolutie_productie_items", items, cfg_override=kopie_cfg,
-                  alleen_naamfouten=True, stop_bij_updating=True)
+            # Alle items in een aanroep, elk met @sourcedescr: opgelost, niet uitgerekend.
+            toets("3_boom", "naamcontrole_productie_items", items, cfg_override=kopie_cfg,
+                  alleen_naamfouten=True, beschrijf=True)
         finally:
             shutil.rmtree(kopie_dir, ignore_errors=True)
             shutil.rmtree(Path("C:/LocalData") / kopie_dir.name, ignore_errors=True)

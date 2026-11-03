@@ -20,6 +20,7 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 	#include<BAG.dms>
 	#include<WOZ.dms>
 	#include<EigendomStaat.dms>
+	#include<BRK.dms> //de kadastrale percelen en het perceel per cel, waarover wonen de opstalkosten uitsmeert (#861)
 	
 	unit<UInt32> Logistiek_panden
 	:	StorageName     = "%RSo_DataDir%/Vastgoed/LogistiekBuildings/buildings2021NL_rdc.shp"
@@ -34,7 +35,7 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 		attribute<UInt32>    function_n;
 		attribute<String>    function;
 		attribute<String>    bag_id;
-		attribute<uint64>    pand_bag_nr := uint64(bag_id);
+		attribute<uint64>    pand_bag_nr     := uint64(bag_id);
 		attribute<UInt32>    constr_yea;
 		
 		unit<UInt32> Logistics := select_with_attr_by_cond(., function_n != 3)
@@ -47,67 +48,35 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 	,	StorageReadOnly = "True"
 	,	Descr = "LISA-afgeleide aanvulling op de statische logistieke pandenset: panden met bouwjaar vanaf 2021 die volgens BAG en LISA logistiek zijn. Gegenereerd door WritePrivData/LogistiekAanvulling; alleen gelezen wanneer ModelParameters/Werken/BAG_LogistiekDynamisch aanstaat. Bevat uitsluitend pand_bag_nr, dat via de mmd-dictionary binnenkomt.";
 	
-	unit<UInt32> Energielabels
-	:	StorageName     = "%RSo_DataDir%/Vastgoed/Energielabel/VestaStartanalyse2020/RVOtot.fss"
-	,	StorageReadOnly = "True"
-	,	DialogType      = "Map"
-	,	DialogData      = "locatie"
-	,	Source          = "export uit https://pbl.sliksvn.com/vesta/PD/branch/VestaStartanalyse2020_To_RSL rev 566, GeoDMS 7.239, open S1a_B_LuchtWP.dms activate /Invoer/RuimtelijkeData/energieLabel/RVOtot --> fss in LD, ongegeveer 300000 records bleken niet koppelbaar (voor vastgesteld en voorlopig dms geocoding (zijn niet opgenomen in fss bestand)"
-	,	Descr           = "Alle energielabels van woningen en utiliteitsgebouwen in Nederland"
+	container Energielabels
+	: Descr = "De geldige energielabels uit EP-online (#860): het nieuwste label per woning, en per cel het meest voorkomende label van de woningen van het basisjaar voor de zeefregel
+				GeenSloopvanafELabel. Utiliteitsgebouwen en labels zonder verblijfsobject tellen niet mee."
+	, Source = "EP-online, openbare levering (https://www.ep-online.nl/PublicData) van de datum in ModelParameters/Wonen/Energielabel/EP_Levering, zonder inhoudelijke bewerking omgezet van csv naar parquet"
 	{
-		attribute<String>                                vbo_id;
-		attribute<rdc_meter>                             locatie;
-		attribute<UInt8>                                 SchilLabel_rel;
-		attribute<String>                                pand_id;
-		attribute<UInt32>                                Bron                : Descr = "Bron van het energielabel: 1=vastgesteld,2=voorlopig,3=utiliteit (is volledig)";
-		attribute<Classifications/Vastgoed/Energielabel> Energielabel_rel    := SchilLabel_rel[Classifications/Vastgoed/Energielabel];
-		attribute<AllocDomain>                           AllocDomain_rel     := locatie[AllocDomain];
-		attribute<AdminDomain>                           AdminDomain_rel     := locatie[AdminDomain];
-		attribute<Classifications/Vastgoed/Energielabel> Modus (AdminDomain) := Modus(Energielabel_rel, locatie[AdminDomain]); //, StorageName = "%LocalDataProjDir%/BaseData/Vastgoed/Energielabels.tif", IntegrityCheck = "not(all(IsNull(this))) && not(all(IsZero(this)))";
-	}
-	
-	container Rudifun 
-	{
-		container Rudifun_src
-		// container Rudifun
-		:	StorageName     = "%RSo_DataDir%/Vastgoed/Rudifun_2024_nl.gdb"
+		unit<UInt32> Bron
+		:	StorageName     = "='%RSo_DataDir%/Vastgoed/EnergieLabel/EP-online_'+/ModelParameters/Wonen/Energielabel/EP_Levering+'.parquet'"
 		,	StorageType     = "gdal.vect"
 		,	StorageReadOnly = "True"
-		,	DialogData      = "rdc_meter"
-		,	Descr           = "De Ruimtelijke Dichtheden en Functiemenging in Nederland (RUDIFUN) dataset geeft een indicatie van de dichtheid en morfologie van bebouwd gebied."
-		, 	URL             = "https://dataportaal.pbl.nl/RUDIFUN"
-		,	SyncMode        = "AllTables"
 		{
-			
+			attribute<String> BAGVerblijfsobjectID;
+			attribute<String> Energieklasse;
+			attribute<Int32>  Opnamedatum;
+			attribute<String> Gebouwklasse;
 		}
-		
-		container Write_Rudifun
-		:	StorageName     = "%RSo_DataDir%/Vastgoed/Rudifun_2024.mmd"
-		,	Descr           = "De Ruimtelijke Dichtheden en Functiemenging in Nederland (RUDIFUN) dataset geeft een indicatie van de dichtheid en morfologie van bebouwd gebied."
-		, 	URL             = "https://dataportaal.pbl.nl/RUDIFUN"
+		unit<UInt32> Woning := select_with_org_rel(Bron/Gebouwklasse == 'W' && strlen(Bron/BAGVerblijfsobjectID) == 16 && strlen(Bron/Energieklasse) > 0), Descr = "De labels van woningen met een verblijfsobject."
 		{
-			unit<uint32> Netto_Buurt := Rudifun_src/nl2_04_Netto_Buurt
-			{
-				attribute<rdc_meter> geometry (poly) := Rudifun_src/nl2_04_Netto_Buurt/geometry;
-				attribute<string>    BU_CODE         := Rudifun_src/nl2_04_Netto_Buurt/BU_CODE;
-			}
-			unit<uint32> Bruto_Buurt := Rudifun_src/nl2_05_Bruto_Buurt
-			{
-				attribute<rdc_meter> geometry (poly) := Rudifun_src/nl2_05_Bruto_Buurt/geometry;
-				attribute<string>    BU_CODE         := Rudifun_src/nl2_05_Bruto_Buurt/BU_CODE;
-				attribute<string>    PV_CODE         := Rudifun_src/nl2_05_Bruto_Buurt/PV_CODE;
-			}
+			attribute<UInt64> vbo_nr  := uint64(Bron/BAGVerblijfsobjectID[org_rel]);
+			attribute<Classifications/Vastgoed/Energielabel> Label_rel := rlookup(left(Bron/Energieklasse[org_rel], 1), Classifications/Vastgoed/Energielabel/name), Descr = "A+ tot en met A++++ tellen als A.";
+			attribute<UInt32> Sleutel := uint32(Bron/Opnamedatum[org_rel]) * 16 + uint32(Label_rel), Descr = "Opnamedatum en label in een getal, zodat het maximum per verblijfsobject het label van de nieuwste opname geeft.";
 		}
-		
-		container Rudifun
-		:	StorageName     = "%RSo_DataDir%/Vastgoed/Rudifun_2024.mmd"
-		,	StorageReadOnly = "True"
-		,	Descr           = "De Ruimtelijke Dichtheden en Functiemenging in Nederland (RUDIFUN) dataset geeft een indicatie van de dichtheid en morfologie van bebouwd gebied."
-		, 	URL             = "https://dataportaal.pbl.nl/RUDIFUN"
+		unit<UInt32> PerVbo := unique(Woning/vbo_nr), Descr = "Het nieuwste label per verblijfsobject."
 		{
+			attribute<UInt32> Sleutel := max(Woning/Sleutel, rlookup(Woning/vbo_nr, values));
+			attribute<Classifications/Vastgoed/Energielabel> Label_rel := value(uint8(Sleutel % 16), Classifications/Vastgoed/Energielabel);
 		}
-		// parameter<float32> BrutoTovNettoBuurt := sum(BaseData/Omgeving/Fractie_VerhardGroen_PerBuurtType/BrutoBuurt/Opp_geom) / sum(BaseData/Omgeving/Fractie_VerhardGroen_PerBuurtType/NettoBuurt/Opp_geom);
-		parameter<Float32> BrutoTovNettoBuurt := 1.0519642f; //resultaat van hierboven, maar ontkoppeld.
+		unit<UInt32>                                     vbo                 := ='/SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/Model_StartYear)+'/vbo/Per_Gebruiksdoel/woon/select', Descr = "De woningen van het basisjaar.";
+		attribute<Classifications/Vastgoed/Energielabel> Label_Vbo     (vbo) := PerVbo/Label_rel[rlookup(vbo/vbo_bag_nr, PerVbo/values)];
+		attribute<Classifications/Vastgoed/Energielabel> Modus (AdminDomain) := modus(Label_Vbo, vbo/AdminDomain_rel), Descr = "Het meest voorkomende label van de gelabelde woningen van de cel.";
 	}
 
 	container Funderingsschade
@@ -118,7 +87,7 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 		,	StorageReadOnly = "True"
 		,	Descr           = "Funderingsschade ontvangen van Deltares d.d. 15-12-2025"
 		{
-			unit<uint32> Buurt := RegioIndelingen/CBS/Y2020/Buurt;
+			unit<uint32>         Buurt           := RegioIndelingen/CBS/Y2020/Buurt;
 			
 			attribute<Buurt>     Buurt_rel       := rlookup(buurtcode, Buurt/statcode);
 			attribute<rdc_meter> geometry (poly) := Buurt/geometry[buurt_rel];
@@ -188,7 +157,7 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 			parameter<float32> P95_perWoning    := rth_element(per_Object/y_perWoning, 0.95f), Descr = "95e percentiel van de verwachte schade per woning (private set); ter rapportage.";
 			parameter<float32> P99_perWoning    := rth_element(per_Object/y_perWoning, 0.99f), Descr = "99e percentiel van de verwachte schade per woning (private set); capbasis: k_i <= s_i * P99_perWoning. P95 bleek samen te vallen met het standaard-herstelbedrag voor houten palen en kapte daardoor reguliere schade af.";
 
-			container r_totaal :=
+			container          r_totaal         :=
 				for_each_nedv(
 					WP_x_BJ/name
 					, 'mean(per_Object/WP_x_BJ_rel == '+string(id(WP_x_BJ))+'[WP_x_BJ] ? per_Object/y_perWoning : null_f) / mean(per_Object/y_perWoning)'
@@ -196,7 +165,7 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 					, float32
 				), Descr = "Relatieve risicofactor per cel (woningtype x bouwjaarklasse), geschat op totale schade per woning; t.b.v. vergelijking met de gesplitste kentallen.";
 
-			container r_hout :=
+			container          r_hout           :=
 				for_each_nedv(
 					WP_x_BJ/name
 					, 'mean(per_Object/WP_x_BJ_rel == '+string(id(WP_x_BJ))+'[WP_x_BJ] ? per_Object/yh_perWoning : null_f) / mean(per_Object/yh_perWoning)'
@@ -204,7 +173,7 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 					, float32
 				), Descr = "Relatieve risicofactor per cel voor de houten-palen-component, geschat op houtschade per woning; verdeelt de openbare cost_timber-buurtkosten.";
 
-			container r_staal :=
+			container          r_staal          :=
 				for_each_nedv(
 					WP_x_BJ/name
 					, 'mean(per_Object/WP_x_BJ_rel == '+string(id(WP_x_BJ))+'[WP_x_BJ] ? per_Object/ys_perWoning : null_f) / mean(per_Object/ys_perWoning)'
@@ -213,7 +182,7 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 				), Descr = "Relatieve risicofactor per cel voor de op-staal-component, geschat op staalschade per woning; verdeelt de openbare cost_shallow-buurtkosten.";
 		}
 
-		container Kentallen : StorageName = "%RSo_DataDir%/Vastgoed/funderingskosten_kentallen.mmd", StorageReadOnly = "true", Descr = "Ontkoppelde kentallen; zie Write_Kentallen. Publicatie behoeft akkoord Deltares.";
+		container Kentallen    : StorageName = "%RSo_DataDir%/Vastgoed/funderingskosten_kentallen.mmd", StorageReadOnly = "true", Descr = "Ontkoppelde kentallen; zie Write_Kentallen. Publicatie behoeft akkoord Deltares.";
 
 		// Verouderd (marginale ratio's op y per pand; vervangen door Write_Kentallen/Kentallen): behouden ter vergelijking.
 		container Write_r_jaar :=
@@ -224,7 +193,7 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 				, float32
 			), StorageName = "%RSo_DataDir%/Vastgoed/funderingskosten_r_jaar.mmd", Descr = "Relatieve risicofactor voor funderingsschade voor bouwjaarklasse c. Afgeleid uit een private kalibratieset, maar gepubliceerd als geaggregeerd kental. Genormaliseerd zodat de gemiddelde of mediane waarde gelijk is aan 1.";
 			
-		container Write_r_type := 
+		container Write_r_type :=
 			for_each_nedv(
 				WP5/name
 				, 'mean(per_Object/t_i == '+string(id(WP5))+'[WP5] ? per_Object/y_i : null_f) / mean(per_Object/y_i)'
@@ -232,65 +201,65 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 				, float32
 			), StorageName = "%RSo_DataDir%/Vastgoed/funderingskosten_r_type.mmd", Descr = "Relatieve risicofactor voor funderingsschade voor woningtype t. Afgeleid uit een private kalibratieset, maar gepubliceerd als geaggregeerd kental. Genormaliseerd zodat de gemiddelde of mediane waarde gelijk is aan 1.";
 		
-		container r_jaar : StorageName = "%RSo_DataDir%/Vastgoed/funderingskosten_r_jaar.mmd", StorageReadOnly = "true", Descr = "Relatieve risicofactor voor funderingsschade voor bouwjaarklasse c. Afgeleid uit een private kalibratieset, maar gepubliceerd als geaggregeerd kental. Genormaliseerd zodat de gemiddelde of mediane waarde gelijk is aan 1.";
-		container r_type : StorageName = "%RSo_DataDir%/Vastgoed/funderingskosten_r_type.mmd", StorageReadOnly = "true", Descr = "Relatieve risicofactor voor funderingsschade voor woningtype t. Afgeleid uit een private kalibratieset, maar gepubliceerd als geaggregeerd kental. Genormaliseerd zodat de gemiddelde of mediane waarde gelijk is aan 1.";
+		container r_jaar       : StorageName = "%RSo_DataDir%/Vastgoed/funderingskosten_r_jaar.mmd", StorageReadOnly = "true", Descr = "Relatieve risicofactor voor funderingsschade voor bouwjaarklasse c. Afgeleid uit een private kalibratieset, maar gepubliceerd als geaggregeerd kental. Genormaliseerd zodat de gemiddelde of mediane waarde gelijk is aan 1.";
+		container r_type       : StorageName = "%RSo_DataDir%/Vastgoed/funderingskosten_r_type.mmd", StorageReadOnly = "true", Descr = "Relatieve risicofactor voor funderingsschade voor woningtype t. Afgeleid uit een private kalibratieset, maar gepubliceerd als geaggregeerd kental. Genormaliseerd zodat de gemiddelde of mediane waarde gelijk is aan 1.";
 		
 		unit<uint32> per_Pand := ='/SourceData/Vastgoed/BAG/PerJaar/Y'+string(ModelParameters/BAG_RecentYear)+'/pand'
 		{
-			attribute<WP5>             t_i                       := WP5_rel, Descr = "Woningtype van pand i (bijvoorbeeld: rijwoning, hoekwoning, vrijstaand, appartement).";
-			attribute<BouwjaarKlassen> c_i                       := Classify(Bouwjaar_trunc, BouwjaarKlassen/ClassBreaks), Descr = "Bouwjaarklasse van pand i (bijvoorbeeld: vóór 1940, 1940–1969, 1970–1989, ≥1990).";
-			attribute<float32>         s_i                       := Counts/woon_VBOs[float32], Descr = "Schaalfactor voor pand i: aantal woningen in het pand";
+			attribute<WP5>             t_i                      := WP5_rel, Descr = "Woningtype van pand i (bijvoorbeeld: rijwoning, hoekwoning, vrijstaand, appartement).";
+			attribute<BouwjaarKlassen> c_i                      := Classify(Bouwjaar_trunc, BouwjaarKlassen/ClassBreaks), Descr = "Bouwjaarklasse van pand i (bijvoorbeeld: vóór 1940, 1940–1969, 1970–1989, ≥1990).";
+			attribute<float32>         s_i                      := Counts/woon_VBOs[float32], Descr = "Schaalfactor voor pand i: aantal woningen in het pand";
 			
-			attribute<WP_x_BJ>         WP_x_BJ_rel                   := combine_data(WP_x_BJ, t_i, c_i), Descr = "Klasse-combinatie woningtype x bouwjaarklasse van pand i (index in de WP_x_BJ-kruistabel; niet de gridcel).";
-			attribute<float32>         w_hout_i                  := WP_x_BJ/r_hout[WP_x_BJ_rel]  * s_i, Descr = "Publiek herleidbaar verdeelgewicht voor de houten-palen-kosten: klassekental maal aantal woningen; niet zelf een eurobedrag.";
-			attribute<float32>         w_staal_i                 := WP_x_BJ/r_staal[WP_x_BJ_rel] * s_i, Descr = "Publiek herleidbaar verdeelgewicht voor de op-staal-kosten: klassekental maal aantal woningen; niet zelf een eurobedrag.";
+			attribute<WP_x_BJ>         WP_x_BJ_rel              := combine_data(WP_x_BJ, t_i, c_i), Descr = "Klasse-combinatie woningtype x bouwjaarklasse van pand i (index in de WP_x_BJ-kruistabel; niet de gridcel).";
+			attribute<float32>         w_hout_i                 := WP_x_BJ/r_hout[WP_x_BJ_rel]  * s_i, Descr = "Publiek herleidbaar verdeelgewicht voor de houten-palen-kosten: klassekental maal aantal woningen; niet zelf een eurobedrag.";
+			attribute<float32>         w_staal_i                := WP_x_BJ/r_staal[WP_x_BJ_rel] * s_i, Descr = "Publiek herleidbaar verdeelgewicht voor de op-staal-kosten: klassekental maal aantal woningen; niet zelf een eurobedrag.";
 
-			attribute<Eur_pand>        k_hout_i                  := (C_b_hout[buurt_rel]  * (w_hout_i  / sum(w_hout_i,  buurt_rel)[buurt_rel]))[Eur_pand], Descr = "Toegerekend deel van de houten-palen-buurtkosten aan pand i.";
-			attribute<Eur_pand>        k_staal_i                 := (C_b_staal[buurt_rel] * (w_staal_i / sum(w_staal_i, buurt_rel)[buurt_rel]))[Eur_pand], Descr = "Toegerekend deel van de op-staal-buurtkosten aan pand i.";
-			attribute<Eur_pand>        k_i                       := IsDefined(w_hout_i) || IsDefined(w_staal_i)
-																	? MakeDefined(k_hout_i, 0[Eur_pand]) + MakeDefined(k_staal_i, 0[Eur_pand])
-																	: null_f[Eur_pand], Descr = "Toegerekend deel van de buurtkosten aan pand i: som van de per component (hout/staal) verdeelde openbare buurtkosten. Panden zonder enig toerekenbaar gewicht blijven null.";
+			attribute<Eur_pand>        k_hout_i                 := (C_b_hout[buurt_rel]  * (w_hout_i  / sum(w_hout_i,  buurt_rel)[buurt_rel]))[Eur_pand], Descr = "Toegerekend deel van de houten-palen-buurtkosten aan pand i.";
+			attribute<Eur_pand>        k_staal_i                := (C_b_staal[buurt_rel] * (w_staal_i / sum(w_staal_i, buurt_rel)[buurt_rel]))[Eur_pand], Descr = "Toegerekend deel van de op-staal-buurtkosten aan pand i.";
+			attribute<Eur_pand>        k_i                      := IsDefined(w_hout_i) || IsDefined(w_staal_i)
+			                                                       ? MakeDefined(k_hout_i, 0[Eur_pand]) + MakeDefined(k_staal_i, 0[Eur_pand])
+			                                                       : null_f[Eur_pand], Descr = "Toegerekend deel van de buurtkosten aan pand i: som van de per component (hout/staal) verdeelde openbare buurtkosten. Panden zonder enig toerekenbaar gewicht blijven null.";
 
-			attribute<per_Buurt>       buurt_rel                 := point_in_polygon(centroid_or_mid(geometry), per_Buurt/geometry), Descr = "";
-			attribute<float32>         C_b           (per_Buurt) := per_Buurt/total_cost,   Descr = "Totale geschatte funderingsschade (euro) in buurt b.";
-			attribute<float32>         C_b_hout      (per_Buurt) := per_Buurt/cost_timber,  Descr = "Houten-palen-component van de buurtkosten.";
-			attribute<float32>         C_b_staal     (per_Buurt) := per_Buurt/cost_shallow, Descr = "Op-staal-component van de buurtkosten.";
+			attribute<per_Buurt>       buurt_rel                := point_in_polygon(centroid_or_mid(geometry), per_Buurt/geometry), Descr = "";
+			attribute<float32>         C_b          (per_Buurt) := per_Buurt/total_cost,   Descr = "Totale geschatte funderingsschade (euro) in buurt b.";
+			attribute<float32>         C_b_hout     (per_Buurt) := per_Buurt/cost_timber,  Descr = "Houten-palen-component van de buurtkosten.";
+			attribute<float32>         C_b_staal    (per_Buurt) := per_Buurt/cost_shallow, Descr = "Op-staal-component van de buurtkosten.";
 
-			attribute<Eur_pand>        cap_i                           := (s_i * Kentallen/P99_perWoning)[Eur_pand], Descr = "Per-woning-cap: aantal woningen maal P99 van de schade per woning. Grote (appartementen)panden houden zo hun legitieme schade; alleen echte uitschieters worden afgekapt.";
+			attribute<Eur_pand>        cap_i                    := (s_i * Kentallen/P99_perWoning)[Eur_pand], Descr = "Per-woning-cap: aantal woningen maal P99 van de schade per woning. Grote (appartementen)panden houden zo hun legitieme schade; alleen echte uitschieters worden afgekapt.";
 
 			// Cap + herverdeling binnen de buurt, exact in een pass: het boven de cap afgekapte surplus wordt
 			// naar rato van de resterende capruimte over de overige panden in de buurt verdeeld. Omdat de
 			// aanvulling per pand nooit groter is dan de eigen capruimte, blijft iedereen onder de cap.
 			// Wat boven de gezamenlijke buurtcap uitkomt is per definitie onvermijdbaar verlies.
 			// N.b. alles in zuivere unit-algebra (Eur_pand x pand = Eur); casts tussen metrics staat GeoDMS niet toe.
-			attribute<Eur_pand>        kcap0_i                          := IsDefined(k_i) ? min_elem(k_i, cap_i) : null_f[Eur_pand]; // guard: min_elem(null, cap) geeft cap; panden zonder toerekenbaar gewicht moeten null blijven
-			attribute<Eur_pand>        surplus_i                        := k_i - kcap0_i,   Descr = "Boven de cap afgekapt deel van pand i.";
-			attribute<Eur_pand>        head_i                           := cap_i - kcap0_i, Descr = "Resterende capruimte van pand i.";
-			attribute<Eur>             surplus_b             (per_Buurt) := sum(surplus_i * 1[PandUnit], buurt_rel), Descr = "Afgekapt surplus per buurt.";
-			attribute<Eur>             head_b                (per_Buurt) := sum(head_i    * 1[PandUnit], buurt_rel), Descr = "Totale resterende capruimte per buurt.";
-			attribute<Eur_pand>        extra_i                          := min_elem(surplus_b[buurt_rel], head_b[buurt_rel]) * head_i / max_elem(head_b[buurt_rel], 0.001[Eur]), Descr = "Herverdeeld surplus naar pand i, naar rato van de resterende capruimte; 0 zodra de buurt geen capruimte meer heeft (epsilon-noemer voorkomt 0/0).";
+			attribute<Eur_pand>        kcap0_i                  := IsDefined(k_i) ? min_elem(k_i, cap_i) : null_f[Eur_pand]; // guard: min_elem(null, cap) geeft cap; panden zonder toerekenbaar gewicht moeten null blijven
+			attribute<Eur_pand>        surplus_i                := k_i - kcap0_i,   Descr = "Boven de cap afgekapt deel van pand i.";
+			attribute<Eur_pand>        head_i                   := cap_i - kcap0_i, Descr = "Resterende capruimte van pand i.";
+			attribute<Eur>             surplus_b    (per_Buurt) := sum(surplus_i * 1[PandUnit], buurt_rel), Descr = "Afgekapt surplus per buurt.";
+			attribute<Eur>             head_b       (per_Buurt) := sum(head_i    * 1[PandUnit], buurt_rel), Descr = "Totale resterende capruimte per buurt.";
+			attribute<Eur_pand>        extra_i                  := min_elem(surplus_b[buurt_rel], head_b[buurt_rel]) * head_i / max_elem(head_b[buurt_rel], 0.001[Eur]), Descr = "Herverdeeld surplus naar pand i, naar rato van de resterende capruimte; 0 zodra de buurt geen capruimte meer heeft (epsilon-noemer voorkomt 0/0).";
 
-			attribute<Eur_pand>        k_i_censored                     := kcap0_i + extra_i, Descr = "Pandbedrag na cap en herverdeling binnen de buurt; null voor panden zonder toerekening.";
-			attribute<Eur>             k        (CompactedAdminDomain) := sum(k_i_censored[ToedelingsMatrix/Pand_rel] * ToedelingsMatrix/ToedelingPand * 1[PandUnit], ToedelingsMatrix/CompactedAdminDomain_rel); // eindresultaat: Eur/pand x pand-fractie x pand -> Eur per cel
-			attribute<Eur_pand>        Verschil                        := k_i - k_i_censored, Descr = "Netto mutatie per pand door cap en herverdeling (negatief voor ontvangers); de som over alle panden is het onvermijdbare verlies.";
+			attribute<Eur_pand>        k_i_censored             := kcap0_i + extra_i, Descr = "Pandbedrag na cap en herverdeling binnen de buurt; null voor panden zonder toerekening.";
+			attribute<Eur>             k (CompactedAdminDomain) := sum(k_i_censored[ToedelingsMatrix/Pand_rel] * ToedelingsMatrix/ToedelingPand * 1[PandUnit], ToedelingsMatrix/CompactedAdminDomain_rel); // eindresultaat: Eur/pand x pand-fractie x pand -> Eur per cel
+			attribute<Eur_pand>        Verschil                 := k_i - k_i_censored, Descr = "Netto mutatie per pand door cap en herverdeling (negatief voor ontvangers); de som over alle panden is het onvermijdbare verlies.";
 		}
 		
 		container Validatie
 		: Descr = "Controlegrootheden: de pandtoerekening hoort exact op te tellen naar de openbare buurttotalen (C_b); afwijkingen komen door de per-woning-cap (na herverdeling alleen het onvermijdbare deel) en door buurten zonder geldige gewichten (w null)."
 		{
-			parameter<Eur>     Som_Buurtkosten          := sum(per_Buurt/total_cost)[Eur],       Descr = "Som van de openbare buurtkosten C_b.";
-			parameter<Eur>     Som_k_i                  := sum(per_Pand/k_i          * 1[PandUnit]), Descr = "Som van de toegerekende pandbedragen voor cap/herverdeling; hoort gelijk te zijn aan Som_Buurtkosten, op niet-toerekenbare buurten na.";
-			parameter<Eur>     Som_k_i_censored         := sum(per_Pand/k_i_censored * 1[PandUnit]), Descr = "Som van de pandbedragen na cap en herverdeling.";
-			parameter<Eur>     CensoringVerlies         := sum(per_Pand/Verschil     * 1[PandUnit]), Descr = "Netto verlies door de cap na herverdeling binnen de buurt; hoort samen te vallen met OnvermijdbaarVerlies.";
-			parameter<float32> CensoringVerlies_fractie := (CensoringVerlies / Som_k_i)[float32],    Descr = "Cap-verlies als fractie van het toegerekende totaal.";
-			parameter<Eur>     NietToegerekend          := Som_Buurtkosten - Som_k_i,            Descr = "Buurtkosten die niet aan panden zijn toegerekend (buurten zonder panden of waar alle gewichten null zijn).";
-			parameter<Eur>     Som_k_grid               := sum(per_Pand/k),                      Descr = "Som van het eindresultaat op het 25m-grid; hoort gelijk te zijn aan Som_k_i_censored, op toedelingsranden na.";
+			parameter<Eur>     Som_Buurtkosten             := sum(per_Buurt/total_cost)[Eur],       Descr = "Som van de openbare buurtkosten C_b.";
+			parameter<Eur>     Som_k_i                     := sum(per_Pand/k_i          * 1[PandUnit]), Descr = "Som van de toegerekende pandbedragen voor cap/herverdeling; hoort gelijk te zijn aan Som_Buurtkosten, op niet-toerekenbare buurten na.";
+			parameter<Eur>     Som_k_i_censored            := sum(per_Pand/k_i_censored * 1[PandUnit]), Descr = "Som van de pandbedragen na cap en herverdeling.";
+			parameter<Eur>     CensoringVerlies            := sum(per_Pand/Verschil     * 1[PandUnit]), Descr = "Netto verlies door de cap na herverdeling binnen de buurt; hoort samen te vallen met OnvermijdbaarVerlies.";
+			parameter<float32> CensoringVerlies_fractie    := (CensoringVerlies / Som_k_i)[float32],    Descr = "Cap-verlies als fractie van het toegerekende totaal.";
+			parameter<Eur>     NietToegerekend             := Som_Buurtkosten - Som_k_i,            Descr = "Buurtkosten die niet aan panden zijn toegerekend (buurten zonder panden of waar alle gewichten null zijn).";
+			parameter<Eur>     Som_k_grid                  := sum(per_Pand/k),                      Descr = "Som van het eindresultaat op het 25m-grid; hoort gelijk te zijn aan Som_k_i_censored, op toedelingsranden na.";
 
 			parameter<Eur>     Som_Buurtkosten_componenten := sum(per_Buurt/cost_timber + per_Buurt/cost_shallow)[Eur], Descr = "Som van de hout- en staalcomponenten; check tegen Som_Buurtkosten (total_cost).";
 
-			attribute<Eur>     Som_k_b   (per_Buurt)    := sum(per_Pand/k_i * 1[PandUnit], per_Pand/buurt_rel), Descr = "Toegerekende kosten per buurt.";
-			attribute<Eur>     Som_cap_b (per_Buurt)    := sum(IsDefined(per_Pand/k_i) ? per_Pand/cap_i * 1[PandUnit] : null_f[Eur], per_Pand/buurt_rel), Descr = "Maximaal draagbare kosten per buurt onder de per-woning-cap (som van de caps van panden met toerekening).";
-			parameter<Eur>     OnvermijdbaarVerlies     := sum(max_elem(Som_k_b - Som_cap_b, 0[Eur])), Descr = "Deel van de toegerekende buurtkosten dat zelfs bij volledige herverdeling binnen de buurt boven de gezamenlijke cap uitkomt; ondergrens voor elk censoring-verlies bij deze caphoogte.";
+			attribute<Eur>     Som_k_b         (per_Buurt) := sum(per_Pand/k_i * 1[PandUnit], per_Pand/buurt_rel), Descr = "Toegerekende kosten per buurt.";
+			attribute<Eur>     Som_cap_b       (per_Buurt) := sum(IsDefined(per_Pand/k_i) ? per_Pand/cap_i * 1[PandUnit] : null_f[Eur], per_Pand/buurt_rel), Descr = "Maximaal draagbare kosten per buurt onder de per-woning-cap (som van de caps van panden met toerekening).";
+			parameter<Eur>     OnvermijdbaarVerlies        := sum(max_elem(Som_k_b - Som_cap_b, 0[Eur])), Descr = "Deel van de toegerekende buurtkosten dat zelfs bij volledige herverdeling binnen de buurt boven de gezamenlijke cap uitkomt; ondergrens voor elk censoring-verlies bij deze caphoogte.";
 
 			unit<uint8> Export : NrOfRows = 9
 			,	StorageName = "%LocalDataProjDir%/Indicatoren/Funderingsschade_Validatie.csv"
@@ -309,27 +278,27 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 			attribute<float32> y_hat_hout   (per_Object) := sum(per_Object/y_hout_i,  per_Object/buurt_rel)[per_Object/buurt_rel] * (per_Object/w_hout_i  / sum(per_Object/w_hout_i,  per_Object/buurt_rel)[per_Object/buurt_rel]), Descr = "Voorspelde houten-palen-schade per pand o.b.v. r_hout.";
 			attribute<float32> y_hat_staal  (per_Object) := sum(per_Object/y_staal_i, per_Object/buurt_rel)[per_Object/buurt_rel] * (per_Object/w_staal_i / sum(per_Object/w_staal_i, per_Object/buurt_rel)[per_Object/buurt_rel]), Descr = "Voorspelde op-staal-schade per pand o.b.v. r_staal.";
 			attribute<float32> y_hat_split  (per_Object) := IsDefined(per_Object/w_hout_i) || IsDefined(per_Object/w_staal_i)
-															? MakeDefined(y_hat_hout, 0f) + MakeDefined(y_hat_staal, 0f)
-															: null_f, Descr = "Voorspelde schade per pand o.b.v. de hout/staal-splitsing.";
+			                                                ? MakeDefined(y_hat_hout, 0f) + MakeDefined(y_hat_staal, 0f)
+			                                                : null_f, Descr = "Voorspelde schade per pand o.b.v. de hout/staal-splitsing.";
 
-			attribute<float32> y_obs_t (per_Object) := IsDefined(y_hat_totaal) ? per_Object/y_i : null_f, Descr = "Waargenomen schade, beperkt tot panden met een totaalgewicht-voorspelling.";
-			attribute<float32> y_obs_s (per_Object) := IsDefined(y_hat_split)  ? per_Object/y_i : null_f, Descr = "Waargenomen schade, beperkt tot panden met een splitsing-voorspelling.";
+			attribute<float32> y_obs_t      (per_Object) := IsDefined(y_hat_totaal) ? per_Object/y_i : null_f, Descr = "Waargenomen schade, beperkt tot panden met een totaalgewicht-voorspelling.";
+			attribute<float32> y_obs_s      (per_Object) := IsDefined(y_hat_split)  ? per_Object/y_i : null_f, Descr = "Waargenomen schade, beperkt tot panden met een splitsing-voorspelling.";
 
-			parameter<float32> R2_pand_totaal := 1f - sum(sqr(y_obs_t - y_hat_totaal)) / sum(sqr(y_obs_t - mean(y_obs_t))), Descr = "R2 op pandniveau, ongesplitst totaalgewicht.";
-			parameter<float32> R2_pand_split  := 1f - sum(sqr(y_obs_s - y_hat_split))  / sum(sqr(y_obs_s - mean(y_obs_s))), Descr = "R2 op pandniveau, hout/staal-splitsing.";
+			parameter<float32> R2_pand_totaal            := 1f - sum(sqr(y_obs_t - y_hat_totaal)) / sum(sqr(y_obs_t - mean(y_obs_t))), Descr = "R2 op pandniveau, ongesplitst totaalgewicht.";
+			parameter<float32> R2_pand_split             := 1f - sum(sqr(y_obs_s - y_hat_split))  / sum(sqr(y_obs_s - mean(y_obs_s))), Descr = "R2 op pandniveau, hout/staal-splitsing.";
 
-			attribute<float32> Y_cel  (AdminDomain) := sum(y_obs_s,     per_Object/AdminDomain_rel), Descr = "Waargenomen schade per 25m-cel.";
-			attribute<float32> Yh_cel (AdminDomain) := sum(y_hat_split, per_Object/AdminDomain_rel), Descr = "Voorspelde schade per 25m-cel (splitsing).";
-			attribute<float32> Y_celm (AdminDomain) := IsDefined(Yh_cel) ? Y_cel : null_f;
+			attribute<float32> Y_cel       (AdminDomain) := sum(y_obs_s,     per_Object/AdminDomain_rel), Descr = "Waargenomen schade per 25m-cel.";
+			attribute<float32> Yh_cel      (AdminDomain) := sum(y_hat_split, per_Object/AdminDomain_rel), Descr = "Voorspelde schade per 25m-cel (splitsing).";
+			attribute<float32> Y_celm      (AdminDomain) := IsDefined(Yh_cel) ? Y_cel : null_f;
 
-			parameter<float32> R2_cel25m_split := 1f - sum(sqr(Y_celm - Yh_cel)) / sum(sqr(Y_celm - mean(Y_celm))), Descr = "R2 op 25m-celniveau (splitsing); het relevante kwaliteitscijfer voor RS, dat op celniveau rekent.";
+			parameter<float32> R2_cel25m_split           := 1f - sum(sqr(Y_celm - Yh_cel)) / sum(sqr(Y_celm - mean(Y_celm))), Descr = "R2 op 25m-celniveau (splitsing); het relevante kwaliteitscijfer voor RS, dat op celniveau rekent.";
 
-			attribute<float32> Som_y_buurt (per_Buurt) := sum(per_Object/y_i, per_Object/buurt_rel), Descr = "Som van de private pandschades per buurt.";
-			attribute<float32> x_b         (per_Buurt) := IsDefined(Som_y_buurt) ? per_Buurt/total_cost : null_f, Descr = "Openbare buurtkosten, beperkt tot buurten met private panden.";
-			attribute<float32> y_b         (per_Buurt) := IsDefined(x_b) ? Som_y_buurt : null_f;
+			attribute<float32> Som_y_buurt   (per_Buurt) := sum(per_Object/y_i, per_Object/buurt_rel), Descr = "Som van de private pandschades per buurt.";
+			attribute<float32> x_b           (per_Buurt) := IsDefined(Som_y_buurt) ? per_Buurt/total_cost : null_f, Descr = "Openbare buurtkosten, beperkt tot buurten met private panden.";
+			attribute<float32> y_b           (per_Buurt) := IsDefined(x_b) ? Som_y_buurt : null_f;
 
-			parameter<float32> Ratio_publiek_privaat := sum(x_b) / sum(y_b), Descr = "Verhouding openbare buurtkosten / private pandtotalen; 1 = zelfde schaal (zelfde scenario/vintage).";
-			parameter<float32> Corr_buurt            := (mean(x_b * y_b) - mean(x_b) * mean(y_b)) / (sqrt(mean(x_b * x_b) - sqr(mean(x_b))) * sqrt(mean(y_b * y_b) - sqr(mean(y_b)))), Descr = "Correlatie tussen openbare buurtkosten en private buurttotalen.";
+			parameter<float32> Ratio_publiek_privaat     := sum(x_b) / sum(y_b), Descr = "Verhouding openbare buurtkosten / private pandtotalen; 1 = zelfde schaal (zelfde scenario/vintage).";
+			parameter<float32> Corr_buurt                := (mean(x_b * y_b) - mean(x_b) * mean(y_b)) / (sqrt(mean(x_b * x_b) - sqr(mean(x_b))) * sqrt(mean(y_b * y_b) - sqr(mean(y_b)))), Descr = "Correlatie tussen openbare buurtkosten en private buurttotalen.";
 
 			unit<uint8> Export : NrOfRows = 9
 			,	StorageName = "%LocalDataProjDir%/Indicatoren/Funderingsschade_Fit.csv"
@@ -342,20 +311,20 @@ container Vastgoed: using  = "Units;Geography;Classifications;RegioIndelingen"
 
 		unit<uint8> WP_x_BJ := combine_uint8(WP5, BouwjaarKlassen)
 		{
-			attribute<string>  WP_name := WP5/name[first_rel];
-			attribute<string>  BJ_name := BouwjaarKlassen/name[second_rel];
-			attribute<string>  name    := WP_name + '_x_' + BJ_name;
-			attribute<float32> r_totaal   := ='union_data(., '+AsList('Kentallen/r_totaal/'+name,   ',')+')', Descr = "Ontkoppelde relatieve risicofactor per cel (totale schade; t.b.v. fit-vergelijking).";
-			attribute<float32> r_hout  := ='union_data(., '+AsList('Kentallen/r_hout/'+name,  ',')+')', Descr = "Ontkoppelde relatieve risicofactor per cel, houten-palen-component.";
-			attribute<float32> r_staal := ='union_data(., '+AsList('Kentallen/r_staal/'+name, ',')+')', Descr = "Ontkoppelde relatieve risicofactor per cel, op-staal-component.";
+			attribute<string>  WP_name  := WP5/name[first_rel];
+			attribute<string>  BJ_name  := BouwjaarKlassen/name[second_rel];
+			attribute<string>  name     := WP_name + '_x_' + BJ_name;
+			attribute<float32> r_totaal := ='union_data(., '+AsList('Kentallen/r_totaal/'+name,   ',')+')', Descr = "Ontkoppelde relatieve risicofactor per cel (totale schade; t.b.v. fit-vergelijking).";
+			attribute<float32> r_hout   := ='union_data(., '+AsList('Kentallen/r_hout/'+name,  ',')+')', Descr = "Ontkoppelde relatieve risicofactor per cel, houten-palen-component.";
+			attribute<float32> r_staal  := ='union_data(., '+AsList('Kentallen/r_staal/'+name, ',')+')', Descr = "Ontkoppelde relatieve risicofactor per cel, op-staal-component.";
 		}
 		
 		unit<uint8> BouwjaarKlassen := cat_range(0b, 4b)
 		{
-			attribute<string> label          : ['<1940', '1940-1969', '1970-1989', '>=1990'];
-			attribute<string> name           := AsItemName(label);
-			attribute<yr>     ClassBreaks   : [0, 1940, 1970, 1990], DialogType = "Classification";
-			container V := for_each_nedv(name, string(id(.))+'[..]', void, .);
+			attribute<string> label       : ['<1940', '1940-1969', '1970-1989', '>=1990'];
+			attribute<string> name        := AsItemName(label);
+			attribute<yr>     ClassBreaks : [0, 1940, 1970, 1990], DialogType = "Classification";
+			container         V           := for_each_nedv(name, string(id(.))+'[..]', void, .);
 		}
 	}	
 }

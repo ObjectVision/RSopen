@@ -1,9 +1,3 @@
-REM LET OP: dit script kent het lenen van een allocatiestand NIET. Een variant die in de kolom
-REM StandVanVariant van VariantParameters/VariantK.dms naar een andere variant wijst hoeft haar
-REM allocatie niet te draaien, maar dit script alloceert haar toch. Gebruik voor een reeks
-REM batch/Run2120.ps1; die slaat een lenende variant over en toetst bovendien of de aanname
-REM eronder klopt. Zie de skill rs-draaien.
-
 REM ================================================================================
 REM
 REM Dit is RSOpen, de open source versie van het model RuimteScanner.
@@ -25,7 +19,7 @@ REM ========== PARAMETER INSTELLINGEN ================
 REM De geinstalleerde GeoDMS, niet de build uit Visual Studio. Die laatste is een bewegend doel:
 REM hij wordt opnieuw gecompileerd zonder dat de configuratie verandert, en een run kan dan
 REM halverwege op een andere engine draaien dan waarmee hij begon.
-set geodmsversion=GeoDms20.20.0.m
+set geodmsversion=GeoDms20.23.1.m
 set exe_dir=C:\Program Files\ObjectVision\%geodmsversion%
 REM set exe_dir=C:\dev\GeoDms_2026\bin\Release\x64
 set ProgramPath=%exe_dir%\GeoDmsRun.exe
@@ -89,15 +83,10 @@ echo "ErrorLevel is " %ErrorLevel%
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
 REM Run3 maakt de stand van het basisjaar, de woningsubsector-proxies, de sloopkosten, de werken-geschiktheid,
-REM de waterbergingsnormen, de afstandskernels, de zonneladder en de verblijfsrecreatietrends. Zonder deze stap
+REM de waterbergingsnormen, de afstandskernels, de zonneladder, de verblijfsrecreatietrends en de claims in LocalData. Zonder deze stap
 REM strandt elke claim op een onbekende naam in plaats van op een ontbrekend bestand, want een mmd levert zijn
 REM kolommen uit de dictionary in het bestand.
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3
-echo "ErrorLevel is " %ErrorLevel%
-if %ErrorLevel% NEQ 0 goto ErrorEnd
-
-REM De claims in LocalData, als eigen stap na Run3; in RuimteVoorWoningbouw lezen de woonclaims de basisjaarstand terug.
-call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteBasedata/Generate_Run3_Claims
 echo "ErrorLevel is " %ErrorLevel%
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 

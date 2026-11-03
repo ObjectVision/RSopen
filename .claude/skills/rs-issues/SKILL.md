@@ -29,6 +29,18 @@ Geen vetgedrukte tekst in de lopende tekst. Vet is alleen voor kopjes, niet voor
 
 Geen gedachtenstreepjes, dus geen em dash of en dash als leesteken. Herschrijf de zin, of gebruik een komma, een dubbele punt of een punt. Deze regel geldt ook buiten issues: in commit messages, documentatie en antwoorden in de chat.
 
+Schrijf voor een collega die het model kent maar niet weet wat er in de sessie gebeurde. Vanuit PBL kwam in oktober 2026 de klacht dat de commits niet te volgen waren: telegramstijl, eigen jargon en reeksen kale getallen. Dus volledige zinnen met een werkwoord, geen namen die alleen in de sessie bestaan (een toetskopie als RSeig3, "de stand van de eigendomsproef"), een getal met wat het is en waartegen het staat, en een reeks getallen in een tabel met labels of in het issue. Een regel, cel of indicator is "hij" of "het", niet "zij".
+
+Een commitboodschap: onderwerpregel onder de 70 tekens, want Visual Studio en GitHub kappen daarna af. De body zegt in een paar zinnen wat er veranderde, waarom, en wat het oplevert, met een verwijzing naar het issue; de meetparagraaf hoort in het issue. Geen harde enter binnen een alinea, alleen een witregel tussen alinea's, want elk scherm breekt zelf af. Geen vaste aanwijzingen voor de volgende sessie ("maak de variantdata opnieuw"); die staan in `rs-fingerprints` en `rs-draaien`.
+
+```
+#861 Sloop: opslag op de verwervingskosten naar bouwperiode
+
+Het model sloopte genoeg woningen, maar te vaak jonge. In werkelijkheid worden woningen uit 1951 tot 1965 het vaakst gesloopt. Jongere woningen krijgen nu een opslag op hun verwervingskosten en oudere een kleine korting, naar hoe vaak ze in werkelijkheid gesloopt worden. De bedragen komen uit de schatting van het EconLogic-paper.
+
+In een proefrun voor Noord-Holland tot 2040 is nu 22 procent van de gesloopte woningen van 1966 of later, tegen 43 procent zonder de opslag en 21 procent in de BAG. De metingen staan in #861.
+```
+
 ## Verwijzen met hekje
 
 Schrijf altijd `#634`, nooit "issue 634" of alleen "634". GitHub herkent alleen de vorm met hekje. Zonder hekje verschijnt de commit niet in de tijdlijn van het issue en moet de koppeling met de hand gelegd worden.
@@ -38,8 +50,7 @@ In een commit message begint de onderwerpregel met het issuenummer, gevolgd door
 ```
 #620 Kansrijke woningbouwlocaties opgenomen in de trede voor wonen
 
-De trede leest nu BBGPlusKansrijkWoningbouw in plaats van BBG, zodat de
-kansrijke locaties meetellen bij de afweging.
+De trede leest nu BBGPlusKansrijkWoningbouw in plaats van BBG, zodat de kansrijke locaties meetellen bij de afweging.
 ```
 
 Hoort een commit bij geen enkel issue, dan begint de onderwerpregel gewoon met de beschrijving. Raakt hij meerdere issues, zet het belangrijkste nummer vooraan en noem de rest in de body.
