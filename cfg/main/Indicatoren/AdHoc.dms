@@ -756,4 +756,154 @@ container AdHoc
 			}
 		}
 	}
+
+	container Uitlevering_20261103_Krimpenerwaard
+	: Descr = "Uitlevering voor het Hoogheemraadschap van Schieland en de Krimpenerwaard (HHSK): areaal per hoofdklasse van de landgebruikskaart per waterschap,
+				basisjaar en Y2120 van WLO_hoog_BAU, in hectare, en de twee kaarten van HHSK. Leest de weggeschreven kaarten van Write_Result_Hoofdklasse_SA uit de
+				LocalData en niet de items zelf, zodat de cijfers op de opgeleverde pixels rusten, zoals Rapport_v01/ArealenBasisjaar; die kaarten zijn byte-gelijk aan
+				Oplevering/BAU1 van de productierun van 10 en 11 september 2026. De waterschappen worden rechtstreeks op AdminDomain gerasterd, om dezelfde reden als
+				Per_AdminDomain_Fijn (#748). Controle geeft per klasse Nederland, de som over de waterschappen en het deel daarbuiten."
+	{
+		parameter<String> Casus           := 'WLO_hoog_BAU', Descr = "De casus onder Indicatoren in de LocalData; in de oplevering heet die variant BAU1.";
+		parameter<String> Uitvoermap      := '%LocalDataProjDir%/Uitlevering_20261103_Krimpenerwaard';
+		parameter<String> FocusWaterschap := 'Hoogheemraadschap van Schieland en de Krimpenerwaard', Descr = "Het waterschap waarvan de kaarten apart worden weggeschreven, met de naam zoals de PDOK-levering hem schrijft.";
+
+		unit<uint32> Waterschap := /SourceData/RegioIndelingen/Waterschap;
+		unit<uint8>  Klasse     := /Classifications/Grondgebruik/LU_Hoofdklasse;
+
+		parameter<Waterschap> Focus_rel := rlookup(FocusWaterschap, Waterschap/label)
+		, IntegrityCheck = "IsDefined(this)";
+
+		attribute<Waterschap> Waterschap_rel (/Geography/AdminDomain) := poly2grid(Waterschap/geometry, /Geography/AdminDomain)
+		, Descr = "Waterschap per cel van 25 m, rechtstreeks gerasterd; null buiten de waterschappen. Langs de grenzen overlappen de polygonen elkaar in totaal 16 ha; zo'n cel gaat naar het waterschap dat poly2grid als laatste legt.";
+
+		attribute<Klasse> Kaart_Basisjaar (/Geography/AdminDomain)
+		: StorageName     = "='%LocalDataProjDir%/Indicatoren/' + Casus + '/LandgebruikHoofdklasse/Basisjaar_Nederland.tif'"
+		, StorageType     = "gdal.grid"
+		, StorageReadOnly = "True";
+
+		attribute<Klasse> Kaart_Y2120 (/Geography/AdminDomain)
+		: StorageName     = "='%LocalDataProjDir%/Indicatoren/' + Casus + '/LandgebruikHoofdklasse/Y2120_Nederland.tif'"
+		, StorageType     = "gdal.grid"
+		, StorageReadOnly = "True";
+
+		unit<uint32> RijenBron := combine(Waterschap, Klasse)
+		, Descr = "Een regel per waterschap en klasse, gerekend los van de weggeschreven unit: een kolom van een unit met StorageName mag niet op een zusterkolom steunen."
+		{
+			attribute<String>   WaterschapNaam := Waterschap/label[first_rel];
+			attribute<uint32>   KlasseId       := second_rel[uint32];
+			attribute<String>   KlasseLabel    := Klasse/Label[second_rel];
+			attribute<Units/Ha> Ha_Basisjaar   := pcount(Combi_Basisjaar)[float32] * /Geography/rdc_25m/NrHaPerCell;
+			attribute<Units/Ha> Ha_Y2120       := pcount(Combi_Y2120)[float32] * /Geography/rdc_25m/NrHaPerCell;
+			attribute<Units/Ha> Ha_Verschil    := Ha_Y2120 - Ha_Basisjaar;
+		}
+
+		attribute<RijenBron> Combi_Basisjaar (/Geography/AdminDomain) := combine_data(RijenBron, Waterschap_rel, Kaart_Basisjaar)
+		, Descr = "Combinatie van waterschap en klasse per cel; null buiten de waterschappen en waar de kaart geen klasse heeft.";
+		attribute<RijenBron> Combi_Y2120     (/Geography/AdminDomain) := combine_data(RijenBron, Waterschap_rel, Kaart_Y2120);
+
+		unit<uint32> Arealen := RijenBron
+		, StorageName = "=Uitvoermap + '/Arealen_Hoofdklasse_perWaterschap_BAU1.csv'"
+		, StorageType = "gdalwrite.vect"
+		, Descr       = "Een regel per waterschap en hoofdklasse: areaal in het basisjaar, in Y2120 en het verschil, in hectare."
+		{
+			attribute<String>   Waterschap   := RijenBron/WaterschapNaam;
+			attribute<uint32>   Klasse_id    := RijenBron/KlasseId;
+			attribute<String>   Klasse       := RijenBron/KlasseLabel;
+			attribute<Units/Ha> Basisjaar_ha := RijenBron/Ha_Basisjaar;
+			attribute<Units/Ha> Y2120_ha     := RijenBron/Ha_Y2120;
+			attribute<Units/Ha> Verschil_ha  := RijenBron/Ha_Verschil;
+		}
+
+		unit<uint8> ControleBron := Klasse
+		, Descr = "Per klasse: Nederland, de som van de waterschappen en wat buiten de waterschappen valt, per jaar; plus het areaal zonder klasse in HHSK."
+		{
+			attribute<String>   KlasseLabel                := Klasse/Label;
+			attribute<Units/Ha> Nederland_Basisjaar        := pcount(Kaart_Basisjaar)[float32] * /Geography/rdc_25m/NrHaPerCell;
+			attribute<Units/Ha> Waterschappen_Basisjaar    := pcount(IsDefined(Waterschap_rel) ? Kaart_Basisjaar : null_b)[float32] * /Geography/rdc_25m/NrHaPerCell;
+			attribute<Units/Ha> BuitenWaterschap_Basisjaar := pcount(IsDefined(Waterschap_rel) ? null_b : Kaart_Basisjaar)[float32] * /Geography/rdc_25m/NrHaPerCell;
+			attribute<Units/Ha> Nederland_Y2120            := pcount(Kaart_Y2120)[float32] * /Geography/rdc_25m/NrHaPerCell;
+			attribute<Units/Ha> Waterschappen_Y2120        := pcount(IsDefined(Waterschap_rel) ? Kaart_Y2120 : null_b)[float32] * /Geography/rdc_25m/NrHaPerCell;
+			attribute<Units/Ha> BuitenWaterschap_Y2120     := pcount(IsDefined(Waterschap_rel) ? null_b : Kaart_Y2120)[float32] * /Geography/rdc_25m/NrHaPerCell;
+		}
+
+		unit<uint8> Controle := ControleBron
+		, StorageName = "=Uitvoermap + '/Controle_Arealen_Hoofdklasse_BAU1.csv'"
+		, StorageType = "gdalwrite.vect"
+		{
+			attribute<String>   Klasse                     := ControleBron/KlasseLabel;
+			attribute<Units/Ha> Nederland_Basisjaar        := ControleBron/Nederland_Basisjaar;
+			attribute<Units/Ha> Waterschappen_Basisjaar    := ControleBron/Waterschappen_Basisjaar;
+			attribute<Units/Ha> BuitenWaterschap_Basisjaar := ControleBron/BuitenWaterschap_Basisjaar;
+			attribute<Units/Ha> Nederland_Y2120            := ControleBron/Nederland_Y2120;
+			attribute<Units/Ha> Waterschappen_Y2120        := ControleBron/Waterschappen_Y2120;
+			attribute<Units/Ha> BuitenWaterschap_Y2120     := ControleBron/BuitenWaterschap_Y2120;
+		}
+
+		attribute<Bool> IsFocus (/Geography/AdminDomain) := Waterschap_rel == Focus_rel
+		, Descr = "Ligt de cel in het focuswaterschap? Gelijk aan de cellen die in de tabel bij dat waterschap tellen.";
+
+		attribute<Klasse> Focus_Basisjaar (/Geography/AdminDomain) := IsFocus ? Kaart_Basisjaar : null_b
+		, StorageName = "=Uitvoermap + '/LandgebruikskaartHoofdklasse_Basisjaar_HHSK.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr       = "De opgeleverde kaart van het basisjaar, alleen binnen het focuswaterschap; daarbuiten leeg. Pixels ongewijzigd.";
+
+		attribute<Klasse> Focus_Y2120 (/Geography/AdminDomain) := IsFocus ? Kaart_Y2120 : null_b
+		, StorageName = "=Uitvoermap + '/LandgebruikskaartHoofdklasse_Y2120_HHSK.tif'"
+		, StorageType = "gdalwrite.grid";
+
+		unit<uint32> Gemeente := /SourceData/RegioIndelingen/Gemeente;
+
+		attribute<Gemeente> Focus_Gemeente (/Geography/AdminDomain) := IsFocus ? Gemeente/Per_AdminDomain_Fijn : null_u
+		, StorageName = "=Uitvoermap + '/Gemeente_HHSK.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr       = "De CBS-gemeente per cel binnen het focuswaterschap, rechtstreeks op AdminDomain gerasterd (Per_AdminDomain_Fijn, #748); daarbuiten leeg. Voor de telling per gemeente bij de memo.";
+
+		unit<uint32> Gemeentenamen := Gemeente
+		, StorageName = "=Uitvoermap + '/Gemeente_HHSK_namen.csv'"
+		, StorageType = "gdalwrite.vect"
+		{
+			attribute<uint32> Gemeente_id := id(.);
+			attribute<String> Gemeente    := /SourceData/RegioIndelingen/Gemeente/name, Descr = "Met het volledige pad: de kale naam Gemeente is binnen deze unit deze kolom zelf.";
+		}
+
+		attribute<uint16> Focus_TredeLagen (/Geography/AdminDomain) := IsFocus
+			? (/SourceData/Plancapaciteit/Read/Wonen/Hard/Per_AdminDomain    ? 1w   : 0w)
+			+ (/SourceData/Plancapaciteit/Read/Wonen/Zacht/Per_AdminDomain   ? 2w   : 0w)
+			+ (/SourceData/Plancapaciteit/Read/Werken/Hard/Per_AdminDomain   ? 4w   : 0w)
+			+ (/SourceData/Plancapaciteit/Read/Werken/Zacht/Per_AdminDomain  ? 8w   : 0w)
+			+ (/SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Is_BebouwdGebied ? 16w : 0w)
+			+ (/BaseData/StartState/Bodemstatistiek/IsBouwterrein            ? 128w : 0w)
+			: null_w
+		, StorageName = "=Uitvoermap + '/TredeLagen_HHSK.tif'"
+		, StorageType = "gdalwrite.grid"
+		, Descr       = "Per cel binnen het focuswaterschap een deel van de lagen waarop de trede van de allocatie in BaU beslist (VariantParameters/Tredes/Wonen en Werken), als bitmasker:
+						1 harde en 2 zachte plancapaciteit wonen, 4 harde en 8 zachte plancapaciteit werken, 16 binnen de begrenzing van het bebouwd gebied, 128 bouwterrein.
+						Dezelfde bronnen als Templates/VariantData_T/Trede. De stimuleringsgebieden en de nabijheid van openbaar vervoer ontbreken bewust: hun items zijn
+						schrijvende opslagen in de brondatamap, en een aanroep hier zou daar kunnen schrijven. Voor de duiding in de memo van waarom nieuwbouw landt waar hij landt.
+						Bevat niet-openbare plancapaciteit: alleen voor tellingen, niet om uit te leveren.";
+
+		unit<uint32> FocusLegeCellen : nrofrows = 1
+		, StorageName = "=Uitvoermap + '/Controle_HHSK_cellen_zonder_klasse.csv'"
+		, StorageType = "gdalwrite.vect"
+		, Descr       = "Areaal van het focuswaterschap op het raster, en het deel daarvan zonder klasse op de kaart, in hectare. In 2120 horen daar de randcellen van #826 bij, die buiten het rekendomein van de allocatie vallen."
+		{
+			attribute<Units/Ha> Totaal_ha            := const(sum(IsFocus ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell, .);
+			attribute<Units/Ha> Leeg_Basisjaar_ha    := const(sum(IsFocus && IsNull(Kaart_Basisjaar) ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell, .);
+			attribute<Units/Ha> Leeg_Y2120_ha        := const(sum(IsFocus && IsNull(Kaart_Y2120) ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell, .);
+			attribute<Units/Ha> Leeg_alleen_Y2120_ha := const(sum(IsFocus && IsDefined(Kaart_Basisjaar) && IsNull(Kaart_Y2120) ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell, .);
+		}
+
+		unit<uint8> Legenda := Klasse
+		, StorageName = "=Uitvoermap + '/Legenda_LandgebruikskaartHoofdklasse.csv'"
+		, StorageType = "gdalwrite.vect"
+		, Descr       = "Klassenummer, naam en kleur zoals de RuimteScanner de hoofdklassekaart tekent; de kleur is als rood, groen en blauw uitgesplitst."
+		{
+			attribute<uint32> Klasse_id := id(.)[uint32];
+			attribute<String> Klasse    := /Classifications/Grondgebruik/LU_Hoofdklasse/Label, Descr = "Met het volledige pad: de kale naam Klasse is binnen deze unit deze kolom zelf.";
+			attribute<uint32> Rood      := /Classifications/Grondgebruik/LU_Hoofdklasse/BrushColor % 256;
+			attribute<uint32> Groen     := (/Classifications/Grondgebruik/LU_Hoofdklasse/BrushColor / 256) % 256;
+			attribute<uint32> Blauw     := /Classifications/Grondgebruik/LU_Hoofdklasse/BrushColor / 65536;
+		}
+	}
 }
