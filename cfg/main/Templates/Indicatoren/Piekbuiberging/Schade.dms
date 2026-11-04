@@ -13,7 +13,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container Schade
-: Descr = "De directe schade door een piekbui en wat de bergingsmaatregelen daarvan wegnemen (#875). Per bui rekent dezelfde regel twee keer: Zonder bij de diepte uit de dieptekaart, Met bij de diepte die overblijft na de maatregelen; de vermeden schade is het verschil van die twee, want de schadefuncties lopen niet recht (#851). Bedragen, functies en blootstelling zijn die van de SSM-tabel voor het regionale watersysteem, die geen bedrijfsuitval rekent, met dezelfde voorbehouden als de overstromingsschade. Het is de schade als de bui overal tegelijk valt en geen verwachte schade per jaar. Op hetzelfde gebied als de opgave (GebiedMetOpgave)."
+: Descr = "De directe schade door een piekbui en wat de bergingsmaatregelen daarvan wegnemen (#875). Alleen het natte deel van een cel krijgt schade, bij de diepte die daar staat. Per bui rekent dezelfde regel twee keer: Zonder bij de diepte uit de dieptekaart, Met bij de diepte die overblijft na de maatregelen; de vermeden schade is het verschil van die twee, want de schadefuncties lopen niet recht (#851). Bedragen, functies en blootstelling zijn die van de SSM-tabel voor het regionale watersysteem, die geen bedrijfsuitval rekent, met dezelfde voorbehouden als de overstromingsschade. Het is de schade als de bui overal tegelijk valt en geen verwachte schade per jaar. Op hetzelfde gebied als de opgave (GebiedMetOpgave)."
 , Source = "Bedragen en functies: Slager, K. (2016), Technische documentatie SSM2015, Deltares 1230095-004-HYE-0009, tabel RegionaalBinnendijks in SSM2017_Overstromingsschades/Parameters.dms. De keuze voor SSM en tegen de WaterSchadeSchatter is van Deltares (#875)."
 {
 	unit<UInt8> SSM := Overstromingsschade/Parameters/RegionaalBinnendijks
@@ -52,7 +52,7 @@ container Schade
 	unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
 
 	Template Factor_T
-	: Descr = "De schadefactor van een functie op een diepte in cm, lineair tussen de hele centimeters van de SSM-tabel. Afronden op hele cm zoals de overstromingsschade doet (#607) past hier niet: bij diepten van 5 tot 30 cm en een dekking van enkele procenten blijft een deel van de cellen op dezelfde hele cm staan en valt de vermeden schade te laag uit."
+	: Descr = "De schadefactor van een functie op een diepte in cm, lineair tussen de hele centimeters van de SSM-tabel. Afronden op hele cm zoals de overstromingsschade doet (#607) past hier niet: bij lage diepten en een dekking van enkele procenten blijft een deel van de cellen op dezelfde hele cm staan en valt de vermeden schade te laag uit."
 	{
 		//
 		parameter<String> Functie;
@@ -71,11 +71,12 @@ container Schade
 	}
 
 	Template Situatie_T
-	: Descr = "De schade bij een waterdiepte, per cel en opgeteld. Werkt op de levende kaarten of, met ModelParameters/TabellenUitExport aan, op de teruggelezen tifs (#824)."
+	: Descr = "De schade bij een waterdiepte op het natte deel van de cel en de natte fractie, per cel en opgeteld. Werkt op de levende kaarten of, met ModelParameters/TabellenUitExport aan, op de teruggelezen tifs (#824)."
 	{
 		//
 		parameter<String> Naam;
 		attribute<Meter>  Diepte (AdminDomain);
+		attribute<Float32> Fractie (AdminDomain);
 		//
 
 		container DiepteCm
@@ -93,7 +94,7 @@ container Schade
 		container PerCategorie :=
 			for_each_nedv(
 				  SSM/name
-				, 'Factor/' + CategorieInfo/FunctieGroep + '/Resultaat * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/η_i * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/s_i'
+				, 'Factor/' + CategorieInfo/FunctieGroep + '/Resultaat * Fractie * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/η_i * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/s_i'
 				, AdminDomain
 				, Eur
 			);
@@ -163,21 +164,23 @@ container Schade
 		}
 	}
 
-	attribute<Meter> Diepte_Zonder (AdminDomain) := WaterdiepteBijHevigeNeerslag * float32(GebiedMetOpgave)
-	, Descr = "De waterdiepte uit de dieptekaart van ModelParameters/Piekbuiberging/Kans_ref, op hetzelfde gebied als de opgave. Buiten dat gebied is er geen opgave en dus ook geen schade in deze indicator.";
+	attribute<Float32> FractieNat (AdminDomain) := ='/SourceData/Water/FractieNat_'+Bui_ref, Descr = "Het aandeel van de cel dat nat is bij de bui van ModelParameters/Piekbuiberging/Bui_ref.";
+	attribute<Meter> Diepte_Zonder (AdminDomain) := (FractieNat > 0f ? WaterdiepteBijHevigeNeerslag / FractieNat : 0[Meter]) * float32(GebiedMetOpgave)
+	, Descr = "De diepte op het natte deel van de cel: de waterschijf gedeeld door de natte fractie, op hetzelfde gebied als de opgave. Buiten dat gebied is er geen opgave en dus ook geen schade in deze indicator.";
 	attribute<Float32> FractieOngedekt (AdminDomain) := ='MakeDefined(PerGrid/Ongedekt / PerGrid/Opgave, 1f)[AdminDomain/rdc_'+Grid_ref+'_rel]'
-	, Descr = "Het deel van de opgave in het blok dat na de maatregelen overblijft. De maatregelen werken in het model op het blok, dus elke cel verliest hetzelfde aandeel van zijn diepte en de waterschijf maal het oppervlak telt op tot Ongedekt. Een blok zonder opgave krijgt 1.";
+	, Descr = "Het deel van de opgave in het blok dat na de maatregelen overblijft. De maatregelen werken in het model op het blok, dus elke cel verliest hetzelfde aandeel van zijn diepte, het natte deel blijft even groot, en diepte maal natte fractie maal oppervlak telt op tot Ongedekt. Een blok zonder opgave krijgt 1.";
 	attribute<Meter> Diepte_Met (AdminDomain) := Diepte_Zonder * FractieOngedekt;
 
-	attribute<Meter> Diepte_Zonder_T100 (AdminDomain) := WaterdiepteBijHevigeNeerslag_T100 * float32(GebiedMetOpgave), Descr = "Hetzelfde als Diepte_Zonder voor de tweede bui (#828).";
-	attribute<Float32> FractieOngedekt_T100 (AdminDomain) := ='MakeDefined(TweedeBui/Ongedekt / TweedeBui/Opgave, 1f)[AdminDomain/rdc_'+Grid_ref+'_rel]';
-	attribute<Meter> Diepte_Met_T100 (AdminDomain) := Diepte_Zonder_T100 * FractieOngedekt_T100;
+	attribute<Float32> FractieNat_70mm_1h (AdminDomain) := /SourceData/Water/FractieNat_70mm_1h;
+	attribute<Meter> Diepte_Zonder_70mm_1h (AdminDomain) := (FractieNat_70mm_1h > 0f ? WaterdiepteBijHevigeNeerslag_70mm_1h / FractieNat_70mm_1h : 0[Meter]) * float32(GebiedMetOpgave), Descr = "Hetzelfde als Diepte_Zonder voor de tweede bui (#828).";
+	attribute<Float32> FractieOngedekt_70mm_1h (AdminDomain) := ='MakeDefined(TweedeBui/Ongedekt / TweedeBui/Opgave, 1f)[AdminDomain/rdc_'+Grid_ref+'_rel]';
+	attribute<Meter> Diepte_Met_70mm_1h (AdminDomain) := Diepte_Zonder_70mm_1h * FractieOngedekt_70mm_1h;
 
-	container Zonder := Situatie_T('Zonder', Diepte_Zonder);
-	container Met    := Situatie_T('Met', Diepte_Met);
+	container Zonder := Situatie_T('Zonder', Diepte_Zonder, FractieNat);
+	container Met    := Situatie_T('Met', Diepte_Met, FractieNat);
 	container Vermeden := Vermeden_T('Vermeden', Zonder, Met);
 
-	container Zonder_T100 := Situatie_T('Zonder_T100', Diepte_Zonder_T100);
-	container Met_T100    := Situatie_T('Met_T100', Diepte_Met_T100);
-	container Vermeden_T100 := Vermeden_T('Vermeden_T100', Zonder_T100, Met_T100);
+	container Zonder_70mm_1h := Situatie_T('Zonder_70mm_1h', Diepte_Zonder_70mm_1h, FractieNat_70mm_1h);
+	container Met_70mm_1h    := Situatie_T('Met_70mm_1h', Diepte_Met_70mm_1h, FractieNat_70mm_1h);
+	container Vermeden_70mm_1h := Vermeden_T('Vermeden_70mm_1h', Zonder_70mm_1h, Met_70mm_1h);
 }

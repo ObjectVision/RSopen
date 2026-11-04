@@ -697,6 +697,12 @@ Een `GFS_TEMPLATE` voor GDAL moet zijn klasse noemen naar het GML-element van de
 
 Gemeten op 2026-10-08, GeoDms20.20.0.m, op de pandlaag van de BRK Kadastrale Kaart (`SourceData/Kadaster` in pbl-nl/model-RS-PlanCapaciteit): twaalf minuten lezen voor een store zonder panden.
 
+## `dyna_point` telt door over aansluitende segmenten
+
+`dyna_point(punt, volgend_punt, interval)` begint niet per segment opnieuw. Sluit een segment aan op het vorige, dan loopt de afstand door, en alleen na een sprong komt er een punt op het begin. Een kort segment kan daardoor geen enkel punt krijgen. Gemeten op 2026-11-04 met GeoDms20.23.1.m in een mini-configuratie met interval 25: de aansluitende segmenten 0-5, 5-29, 29-54, 54-80 en 80-90 gaven punten op 0, 25, 50 en 75 en geen op het laatste segment, het losse segment 1000-1060 gaf 1000, 1010, 1035 en 1060, en het losse segment 2000-2010 alleen 2000.
+
+Reken dus nooit per segment op een aantal punten. Op het NWB, met een mediaan segment van 5 m, gaf een gewicht van segmentlengte gedeeld door `pcount(punt/sequence_rel)` stil te weinig weglengte: 20.768 km in de kaartsom tegen 26.080 km over de wegvakken, want een segment zonder punt verliest zijn lengte. Elk punt even zwaar laten wegen per wegvak klopt wel, omdat de punten gelijkmatig langs de weg liggen. Toets zo'n gewicht door de punten per cel op te tellen en die som naast de weglengte te leggen.
+
 ## Een fss-tabel van een oudere GeoDMS leest polygonen als ruis
 
 Een `.fss`-store is geen uitwisselformaat over hoofdversies heen voor sequentie-attributen. `perceel.fss` van de BRK-levering 20231206 is geschreven door GeoDms 14.7; GeoDms 20.23.1.m leest daaruit `identificatie` (int64) goed, 8.271.596 rijen met de juiste eerste waarde, maar `geometry (poly)` op een dpoint-eenheid komt als ruis terug: coordinaten van 1e32, een totale oppervlakte van min 4e79 ha, en `poly2grid` levert een lege kaart. Het aantal punten per polygoon klopt wel, en er is geen foutmelding en exit 0. Dezelfde laag uit de GML-download, door GeoDms 20.20 naar een fss geschreven, leest in 20.23.1 goed. Lees bij een oude store dus de bron opnieuw of schrijf de store met de huidige versie, en toets een gelezen polygoonlaag altijd met een oppervlaktesom en een eerste geometrie voordat je erop vergridt. Herkenbaar: een scalair attribuut leest goed en een poly-attribuut geeft absurde waarden.
