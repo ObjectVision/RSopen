@@ -1,0 +1,92 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het wegennet voor de auto als graaf, voor de weguitval door een piekbui.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Wegennet
+: Descr = "Het wegennet voor de auto uit het NWB als graaf, met de punten waarop de waterdiepte wordt afgelezen en de ziekenhuizen als bestemming; gelezen door Templates/Indicatoren/Piekbuiberging/Weguitval.dms (#873). Hangt niet van variant of zichtjaar af. De knopen zijn de junctie-nummers van het NWB zelf, zodat een viaduct geen kruising wordt. Eenrichtingsverkeer telt mee in de reistijd en niet in de vraag of een knoop verbonden is."
+, Source = "NWB-wegvakken uit SourceData/Diversen/Impl/NWB; ziekenhuiscomplexen uit de TOP10NL (BRT)"
+{
+	unit<UInt32> NWB := /SourceData/Diversen/Impl/NWB;
+	unit<UInt8>  WegK := /ModelParameters/Piekbuiberging/Weguitval/WegK;
+	unit<UInt8>  ZonderAuto := /ModelParameters/Piekbuiberging/Weguitval/BaansoortZonderAuto;
+
+	unit<UInt32> Wegvak := select_with_org_rel(IsNull(rlookup(NWB/BST_CODE, ZonderAuto/code)))
+	, Descr = "De wegvakken waar een auto kan rijden: alle baansoorten behalve die in ModelParameters/Piekbuiberging/Weguitval/BaansoortZonderAuto."
+	{
+		attribute<rdc_meter> geometry (arc) := NWB/geometry[org_rel];
+		attribute<UInt32>    JTE_Begin      := uint32(NWB/JTE_ID_BEG)[org_rel];
+		attribute<UInt32>    JTE_Eind       := uint32(NWB/JTE_ID_END)[org_rel];
+		attribute<Bool>      IsTegen        := NWB/RIJRICHTNG[org_rel] == 'T', Descr = "Eenrichtingsverkeer tegen de digitalisatierichting in; F1 en F2 draaien dan om, zodat een eenrichtingsweg altijd van F1 naar F2 loopt.";
+		attribute<Bool>      Tweerichting   := NWB/RIJRICHTNG[org_rel] != 'H' && !IsTegen, Descr = "Rijrichting beide of onbekend. Onbekend gaat bij het NWB vooral over wegen zonder bord; die tellen als tweerichtingsweg.";
+		attribute<Knoop>     F1             := rlookup(IsTegen ? JTE_Eind : JTE_Begin, Knoop/Values);
+		attribute<Knoop>     F2             := rlookup(IsTegen ? JTE_Begin : JTE_Eind, Knoop/Values);
+		attribute<WegK>      WegK_rel       := rlookup(NWB/FRC[org_rel], WegK/FRC), IntegrityCheck = "all(IsDefined(this))", Descr = "De functionele wegklasse. Een onbekende klasse in een nieuwe levering valt hier om in plaats van stil zonder reistijd te blijven.";
+		attribute<meter>     Lengte         := arc_length(geometry, meter_f64)[meter];
+		attribute<min>       Reistijd       := convert(convert(Lengte, km) / WegK/Snelheid[WegK_rel], min);
+		attribute<UInt32>    NrMeetpunten   := pcount(Meetpunt/Wegvak_rel);
+	}
+
+	unit<UInt32> Einde := union_unit(Wegvak, Wegvak)
+	{
+		attribute<UInt32>    JTE  := union_data(., Wegvak/JTE_Begin, Wegvak/JTE_Eind);
+		attribute<rdc_meter> Punt := union_data(., first_point(Wegvak/geometry), last_point(Wegvak/geometry));
+	}
+
+	unit<UInt32> Knoop := unique(Einde/JTE)
+	{
+		attribute<rdc_meter> geometry := rjoin(Values, Einde/JTE, Einde/Punt);
+	}
+
+	unit<UInt32> Delen := connected_parts(Wegvak/F1, Wegvak/F2)
+	, Descr = "De verbonden delen van het net zonder water. Het grootste deel is het hoofdnet; de rest zijn eilanden zonder veer voor auto's, terreinen en losse stukken in de levering, die hier niet meetellen als gevolg van een bui."
+	{
+		attribute<UInt32> NrKnopen := pcount(part_rel);
+		parameter<.>      Grootste := rlookup(max(NrKnopen), NrKnopen);
+	}
+	attribute<Bool> IsHoofdnet (Knoop) := Delen/part_rel == Delen/Grootste;
+
+	unit<UInt32> KnoopHoofdnet := select_with_org_rel(IsHoofdnet)
+	{
+		attribute<rdc_meter> geometry := Knoop/geometry[org_rel];
+	}
+
+	attribute<Knoop> Knoop_rel (/Geography/rdc_100m) := KnoopHoofdnet/org_rel[connect(KnoopHoofdnet/geometry, /Geography/rdc_100m/locatie)]
+	, Descr = "De dichtstbijzijnde knoop op het hoofdnet per blok van 100 meter: daarlangs komen de woningen en banen van dat blok op het net. Bij een lange weg zonder aftakking is dat niet de weg zelf maar een van zijn uiteinden, dus de maat is grof binnen de afstand tussen twee kruisingen.";
+
+	unit<UInt32> Ziekenhuis := /SourceData/Grondgebruik/BRT/Compleet/MaakLosseCat_functioneel_gebied/Terrein_vlakken_ziekenhuiscomplex/combined_vlak
+	, Descr = "De ziekenhuiscomplexen uit de TOP10NL als bestemming van de bereikbaarheid. Elk complex telt, ongeacht of er een spoedeisende hulp is, want de TOP10NL kent dat onderscheid niet."
+	{
+		attribute<rdc_meter> Punt      := centroid_or_mid(geometry);
+		attribute<Knoop>     Knoop_rel := KnoopHoofdnet/org_rel[connect(KnoopHoofdnet/geometry, Punt)];
+	}
+
+	attribute<min> ReistijdZiekenhuis (Knoop) :=
+		impedance_table(
+			  'bidirectional(link_flag);startPoint(Node_rel)'
+			, Wegvak/Reistijd
+			, Wegvak/F1
+			, Wegvak/F2
+			, Wegvak/Tweerichting
+			, Ziekenhuis/Knoop_rel
+		)
+	, Descr = "De reistijd vanaf het dichtstbijzijnde ziekenhuis op het net zonder water, de referentie voor de extra reistijd. Gerekend vanuit het ziekenhuis, dus eenrichtingswegen in de richting van de ambulance.";
+
+	unit<UInt32> Segment := arc2segm(Wegvak/geometry);
+
+	unit<UInt32> Meetpunt := dyna_point(Segment/point, Segment/nextpoint, /ModelParameters/Piekbuiberging/Weguitval/IntervalMeetpunten[float64])
+	, Descr = "De punten waarop de waterdiepte op een wegvak wordt afgelezen. Elk segment begint opnieuw te tellen, dus een bochtig stuk draagt iets meer punten dan een recht stuk van dezelfde lengte."
+	{
+		attribute<Wegvak>      Wegvak_rel := Segment/sequence_rel[sequence_rel];
+		attribute<AdminDomain> Cel_rel    := point[AdminDomain];
+		attribute<meter>       Gewicht    := Wegvak/Lengte[Wegvak_rel] / float32(Wegvak/NrMeetpunten[Wegvak_rel]), Descr = "Het deel van de wegvaklengte dat bij dit punt hoort, zodat de punten per cel optellen tot de weglengte.";
+	}
+}

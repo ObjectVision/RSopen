@@ -1,0 +1,128 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De wegen die een piekbui onbegaanbaar maakt en wat dat doet met de bereikbaarheid, zonder en met de
+// bergingsmaatregelen van het zichtjaar.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Weguitval
+: Descr = "De indirecte gevolgen van een piekbui via het wegennet (#873): welke wegen onbegaanbaar raken, welke woningen en banen van het hoofdnet afraken en hoe ver het dichtstbijzijnde ziekenhuis wordt, zonder en met de bergingsmaatregelen. De uitvalregel komt uit RA2CE: een wegvak valt uit als het gemiddeld minstens 10 cm diep staat en minstens een kwart nat is; de kentallen staan in ModelParameters/Piekbuiberging/Weguitval. De bui valt overal tegelijk en er is geen verkeer en geen duur, dus dit meet de kwetsbaarheid van het net en geen voertuigverlies. De dieptekaart loopt door buiten bebouwd gebied, want ook daar kan een weg uitvallen; de maatregelen werken alleen binnen bestaand bebouwd gebied."
+, Source = "Uitvalregel: RA2CE (Deltares) op basis van Pregnolato et al. (2017), The impact of flooding on road transport, Transportation Research Part D 55; zie #873"
+{
+	unit<UInt32> Wegvak     := /BaseData/Wegennet/Wegvak;
+	unit<UInt32> Knoop      := /BaseData/Wegennet/Knoop;
+	unit<UInt32> Meetpunt   := /BaseData/Wegennet/Meetpunt;
+	unit<UInt32> Ziekenhuis := /BaseData/Wegennet/Ziekenhuis;
+	unit<UInt8>  WegK       := /ModelParameters/Piekbuiberging/Weguitval/WegK;
+	unit<UInt32> Regio      := =/ModelParameters/Advanced/IndicatorRegio_path;
+
+	parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Piekbuiberging_Weguitval_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De kaarten per cel; @V@ is de bui, de situatie en de grootheid.";
+
+	attribute<Knoop>  Knoop_rel       (AdminDomain) := /BaseData/Wegennet/Knoop_rel[AdminDomain/rdc_100m_rel];
+	attribute<min>    Reistijd_Geen   (AdminDomain) := /BaseData/Wegennet/ReistijdZiekenhuis[Knoop_rel], Descr = "De reistijd naar het dichtstbijzijnde ziekenhuis zonder water.";
+
+	Template Situatie_T
+	: Descr = "De weguitval bij een waterdiepte. Werkt op de levende kaarten of, met ModelParameters/TabellenUitExport aan, op de teruggelezen tifs (#824)."
+	{
+		//
+		parameter<String> Naam;
+		attribute<Meter>  Diepte (AdminDomain);
+		//
+
+		attribute<Meter>   DiepteWeg (Meetpunt) := MakeDefined(Diepte[Meetpunt/Cel_rel], 0[Meter]), Descr = "Geen diepte in de kaart, bijvoorbeeld net over de grens, telt als droog.";
+		attribute<Bool>    IsNat     (Meetpunt) := DiepteWeg > 0[Meter];
+
+		attribute<Float32> NrNat               (Wegvak) := sum(float32(IsNat), Meetpunt/Wegvak_rel);
+		attribute<Float32> FractieNat          (Wegvak) := NrNat / float32(Wegvak/NrMeetpunten);
+		attribute<Meter>   GemiddeldeDiepte    (Wegvak) := sum(DiepteWeg, Meetpunt/Wegvak_rel) / (/ModelParameters/Piekbuiberging/Weguitval/GemiddeldeAlleenOverNatDeel ? NrNat : float32(Wegvak/NrMeetpunten));
+		attribute<Bool>    IsUitgevallen       (Wegvak) := GemiddeldeDiepte >= WegK/DiepteDrempel[Wegvak/WegK_rel] && FractieNat >= WegK/FractieDrempel[Wegvak/WegK_rel];
+		attribute<km>      LengtePerWegK       (WegK)   := convert(sum(float32(IsUitgevallen) * Wegvak/Lengte, Wegvak/WegK_rel), km), Descr = "De uitgevallen lengte per wegklasse, voor de uitdraai in Diagnose/Piekbuiberging/Weguitval.";
+
+		unit<UInt32> Werkend := select_with_org_rel(!IsUitgevallen)
+		{
+			attribute<Knoop> F1           := Wegvak/F1[org_rel];
+			attribute<Knoop> F2           := Wegvak/F2[org_rel];
+			attribute<min>   Reistijd     := Wegvak/Reistijd[org_rel];
+			attribute<Bool>  Tweerichting := Wegvak/Tweerichting[org_rel];
+		}
+
+		unit<UInt32> Delen := connected_parts(Werkend/F1, Werkend/F2)
+		{
+			attribute<UInt32> NrKnopen := pcount(part_rel);
+			parameter<.>      Grootste := rlookup(max(NrKnopen), NrKnopen);
+		}
+
+		attribute<Bool> IsGeisoleerd (Knoop) := /BaseData/Wegennet/IsHoofdnet && Delen/part_rel != Delen/Grootste
+		, Descr = "Hoort bij het hoofdnet zonder water en is er met water van afgeraakt.";
+
+		attribute<min> ReistijdKnoop (Knoop) :=
+			impedance_table(
+				  'bidirectional(link_flag);startPoint(Node_rel)'
+				, Werkend/Reistijd
+				, Werkend/F1
+				, Werkend/F2
+				, Werkend/Tweerichting
+				, Ziekenhuis/Knoop_rel
+			);
+
+		attribute<Bool> IsGeisoleerdCel (AdminDomain) := IsGeisoleerd[Knoop_rel];
+		attribute<min>  ReistijdCel     (AdminDomain) := ReistijdKnoop[Knoop_rel];
+		attribute<Bool> BinnenNorm      (AdminDomain) := ReistijdCel <= /ModelParameters/Piekbuiberging/Weguitval/NormReistijdZiekenhuis, Descr = "Een onbereikbaar ziekenhuis geeft geen reistijd en dus FALSE.";
+
+		container Schrijf
+		: Descr = "De vijf grootheden als kaart per cel."
+		{
+			attribute<Meter>   Lengte             (AdminDomain) := sum(float32(IsUitgevallen[Meetpunt/Wegvak_rel]) * Meetpunt/Gewicht, Meetpunt/Cel_rel), StorageName = "=replace(StorageStr, '@V@', Naam+'_Lengte')", StorageType = "gdalwrite.grid";
+			attribute<Woning>  WoningenGeisoleerd (AdminDomain) := Stand/Aantal_Woningen_Totaal * float32(IsGeisoleerdCel), StorageName = "=replace(StorageStr, '@V@', Naam+'_WoningenGeisoleerd')", StorageType = "gdalwrite.grid";
+			attribute<Job>     BanenGeisoleerd    (AdminDomain) := Stand/Aantal_Banen_Totaal * float32(IsGeisoleerdCel), StorageName = "=replace(StorageStr, '@V@', Naam+'_BanenGeisoleerd')", StorageType = "gdalwrite.grid";
+			attribute<Woning>  WoningenBovenNorm  (AdminDomain) := Stand/Aantal_Woningen_Totaal * float32(!BinnenNorm && Reistijd_Geen <= /ModelParameters/Piekbuiberging/Weguitval/NormReistijdZiekenhuis), StorageName = "=replace(StorageStr, '@V@', Naam+'_WoningenBovenNorm')", StorageType = "gdalwrite.grid", Descr = "De woningen die zonder water binnen de norm bij een ziekenhuis zijn en met water niet meer.";
+			attribute<Float32> ExtraWoningMinuten (AdminDomain) := Stand/Aantal_Woningen_Totaal[Float32] * MakeDefined((ReistijdCel - Reistijd_Geen)[Float32], 0f), StorageName = "=replace(StorageStr, '@V@', Naam+'_ExtraWoningMinuten')", StorageType = "gdalwrite.grid", Descr = "De extra reistijd maal het aantal woningen. Een geisoleerde woning heeft geen reistijd en telt hier niet mee, die staat in WoningenGeisoleerd.";
+		}
+
+		container Lees
+		: Descr = "De kaarten van deze situatie teruggelezen voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers hierboven."
+		{
+			attribute<Meter>   Lengte             (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', Naam+'_Lengte')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Woning>  WoningenGeisoleerd (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', Naam+'_WoningenGeisoleerd')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Job>     BanenGeisoleerd    (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', Naam+'_BanenGeisoleerd')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Woning>  WoningenBovenNorm  (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', Naam+'_WoningenBovenNorm')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Float32> ExtraWoningMinuten (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', Naam+'_ExtraWoningMinuten')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Schrijf';
+
+		container PerRegio
+		{
+			attribute<km>      Lengte             (Regio) := convert(sum(Bron/Lengte, Regio/Per_AdminDomain_Fijn), km);
+			attribute<Woning>  WoningenGeisoleerd (Regio) := sum(Bron/WoningenGeisoleerd, Regio/Per_AdminDomain_Fijn);
+			attribute<Job>     BanenGeisoleerd    (Regio) := sum(Bron/BanenGeisoleerd, Regio/Per_AdminDomain_Fijn);
+			attribute<Woning>  WoningenBovenNorm  (Regio) := sum(Bron/WoningenBovenNorm, Regio/Per_AdminDomain_Fijn);
+			attribute<Float32> ExtraReistijd_min  (Regio) := sum(Bron/ExtraWoningMinuten, Regio/Per_AdminDomain_Fijn) / sum(Stand/Aantal_Woningen_Totaal, Regio/Per_AdminDomain_Fijn)[Float32], Descr = "De gemiddelde extra reistijd naar het ziekenhuis in minuten per woning in de regio.";
+		}
+		container PerNL
+		{
+			parameter<km>      Lengte             := convert(sum(Bron/Lengte), km);
+			parameter<Woning>  WoningenGeisoleerd := sum(Bron/WoningenGeisoleerd);
+			parameter<Job>     BanenGeisoleerd    := sum(Bron/BanenGeisoleerd);
+			parameter<Woning>  WoningenBovenNorm  := sum(Bron/WoningenBovenNorm);
+			parameter<Float32> ExtraReistijd_min  := sum(Bron/ExtraWoningMinuten) / sum(Stand/Aantal_Woningen_Totaal)[Float32], Descr = "De gemiddelde extra reistijd naar het ziekenhuis in minuten per woning.";
+		}
+	}
+
+	attribute<Meter> Diepte_Zonder (AdminDomain) := WaterdiepteBijHevigeNeerslag;
+	attribute<Meter> Diepte_Met    (AdminDomain) := BestaandBebouwdGebied ? WaterdiepteBijHevigeNeerslag * Schade/FractieOngedekt : WaterdiepteBijHevigeNeerslag;
+	attribute<Meter> Diepte_Zonder_T100 (AdminDomain) := WaterdiepteBijHevigeNeerslag_T100;
+	attribute<Meter> Diepte_Met_T100    (AdminDomain) := BestaandBebouwdGebied ? WaterdiepteBijHevigeNeerslag_T100 * Schade/FractieOngedekt_T100 : WaterdiepteBijHevigeNeerslag_T100;
+
+	container Zonder := Situatie_T('Zonder', Diepte_Zonder);
+	container Met    := Situatie_T('Met', Diepte_Met);
+	container Zonder_T100 := Situatie_T('Zonder_T100', Diepte_Zonder_T100);
+	container Met_T100    := Situatie_T('Met_T100', Diepte_Met_T100);
+}
