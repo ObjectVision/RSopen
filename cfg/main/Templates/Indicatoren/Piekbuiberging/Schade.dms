@@ -1,0 +1,183 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De directe schade door een piekbui, zonder en met de bergingsmaatregelen van het zichtjaar, met de bedragen en
+// schadefuncties van de SSM.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Schade
+: Descr = "De directe schade door een piekbui en wat de bergingsmaatregelen daarvan wegnemen (#875). Per bui rekent dezelfde regel twee keer: Zonder bij de diepte uit de dieptekaart, Met bij de diepte die overblijft na de maatregelen; de vermeden schade is het verschil van die twee, want de schadefuncties lopen niet recht (#851). Bedragen, functies en blootstelling zijn die van de SSM-tabel voor het regionale watersysteem, die geen bedrijfsuitval rekent, met dezelfde voorbehouden als de overstromingsschade. Het is de schade als de bui overal tegelijk valt en geen verwachte schade per jaar. Op bestaand bebouwd gebied, net als de opgave."
+, Source = "Bedragen en functies: Slager, K. (2016), Technische documentatie SSM2015, Deltares 1230095-004-HYE-0009, tabel RegionaalBinnendijks in SSM2017_Overstromingsschades/Parameters.dms. De keuze voor SSM en tegen de WaterSchadeSchatter is van Deltares (#875)."
+{
+	unit<UInt8> SSM := Overstromingsschade/Parameters/RegionaalBinnendijks
+	, Descr = "De 26 categorieen van de SSM. De blootstelling en het maximale schadebedrag staan per categorie in Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks, zodat die hier niet nog eens worden afgeleid.";
+
+	unit<UInt8> Groep : nrofrows = 3
+	, Descr = "De drie delen waarin de schade wordt gerapporteerd. Wonen en Bedrijven lezen de diepte met de bouwwijze en het vloerpeil erin verrekend, Overig de kale diepte: infrastructuur, stedelijk gebied en de andere categorieen zonder eigen vloer."
+	{
+		attribute<String> name : ['Wonen', 'Bedrijven', 'Overig'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> Termen := AsList('PerCategorie/' + SSM/name, ', ', CategorieInfo/Groep_rel);
+		container V := for_each_nedv(name, string(id(.)) + '[..]', void, .);
+	}
+
+	unit<UInt8> CategorieInfo := SSM
+	, Descr = "Per SSM-categorie de groep en de schadefunctie."
+	{
+		attribute<Groep> Groep_rel :=
+			  SSM/Categorie == 'Woningen_Opstal' || SSM/Categorie == 'Woningen_Inboedel' ? Groep/V/Wonen
+			: SSM/Categorie == 'Bedrijven'                                               ? Groep/V/Bedrijven
+			:                                                                              Groep/V/Overig;
+		attribute<String> FunctieGroep := 'F' + string(SSM/Function) + '_' + Groep/name[Groep_rel];
+	}
+
+	unit<UInt8> FunctieGroep := unique(CategorieInfo/FunctieGroep)
+	, Descr = "De combinaties van schadefunctie en groep die de tabel gebruikt. Veel categorieen delen een functie; de factor wordt per combinatie een keer afgelezen en niet per categorie, wat de rekentijd ruim halveert."
+	{
+		attribute<String>        name    := Values;
+		attribute<CategorieInfo> Rij_rel := rlookup(Values, CategorieInfo/FunctieGroep);
+		attribute<String>        Functie := string(SSM/Function[Rij_rel]);
+		attribute<String>        GroepN  := Groep/name[CategorieInfo/Groep_rel[Rij_rel]];
+	}
+
+	parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Piekbuiberging_Schade_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De schadekaarten als tif per cel; @V@ is de bui, de situatie en de groep.";
+
+	unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
+
+	Template Factor_T
+	: Descr = "De schadefactor van een functie op een diepte in cm, lineair tussen de hele centimeters van de SSM-tabel. Afronden op hele cm zoals de overstromingsschade doet (#607) past hier niet: bij diepten van 5 tot 30 cm en een dekking van enkele procenten blijft een deel van de cellen op dezelfde hele cm staan en valt de vermeden schade te laag uit."
+	{
+		//
+		parameter<String> Functie;
+		parameter<String> GroepN;
+		//
+
+		unit<UInt32> Tabel := ='Overstromingsschade/Schadefuncties/Read_DamageFunctions/Function_'+Functie+'/Read';
+
+		attribute<Float32> Cm    (AdminDomain) := ='min_elem_alldefined(DiepteCm/'+GroepN+', Tabel/MaxWaterdiepte[Float32])', Descr = "De diepte in cm, begrensd op de grootste diepte in de tabel; waar geen diepte is blijft hij leeg en is er geen schade.";
+		attribute<NrCm>    Onder (AdminDomain) := Int32(Cm)[NrCm], Descr = "De hele centimeter onder de diepte; de cast naar Int32 kapt af.";
+		attribute<NrCm>    Boven (AdminDomain) := min_elem(Onder + 1[NrCm], Tabel/MaxWaterdiepte);
+
+		attribute<Float32> FactorOnder (AdminDomain) := rjoin(Onder, Tabel/Waterdiepte, Tabel/SchadeFactor);
+		attribute<Float32> FactorBoven (AdminDomain) := rjoin(Boven, Tabel/Waterdiepte, Tabel/SchadeFactor);
+		attribute<Float32> Resultaat   (AdminDomain) := FactorOnder + (Cm - Onder[Float32]) * (FactorBoven - FactorOnder);
+	}
+
+	Template Situatie_T
+	: Descr = "De schade bij een waterdiepte, per cel en opgeteld. Werkt op de levende kaarten of, met ModelParameters/TabellenUitExport aan, op de teruggelezen tifs (#824)."
+	{
+		//
+		parameter<String> Naam;
+		attribute<Meter>  Diepte (AdminDomain);
+		//
+
+		container DiepteCm
+		: Descr = "De diepte waarmee elke groep zijn schadefunctie afleest, in cm. Wonen en Bedrijven trekken de bouwwijze van het zichtjaar eraf op dezelfde manier als de overstromingsschade (#681, #727, #854) en daarna het vloerpeil uit ModelParameters/Piekbuiberging."
+		{
+			parameter<Meter> Vloerpeil := /ModelParameters/Piekbuiberging/VloerpeilBovenMaaiveld;
+
+			attribute<Float32> Overig    (AdminDomain) := Diepte[Float32] * 100f;
+			attribute<Float32> Wonen     (AdminDomain) := (IsDefined(Diepte) ? (Diepte <= Overstromingsschade/Grondgebruik/Zichtjaar/SchadevrijeDiepte_Nieuwbouw ? 0[Meter] : max_elem(Diepte - Overstromingsschade/Grondgebruik/Zichtjaar/Verschuiving_Nieuwbouw - Vloerpeil, 0[Meter])) : Diepte)[Float32] * 100f;
+			attribute<Float32> Bedrijven (AdminDomain) := (IsDefined(Diepte) ? (Diepte <= Overstromingsschade/Grondgebruik/Zichtjaar/SchadevrijeDiepte_Werken    ? 0[Meter] : max_elem(Diepte - Overstromingsschade/Grondgebruik/Zichtjaar/Verschuiving_Werken    - Vloerpeil, 0[Meter])) : Diepte)[Float32] * 100f;
+		}
+
+		container Factor := for_each_ne(FunctieGroep/name, 'Factor_T(' + quote(FunctieGroep/Functie) + ', ' + quote(FunctieGroep/GroepN) + ')');
+
+		container PerCategorie :=
+			for_each_nedv(
+				  SSM/name
+				, 'Factor/' + CategorieInfo/FunctieGroep + '/Resultaat * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/η_i * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/s_i'
+				, AdminDomain
+				, Eur
+			);
+
+		container Schrijf
+		: Descr = "De schade per groep als kaart per cel."
+		{
+			attribute<Eur> Wonen     (AdminDomain) := ='add(' + Groep/Termen[Groep/V/Wonen]     + ')', StorageName = "=replace(StorageStr, '@V@', Naam+'_Wonen')",     StorageType = "gdalwrite.grid";
+			attribute<Eur> Bedrijven (AdminDomain) := ='add(' + Groep/Termen[Groep/V/Bedrijven] + ')', StorageName = "=replace(StorageStr, '@V@', Naam+'_Bedrijven')", StorageType = "gdalwrite.grid";
+			attribute<Eur> Overig    (AdminDomain) := ='add(' + Groep/Termen[Groep/V/Overig]    + ')', StorageName = "=replace(StorageStr, '@V@', Naam+'_Overig')",    StorageType = "gdalwrite.grid";
+		}
+
+		container Lees
+		: Descr = "De drie kaarten van deze situatie teruggelezen voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de schrijvers hierboven."
+		{
+			attribute<Eur> Wonen     (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', Naam+'_Wonen')",     StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> Bedrijven (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', Naam+'_Bedrijven')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<Eur> Overig    (AdminDomain) : StorageName = "=replace(StorageStr, '@V@', Naam+'_Overig')",    StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Schrijf';
+
+		attribute<Eur> Totaal (AdminDomain) := Bron/Wonen + Bron/Bedrijven + Bron/Overig;
+
+		container PerRegio
+		{
+			attribute<Eur> Wonen     (Regio) := sum(Bron/Wonen,     Regio/Per_AdminDomain_Fijn);
+			attribute<Eur> Bedrijven (Regio) := sum(Bron/Bedrijven, Regio/Per_AdminDomain_Fijn);
+			attribute<Eur> Overig    (Regio) := sum(Bron/Overig,    Regio/Per_AdminDomain_Fijn);
+			attribute<Eur> Totaal    (Regio) := Wonen + Bedrijven + Overig;
+		}
+		container PerNL
+		{
+			parameter<Eur> Wonen     := sum(Bron/Wonen);
+			parameter<Eur> Bedrijven := sum(Bron/Bedrijven);
+			parameter<Eur> Overig    := sum(Bron/Overig);
+			parameter<Eur> Totaal    := Wonen + Bedrijven + Overig;
+		}
+	}
+
+	Template Vermeden_T
+	: Descr = "Wat de maatregelen wegnemen: de schade zonder min de schade met, per groep en opgeteld. De NCW krijgt de factor van een bedrag dat in dit zichtjaar valt, zoals de overstromingsschade (#651)."
+	{
+		//
+		parameter<String> Naam;
+		container         Zonder;
+		container         Met;
+		//
+
+		attribute<Eur> Totaal (AdminDomain) := Zonder/Totaal - Met/Totaal, StorageName = "=replace(StorageStr, '@V@', Naam)", StorageType = "gdalwrite.grid"
+		, Descr = "De vermeden schade per cel, als kaart voor de levering. De tabellen lezen niet deze kaart maar de sommen van de twee situaties.";
+
+		container PerRegio
+		{
+			attribute<Eur> Wonen     (Regio) := Zonder/PerRegio/Wonen     - Met/PerRegio/Wonen;
+			attribute<Eur> Bedrijven (Regio) := Zonder/PerRegio/Bedrijven - Met/PerRegio/Bedrijven;
+			attribute<Eur> Overig    (Regio) := Zonder/PerRegio/Overig    - Met/PerRegio/Overig;
+			attribute<Eur> Totaal    (Regio) := Zonder/PerRegio/Totaal    - Met/PerRegio/Totaal;
+			attribute<Eur> Totaal_NCW (Regio) := Totaal * Verdiscontering/Factor;
+		}
+		container PerNL
+		{
+			parameter<Eur> Wonen     := Zonder/PerNL/Wonen     - Met/PerNL/Wonen;
+			parameter<Eur> Bedrijven := Zonder/PerNL/Bedrijven - Met/PerNL/Bedrijven;
+			parameter<Eur> Overig    := Zonder/PerNL/Overig    - Met/PerNL/Overig;
+			parameter<Eur> Totaal    := Zonder/PerNL/Totaal    - Met/PerNL/Totaal;
+			parameter<Eur> Totaal_NCW := Totaal * Verdiscontering/Factor;
+		}
+	}
+
+	attribute<Meter> Diepte_Zonder (AdminDomain) := WaterdiepteBijHevigeNeerslag * float32(BestaandBebouwdGebied)
+	, Descr = "De waterdiepte uit de dieptekaart van ModelParameters/Piekbuiberging/Kans_ref, op hetzelfde gebied als de opgave. Buiten dat gebied is er geen opgave en dus ook geen schade in deze indicator.";
+	attribute<Float32> FractieOngedekt (AdminDomain) := ='MakeDefined(PerGrid/Ongedekt / PerGrid/Opgave, 1f)[AdminDomain/rdc_'+Grid_ref+'_rel]'
+	, Descr = "Het deel van de opgave in het blok dat na de maatregelen overblijft. De maatregelen werken in het model op het blok, dus elke cel verliest hetzelfde aandeel van zijn diepte en de waterschijf maal het oppervlak telt op tot Ongedekt. Een blok zonder opgave krijgt 1.";
+	attribute<Meter> Diepte_Met (AdminDomain) := Diepte_Zonder * FractieOngedekt;
+
+	attribute<Meter> Diepte_Zonder_T100 (AdminDomain) := WaterdiepteBijHevigeNeerslag_T100 * float32(BestaandBebouwdGebied), Descr = "Hetzelfde als Diepte_Zonder voor de tweede bui (#828).";
+	attribute<Float32> FractieOngedekt_T100 (AdminDomain) := ='MakeDefined(TweedeBui/Ongedekt / TweedeBui/Opgave, 1f)[AdminDomain/rdc_'+Grid_ref+'_rel]';
+	attribute<Meter> Diepte_Met_T100 (AdminDomain) := Diepte_Zonder_T100 * FractieOngedekt_T100;
+
+	container Zonder := Situatie_T('Zonder', Diepte_Zonder);
+	container Met    := Situatie_T('Met', Diepte_Met);
+	container Vermeden := Vermeden_T('Vermeden', Zonder, Met);
+
+	container Zonder_T100 := Situatie_T('Zonder_T100', Diepte_Zonder_T100);
+	container Met_T100    := Situatie_T('Met_T100', Diepte_Met_T100);
+	container Vermeden_T100 := Vermeden_T('Vermeden_T100', Zonder_T100, Met_T100);
+}
