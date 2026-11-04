@@ -1,0 +1,131 @@
+container Uitlevering_20261104_Kust
+: Descr = "Uitlevering van 4 november 2026 over de overgang van landbouw naar natuur in de kustzone, voor BAU (map BAU1) en NbS-Genuanceerd (map NbSGenuanceerder).
+			Beantwoordt twee vragen: welk deel van het boerenland dat in 2120 natuur is geworden ligt in de kustzone, en hoe verdeelt dat deel zich over de
+			Zuidwestelijke Delta, het Waddengebied en de zandige kust.
+
+			De kustzone is hier de drie deelgebieden samen die het team Kust heeft aangeleverd (#654), zoals ze in SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd
+			worden gelezen. Waar de duinen een ander deelgebied overlappen, telt de cel bij de duinen. Boerenland is een hoofdklasse met IsLandbouw, natuur een hoofdklasse
+			met IsNatuur. Geteld wordt de stroom per cel: boerenland in het basisjaar dat in 2120 natuur is.
+
+			Leest de weggeschreven hoofdklassekaarten uit de LocalData en niet de items zelf, zoals Uitlevering_20261103_Krimpenerwaard; die kaarten zijn byte-gelijk aan
+			Oplevering/BAU1 en Oplevering/NbSGenuanceerder van de productierun van 10 en 11 september 2026. Het basisjaar is in beide varianten dezelfde kaart (gemeten
+			met sha256), dus het wordt een keer gelezen."
+{
+	parameter<String> Uitvoermap := '%LocalDataProjDir%/Uitlevering_20261104_Kust';
+
+	unit<uint8> Klasse := /Classifications/Grondgebruik/LU_Hoofdklasse;
+
+	attribute<Klasse> Kaart_Basisjaar (/Geography/AdminDomain)
+	: StorageName     = "='%LocalDataProjDir%/Indicatoren/WLO_hoog_BAU/LandgebruikHoofdklasse/Basisjaar_Nederland.tif'"
+	, StorageType     = "gdal.grid"
+	, StorageReadOnly = "True";
+
+	attribute<Bool> IsLandbouw_Basisjaar (/Geography/AdminDomain) := Klasse/IsLandbouw[Kaart_Basisjaar];
+	attribute<Bool> IsNatuur_Basisjaar   (/Geography/AdminDomain) := Klasse/IsNatuur[Kaart_Basisjaar];
+	attribute<Bool> IsOpKaart            (/Geography/AdminDomain) := IsDefined(Kaart_Basisjaar), Descr = "Nederland op de kaart: elke cel met een klasse in het basisjaar.";
+
+	unit<uint8> Deelgebied : nrofrows = 3
+	, Descr = "De drie deelgebieden van de kustzone, in de volgorde van de tweede vraag. De zandige kust staat voor wat de vraag de Hollandse kust noemt; dat is een aanname die in de notitie aan de opdrachtgever wordt voorgelegd."
+	{
+		attribute<String> name  : ['ZWD', 'Wadden', 'Duinen'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> Label : ['Zuidwestelijke Delta', 'Waddengebied', 'Zandige kust'], IntegrityCheck = "all(IsDefined(this))";
+	}
+
+	attribute<Deelgebied> Deelgebied_rel (/Geography/AdminDomain) :=
+		  /SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd/Duinen/IsGebied ? value(2b, Deelgebied)
+		: /SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd/Wadden/IsGebied ? value(1b, Deelgebied)
+		: /SourceData/Grondgebruik/Natuur/Bron/Kust_NbSGenuanceerd/ZWD/IsGebied    ? value(0b, Deelgebied)
+		: null_b
+	, Descr = "Deelgebied per cel van 25 m; null buiten de kustzone. De duinen gaan voor bij overlap, dan het Waddengebied, dan de Zuidwestelijke Delta.";
+
+	attribute<Bool> IsKustzone (/Geography/AdminDomain) := IsDefined(Deelgebied_rel);
+
+	Template Variant_T
+	: Descr = "Boerenland dat natuur wordt in een variant, landelijk en per deelgebied van de kustzone."
+	{
+		parameter<String> Casus;
+		///
+		attribute<Klasse> Kaart_Y2120 (/Geography/AdminDomain)
+		: StorageName     = "='%LocalDataProjDir%/Indicatoren/' + Casus + '/LandgebruikHoofdklasse/Y2120_Nederland.tif'"
+		, StorageType     = "gdal.grid"
+		, StorageReadOnly = "True";
+
+		attribute<Bool> WordtNatuur (/Geography/AdminDomain) := IsLandbouw_Basisjaar && Klasse/IsNatuur[Kaart_Y2120]
+		, Descr = "Boerenland in het basisjaar dat in 2120 natuur is.";
+
+		parameter<Units/Ha> WordtNatuur_ha           := sum(WordtNatuur ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell;
+		parameter<Units/Ha> WordtNatuur_Kustzone_ha  := sum(WordtNatuur && IsKustzone ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell;
+		attribute<Units/Ha> WordtNatuur_perDeel_ha (Deelgebied) := sum(WordtNatuur ? 1f : 0f, Deelgebied_rel) * /Geography/rdc_25m/NrHaPerCell;
+
+		// gevoeligheid voor de definities, voor hoofdstuk 4 van de notitie
+		parameter<Units/Ha> ZonderGlastuinbouw_ha    := sum(WordtNatuur && Kaart_Basisjaar != Klasse/V/Glastuinbouw ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell
+		, Descr = "Idem, zonder glastuinbouw als boerenland.";
+		parameter<Units/Ha> ZonderWater_ha           := sum(WordtNatuur && Kaart_Y2120 != Klasse/V/N02_rivieren && Kaart_Y2120 != Klasse/V/N03_beken_en_bronnen && Kaart_Y2120 != Klasse/V/N04_stilstaande_wateren ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell
+		, Descr = "Idem, zonder de drie waternatuurtypen als natuur.";
+		parameter<Units/Ha> NaarProductiebos_ha      := sum(WordtNatuur && Kaart_Y2120 == Klasse/V/N16_bossen_productie ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell;
+		parameter<Units/Ha> NaarRietPaludicultuur_ha := sum(IsLandbouw_Basisjaar && Kaart_Basisjaar != Klasse/V/Riet_paludicultuur && Kaart_Y2120 == Klasse/V/Riet_paludicultuur ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell
+		, Descr = "Ander boerenland dat in 2120 riet of paludicultuur is; telt als boerenland dat boerenland blijft.";
+	}
+
+	container BAU := Variant_T('WLO_hoog_BAU'),              Descr = "In de oplevering de map BAU1. BAU2 heeft in 2120 cel voor cel dezelfde hoofdklassekaart.";
+	container NbS := Variant_T('WLO_hoog_NbSGenuanceerder'), Descr = "In de oplevering de map NbSGenuanceerder; in de notitie heet hij NbS-Genuanceerd, zoals de opdrachtgever hem kent.";
+
+	parameter<Units/Ha> Nederland_ha            := sum(IsOpKaart ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell;
+	parameter<Units/Ha> Boerenland_Basisjaar_ha := sum(IsLandbouw_Basisjaar ? 1f : 0f) * /Geography/rdc_25m/NrHaPerCell;
+
+	unit<uint8> DeelBron := Deelgebied
+	, Descr = "Per deelgebied, gerekend los van de weggeschreven unit: een kolom van een unit met StorageName mag niet op een zusterkolom steunen."
+	{
+		attribute<Units/Ha> Raster_ha               := pcount(Deelgebied_rel)[float32] * /Geography/rdc_25m/NrHaPerCell;
+		attribute<Units/Ha> OpLand_ha               := sum(IsOpKaart ? 1f : 0f, Deelgebied_rel) * /Geography/rdc_25m/NrHaPerCell;
+		attribute<Units/Ha> Boerenland_Basisjaar_ha := sum(IsLandbouw_Basisjaar ? 1f : 0f, Deelgebied_rel) * /Geography/rdc_25m/NrHaPerCell;
+		attribute<Units/Ha> Natuur_Basisjaar_ha     := sum(IsNatuur_Basisjaar ? 1f : 0f, Deelgebied_rel) * /Geography/rdc_25m/NrHaPerCell;
+	}
+
+	unit<uint8> Kustzone := Deelgebied
+	, StorageName = "=Uitvoermap + '/Kustzone_perDeelgebied.csv'"
+	, StorageType = "gdalwrite.vect"
+	, Descr       = "Een regel per deelgebied van de kustzone, in hectare: oppervlakte op het raster en op land, boerenland en natuur in het basisjaar, en het boerenland dat in 2120 natuur is in BAU en in NbS-Genuanceerd."
+	{
+		attribute<String>   Deelgebied_naam         := /Indicatoren/AdHoc/Uitlevering_20261104_Kust/Deelgebied/Label, Descr = "Met het volledige pad, want binnen deze unit is Deelgebied de unit zelf.";
+		attribute<Units/Ha> Raster_ha               := DeelBron/Raster_ha;
+		attribute<Units/Ha> OpLand_ha               := DeelBron/OpLand_ha
+		, IntegrityCheck = "DeelBron/OpLand_ha <= DeelBron/Raster_ha";
+		attribute<Units/Ha> Boerenland_Basisjaar_ha := DeelBron/Boerenland_Basisjaar_ha;
+		attribute<Units/Ha> Natuur_Basisjaar_ha     := DeelBron/Natuur_Basisjaar_ha;
+		attribute<Units/Ha> BAU_WordtNatuur_ha      := BAU/WordtNatuur_perDeel_ha;
+		attribute<Units/Ha> NbS_WordtNatuur_ha      := NbS/WordtNatuur_perDeel_ha
+		, IntegrityCheck = "abs(sum(NbS/WordtNatuur_perDeel_ha) - NbS/WordtNatuur_Kustzone_ha) < 1[Units/Ha]"
+		, Descr          = "De toets eist dat de som over de deelgebieden gelijk is aan de kustzone als geheel; hij staat op deze kolom zodat hij meedraait met het schrijven.";
+	}
+
+	unit<uint8> Variant : nrofrows = 2
+	, Descr = "De twee varianten van de notitie, in de volgorde BAU, NbS-Genuanceerd."
+	{
+		attribute<String> Label : ['BAU (BAU1)', 'NbS-Genuanceerd (NbSGenuanceerder)'], IntegrityCheck = "all(IsDefined(this))";
+	}
+
+	unit<uint8> Landelijk := Variant
+	, StorageName = "=Uitvoermap + '/Landelijk_perVariant.csv'"
+	, StorageType = "gdalwrite.vect"
+	, Descr       = "Een regel per variant, in hectare: Nederland op de kaart, boerenland in het basisjaar, het boerenland dat natuur wordt landelijk en in de kustzone, en de gevoeligheid voor de definities."
+	{
+		attribute<String>   Variant_naam             := /Indicatoren/AdHoc/Uitlevering_20261104_Kust/Variant/Label, Descr = "Met het volledige pad, want binnen deze unit is Variant de unit zelf.";
+		attribute<Units/Ha> Nederland_ha             := const(/Indicatoren/AdHoc/Uitlevering_20261104_Kust/Nederland_ha, .);
+		attribute<Units/Ha> Boerenland_Basisjaar_ha  := const(/Indicatoren/AdHoc/Uitlevering_20261104_Kust/Boerenland_Basisjaar_ha, .);
+		attribute<Units/Ha> WordtNatuur_ha           := union_data(., BAU/WordtNatuur_ha, NbS/WordtNatuur_ha);
+		attribute<Units/Ha> WordtNatuur_Kustzone_ha  := union_data(., BAU/WordtNatuur_Kustzone_ha, NbS/WordtNatuur_Kustzone_ha);
+		attribute<Units/Ha> ZonderGlastuinbouw_ha    := union_data(., BAU/ZonderGlastuinbouw_ha, NbS/ZonderGlastuinbouw_ha);
+		attribute<Units/Ha> ZonderWater_ha           := union_data(., BAU/ZonderWater_ha, NbS/ZonderWater_ha);
+		attribute<Units/Ha> NaarProductiebos_ha      := union_data(., BAU/NaarProductiebos_ha, NbS/NaarProductiebos_ha);
+		attribute<Units/Ha> NaarRietPaludicultuur_ha := union_data(., BAU/NaarRietPaludicultuur_ha, NbS/NaarRietPaludicultuur_ha);
+	}
+
+	container Generate
+	: Descr = "Vraag dit item op om beide tabellen te schrijven. De toetsen staan als IntegrityCheck op de kolommen van Kustzone."
+	{
+		parameter<Bool> Klaar := TRUE
+		, ExplicitSuppliers = "Kustzone;Landelijk"
+		, Descr = "De twee tabellen als unit, want de csv hangt aan de unit; ze hebben geen zware subboom.";
+	}
+}
