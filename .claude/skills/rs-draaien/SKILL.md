@@ -371,6 +371,8 @@ De botsing heeft twee gezichten. Schrijvende kant: de generator verwijdert het d
 
 Een generatiestap die door een timeout van de aanroepende sessie wordt afgekapt laat een half geschreven bestand achter dat er goed uitziet: het bestaat, is niet leeg en de header leest. Een controle op lege tifs met een drempel van een paar honderd bytes laat het door. Toets na een afgebroken generatie de omvang tegen een vergelijkbaar bestand (25m tegen 25m) en forceer een echte lees met een aggregatie; het item opvragen raakt alleen de header. Geef generatiestappen en lussen met GeoDmsRun-aanroepen op een gedeelde LocalData een ruime timeout of draai ze in de achtergrond, want wordt zo'n aanroep afgekapt, dan ruimt de harness de procesboom op.
 
+Een proefrun op de gedeelde LocalData schrijft ook buiten de map van de allocatie. `/Diagnose/GenerateAll` zet 38 kaarten van het zichtjaar in `Indicatoren/<casus>/`, met hun zijbestanden 114 bestanden, en overschrijft daarmee zonder waarschuwing de kaarten van de productierun. Zet bij een proef onder een label dus ook `Indicatoren/<casus>` opzij, niet alleen `Allocatie/<casus>` en `Diagnose`, of kopieer die kaarten vooraf weg en zet ze daarna terug. Met `IndicatorenOntkoppeld` leest een later zichtjaar uit die map de ketens van zijn voorganger; opzij zetten gaat dan alleen bij het eerste zichtjaar. Welke bestanden een stap schrijft staat in de regels `storage write` van het log. Gemeten op 2026-11-04 bij #872.
+
 ### Nooit op procesnaam opruimen
 
 Een productierun kan uren beslaan en draait vaak naast andere sessies. Ruim GeoDmsRun daarom nooit op naam op:
