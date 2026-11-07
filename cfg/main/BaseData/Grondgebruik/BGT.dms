@@ -1,0 +1,315 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Wat het model afleidt uit de Basisregistratie Grootschalige Topografie die SourceData/Grondgebruik/BGT inleest (#440).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container BGT: using = "Units;Classifications;Classifications/Grondgebruik/BGT;Geography;/SourceData/RegioIndelingen"
+, Descr = "Wat het model uit de BGT afleidt: de gemiddelde verharding per BGT-klasse, de oppervlakken groen, water, bruin, verhard en exogeen per cel, de bergingscapaciteiten van de piekbuiberging en
+			de selecties met buffers voor de windrestricties en de zeef. Het inlezen van de BGT staat in SourceData/Grondgebruik/BGT (#440)."
+{
+	container Verharding_Impl
+	: Descr = "De gemiddelde verharding per BGT-klasse uit de Copernicus-verhardingskaart, als ontkoppeld bestand in LocalData met fingerprint, want de afleiding (DetermineSoilSealing per provincie)
+				is zwaar en de uitkomst hangt alleen af van de BGT-levering, het kaartjaar van de verhardingskaart, het studiegebied en de klassenlijst. Het model maakt het bestand zelf voor elk
+				studiegebied waarvoor het ontbreekt."
+	{
+		parameter<String> FileName := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/Fractie_Verhard_'+/ModelParameters/BGT_file_date+'_'+/ModelParameters/Advanced/ImperviousnessMapYear+'_'+/ModelParameters/StudyArea+'.mmd'
+		, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
+		parameter<String> Fingerprint :=
+			  'bgt_date='             + /ModelParameters/BGT_file_date
+			+ ';imperviousness_year=' + /ModelParameters/Advanced/ImperviousnessMapYear
+			+ ';study_area='          + /ModelParameters/StudyArea
+			+ ';classes='             + AsList(Classes/name, ',')
+		, Descr = "De invoeren die het bestand bepalen, ook de waarden die al in de naam zitten; de klassenlijst omdat het bestand per klasse een waarde heeft en een verschoven lijst de waarden stil zou verwisselen.";
+		container Decoupling_Avg_Verharding := /Templates/DecoupledFile_T(FileName, Fingerprint, 'Write_Avg_Verharding');
+
+		attribute<float32> Calc_Avg_Verharding  (Classes) := ='union_data(Classes, '+AsItemList('IsDefinedAndNotNoData/MaakLosseCat/'+Classes/Class_name+'/DetermineSoilSealing_PerProv/Avg_Verharding_Total')+')';
+		attribute<float32> Write_Avg_Verharding (Classes) := Calc_Avg_Verharding, StorageName = "=Decoupling_Avg_Verharding/StorageFile", Descr = "Schrijft het bestand eenmalig, zonder zijbestand; dat volgt via Make_Avg_Verharding.";
+		attribute<float32> Make_Avg_Verharding  (Classes) := Write_Avg_Verharding, ExplicitSuppliers = "Decoupling_Avg_Verharding/Write_Fingerprint"
+		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_Avg_Verharding, want alleen langs deze weg ontstaat de fingerprint (#837).";
+		attribute<float32> Read_Avg_Verharding  (Classes) : StorageName = "=Decoupling_Avg_Verharding/StorageFile", StorageReadOnly = "TRUE", Descr = "Leest het eerder weggeschreven bestand terug.";
+		attribute<float32> Avg_Verharding0      (Classes) := = Decoupling_Avg_Verharding/MayReuse ? 'Read_Avg_Verharding' : 'Make_Avg_Verharding'
+		, Descr = "De schakel die Avg_Verharding leest: klopt de fingerprint dan wordt het bestand gelezen, anders wordt er gerekend en geschreven, inclusief het zijbestand.";
+	}
+	
+	unit<UInt32> IsDefinedAndNotNoData := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData
+	, Descr = "De BGT-vlakken met een bekende klasse uit SourceData/Grondgebruik/BGT, met wat het model per vlak en per cel van ze afleidt."
+	{
+		container           MaakLosseCat                                 :=
+			for_each_ne(
+				Classes/Class_name
+				, 'MaakLosse_BGT_groepen_T('+string(id(Classes))+', IsDefinedAndNotNoData)'
+			);
+		
+		attribute<float32>  FractieGroen                                 := Classes/Fractie_Groen[visualisatiecode_rel];
+		attribute<float32>  FractieWater                                 := Classes/Fractie_Water[visualisatiecode_rel];
+		attribute<float32>  FractieBruin                                 := Classes/Fractie_Bruin[visualisatiecode_rel];
+		attribute<float32>  FractieVerhard                               := Classes/Fractie_Verhard[visualisatiecode_rel];
+		
+		attribute<float32>  FractieExogeen                               := Classes/Fractie_Exogeen[visualisatiecode_rel];
+
+		attribute<float32>  FractieHalfverhardingCapaciteit              := Classes/FractieWaterretentieCapaciteit/Halfverharding[visualisatiecode_rel]; // @Bart, nog booleans van maken. Fracties worden per variant gemaakt (voor flexibiliteit)
+		attribute<float32>  FractieHolleWegCapaciteit                    := Classes/FractieWaterretentieCapaciteit/HolleWeg[visualisatiecode_rel];
+		attribute<float32>  FractieWadiCapaciteit                        := Classes/FractieWaterretentieCapaciteit/Wadi[visualisatiecode_rel];
+		attribute<float32>  FractieHalfverhardingWijkwegCapaciteit       := Classes/FractieWaterretentieCapaciteit/HalfverhardingWijkweg[visualisatiecode_rel];
+		attribute<float32>  FractieHalfverhardingWoonerfCapaciteit       := Classes/FractieWaterretentieCapaciteit/HalfverhardingWoonerf[visualisatiecode_rel];
+		attribute<float32>  FractieHalfverhardingInritCapaciteit         := Classes/FractieWaterretentieCapaciteit/HalfverhardingInrit[visualisatiecode_rel];
+		
+		unit<uint64> per_2_5_all := poly2allgrids_uint64(geometry, rdc_2_5m)
+		{
+			attribute<float32> FractieGroen                                := IsDefinedAndNotNoData/FractieGroen[polygon_rel];
+			attribute<float32> FractieWater                                := IsDefinedAndNotNoData/FractieWater[polygon_rel];
+			attribute<float32> FractieBruin                                := IsDefinedAndNotNoData/FractieBruin[polygon_rel];
+			attribute<float32> FractieVerhard                              := IsDefinedAndNotNoData/FractieVerhard[polygon_rel];
+			attribute<float32> FractieGroen_2_5m                (rdc_2_5m) := max_elem(max(FractieGroen, grid_rel), 0f);
+			attribute<float32> FractieWater_2_5m                (rdc_2_5m) := max_elem(max(FractieWater, grid_rel), 0f);
+			attribute<float32> FractieBruin_2_5m                (rdc_2_5m) := max_elem(max(FractieBruin, grid_rel), 0f);
+			attribute<float32> FractieVerhard_2_5m              (rdc_2_5m) := max_elem(max(FractieVerhard, grid_rel), 0f);
+			attribute<meter2>  Groen_m2_2_5m                    (rdc_2_5m) := FractieGroen_2_5m * rdc_2_5m/NrMeter2PerCell;
+			attribute<meter2>  Water_m2_2_5m                    (rdc_2_5m) := FractieWater_2_5m * rdc_2_5m/NrMeter2PerCell;
+			attribute<meter2>  Bruin_m2_2_5m                    (rdc_2_5m) := FractieBruin_2_5m * rdc_2_5m/NrMeter2PerCell;
+			attribute<meter2>  Verhard_m2_2_5m                  (rdc_2_5m) := FractieVerhard_2_5m * rdc_2_5m/NrMeter2PerCell;
+			
+			attribute<float32> FractieExogeen                              := IsDefinedAndNotNoData/FractieExogeen[polygon_rel];
+			attribute<float32> FractieExogeen_2_5m              (rdc_2_5m) := max_elem(max(FractieExogeen, grid_rel), 0f);
+			attribute<meter2>  Exogeen_m2_2_5m                  (rdc_2_5m) := FractieExogeen_2_5m * rdc_2_5m/NrMeter2PerCell;
+
+			attribute<float32> FractieHalfverhardingCapaciteit             := IsDefinedAndNotNoData/FractieHalfverhardingCapaciteit[polygon_rel];
+			attribute<float32> FractieHolleWegCapaciteit                   := IsDefinedAndNotNoData/FractieHolleWegCapaciteit[polygon_rel];
+			attribute<float32> FractieWadiCapaciteit                       := IsDefinedAndNotNoData/FractieWadiCapaciteit[polygon_rel];
+			attribute<float32> FractieHalfverhardingWijkwegCapaciteit      := IsDefinedAndNotNoData/FractieHalfverhardingWijkwegCapaciteit[polygon_rel];
+			attribute<float32> FractieHalfverhardingWoonerfCapaciteit      := IsDefinedAndNotNoData/FractieHalfverhardingWoonerfCapaciteit[polygon_rel];
+			attribute<float32> FractieHalfverhardingInritCapaciteit        := IsDefinedAndNotNoData/FractieHalfverhardingInritCapaciteit[polygon_rel];
+			attribute<float32> FractieHalfverhardingCapaciteit_2_5m (rdc_2_5m) := max_elem(max(FractieHalfverhardingCapaciteit, grid_rel), 0f);
+			attribute<float32> FractieHolleWegCapaciteit_2_5m   (rdc_2_5m) := max_elem(max(FractieHolleWegCapaciteit, grid_rel), 0f);
+			attribute<float32> FractieWadiCapaciteit_2_5m       (rdc_2_5m) := max_elem(max(FractieWadiCapaciteit, grid_rel), 0f);
+			attribute<float32> FractieHalfverhardingWijkwegCapaciteit_2_5m (rdc_2_5m) := max_elem(max(FractieHalfverhardingWijkwegCapaciteit, grid_rel), 0f);
+			attribute<float32> FractieHalfverhardingWoonerfCapaciteit_2_5m (rdc_2_5m) := max_elem(max(FractieHalfverhardingWoonerfCapaciteit, grid_rel), 0f);
+			attribute<float32> FractieHalfverhardingInritCapaciteit_2_5m (rdc_2_5m) := max_elem(max(FractieHalfverhardingInritCapaciteit, grid_rel), 0f);
+			attribute<meter2>  HalfverhardingCapaciteit_m2_2_5m (rdc_2_5m) := FractieHalfverhardingCapaciteit_2_5m * rdc_2_5m/NrMeter2PerCell;
+			attribute<meter2>  HolleWegCapaciteit_m2_2_5m       (rdc_2_5m) := FractieHolleWegCapaciteit_2_5m * rdc_2_5m/NrMeter2PerCell;
+			attribute<meter2>  WadiCapaciteit_m2_2_5m           (rdc_2_5m) := FractieWadiCapaciteit_2_5m * rdc_2_5m/NrMeter2PerCell;
+			attribute<meter2>  HalfverhardingWijkwegCapaciteit_m2_2_5m (rdc_2_5m) := FractieHalfverhardingWijkwegCapaciteit_2_5m * rdc_2_5m/NrMeter2PerCell;
+			attribute<meter2>  HalfverhardingWoonerfCapaciteit_m2_2_5m (rdc_2_5m) := FractieHalfverhardingWoonerfCapaciteit_2_5m * rdc_2_5m/NrMeter2PerCell;
+			attribute<meter2>  HalfverhardingInritCapaciteit_m2_2_5m (rdc_2_5m) := FractieHalfverhardingInritCapaciteit_2_5m * rdc_2_5m/NrMeter2PerCell;
+			
+			// attribute<Bool>    IsEvidentBenut                    := IsDefinedAndNotNoData/EvidentBenut[polygon_rel];
+			// attribute<Bool>    IsEvidentBenutZon                 := IsDefinedAndNotNoData/EvidentBenutZon[polygon_rel];
+			// attribute<Bool>    IsEvidentBenut_2_5m    (rdc_2_5m) := any(IsEvidentBenut, grid_rel);
+			// attribute<Bool>    IsEvidentBenutZon_2_5m (rdc_2_5m) := any(IsEvidentBenutZon, grid_rel);
+		}
+		
+		parameter<string>   FileName_GroenOpp                            := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/GroenOpp_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_WaterOpp                            := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/WaterOpp_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_BruinOpp                            := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/BruinOpp_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_ExogeenOpp                          := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/ExogeenOpp_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_HalfverhardingCapaciteit            := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/HalfverhardingCapaciteit_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_HolleWegCapaciteit                  := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/HolleWegCapaciteit_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_WadiCapaciteit                      := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/WadiCapaciteit_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_HalfverhardingWijkwegCapaciteit     := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/HalfverhardingWijkwegCapaciteit_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_HalfverhardingWoonerfCapaciteit     := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/HalfverhardingWoonerfCapaciteit_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+		parameter<string>   FileName_HalfverhardingInritCapaciteit       := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/HalfverhardingInritCapaciteit_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif';
+ 
+		attribute<meter2>   Make_GroenOpp_AdminDomain      (AdminDomain) := sum(per_2_5_all/Groen_m2_2_5m, rdc_2_5m/rdc_25m_rel), StorageName = "=FileName_GroenOpp", StorageType = "gdalwrite.grid";
+		attribute<meter2>   Make_WaterOpp_AdminDomain      (AdminDomain) := sum(per_2_5_all/Water_m2_2_5m, rdc_2_5m/rdc_25m_rel), StorageName = "=FileName_WaterOpp", StorageType = "gdalwrite.grid";
+		attribute<meter2>   Make_BruinOpp_AdminDomain      (AdminDomain) := sum(per_2_5_all/Bruin_m2_2_5m, rdc_2_5m/rdc_25m_rel), StorageName = "=FileName_BruinOpp", StorageType = "gdalwrite.grid";
+		attribute<meter2>   Make_VerhardOpp_AdminDomain    (AdminDomain) := sum(per_2_5_all/Verhard_m2_2_5m, rdc_2_5m/rdc_25m_rel), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/VerhardOpp_'+/ModelParameters/BGT_file_date+'_Per_AdminDomain_'+/ModelParameters/StudyArea+'.tif'", StorageType = "gdalwrite.grid";
+		attribute<meter2>   Make_ExogeenOpp_AdminDomain    (AdminDomain) := sum(per_2_5_all/Exogeen_m2_2_5m, rdc_2_5m/rdc_25m_rel), StorageName = "=FileName_ExogeenOpp", StorageType = "gdalwrite.grid", Descr = "Hoeveel vierkante meter van de cel exogeen grondgebruik is volgens de BGT: spoorbaan, overweg, autosnelweg, autoweg, baan voor vliegverkeer, OV-baan en begraafplaats (#781).";
+		attribute<meter2>   ExogeenOpp_AdminDomain         (AdminDomain) : StorageName = "=FileName_ExogeenOpp", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   GroenOpp_AdminDomain           (AdminDomain) : StorageName = "=FileName_GroenOpp", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   WaterOpp_AdminDomain           (AdminDomain) : StorageName = "=FileName_WaterOpp", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   BruinOpp_AdminDomain           (AdminDomain) : StorageName = "=FileName_BruinOpp", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   VerhardOpp0_AdminDomain        (AdminDomain) : StorageName = "=PropValue(Make_VerhardOpp_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   VerhardOpp_AdminDomain         (AdminDomain) := max_elem(AdminDomain/NrMeter2PerCell - GroenOpp_AdminDomain - WaterOpp_AdminDomain - BruinOpp_AdminDomain, 0[meter2]); // @Jip, moeten we nog iets met het verschil tussen dit item en het item erboven?
+	
+		parameter<String>   Regelversie_Capaciteit                       := '757', Descr = "Versiesleutel van de zes capaciteitskaarten hieronder, met het issue van de laatste wijziging; verander hem mee met de afleiding hieronder en met de capaciteitsklassen in Classifications/Grondgebruik/BGT/Classes/FractieWaterretentieCapaciteit, anders blijft een oude kaart in gebruik (#769).";
+		parameter<String>   Fingerprint_Capaciteit                       :=
+			  'bgt_date='      + /ModelParameters/BGT_file_date
+			+ ';study_area='    + /ModelParameters/StudyArea
+			+ ';admin_domain='  + /ModelParameters/Advanced/AdminDomain_ref
+			+ ';capacity_rule=' + Regelversie_Capaciteit
+			+ ';avg_paving='    + Verharding_Impl/Fingerprint
+		, Descr = "Wat de zes capaciteitskaarten bepaalt: de BGT-levering, het studiegebied, de resolutie, de versie van de rekenregel en van de capaciteitsklassen, en de fingerprint van de gemiddelde verharding per klasse. Alleen parameters, want de keuze tussen lezen en maken staat in een meta-expressie en moet ook kunnen als de verhardingstabel nog ontbreekt (#769).";
+		attribute<meter2>   Calc_HalfverhardingCapaciteit_AdminDomain (AdminDomain) := sum(per_2_5_all/HalfverhardingCapaciteit_m2_2_5m, rdc_2_5m/rdc_25m_rel);
+		attribute<meter2>   Write_HalfverhardingCapaciteit_AdminDomain (AdminDomain) := Calc_HalfverhardingCapaciteit_AdminDomain, StorageName = "=Decoupling_HalfverhardingCapaciteit/StorageFile", StorageType = "gdalwrite.grid";
+		container           Decoupling_HalfverhardingCapaciteit          := /Templates/DecoupledFile_T(FileName_HalfverhardingCapaciteit, Fingerprint_Capaciteit, 'Write_HalfverhardingCapaciteit_AdminDomain');
+		attribute<meter2>   Make_HalfverhardingCapaciteit_AdminDomain (AdminDomain) := Write_HalfverhardingCapaciteit_AdminDomain, ExplicitSuppliers = "Decoupling_HalfverhardingCapaciteit/Write_Fingerprint";
+		attribute<meter2>   Read_HalfverhardingCapaciteit_AdminDomain (AdminDomain) : StorageName = "=Decoupling_HalfverhardingCapaciteit/StorageFile", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   HalfverhardingCapaciteit_AdminDomain (AdminDomain) := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc_HalfverhardingCapaciteit_AdminDomain' : Decoupling_HalfverhardingCapaciteit/MayReuse ? 'Read_HalfverhardingCapaciteit_AdminDomain' : 'Make_HalfverhardingCapaciteit_AdminDomain';
+		attribute<meter2>   Calc_HolleWegCapaciteit_AdminDomain (AdminDomain) := sum(per_2_5_all/HolleWegCapaciteit_m2_2_5m, rdc_2_5m/rdc_25m_rel);
+		attribute<meter2>   Write_HolleWegCapaciteit_AdminDomain (AdminDomain) := Calc_HolleWegCapaciteit_AdminDomain, StorageName = "=Decoupling_HolleWegCapaciteit/StorageFile", StorageType = "gdalwrite.grid";
+		container           Decoupling_HolleWegCapaciteit                := /Templates/DecoupledFile_T(FileName_HolleWegCapaciteit, Fingerprint_Capaciteit, 'Write_HolleWegCapaciteit_AdminDomain');
+		attribute<meter2>   Make_HolleWegCapaciteit_AdminDomain (AdminDomain) := Write_HolleWegCapaciteit_AdminDomain, ExplicitSuppliers = "Decoupling_HolleWegCapaciteit/Write_Fingerprint";
+		attribute<meter2>   Read_HolleWegCapaciteit_AdminDomain (AdminDomain) : StorageName = "=Decoupling_HolleWegCapaciteit/StorageFile", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   HolleWegCapaciteit_AdminDomain (AdminDomain) := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc_HolleWegCapaciteit_AdminDomain' : Decoupling_HolleWegCapaciteit/MayReuse ? 'Read_HolleWegCapaciteit_AdminDomain' : 'Make_HolleWegCapaciteit_AdminDomain';
+		attribute<meter2>   Calc_WadiCapaciteit_AdminDomain (AdminDomain) := sum(per_2_5_all/WadiCapaciteit_m2_2_5m, rdc_2_5m/rdc_25m_rel);
+		attribute<meter2>   Write_WadiCapaciteit_AdminDomain (AdminDomain) := Calc_WadiCapaciteit_AdminDomain, StorageName = "=Decoupling_WadiCapaciteit/StorageFile", StorageType = "gdalwrite.grid";
+		container           Decoupling_WadiCapaciteit                    := /Templates/DecoupledFile_T(FileName_WadiCapaciteit, Fingerprint_Capaciteit, 'Write_WadiCapaciteit_AdminDomain');
+		attribute<meter2>   Make_WadiCapaciteit_AdminDomain (AdminDomain) := Write_WadiCapaciteit_AdminDomain, ExplicitSuppliers = "Decoupling_WadiCapaciteit/Write_Fingerprint";
+		attribute<meter2>   Read_WadiCapaciteit_AdminDomain (AdminDomain) : StorageName = "=Decoupling_WadiCapaciteit/StorageFile", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   WadiCapaciteit_AdminDomain     (AdminDomain) := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc_WadiCapaciteit_AdminDomain' : Decoupling_WadiCapaciteit/MayReuse ? 'Read_WadiCapaciteit_AdminDomain' : 'Make_WadiCapaciteit_AdminDomain';
+		attribute<meter2>   Calc_HalfverhardingWijkwegCapaciteit_AdminDomain (AdminDomain) := sum(per_2_5_all/HalfverhardingWijkwegCapaciteit_m2_2_5m, rdc_2_5m/rdc_25m_rel);
+		attribute<meter2>   Write_HalfverhardingWijkwegCapaciteit_AdminDomain (AdminDomain) := Calc_HalfverhardingWijkwegCapaciteit_AdminDomain, StorageName = "=Decoupling_HalfverhardingWijkwegCapaciteit/StorageFile", StorageType = "gdalwrite.grid";
+		container           Decoupling_HalfverhardingWijkwegCapaciteit   := /Templates/DecoupledFile_T(FileName_HalfverhardingWijkwegCapaciteit, Fingerprint_Capaciteit, 'Write_HalfverhardingWijkwegCapaciteit_AdminDomain');
+		attribute<meter2>   Make_HalfverhardingWijkwegCapaciteit_AdminDomain (AdminDomain) := Write_HalfverhardingWijkwegCapaciteit_AdminDomain, ExplicitSuppliers = "Decoupling_HalfverhardingWijkwegCapaciteit/Write_Fingerprint";
+		attribute<meter2>   Read_HalfverhardingWijkwegCapaciteit_AdminDomain (AdminDomain) : StorageName = "=Decoupling_HalfverhardingWijkwegCapaciteit/StorageFile", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   HalfverhardingWijkwegCapaciteit_AdminDomain (AdminDomain) := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc_HalfverhardingWijkwegCapaciteit_AdminDomain' : Decoupling_HalfverhardingWijkwegCapaciteit/MayReuse ? 'Read_HalfverhardingWijkwegCapaciteit_AdminDomain' : 'Make_HalfverhardingWijkwegCapaciteit_AdminDomain';
+		attribute<meter2>   Calc_HalfverhardingWoonerfCapaciteit_AdminDomain (AdminDomain) := sum(per_2_5_all/HalfverhardingWoonerfCapaciteit_m2_2_5m, rdc_2_5m/rdc_25m_rel);
+		attribute<meter2>   Write_HalfverhardingWoonerfCapaciteit_AdminDomain (AdminDomain) := Calc_HalfverhardingWoonerfCapaciteit_AdminDomain, StorageName = "=Decoupling_HalfverhardingWoonerfCapaciteit/StorageFile", StorageType = "gdalwrite.grid";
+		container           Decoupling_HalfverhardingWoonerfCapaciteit   := /Templates/DecoupledFile_T(FileName_HalfverhardingWoonerfCapaciteit, Fingerprint_Capaciteit, 'Write_HalfverhardingWoonerfCapaciteit_AdminDomain');
+		attribute<meter2>   Make_HalfverhardingWoonerfCapaciteit_AdminDomain (AdminDomain) := Write_HalfverhardingWoonerfCapaciteit_AdminDomain, ExplicitSuppliers = "Decoupling_HalfverhardingWoonerfCapaciteit/Write_Fingerprint";
+		attribute<meter2>   Read_HalfverhardingWoonerfCapaciteit_AdminDomain (AdminDomain) : StorageName = "=Decoupling_HalfverhardingWoonerfCapaciteit/StorageFile", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   HalfverhardingWoonerfCapaciteit_AdminDomain (AdminDomain) := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc_HalfverhardingWoonerfCapaciteit_AdminDomain' : Decoupling_HalfverhardingWoonerfCapaciteit/MayReuse ? 'Read_HalfverhardingWoonerfCapaciteit_AdminDomain' : 'Make_HalfverhardingWoonerfCapaciteit_AdminDomain';
+		attribute<meter2>   Calc_HalfverhardingInritCapaciteit_AdminDomain (AdminDomain) := sum(per_2_5_all/HalfverhardingInritCapaciteit_m2_2_5m, rdc_2_5m/rdc_25m_rel);
+		attribute<meter2>   Write_HalfverhardingInritCapaciteit_AdminDomain (AdminDomain) := Calc_HalfverhardingInritCapaciteit_AdminDomain, StorageName = "=Decoupling_HalfverhardingInritCapaciteit/StorageFile", StorageType = "gdalwrite.grid";
+		container           Decoupling_HalfverhardingInritCapaciteit     := /Templates/DecoupledFile_T(FileName_HalfverhardingInritCapaciteit, Fingerprint_Capaciteit, 'Write_HalfverhardingInritCapaciteit_AdminDomain');
+		attribute<meter2>   Make_HalfverhardingInritCapaciteit_AdminDomain (AdminDomain) := Write_HalfverhardingInritCapaciteit_AdminDomain, ExplicitSuppliers = "Decoupling_HalfverhardingInritCapaciteit/Write_Fingerprint";
+		attribute<meter2>   Read_HalfverhardingInritCapaciteit_AdminDomain (AdminDomain) : StorageName = "=Decoupling_HalfverhardingInritCapaciteit/StorageFile", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
+		attribute<meter2>   HalfverhardingInritCapaciteit_AdminDomain (AdminDomain) := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc_HalfverhardingInritCapaciteit_AdminDomain' : Decoupling_HalfverhardingInritCapaciteit/MayReuse ? 'Read_HalfverhardingInritCapaciteit_AdminDomain' : 'Make_HalfverhardingInritCapaciteit_AdminDomain';
+		attribute<meter2>   DoorlatendGroenCapaciteit_AdminDomain (AdminDomain) := const(0[meter2], AdminDomain); // tijdelijk tot inout beestaande stad verwerkt
+		attribute<meter2>   BergingOpWaterCapaciteit_AdminDomain (AdminDomain) := const(0[meter2], AdminDomain); // tijdelijk tot inout beestaande stad verwerkt
+		
+		
+		unit<UInt32> IsGroenVoorziening := select_with_org_rel(visualisatiecode_rel == Classes/V/begroeidterreindeel_groenVoorziening)
+		{
+			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
+		}
+		unit<UInt32> IsSpoorbaan := select_with_org_rel(visualisatiecode_rel == Classes/V/wegdeel_Spoorbaan)
+		{
+			attribute<rdc_meter> geometry                       (poly) := ../geometry[org_rel];
+			
+			parameter<Float64>   BufferSizeSnelwegenVoorWindRestrictie := ModelParameters/Wind/BufferSizeSnelwegenVoorWindRestrictie;
+			
+			attribute<rdc_meter> WindBuffer                     (poly) := geos_buffer_multi_polygon(geometry, BufferSizeSnelwegenVoorWindRestrictie, 4b);
+			
+			attribute<Bool>      Make_Per_AdminDomain    (AdminDomain) := IsDefined(poly2grid(WindBuffer, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsSpoorwegBuffer_'+string(BufferSizeSnelwegenVoorWindRestrictie)+'m_'+/ModelParameters/BGT_file_date+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+			attribute<Bool>      Per_AdminDomain         (AdminDomain) : StorageName = "=PropValue(Make_Per_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "tif";
+		}
+		unit<UInt32> IsWaterweg := select_with_org_rel(visualisatiecode_rel == Classes/V/waterdeel_waterloop && (plus_Type == 'kanaal' || plus_Type == 'rivier' || plus_Type == 'waardeOnbekend'))
+		{
+			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
+			attribute<String>    plus_Type       := ../plus_Type[org_rel];
+		}
+	
+		unit<UInt32> IsAutoweg := select_with_org_rel(visualisatiecode_rel == Classes/V/wegdeel_rijbaan_autosnelweg )
+		{
+			attribute<rdc_meter> geometry                       (poly) := ../geometry[org_rel];
+			attribute<String>    plus_Type                             := ../plus_Type[org_rel];
+			attribute<Classes>   visualisatiecode_rel                  := ../visualisatiecode_rel[org_rel];
+			
+			parameter<Float64>   BufferSizeSnelwegenVoorWindRestrictie := ModelParameters/Wind/BufferSizeSnelwegenVoorWindRestrictie;
+			
+			attribute<rdc_meter> WindBuffer                     (poly) := geos_buffer_multi_polygon(geometry, BufferSizeSnelwegenVoorWindRestrictie, 4b);
+			
+			unit<UInt32> FixKlaverbladen := .
+			{
+				attribute<rdc_meter> KlaverbladBufferPlus        (poly) := geos_buffer_multi_polygon(geometry,  100d, 4b);
+				unit<UInt32>         union                              := geos_split_union_polygon(KlaverbladBufferPlus, visualisatiecode_rel);
+				attribute<rdc_meter> KlaverbladBufferMin  (union, poly) := geos_buffer_multi_polygon(union/geometry, -100d, 4b);
+				attribute<Bool>      Make_Per_AdminDomain (AdminDomain) := IsDefined(poly2grid(KlaverbladBufferMin, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsAutoweg_KlaverbladFix_'+ModelParameters/BGT_file_date+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+				attribute<Bool>      Per_AdminDomain      (AdminDomain) : StorageName = "=PropValue(Make_Per_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "tif";
+			}
+			attribute<Bool>      Make_Per_AdminDomain    (AdminDomain) := IsDefined(poly2grid(WindBuffer, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsAutowegBuffer_'+string(BufferSizeSnelwegenVoorWindRestrictie)+'m_'+ModelParameters/BGT_file_date+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+			attribute<Bool>      Per_AdminDomain         (AdminDomain) : StorageName = "=PropValue(Make_Per_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "tif";
+		
+			//adhoc
+			attribute<rdc_meter> SnelwegBufferWoningSloop       (poly) := geos_buffer_multi_polygon(geometry, 200d, 4b);
+			attribute<Bool>      Make_SnelwegBufferWoningSloop_AdminDomain (AdminDomain) := IsDefined(poly2grid(SnelwegBufferWoningSloop, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsAutowegBuffer_200m_'+ModelParameters/BGT_file_date+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
+			attribute<Bool>      SnelwegBufferWoningSloop_AdminDomain (AdminDomain) : StorageName = "=PropValue(Make_SnelwegBufferWoningSloop_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "tif";
+		
+		}
+		
+		unit<UInt32> IsWindturbine := select_with_org_rel(visualisatiecode_rel == Classes/V/overigbouwwerk_windturbine)
+		{
+			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
+			attribute<String>    plus_Type       := ../plus_Type[org_rel];
+		}
+	}
+	
+	Template MaakLosse_BGT_groepen_T
+	{
+		//
+		parameter<Classes> visualisatiecode_rel_base;
+		unit<UInt32>       src;
+		//
+		
+		container Source 
+		{
+			parameter<Classes> vc_rel := visualisatiecode_rel_base;
+		}
+		container          phase                := phasecontainer(source, 'MaakLosse_BGT '+string(visualisatiecode_rel_base));
+		parameter<Classes> visualisatiecode_rel := phase/vc_rel;
+		
+		unit<UInt32> vlak_org := select_with_org_rel(src/IsStudyArea && src/visualisatiecode_rel == visualisatiecode_rel)
+		{
+			attribute<rdc_meter>      geometry      (poly) := src/geometry[org_rel];
+			// parameter<rdc_meter>      geometry_union         (poly) := geos_union_polygon(geometry);
+			// attribute<.>              per_2_5m           (rdc_2_5m) := poly2grid(geometry, rdc_2_5m);
+			// attribute<bool>           per_5m               (rdc_5m) := poly2grid(geometry_union, rdc_5m);
+			// attribute<Bool>           Per_AdminDomain (AdminDomain) := Modus(IsDefined(per_2_5m), rdc_2_5m/rdc_25m_rel);
+			attribute<Classes>        visualisatiecode_rel := src/visualisatiecode_rel[org_rel];
+			
+			
+			// container verharding
+			// {
+				// attribute<Percent>        Avg_Verharding         (bool) := mean(/SourceData/Grondgebruik/Imperviousness_Map/InProcent_5m, per_5m), Descr = "Gemiddelde verharding in procenten per BGT vlak van dit type.";
+				// parameter<Percent>        Avg_Verharding_Total          := Avg_Verharding[TRUE];
+			// }
+		}
+		
+		unit<UInt32> vlak_alt := select_with_org_rel(src/IsStudyArea && src/visualisatiecode_rel2 == visualisatiecode_rel)
+		{
+			attribute<rdc_meter>      geometry      (poly) := src/geometry[org_rel];
+			// parameter<rdc_meter>      geometry_union         (poly) := geos_union_polygon(geometry);
+			attribute<Classes>        visualisatiecode_rel := src/visualisatiecode_rel2[org_rel];
+			// attribute<bool>           per_5m               (rdc_5m) := poly2grid(geometry_union, rdc_5m);
+		
+			// container verharding
+			// {
+				// attribute<Percent>        Avg_Verharding         (bool) := mean(/SourceData/Grondgebruik/Imperviousness_Map/InProcent_5m, per_5m), Descr = "Gemiddelde verharding in procenten per BGT vlak van dit type.";
+				// parameter<Percent>        Avg_Verharding_Total          := Avg_Verharding[TRUE];
+			// }
+		}
+		
+		unit<uint32> combined := union_unit(vlak_org, vlak_alt)
+		{
+			attribute<rdc_meter>      geometry               (poly) := union_data(., vlak_org/geometry, vlak_alt/geometry);
+			attribute<Classes>        visualisatiecode_rel          := union_data(., vlak_org/visualisatiecode_rel, vlak_alt/visualisatiecode_rel);
+		
+			attribute<.>              per_2_5m           (rdc_2_5m) := poly2grid(geometry, rdc_2_5m);
+			// attribute<bool>           per_5m               (rdc_5m) := poly2grid(geometry_union, rdc_5m);
+			attribute<Bool>           Per_AdminDomain (AdminDomain) := Modus(IsDefined(per_2_5m), rdc_2_5m/rdc_25m_rel);
+			
+			attribute<provincie>      provincie_rel                 := MakeDefined(point_in_polygon(centroid_or_mid(geometry), provincie/geometry), Provincie/v/Zeeland);
+		}
+		
+		container DetermineSoilSealing_PerProv := for_each_ne(Provincie/name, 'DetermineSoilSealingPerType_T('+string(id(Provincie))+')')
+		{
+			attribute<float32> Avg_Verharding (combined) := ='union_data(combined, '+AsList(Provincie/name+'/subset/Avg_Verharding', ',')+')';
+			parameter<float32> Avg_Verharding_Total      := mean(Avg_Verharding);
+		}
+	}
+	
+	Template DetermineSoilSealingPerType_T
+	{
+		//
+		parameter<provincie> prov_id;
+		//
+		
+		unit<UInt32> subset := select_with_org_rel(combined/provincie_rel = prov_id)
+		{
+			attribute<rdc_meter>      geometry (poly) := combined/geometry[org_rel];
+			attribute<.>              per_5m (rdc_5m) := poly2grid(geometry, rdc_5m);
+			
+			attribute<float32>        Avg_Verharding  := mean(/SourceData/Grondgebruik/Imperviousness_Map/InProcent_5m, per_5m)[Ratio], Descr = "Gemiddelde verharding in procenten per BGT vlak van dit type.";
+			// parameter<float32>        Avg_Verharding_Total          := mean(Avg_Verharding);
+		}
+	}
+}
