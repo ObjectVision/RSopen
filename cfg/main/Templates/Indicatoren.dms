@@ -319,13 +319,16 @@ Template Zichtjaar_T
 		, Descr = "Het groen van de landgebruikskaart van dit zichtjaar, de klassetak van de BBG-bereikbaarheid; hier en niet in BereikbaarheidGroenBBG_T, zodat een tabelrun het kan teruglezen (#824).";
 		attribute<float32>   GroenFractieCel_Live (AdminDomain) := min_elem(MakeDefined(WaardeNabijheidGroen/Fracties/NatuurCel, 0f) + MakeDefined(WaardeNabijheidGroen/Fracties/WaterCel, 0f), 1f), StorageName = "=replace(StorageStr_Invoer, '@V@', 'GroenFractieCel')", StorageType = "gdalwrite.grid"
 		, Descr = "Het groene deel van de cel, natuur plus water, begrensd op een; de fractietak van de BBG-bereikbaarheid, zonder de regiovlag die Per_GroenK_T er zelf op zet (#824).";
+		attribute<float32>   NatuurFractieCel_Live (AdminDomain) := MakeDefined(WaardeNabijheidGroen/Fracties/NatuurCel, 0f), StorageName = "=replace(StorageStr_Invoer, '@V@', 'NatuurFractieCel')", StorageType = "gdalwrite.grid"
+		, Descr = "Het natuurdeel van de cel zonder water, gelezen door Normtoets (#400): een meer of de zee is geen groenplek en telt niet als groen per woning.";
 		container Lees
-		: Descr = "De vier invoerkaarten van dit zichtjaar teruggelezen, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de _Live-items hierboven."
+		: Descr = "De vijf invoerkaarten van dit zichtjaar teruggelezen, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de _Live-items hierboven."
 		{
 			attribute<Woning>  Woningen0       (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenTotaal')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
 			attribute<Woning>  Woningen        (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenGealloceerd')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
 			attribute<GroenK>  Groen           (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'Groen')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
 			attribute<float32> GroenFractieCel (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'GroenFractieCel')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			attribute<float32> NatuurFractieCel (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'NatuurFractieCel')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
 		}
 		container Live
 		{
@@ -333,6 +336,7 @@ Template Zichtjaar_T
 			attribute<Woning>  Woningen        (AdminDomain) := BereikbaarheidGroen/Woningen_Live;
 			attribute<GroenK>  Groen           (AdminDomain) := BereikbaarheidGroen/Groen_Live;
 			attribute<float32> GroenFractieCel (AdminDomain) := BereikbaarheidGroen/GroenFractieCel_Live;
+			attribute<float32> NatuurFractieCel (AdminDomain) := BereikbaarheidGroen/NatuurFractieCel_Live;
 		}
 		container            Bron                               := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Live'
 		, Descr = "Waar de sjablonen hun invoer vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824).";
@@ -340,6 +344,7 @@ Template Zichtjaar_T
 		attribute<Woning>    Woningen             (AdminDomain) := Bron/Woningen;
 		attribute<GroenK>    Groen                (AdminDomain) := Bron/Groen;
 		attribute<float32>   GroenFractieCel      (AdminDomain) := Bron/GroenFractieCel;
+		attribute<float32>   NatuurFractieCel     (AdminDomain) := Bron/NatuurFractieCel;
 		
 		parameter<Float32>   FractieGroenWerken                 := 1f - min_elem(VariantParameters/FractiesGroenInWerken/Default/Verhard * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f);
 		parameter<Float32>   FractieGroenVerblijfsrecreatie     := 1f - min_elem(VariantParameters/FractiesGroenInVerblijfsrecreatie/Default/Verhard * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f);
@@ -378,8 +383,42 @@ Template Zichtjaar_T
 		
 		container            obv_BBG                            := Templates/Indicatoren/BereikbaarheidGroenBBG_T(..);
 		container            obv_BGT                            := Templates/Indicatoren/BereikbaarheidGroenBGT_T(..);
+
+		container Normtoets
+		: Descr = "Het groen getoetst aan twee referenties uit #400, met de waarden in ModelParameters/Indicatoren/Groennorm; de indicatorentabel telt de cellen per regio op. Beschikbaarheid: hoeveel m2 groen
+					een woning heeft binnen de straal, als ze dat groen deelt met alle woningen die het binnen dezelfde straal hebben, tegenover 75 m2 per woning; over een regio gemiddeld is dat het groen bij de
+					woningen gedeeld door de woningen, de gebiedsmaat van de referentie. Bereikbaarheid: of er binnen de straal een groenplek van minstens MinOppervlakteGroenplek ligt (3+30+300). Beide tellen
+					alle woningen en niet alleen die op gealloceerde cellen, zoals Woningen in de sjablonen doet. Het groen van een cel is de ruimste van de twee bestaande maten: de klassetak (de hele cel als
+					de landgebruikskaart er groen behalve agrarisch heeft, zodat stadsparken, sportvelden en volkstuinen meetellen) en de natuurfractie uit Groenfracties_T, zonder water (zodat nieuwe natuur
+					en het groen in een ontwikkelpakket meetellen, #696, en een meer of de zee niet). Openbaar of prive is in geen van beide bronnen te onderscheiden, dus de referentie van 50 m2 openbaar groen per inwoner staat er niet in."
+		{
+			parameter<String> Kern := '/Geography/Distmatrices/Impl_25m/pot' + string(/ModelParameters/Indicatoren/Groennorm/Straal) + 'm/potrange/Flat2', Descr = "De schijf van de straal, hemelsbreed.";
+
+			attribute<Woning>  Woningen   (AdminDomain) := MakeDefined(Woningen0, 0[Woning]), Descr = "Alle woningen van de cel.";
+			attribute<Bool>    IsGroenKlasse (AdminDomain) := IsDefined(Groen) && Groen != GroenK/V/overige_agrarisch_gebruik, Descr = "Groen op de landgebruikskaart, dezelfde selectie als TotaalExAgrarisch in de klassetak.";
+			attribute<Float32> Fractie    (AdminDomain) := max_elem(float32(IsGroenKlasse), MakeDefined(NatuurFractieCel, 0f)), Descr = "Het groene deel van de cel: de ruimste van klassetak en natuurfractie.";
+			attribute<meter2>  Groen_m2   (AdminDomain) := Fractie * AdminDomain/NrMeter2PerCell;
+
+			attribute<Woning>    WoningenInOmgeving (AdminDomain) := ='potential(Woningen, ' + Kern + ')[Woning]', Descr = "De woningen binnen de straal van de cel.";
+			attribute<m2_Woning> AandeelPerWoning   (AdminDomain) := WoningenInOmgeving > 0[Woning] ? Groen_m2 / WoningenInOmgeving : 0[m2_Woning], Descr = "Wat het groen van de cel aan elke woning in de omgeving bijdraagt.";
+			attribute<m2_Woning> GroenInOmgevingPerWoning (AdminDomain) := ='potential(AandeelPerWoning, ' + Kern + ')[m2_Woning]';
+			attribute<m2_Woning> GroenPerWoning     (AdminDomain) := Woningen > 0[Woning] ? GroenInOmgevingPerWoning : 0[m2_Woning] / 0f
+			, Descr = "De beschikbaarheid: het groen binnen de straal per woning, gedeeld met de woningen eromheen; leeg in een cel zonder woningen. Over alle woningen opgeteld komt het groen bij de woningen er precies een keer in.";
+			attribute<Bool>      OnderReferentie    (AdminDomain) := GroenPerWoning < /ModelParameters/Indicatoren/Groennorm/GroenPerWoning;
+
+			attribute<Bool> IsGroenplekCel (AdminDomain) := Fractie >= 0.5f && MakeDefined(Woningen0, 0[Woning]) <= /ModelParameters/Indicatoren/MaxWoningenInGroen * AdminDomain/NrHaPerCell
+			, Descr = "Een cel die tot een groenplek kan horen: voor minstens de helft groen, en met hooguit zoveel woningen als de klassetak in groen toelaat.";
+			unit<UInt32> Groenplek := district_8(uint32(IsGroenPlekCel))
+			, Descr = "De aaneengesloten groengebieden, met 8-connectiviteit zoals in de klassetak."
+			{
+				attribute<ha> Oppervlakte := pcount(Districts)[float32] * AdminDomain/NrHaPerCell;
+			}
+			attribute<Bool> IsGroenplek (AdminDomain) := IsGroenplekCel && Groenplek/Oppervlakte[Groenplek/Districts] >= /ModelParameters/Indicatoren/Groennorm/MinOppervlakteGroenplek;
+			attribute<Bool> GroenplekBinnenStraal (AdminDomain) := ='potential(float32(IsGroenplek), ' + Kern + ') > 0f'
+			, Descr = "De bereikbaarheid: ligt er binnen de straal een groenplek?";
+		}
 	}
-	
+
 	#include<Verharding.dms>
 	#include<Piekbuiberging.dms>
 	#include<Regenwaterhergebruik.dms>
