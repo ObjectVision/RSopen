@@ -13,7 +13,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container Schade
-: Descr = "De directe schade door een piekbui en wat de bergingsmaatregelen daarvan wegnemen (#875). Alleen het natte deel van een cel krijgt schade, bij de diepte die daar staat. Per bui rekent dezelfde regel twee keer: Zonder bij de diepte uit de dieptekaart, Met bij de diepte die overblijft na de maatregelen; de vermeden schade is het verschil van die twee, want de schadefuncties lopen niet recht (#851). Bedragen, functies en blootstelling zijn die van de SSM-tabel voor het regionale watersysteem, die geen bedrijfsuitval rekent, met dezelfde voorbehouden als de overstromingsschade. Het is de schade als de bui overal tegelijk valt en geen verwachte schade per jaar. Op hetzelfde gebied als de opgave (GebiedMetOpgave)."
+: Descr = "De directe schade door een piekbui en wat de bergingsmaatregelen daarvan wegnemen (#875). Alleen het natte deel van een cel krijgt schade, bij de diepte die daar staat. Per bui rekent dezelfde regel twee keer: Zonder bij de diepte uit de dieptekaart, Met bij de diepte die overblijft na de maatregelen; de vermeden schade is het verschil van die twee, want de schadefuncties lopen niet recht (#851). Bedragen, functies en blootstelling zijn die van de SSM-tabel voor het regionale watersysteem, die geen bedrijfsuitval rekent, met dezelfde voorbehouden als de overstromingsschade; alleen bedrijven tellen hier het vloeroppervlak op de begane grond en niet alle verdiepingen (#875). De schadefunctie per categorie komt uit de kolom Function van die tabel, zodat een nieuwe functie van Deltares een nieuw bestand en een ander nummer is. Het is de schade als de bui overal tegelijk valt en geen verwachte schade per jaar. Op hetzelfde gebied als de opgave (GebiedMetOpgave)."
 , Source = "Bedragen en functies: Slager, K. (2016), Technische documentatie SSM2015, Deltares 1230095-004-HYE-0009, tabel RegionaalBinnendijks in SSM2017_Overstromingsschades/Parameters.dms. De keuze voor SSM en tegen de WaterSchadeSchatter is van Deltares (#875)."
 {
 	unit<UInt8> SSM := Overstromingsschade/Parameters/RegionaalBinnendijks
@@ -35,6 +35,11 @@ container Schade
 			: SSM/Categorie == 'Bedrijven'                                               ? Groep/V/Bedrijven
 			:                                                                              Groep/V/Overig;
 		attribute<String> FunctieGroep := 'F' + string(SSM/Function) + '_' + Groep/name[Groep_rel];
+		attribute<String> Blootstelling :=
+			Groep_rel == Groep/V/Bedrijven
+				? 'Overstromingsschade/' + replace(SSM/Path, '/Bedrijven/', '/BedrijvenBeganeGrond/')
+				: 'Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/η_i'
+		, Descr = "Hoeveel eenheden van de categorie in de cel staan. Bedrijven tellen alleen het vloeroppervlak op de begane grond (Grondgebruik/<jaar>/BedrijvenBeganeGrond, #875), want bij een piekbui wordt alleen die nat; de SSM telt bij een overstroming alle verdiepingen. De andere categorieen lezen de blootstelling van de overstromingsschade.";
 	}
 
 	unit<UInt8> FunctieGroep := unique(CategorieInfo/FunctieGroep)
@@ -89,12 +94,20 @@ container Schade
 			attribute<Float32> Bedrijven (AdminDomain) := (IsDefined(Diepte) ? (Diepte <= Overstromingsschade/Grondgebruik/Zichtjaar/SchadevrijeDiepte_Werken    ? 0[Meter] : max_elem(Diepte - Overstromingsschade/Grondgebruik/Zichtjaar/Verschuiving_Werken    - Vloerpeil, 0[Meter])) : Diepte)[Float32] * 100f;
 		}
 
+		container Restschade
+		: Descr = "Welk deel van de gewone schade per groep overblijft, bij wet proof bouwen tot de grensdiepte van die bouwwijze (#854), op dezelfde manier als de overstromingsschade; een waar geen restschadefactor geldt."
+		{
+			attribute<Float32> Wonen     (AdminDomain) := MakeDefined(Diepte <= Overstromingsschade/Grondgebruik/Zichtjaar/RestschadeTotDiepte_Nieuwbouw ? Overstromingsschade/Grondgebruik/Zichtjaar/Restschadefactor_Nieuwbouw : 1f, 1f);
+			attribute<Float32> Bedrijven (AdminDomain) := MakeDefined(Diepte <= Overstromingsschade/Grondgebruik/Zichtjaar/RestschadeTotDiepte_Werken    ? Overstromingsschade/Grondgebruik/Zichtjaar/Restschadefactor_Werken    : 1f, 1f);
+			attribute<Float32> Overig    (AdminDomain) := const(1f, AdminDomain);
+		}
+
 		container Factor := for_each_ne(FunctieGroep/name, 'Factor_T(' + quote(FunctieGroep/Functie) + ', ' + quote(FunctieGroep/GroepN) + ')');
 
 		container PerCategorie :=
 			for_each_nedv(
 				  SSM/name
-				, 'Factor/' + CategorieInfo/FunctieGroep + '/Resultaat * Fractie * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/η_i * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/s_i'
+				, 'Factor/' + CategorieInfo/FunctieGroep + '/Resultaat * Restschade/' + Groep/name[CategorieInfo/Groep_rel] + ' * Fractie * ' + CategorieInfo/Blootstelling + ' * Overstromingsschade/Resultaat/Regionaalwatersysteem_Binnendijks/' + SSM/name + '/s_i'
 				, AdminDomain
 				, Eur
 			);
