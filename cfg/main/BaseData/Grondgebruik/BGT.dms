@@ -12,13 +12,13 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container BGT: using = "Units;Classifications;Classifications/Grondgebruik/BGT;Geography;/SourceData/RegioIndelingen"
-, Descr = "Wat het model uit de BGT afleidt: de gemiddelde verharding per BGT-klasse, de oppervlakken groen, water, bruin, verhard en exogeen per cel, de bergingscapaciteiten van de piekbuiberging en
+, Descr = "Wat het model uit de BGT afleidt: de gemiddelde verharding en de fracties groen, water, bruin en verhard per BGT-klasse, de oppervlakken groen, water, bruin, verhard en exogeen per cel, de bergingscapaciteiten van de piekbuiberging en
 			de selecties met buffers voor de windrestricties en de zeef. Het inlezen van de BGT staat in SourceData/Grondgebruik/BGT (#440)."
 {
 	container Verharding_Impl
 	: Descr = "De gemiddelde verharding per BGT-klasse uit de Copernicus-verhardingskaart, als ontkoppeld bestand in LocalData met fingerprint, want de afleiding (DetermineSoilSealing per provincie)
 				is zwaar en de uitkomst hangt alleen af van de BGT-levering, het kaartjaar van de verhardingskaart, het studiegebied en de klassenlijst. Het model maakt het bestand zelf voor elk
-				studiegebied waarvoor het ontbreekt."
+				studiegebied waarvoor het ontbreekt. De attributen staan op /Classifications/Grondgebruik/BGT/Classes zelf en niet op de unit Classes hieronder: de mmd schrijft de naam van zijn domein in zijn woordenboek, en zo hangt het bestand niet af van waar de fracties staan."
 	{
 		parameter<String> FileName := '%LocalDataProjDir%/BaseData/Grondgebruik/BGT/Fractie_Verhard_'+/ModelParameters/BGT_file_date+'_'+/ModelParameters/Advanced/ImperviousnessMapYear+'_'+/ModelParameters/StudyArea+'.mmd'
 		, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
@@ -30,13 +30,94 @@ container BGT: using = "Units;Classifications;Classifications/Grondgebruik/BGT;G
 		, Descr = "De invoeren die het bestand bepalen, ook de waarden die al in de naam zitten; de klassenlijst omdat het bestand per klasse een waarde heeft en een verschoven lijst de waarden stil zou verwisselen.";
 		container Decoupling_Avg_Verharding := /Templates/DecoupledFile_T(FileName, Fingerprint, 'Write_Avg_Verharding');
 
-		attribute<float32> Calc_Avg_Verharding  (Classes) := ='union_data(Classes, '+AsItemList('IsDefinedAndNotNoData/MaakLosseCat/'+Classes/Class_name+'/DetermineSoilSealing_PerProv/Avg_Verharding_Total')+')';
-		attribute<float32> Write_Avg_Verharding (Classes) := Calc_Avg_Verharding, StorageName = "=Decoupling_Avg_Verharding/StorageFile", Descr = "Schrijft het bestand eenmalig, zonder zijbestand; dat volgt via Make_Avg_Verharding.";
-		attribute<float32> Make_Avg_Verharding  (Classes) := Write_Avg_Verharding, ExplicitSuppliers = "Decoupling_Avg_Verharding/Write_Fingerprint"
+		attribute<float32> Calc_Avg_Verharding  (/Classifications/Grondgebruik/BGT/Classes) := ='union_data(/Classifications/Grondgebruik/BGT/Classes, '+AsItemList('IsDefinedAndNotNoData/MaakLosseCat/'+Classes/Class_name+'/DetermineSoilSealing_PerProv/Avg_Verharding_Total')+')';
+		attribute<float32> Write_Avg_Verharding (/Classifications/Grondgebruik/BGT/Classes) := Calc_Avg_Verharding, StorageName = "=Decoupling_Avg_Verharding/StorageFile", Descr = "Schrijft het bestand eenmalig, zonder zijbestand; dat volgt via Make_Avg_Verharding.";
+		attribute<float32> Make_Avg_Verharding  (/Classifications/Grondgebruik/BGT/Classes) := Write_Avg_Verharding, ExplicitSuppliers = "Decoupling_Avg_Verharding/Write_Fingerprint"
 		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_Avg_Verharding, want alleen langs deze weg ontstaat de fingerprint (#837).";
-		attribute<float32> Read_Avg_Verharding  (Classes) : StorageName = "=Decoupling_Avg_Verharding/StorageFile", StorageReadOnly = "TRUE", Descr = "Leest het eerder weggeschreven bestand terug.";
-		attribute<float32> Avg_Verharding0      (Classes) := = Decoupling_Avg_Verharding/MayReuse ? 'Read_Avg_Verharding' : 'Make_Avg_Verharding'
+		attribute<float32> Read_Avg_Verharding  (/Classifications/Grondgebruik/BGT/Classes) : StorageName = "=Decoupling_Avg_Verharding/StorageFile", StorageReadOnly = "TRUE", Descr = "Leest het eerder weggeschreven bestand terug.";
+		attribute<float32> Avg_Verharding0      (/Classifications/Grondgebruik/BGT/Classes) := = Decoupling_Avg_Verharding/MayReuse ? 'Read_Avg_Verharding' : 'Make_Avg_Verharding'
 		, Descr = "De schakel die Avg_Verharding leest: klopt de fingerprint dan wordt het bestand gelezen, anders wordt er gerekend en geschreven, inclusief het zijbestand.";
+	}
+	
+	unit<UInt32> Classes := /Classifications/Grondgebruik/BGT/Classes
+	, Descr = "De BGT-klassen uit Classifications/Grondgebruik/BGT met wat het model per klasse afleidt: de gemiddelde verharding uit de Copernicus-verhardingskaart, de fracties groen, water,
+				bruin en verhard, en de capaciteiten voor de piekbuiberging. De kentallen waar ze op rusten, de verdeling van het onverharde deel en het exogene grondgebruik, staan bij de klassen (#440)."
+	{
+		attribute<float32> Avg_Verharding := switch(
+			 case(id(.) == V/waterdeel_watervlakte, 0f)
+			,case(id(.) == V/waterdeel_zee, 0f)
+			,case(id(.) == V/pand_waardeonbekend, null_f)
+			,case(id(.) == V/functioneelgebied_functioneel_beheer, null_f)
+			,case(id(.) == V/functioneelgebied_functioneel_beheer_hondenuitlaatplaats, null_f)
+			,case(id(.) == V/functioneelgebied_waardeOnbekend, null_f)
+			,case(id(.) == V/functioneelgebied_infrastructuur_verkeer_en_vervoer, null_f)
+			,case(id(.) == V/functioneelgebied_infrastructuur_waterstaatswerken, null_f)
+			,case(id(.) == V/functioneelgebied_Landbouw, null_f)
+			,case(id(.) == V/functioneelgebied_maatschappelijke_en_of_publieksVoorziening, null_f)
+			,case(id(.) == V/functioneelgebied_natuur_en_landschap, null_f)
+			,case(id(.) == V/functioneelgebied_waterbergingsgebied, null_f)
+			,case(id(.) == V/functioneelgebied_recreatie_park, null_f)
+			,Verharding_Impl/Avg_Verharding0
+		);
+		
+		attribute<float32> Fractie_GroenWaterBruin := 1f - Avg_Verharding;
+		
+		attribute<float32> Fractie_Groen           := Fractie_GroenWaterBruin * Fractie_Onverhard_Groen;
+		attribute<float32> Fractie_Water           := Fractie_GroenWaterBruin * Fractie_Onverhard_Water;
+		attribute<float32> Fractie_Bruin           := Fractie_GroenWaterBruin * Fractie_Onverhard_Bruin;
+		attribute<float32> Fractie_Verhard         := Avg_Verharding;
+		
+		attribute<float32> Check := Fractie_Verhard + Fractie_Groen +Fractie_Water + Fractie_Bruin;
+		
+		container FractieWaterretentieCapaciteit // Dit is de maximum extra capacitreit tov basisjaar. Moet nog vermenigvuldigd met variant-specifieke fracties die aangeven welk deel van bijv. lokale wegen hol kan zijn. OpDaken nog toevoegen.
+		{
+			attribute<float32> Halfverharding (..) := switch(
+				case(id(..) == V/functioneelgebied_recreatie_volkstuin, 1f),
+				case(id(..) == V/functioneelgebied_recreatie_sportterrein, 1f),
+				case(id(..) == V/functioneelgebied_recreatie_bungalowpark, 1f),
+				case(id(..) == V/functioneelgebied_recreatie_camping, 1f),
+				case(id(..) == V/functioneelgebied_recreatie_speeltuin, 1f),
+				case(id(..) == V/functioneelgebied_begraafplaats, 1f),
+				case(id(..) == V/onbegroeidterreindeel_gesloten_verharding, 1f),
+				case(id(..) == V/onbegroeidterreindeel_open_verharding, 1f),
+				case(id(..) == V/wegdeel_fietspad, 1f),
+				case(id(..) == V/wegdeel_parkeervlak, 1f),
+				case(id(..) == V/wegdeel_voetgangersgebied, 1f),
+				case(id(..) == V/wegdeel_voetpad, 1f),
+				0f
+			) * Fractie_Verhard;
+			
+			attribute<float32> HolleWeg (..) := switch(
+				case(id(..) == V/wegdeel_OV_baan, 1f),
+				case(id(..) == V/wegdeel_rijbaan_lokale_weg, 1f),
+				0f
+			) * Fractie_Verhard;
+
+			// De drie kaarten hieronder staan er sinds #757, naar de uitspraken van team Stad van Deltares. Ze dragen
+			// hetzelfde kental als Halfverharding maar een eigen aandeel per variant, en daarom een eigen kaart: de
+			// klassenkaart wordt weggeschreven voordat de variant bekend is. De wijkweg staat ook in HolleWeg hierboven;
+			// dat is bedoeld, want een wijkweg kan tegelijk halfverhard en hol zijn.
+			attribute<float32> HalfverhardingWijkweg (..) := switch(
+				case(id(..) == V/wegdeel_OV_baan, 1f),
+				case(id(..) == V/wegdeel_rijbaan_lokale_weg, 1f),
+				0f
+			) * Fractie_Verhard;
+
+			attribute<float32> HalfverhardingWoonerf (..) := switch(
+				case(id(..) == V/wegdeel_woonerf, 1f),
+				0f
+			) * Fractie_Verhard;
+
+			attribute<float32> HalfverhardingInrit (..) := switch(
+				case(id(..) == V/wegdeel_inrit, 1f),
+				0f
+			) * Fractie_Verhard;
+			
+			attribute<float32> Wadi (..) := switch(
+				case(id(..) == V/begroeidterreindeel_groenvoorziening, 1f),
+				0f
+			) * Fractie_Groen;
+		}
 	}
 	
 	unit<UInt32> IsDefinedAndNotNoData := /SourceData/Grondgebruik/BGT/IsDefinedAndNotNoData
@@ -129,7 +210,7 @@ container BGT: using = "Units;Classifications;Classifications/Grondgebruik/BGT;G
 		attribute<meter2>   VerhardOpp0_AdminDomain        (AdminDomain) : StorageName = "=PropValue(Make_VerhardOpp_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "gdal.grid";
 		attribute<meter2>   VerhardOpp_AdminDomain         (AdminDomain) := max_elem(AdminDomain/NrMeter2PerCell - GroenOpp_AdminDomain - WaterOpp_AdminDomain - BruinOpp_AdminDomain, 0[meter2]); // @Jip, moeten we nog iets met het verschil tussen dit item en het item erboven?
 	
-		parameter<String>   Regelversie_Capaciteit                       := '757', Descr = "Versiesleutel van de zes capaciteitskaarten hieronder, met het issue van de laatste wijziging; verander hem mee met de afleiding hieronder en met de capaciteitsklassen in Classifications/Grondgebruik/BGT/Classes/FractieWaterretentieCapaciteit, anders blijft een oude kaart in gebruik (#769).";
+		parameter<String>   Regelversie_Capaciteit                       := '757', Descr = "Versiesleutel van de zes capaciteitskaarten hieronder, met het issue van de laatste wijziging; verander hem mee met de afleiding hieronder en met de capaciteitsklassen in BaseData/Grondgebruik/BGT/Classes/FractieWaterretentieCapaciteit, anders blijft een oude kaart in gebruik (#769).";
 		parameter<String>   Fingerprint_Capaciteit                       :=
 			  'bgt_date='      + /ModelParameters/BGT_file_date
 			+ ';study_area='    + /ModelParameters/StudyArea
@@ -177,10 +258,6 @@ container BGT: using = "Units;Classifications;Classifications/Grondgebruik/BGT;G
 		attribute<meter2>   BergingOpWaterCapaciteit_AdminDomain (AdminDomain) := const(0[meter2], AdminDomain); // tijdelijk tot inout beestaande stad verwerkt
 		
 		
-		unit<UInt32> IsGroenVoorziening := select_with_org_rel(visualisatiecode_rel == Classes/V/begroeidterreindeel_groenVoorziening)
-		{
-			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
-		}
 		unit<UInt32> IsSpoorbaan := select_with_org_rel(visualisatiecode_rel == Classes/V/wegdeel_Spoorbaan)
 		{
 			attribute<rdc_meter> geometry                       (poly) := ../geometry[org_rel];
@@ -191,11 +268,6 @@ container BGT: using = "Units;Classifications;Classifications/Grondgebruik/BGT;G
 			
 			attribute<Bool>      Make_Per_AdminDomain    (AdminDomain) := IsDefined(poly2grid(WindBuffer, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsSpoorwegBuffer_'+string(BufferSizeSnelwegenVoorWindRestrictie)+'m_'+/ModelParameters/BGT_file_date+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
 			attribute<Bool>      Per_AdminDomain         (AdminDomain) : StorageName = "=PropValue(Make_Per_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "tif";
-		}
-		unit<UInt32> IsWaterweg := select_with_org_rel(visualisatiecode_rel == Classes/V/waterdeel_waterloop && (plus_Type == 'kanaal' || plus_Type == 'rivier' || plus_Type == 'waardeOnbekend'))
-		{
-			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
-			attribute<String>    plus_Type       := ../plus_Type[org_rel];
 		}
 	
 		unit<UInt32> IsAutoweg := select_with_org_rel(visualisatiecode_rel == Classes/V/wegdeel_rijbaan_autosnelweg )
@@ -218,18 +290,6 @@ container BGT: using = "Units;Classifications;Classifications/Grondgebruik/BGT;G
 			}
 			attribute<Bool>      Make_Per_AdminDomain    (AdminDomain) := IsDefined(poly2grid(WindBuffer, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsAutowegBuffer_'+string(BufferSizeSnelwegenVoorWindRestrictie)+'m_'+ModelParameters/BGT_file_date+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
 			attribute<Bool>      Per_AdminDomain         (AdminDomain) : StorageName = "=PropValue(Make_Per_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "tif";
-		
-			//adhoc
-			attribute<rdc_meter> SnelwegBufferWoningSloop       (poly) := geos_buffer_multi_polygon(geometry, 200d, 4b);
-			attribute<Bool>      Make_SnelwegBufferWoningSloop_AdminDomain (AdminDomain) := IsDefined(poly2grid(SnelwegBufferWoningSloop, AdminDomain)), StorageName = "='%LocalDataProjDir%/BaseData/Grondgebruik/BGT/IsAutowegBuffer_200m_'+ModelParameters/BGT_file_date+'_'+/ModelParameters/StudyArea+'.tif'", StorageType = "tif";
-			attribute<Bool>      SnelwegBufferWoningSloop_AdminDomain (AdminDomain) : StorageName = "=PropValue(Make_SnelwegBufferWoningSloop_AdminDomain, 'StorageName')", StorageReadOnly = "TRUE", StorageType = "tif";
-		
-		}
-		
-		unit<UInt32> IsWindturbine := select_with_org_rel(visualisatiecode_rel == Classes/V/overigbouwwerk_windturbine)
-		{
-			attribute<rdc_meter> geometry (poly) := ../geometry[org_rel];
-			attribute<String>    plus_Type       := ../plus_Type[org_rel];
 		}
 	}
 	
