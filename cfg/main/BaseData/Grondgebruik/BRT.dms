@@ -1,0 +1,53 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Wat het model afleidt uit de Basisregistratie Topografie die SourceData/Grondgebruik/BRT inleest (#440).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container BRT: using = "Units;Geography;Classifications;Classifications/Grondgebruik"
+, Descr = "Wat het model uit de BRT afleidt: welke cellen in een woonkern liggen, als ontkoppelde tif op AdminDomain; de functioneelgebieden voor evident benut leest de evident-benut-kaart zelf (#872). Het
+			inlezen van de BRT staat in SourceData/Grondgebruik/BRT (#440)."
+{
+	unit<UInt32> IsWoonkern := /SourceData/Grondgebruik/BRT/Compleet/MaakLosseCat_plaats/Plaats_woonkern/combined_vlak
+	{
+		attribute<rdc_meter> geometry             (poly)        := /SourceData/Grondgebruik/BRT/Compleet/MaakLosseCat_plaats/Plaats_woonkern/combined_vlak/geometry;
+		attribute<bool>      Calc_Per_AdminDomain (AdminDomain) := IsDefined(poly2grid(geometry, AdminDomain)), Descr = "De vergridding zelf, met dezelfde expressie als voor de ontkoppeling: elke cel die door een woonkernvlak van de BRT wordt geraakt.";
+
+		parameter<String> FileName_Per_AdminDomain := '%LocalDataProjDir%/BaseData/Grondgebruik/BRT/IsWoonkern_'+/ModelParameters/BRT_file_date+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
+
+		unit<UInt32> SelectieCodes := select_with_org_rel(lowercase(/SourceData/Grondgebruik/BRT/BRT_Classifications/Label) == 'plaats - woonkern')
+		, Descr = "De visualisatiecodes die het woonkernlabel dragen. Deze set zit in de fingerprint omdat een gewijzigde toewijzing van codes aan dit label de selectie verandert zonder de bestandsnaam te raken."
+		{
+			attribute<Int32> code := /SourceData/Grondgebruik/BRT/BRT_Classifications/code[org_rel];
+		}
+
+		parameter<String> Fingerprint_Per_AdminDomain :=
+			  'brt_date='         + /ModelParameters/BRT_file_date
+			+ ';study_area='      + /ModelParameters/StudyArea
+			+ ';admin_grid='      + /ModelParameters/Advanced/AdminDomain_ref
+			+ ';grid_size='       + string(AdminDomain/gridsize)
+			+ ';source_layers=plaats_vlak,plaats_multivlak'
+			+ ';selection_label=plaats - woonkern'
+			+ ';selection_codes=' + asList(string(SelectieCodes/code), ',')
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. brt_date is de vintage van de gpkg; admin_grid en grid_size vangen dat een andere
+				rasterresolutie een ander bestand onder dezelfde naam zou opleveren; source_layers en selection_label liggen vast in de configuratie en staan hier als leesbaar verslag; selection_codes komt
+				uit de klassentabel en beweegt mee wanneer die toewijzing wijzigt.";
+
+		container Decoupling_Per_AdminDomain := /Templates/DecoupledFile_T(FileName_Per_AdminDomain, Fingerprint_Per_AdminDomain, 'Write_Per_AdminDomain');
+
+		attribute<bool>      Write_Per_AdminDomain (AdminDomain) := Calc_Per_AdminDomain, StorageName = "=Decoupling_Per_AdminDomain/StorageFile", StorageType = "tif", Descr = "Schrijft de vergridding eenmalig als tif, zonder zijbestand; dat volgt via Make_Per_AdminDomain.";
+		attribute<bool>      Make_Per_AdminDomain (AdminDomain) := Write_Per_AdminDomain, ExplicitSuppliers = "Decoupling_Per_AdminDomain/Write_Fingerprint"
+		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_Per_AdminDomain, want alleen langs deze weg ontstaat de fingerprint (#837).";
+		attribute<bool>      Read_Per_AdminDomain (AdminDomain) : StorageName = "=Decoupling_Per_AdminDomain/StorageFile", StorageType = "tif", StorageReadOnly = "TRUE", Descr = "Leest de eerder weggeschreven tif terug. Domein en waardetype zijn gelijk aan die van Calc_Per_AdminDomain.";
+		attribute<bool>      Per_AdminDomain      (AdminDomain) := = Decoupling_Per_AdminDomain/MayReuse ? 'Read_Per_AdminDomain' : 'Make_Per_AdminDomain'
+		, Descr = "De schakel met de oorspronkelijke naam, zodat de lezers elders in de configuratie ongemoeid blijven. Klopt de fingerprint dan wordt de tif gelezen, anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_Per_AdminDomain/Explanation op om te zien waarom een bestand wel of niet opnieuw gemaakt wordt.";
+	}
+}

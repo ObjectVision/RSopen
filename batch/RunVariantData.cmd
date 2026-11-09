@@ -14,7 +14,7 @@ REM allocatierun.
 REM
 REM ================================================================================
 
-REM Run1 maakt de EvidentBenut-tifs voor deze variant.
+REM Run1 maakt de evident-benut-kaart en, als de zonsector meedraait, de BGT-kaart van zon voor deze variant.
 call ..\batch\RunImpl.cmd %ProjDir%\cfg\main.dms /WriteVariantData/per_Variant/%RSL_VARIANT_NAME%/Generate_Run1
 if %ErrorLevel% NEQ 0 goto ErrorEnd
 
