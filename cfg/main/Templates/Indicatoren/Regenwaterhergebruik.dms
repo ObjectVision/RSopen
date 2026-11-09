@@ -51,6 +51,9 @@ container Regenwaterhergebruik
 	attribute<Bool> DoetMee (AdminDomain) := Woningen > 0[Woning] && Dak/Totaal > 0[meter2] && IsDefined(Curve_rel)
 	, Descr = "Cellen met woningen, een woondak en een curve; daarbuiten zijn de grootheden hieronder null.";
 
+	container Annuiteit := /Templates/Verdiscontering_Stroom_T(0[jaar], /ModelParameters/Regenwaterhergebruik/Kosten/Levensduur)
+	, Descr = "De annuiteitfactor over de levensduur van een tank, geteld vanaf het jaar van aanleg en met de discontovoeten uit ModelParameters/Advanced: de netto contante waarde van de tank geldt op het moment van aanleg, niet in het basisjaar.";
+
 	container VasteTank
 	: Descr = "Wat een tank van ModelParameters/Regenwaterhergebruik/TankPerWoning per woning bespaart. De tank per m2 dak volgt uit de woningen en het dak van de cel, de curve geeft wat die tank
 				per m2 dak per jaar levert, en de besparing is dat volume, begrensd op het vervangbare deel van de vraag."
@@ -59,16 +62,19 @@ container Regenwaterhergebruik
 		attribute<Float32> x_n               (AdminDomain) := exp(n * log(Tank_spec[float32]));
 		attribute<mm_jaar> Leverbaar_spec    (AdminDomain) := (a * x_n / (x_n + b))[mm_jaar], Descr = "De y van de systeemcurve: hoeveel drinkwatervraag per m2 dak per jaar deze tank met de gekozen leveringszekerheid dekt.";
 		attribute<m3_jaar> Leverbaar         (AdminDomain) := (Leverbaar_spec * Dak/Totaal)[m3_jaar];
-		attribute<m3_jaar> Besparing         (AdminDomain) := min_elem(Leverbaar, Vervangbaar);
+		attribute<m3_jaar> Besparing         (AdminDomain) := DoetMee ? min_elem(Leverbaar, Vervangbaar) : 0[m3_jaar] / 0f, Descr = "Het leverbare volume, begrensd op het vervangbare deel; leeg in een cel die niet meedoet.";
 		attribute<Float32> Besparingsaandeel (AdminDomain) := Besparing[float32] / Drinkwatervraag[float32], Descr = "Het bespaarde deel van het hele drinkwatergebruik van de cel.";
 		attribute<m3>      Tankvolume        (AdminDomain) := DoetMee ? Woningen * /ModelParameters/Regenwaterhergebruik/TankPerWoning : 0[m3] / 0f;
 
 		container Kosten
-		: Descr = "Wat de vaste tank kost en wat hij aan leidingwater uitspaart, met de kentallen uit ModelParameters/Regenwaterhergebruik/Kosten (#507): de aanleg eenmalig per woning, laag en hoog geschat, en de besparing per jaar tegen het variabele tarief plus de belasting op leidingwater. De terugverdientijd is de aanleg gedeeld door de besparing per jaar, zonder onderhoud, rente of levensduur."
+		: Descr = "Wat de vaste tank kost en wat hij aan leidingwater uitspaart, met de kentallen uit ModelParameters/Regenwaterhergebruik/Kosten (#507): de aanleg eenmalig per woning, laag en hoog geschat, de besparing per jaar tegen het variabele tarief plus de belasting op leidingwater, en het onderhoud per jaar naar het tankvolume. De netto contante waarde zet de besparing min het onderhoud over de levensduur af tegen de aanleg."
 		{
-			attribute<Eur>           AanlegMin       (AdminDomain) := DoetMee ? Woningen * /ModelParameters/Regenwaterhergebruik/Kosten/AanlegMin : 0[Eur] / 0f;
-			attribute<Eur>           AanlegMax       (AdminDomain) := DoetMee ? Woningen * /ModelParameters/Regenwaterhergebruik/Kosten/AanlegMax : 0[Eur] / 0f;
+			attribute<Eur>           AanlegMin        (AdminDomain) := DoetMee ? Woningen * /ModelParameters/Regenwaterhergebruik/Kosten/AanlegMin : 0[Eur] / 0f;
+			attribute<Eur>           AanlegMax        (AdminDomain) := DoetMee ? Woningen * /ModelParameters/Regenwaterhergebruik/Kosten/AanlegMax : 0[Eur] / 0f;
 			attribute<Eur_jaarlijks> BesparingPerJaar (AdminDomain) := Besparing * /ModelParameters/Regenwaterhergebruik/Kosten/VermedenPerM3, Descr = "De uitgespaarde kosten voor leidingwater per jaar.";
+			attribute<Eur_jaarlijks> OnderhoudPerJaar (AdminDomain) := Tankvolume * /ModelParameters/Regenwaterhergebruik/Kosten/OnderhoudPerM3;
+			attribute<Eur>           NCWMin           (AdminDomain) := (BesparingPerJaar - OnderhoudPerJaar) * Annuiteit/Factor - AanlegMax, Descr = "De netto contante waarde over de levensduur bij de hoge schatting van de aanleg, dus de laagste van de twee.";
+			attribute<Eur>           NCWMax           (AdminDomain) := (BesparingPerJaar - OnderhoudPerJaar) * Annuiteit/Factor - AanlegMin, Descr = "Hetzelfde bij de lage schatting van de aanleg.";
 		}
 	}
 
@@ -84,6 +90,16 @@ container Regenwaterhergebruik
 		attribute<m3>        Tankvolume        (AdminDomain) := (Tank_spec * Dak/Totaal)[m3];
 		attribute<m3_Woning> TankPerWoning     (AdminDomain) := Tankvolume / Woningen;
 		attribute<Woning>    Woningen_Haalbaar (AdminDomain) := IsHaalbaar ? Woningen : 0[Woning];
+		attribute<m3_jaar>   Besparing         (AdminDomain) := IsHaalbaar ? Drinkwatervraag * /ModelParameters/Regenwaterhergebruik/Besparingsdoel : 0[m3_jaar] / 0f, Descr = "Wat de doeltank bespaart: per constructie het besparingsdoel van de drinkwatervraag.";
+
+		container Kosten
+		: Descr = "Wat de doeltank kost en wat hij aan leidingwater uitspaart, met de kentallen uit ModelParameters/Regenwaterhergebruik/Kosten (#507): de aanleg als tankvolume maal de prijs per m3, het onderhoud per jaar naar het tankvolume, en de netto contante waarde over de levensduur, net als bij de vaste tank."
+		{
+			attribute<Eur>           Aanleg           (AdminDomain) := Tankvolume * /ModelParameters/Regenwaterhergebruik/Kosten/DoeltankPerM3;
+			attribute<Eur_jaarlijks> BesparingPerJaar (AdminDomain) := Besparing * /ModelParameters/Regenwaterhergebruik/Kosten/VermedenPerM3;
+			attribute<Eur_jaarlijks> OnderhoudPerJaar (AdminDomain) := Tankvolume * /ModelParameters/Regenwaterhergebruik/Kosten/OnderhoudPerM3;
+			attribute<Eur>           NCW              (AdminDomain) := (BesparingPerJaar - OnderhoudPerJaar) * Annuiteit/Factor - Aanleg;
+		}
 	}
 
 	parameter<String> Pad    := '%LocalDataProjDir%/Indicatoren/' + Casus_name + '/Regenwaterhergebruik_', Descr = "Begin van de bestandsnaam van de kaarten; daarna volgen de grootheid en Staart.";
@@ -112,12 +128,22 @@ container Regenwaterhergebruik
 		attribute<Eur>       VasteTank_AanlegMin         (Regio) := sum(MakeDefined(VasteTank/Kosten/AanlegMin, 0[Eur]), Regio/Per_AdminDomain_Fijn);
 		attribute<Eur>       VasteTank_AanlegMax         (Regio) := sum(MakeDefined(VasteTank/Kosten/AanlegMax, 0[Eur]), Regio/Per_AdminDomain_Fijn);
 		attribute<Eur_jaarlijks> VasteTank_BesparingPerJaar (Regio) := sum(MakeDefined(VasteTank/Kosten/BesparingPerJaar, 0[Eur_jaarlijks]), Regio/Per_AdminDomain_Fijn);
-		attribute<jaar>      VasteTank_TerugverdientijdMin (Regio) := VasteTank_AanlegMin / VasteTank_BesparingPerJaar, Descr = "De aanleg bij de lage schatting gedeeld door de besparing per jaar, zonder onderhoud.";
-		attribute<jaar>      VasteTank_TerugverdientijdMax (Regio) := VasteTank_AanlegMax / VasteTank_BesparingPerJaar, Descr = "Hetzelfde bij de hoge schatting.";
+		attribute<Eur_jaarlijks> VasteTank_OnderhoudPerJaar (Regio) := sum(MakeDefined(VasteTank/Kosten/OnderhoudPerJaar, 0[Eur_jaarlijks]), Regio/Per_AdminDomain_Fijn);
+		attribute<Eur_jaarlijks> VasteTank_NettoPerJaar     (Regio) := VasteTank_BesparingPerJaar - VasteTank_OnderhoudPerJaar;
+		attribute<jaar>      VasteTank_TerugverdientijdMin (Regio) := VasteTank_NettoPerJaar > 0[Eur_jaarlijks] && VasteTank_AanlegMin <= VasteTank_NettoPerJaar * /ModelParameters/Regenwaterhergebruik/Kosten/Levensduur ? VasteTank_AanlegMin / VasteTank_NettoPerJaar : 0[jaar] / 0f
+		, Descr = "De aanleg bij de lage schatting gedeeld door de besparing min het onderhoud per jaar, zonder rente; leeg als de tank zich binnen zijn levensduur niet terugverdient.";
+		attribute<jaar>      VasteTank_TerugverdientijdMax (Regio) := VasteTank_NettoPerJaar > 0[Eur_jaarlijks] && VasteTank_AanlegMax <= VasteTank_NettoPerJaar * /ModelParameters/Regenwaterhergebruik/Kosten/Levensduur ? VasteTank_AanlegMax / VasteTank_NettoPerJaar : 0[jaar] / 0f
+		, Descr = "Hetzelfde bij de hoge schatting.";
+		attribute<Eur>       VasteTank_NCWMin            (Regio) := sum(MakeDefined(VasteTank/Kosten/NCWMin, 0[Eur]), Regio/Per_AdminDomain_Fijn);
+		attribute<Eur>       VasteTank_NCWMax            (Regio) := sum(MakeDefined(VasteTank/Kosten/NCWMax, 0[Eur]), Regio/Per_AdminDomain_Fijn);
 		attribute<Woning>    Doeltank_Woningen_Haalbaar  (Regio) := sum(Doeltank/Woningen_Haalbaar, Regio/Per_AdminDomain_Fijn);
 		attribute<Float32>   Doeltank_AandeelHaalbaar    (Regio) := Doeltank_Woningen_Haalbaar[float32] / Woningen[float32];
 		attribute<m3>        Doeltank_Tankvolume         (Regio) := sum(MakeDefined(Doeltank/Tankvolume, 0[m3]), Regio/Per_AdminDomain_Fijn);
 		attribute<m3_Woning> Doeltank_TankPerWoning      (Regio) := Doeltank_Tankvolume / Doeltank_Woningen_Haalbaar, Descr = "De gemiddelde tank per woning waar het doel haalbaar is.";
+		attribute<Eur>       Doeltank_Aanleg             (Regio) := sum(MakeDefined(Doeltank/Kosten/Aanleg, 0[Eur]), Regio/Per_AdminDomain_Fijn);
+		attribute<Eur_jaarlijks> Doeltank_BesparingPerJaar  (Regio) := sum(MakeDefined(Doeltank/Kosten/BesparingPerJaar, 0[Eur_jaarlijks]), Regio/Per_AdminDomain_Fijn);
+		attribute<Eur_jaarlijks> Doeltank_OnderhoudPerJaar  (Regio) := sum(MakeDefined(Doeltank/Kosten/OnderhoudPerJaar, 0[Eur_jaarlijks]), Regio/Per_AdminDomain_Fijn);
+		attribute<Eur>       Doeltank_NCW                (Regio) := sum(MakeDefined(Doeltank/Kosten/NCW, 0[Eur]), Regio/Per_AdminDomain_Fijn);
 	}
 
 	container PerNL
@@ -131,11 +157,19 @@ container Regenwaterhergebruik
 		parameter<Eur>       VasteTank_AanlegMin         := sum(MakeDefined(VasteTank/Kosten/AanlegMin, 0[Eur]));
 		parameter<Eur>       VasteTank_AanlegMax         := sum(MakeDefined(VasteTank/Kosten/AanlegMax, 0[Eur]));
 		parameter<Eur_jaarlijks> VasteTank_BesparingPerJaar := sum(MakeDefined(VasteTank/Kosten/BesparingPerJaar, 0[Eur_jaarlijks]));
-		parameter<jaar>      VasteTank_TerugverdientijdMin := VasteTank_AanlegMin / VasteTank_BesparingPerJaar;
-		parameter<jaar>      VasteTank_TerugverdientijdMax := VasteTank_AanlegMax / VasteTank_BesparingPerJaar;
+		parameter<Eur_jaarlijks> VasteTank_OnderhoudPerJaar := sum(MakeDefined(VasteTank/Kosten/OnderhoudPerJaar, 0[Eur_jaarlijks]));
+		parameter<Eur_jaarlijks> VasteTank_NettoPerJaar     := VasteTank_BesparingPerJaar - VasteTank_OnderhoudPerJaar;
+		parameter<jaar>      VasteTank_TerugverdientijdMin := VasteTank_NettoPerJaar > 0[Eur_jaarlijks] && VasteTank_AanlegMin <= VasteTank_NettoPerJaar * /ModelParameters/Regenwaterhergebruik/Kosten/Levensduur ? VasteTank_AanlegMin / VasteTank_NettoPerJaar : 0[jaar] / 0f;
+		parameter<jaar>      VasteTank_TerugverdientijdMax := VasteTank_NettoPerJaar > 0[Eur_jaarlijks] && VasteTank_AanlegMax <= VasteTank_NettoPerJaar * /ModelParameters/Regenwaterhergebruik/Kosten/Levensduur ? VasteTank_AanlegMax / VasteTank_NettoPerJaar : 0[jaar] / 0f;
+		parameter<Eur>       VasteTank_NCWMin            := sum(MakeDefined(VasteTank/Kosten/NCWMin, 0[Eur]));
+		parameter<Eur>       VasteTank_NCWMax            := sum(MakeDefined(VasteTank/Kosten/NCWMax, 0[Eur]));
 		parameter<Woning>    Doeltank_Woningen_Haalbaar  := sum(Doeltank/Woningen_Haalbaar);
 		parameter<Float32>   Doeltank_AandeelHaalbaar    := Doeltank_Woningen_Haalbaar[float32] / Woningen[float32];
 		parameter<m3>        Doeltank_Tankvolume         := sum(MakeDefined(Doeltank/Tankvolume, 0[m3]));
 		parameter<m3_Woning> Doeltank_TankPerWoning      := Doeltank_Tankvolume / Doeltank_Woningen_Haalbaar;
+		parameter<Eur>       Doeltank_Aanleg             := sum(MakeDefined(Doeltank/Kosten/Aanleg, 0[Eur]));
+		parameter<Eur_jaarlijks> Doeltank_BesparingPerJaar  := sum(MakeDefined(Doeltank/Kosten/BesparingPerJaar, 0[Eur_jaarlijks]));
+		parameter<Eur_jaarlijks> Doeltank_OnderhoudPerJaar  := sum(MakeDefined(Doeltank/Kosten/OnderhoudPerJaar, 0[Eur_jaarlijks]));
+		parameter<Eur>       Doeltank_NCW                := sum(MakeDefined(Doeltank/Kosten/NCW, 0[Eur]));
 	}
 }
