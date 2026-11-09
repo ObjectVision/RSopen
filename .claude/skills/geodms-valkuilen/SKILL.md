@@ -15,6 +15,8 @@ De oplossing is niet de container hernoemen maar de verwijzing kwalificeren: sch
 
 Uitzondering: verwijzingen die in samengestelde strings zitten zijn niet met een slash te kwalificeren. Daarom staan `PotentieleStates`, `Suitabilities` en `Beschikbaarheden` in het meervoud naast hun enkelvoudige tegenhanger.
 
+Dezelfde zoekweg loopt ook langs de `using` van de containers boven het sjabloon. Een sjabloon in `Templates/Indicatoren` dat een item van de plek van aanroep met een kale naam wil lezen, kan zo bij een gelijknamig item uitkomen dat via een `using` van `Templates` zichtbaar is. In november 2026 (#439) wees een kale `Impl/` uit `BereikbaarheidGroen_T` naar `/SourceData/RegioIndelingen/impl`. Laat de aanroep zijn eigen container meegeven en spreek die aan met een prefix, zoals `ThisYear/` in `Woondiensten_T` en `BereikbaarheidGroen_T`. `@sourcedescr` laat zien waar een naam werkelijk heen wijst.
+
 ### Een gegenereerde container schermt de naam van zijn ouder af
 
 Binnen een container die `for_each_nedv` aanmaakt zoekt een ongekwalificeerde naam eerst in die container zelf. Staat daar een item met dezelfde naam als het ouderitem dat je bedoelt, dan wijst de verwijzing naar zichzelf en meldt GeoDMS Invalid Recursion, met een vervolgfout op een willekeurig ander item in de buurt (in september 2026 een `Unknown identifier org_rel` twee containers verderop). Voorbeeld: `container Delta := for_each_nedv(klassen, 'Totaal * sleutel', ...) { Totaal := add(...); }` waarbij `Totaal` in de generator het totaal van de ouder moest zijn. Geef het ouderitem een andere naam (`NaBAG`) of kwalificeer volledig.

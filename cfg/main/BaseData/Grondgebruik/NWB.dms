@@ -1,0 +1,44 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Wat het model afleidt uit het Nationaal Wegenbestand dat SourceData/Grondgebruik/NWB inleest (#440).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container NWB: using = "Units;Geography;Classifications;Classifications/Grondgebruik"
+, Descr = "De afleidingen uit het Nationaal Wegenbestand: de cellen op de Stichtse Rotonde. Het inlezen staat in SourceData/Grondgebruik/NWB (#440)."
+{
+	unit<uint32> Stichtse_Rotonde := select_with_attr_by_cond(/SourceData/Grondgebruik/NWB/Wegvakken, /SourceData/Grondgebruik/NWB/Wegvakken/STT_NAAM == 'Stichtse Rotonde')
+	, Descr = "hack om de Stichtse Rotondo nabij Amersfoort te identificeren. Zodat daarop niet gealloceerd mag worden. Buffer, dan dissolve, dan negatieve buffer."
+	{
+		attribute<rdc_meter> geometry_buff0           (poly) := bg_buffer_linestring(geometry, 100d, 8b);
+		unit<uint32>         union                           := geos_split_union_polygon(geometry_buff0);
+		attribute<rdc_meter> geometry_buff1    (poly, union) := geos_buffer_multi_polygon(union/geometry, -100d, 4b);
+		
+		attribute<bool>      Calc_Per_AdminDomain (AdminDomain) := IsDefined(poly2grid(geometry_buff1, AdminDomain));
+
+		parameter<String> FileName_Per_AdminDomain := '%LocalDataProjDir%/BaseData/Grondgebruik/NWB/StichtseRotonde_NWB20251101_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
+		parameter<String> Fingerprint_Per_AdminDomain :=
+			  'nwb_date='+ModelParameters/NWB_file_date
+			+ ';street_name=Stichtse Rotonde'
+			+ ';buffer_out_m=100;buffer_in_m=100'
+			+ ';admin_grid='  + /ModelParameters/Advanced/AdminDomain_ref
+			+ ';study_area='  + /ModelParameters/StudyArea
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. nwb_date staat als vaste waarde omdat de datum hard in het pad van de NWB-container zit; komt
+			daar een nieuwe levering, pas dan ook deze sleutel aan. street_name is de selectievoorwaarde van deze unit, de twee bufferwaarden zijn de vaste getallen in geometry_buff0 en geometry_buff1;
+			admin_grid vangt dat 25m tegenover 100m een ander bestand onder dezelfde naam oplevert.";
+		container       Decoupling_Per_AdminDomain := /Templates/DecoupledFile_T(FileName_Per_AdminDomain, Fingerprint_Per_AdminDomain, 'Write_Per_AdminDomain');
+		attribute<bool> Write_Per_AdminDomain      (AdminDomain) := Calc_Per_AdminDomain, StorageName = "=Decoupling_Per_AdminDomain/StorageFile", StorageType = "tif", Descr = "Schrijft de rotondekaart eenmalig weg, zonder zijbestand; dat volgt via Make_Per_AdminDomain.";
+		attribute<bool> Make_Per_AdminDomain       (AdminDomain) := Write_Per_AdminDomain, ExplicitSuppliers = "Decoupling_Per_AdminDomain/Write_Fingerprint"
+		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_Per_AdminDomain, want alleen langs deze weg ontstaat de fingerprint (#837).";
+		attribute<bool>      Read_Per_AdminDomain (AdminDomain) : StorageName = "=Decoupling_Per_AdminDomain/StorageFile", StorageType = "tif", StorageReadOnly = "TRUE";
+		attribute<bool>      Per_AdminDomain   (AdminDomain) := = Decoupling_Per_AdminDomain/MayReuse ? 'Read_Per_AdminDomain' : 'Make_Per_AdminDomain', Descr = "Ligt de cel op de Stichtse Rotonde, ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_Per_AdminDomain/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+	}
+}

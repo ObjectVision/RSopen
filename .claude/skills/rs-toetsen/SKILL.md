@@ -160,6 +160,18 @@ Wat je vooraf moet regelen:
 
 Rekentijden: `rs_indicators.py` kost bijna vijf uur per zichtjaar voor heel Nederland, want het is op een provincie gebouwd. `rs_compare.py` kost 154 s op de standtifs en 856 s op de indicatorkaarten.
 
+### Na elke run met een allocatie: de patroonkaarten
+
+Draai na elke run die alloceert `kaarten/patroonkaarten.py` uit de RS-testomgeving, over alle zichtjaren die de run heeft, en bekijk de kaarten zelf voordat je iets rapporteert. Het leest alleen de standkaarten, heeft geen GeoDMS nodig en kost voor heel Nederland met drie zichtjaren ongeveer een minuut bij 5 GB. Het meet per zichtjaar, per vak en per gemeente hoeveel nieuwe woningen verder dan 250 m en 1 km van een BRT-woonkern landen, welke losse clusters er zijn (met wonen of alleen werken), en hoeveel woningen het jaar erna in een ring om zo'n cluster landen, met de BAG-nieuwbouw als referentie. Het rapport zet de vreemdste tegels en gemeenten bovenaan, met een detailkaart per tegel; met `--vergelijk` komt een tweede run ernaast.
+
+```
+python kaarten\patroonkaarten.py --run <LocalData> --casus WLO_hoog_BAU --zichtjaren Y2040 Y2050 Y2060 --naam <run> --out <map>
+```
+
+Lees een gedeelde LocalData niet terwijl een GeoDMS-proces erop schrijft: een bestand dat jij openhoudt kan dat proces laten omvallen. Kopieer de standmappen dan eerst. Het gereedschap ziet niet of een los cluster een erf, een bedrijf of een geplande wijk is, en of verre bouw op een hard plan ligt; daarvoor is de kaart. Wat je ziet, gaat in het rapport aan Jip, met de kaart erbij en de plek bij naam, ook als alle controlewaarden groen zijn.
+
+Aanleiding (november 2026): in de slotrun van NL2120 lag in 2050 35 procent en in 2060 46 procent van de nieuwe modelwoningen in een ring rond een los cluster van het zichtjaar ervoor, en rond de kernen groeide de nieuwbouw als uienschillen, een smalle band per zichtjaar rondom het hele dorp. Geen controlewaarde zag het, want het meegroeien van het bebouwd gebied (#749, met de schijf van #862) werkt pas vanaf het tweede zichtjaar en de proefruns van #862 stopten bij 2040. Een proefrun voor een ingreep aan de locatiekeuze loopt daarom minstens twee zichtjaren.
+
 ## Meet naast de code in plaats van een A/B te draaien
 
 Voor je een voor-en-na-vergelijking opzet: kijk eerst of de oude en de nieuwe toestand niet allebei in de configuratie staan. Dat is vaker zo dan je denkt, want een begrenzing wordt zelden geschreven door de oude regel weg te gooien.
