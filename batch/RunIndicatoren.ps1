@@ -268,7 +268,7 @@ function Test-Invoer {
             $eisen += ,@("BaseData\Landbouw\WWL_Opbrengstderving\$($hydro[$v])_*.tif", "opbrengstderving van levering $($hydro[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
         }
         $eisen += ,@("VariantData\Vastgoed\Opbrengsten_perOP\$($opbr[$v])\*.tif", "opbrengsten per pakket, set $($opbr[$v]) (variant $v)", "/WriteVariantData/per_Variant/$v/Generate_Run2")
-        $eisen += ,@("VariantData\Grondgebruik\BGT\EvidentBenut_*_${v}_*.tif",         "evident benut (variant $v)",                     "/WriteVariantData/per_Variant/$v/Generate_Run1")
+        $eisen += ,@("BaseData\Grondgebruik\EvidentBenutKaart\Klasse_*.tif",         "evident-benut-kaart",                            "/WriteVariantData/per_Variant/$v/Generate_Run1")
     }
 
     $mis = @()

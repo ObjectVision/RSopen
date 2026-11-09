@@ -120,7 +120,7 @@ De kaart. Het model leest de BBG-jaargang uit `ModelParameters/BBG_Year` via `/B
 
 De index. `Classifications/Grondgebruik/CBSKlasse2020.dms` heeft uitgecommentarieerde regels (busbaan, wrakkenopslagplaatsen, natuurlijk grasland, kustduinen), dus de rasterindex loopt niet gelijk met de EK2020-code en ook niet met de leesvolgorde daarvan. Lees de etiketten uit dat zijbestand en controleer op arealen die je kent: voor Noord-Holland hoort 41.388 ha woonterrein en 111.375 ha IJsselmeer uit te komen. Een tabel met verschoven etiketten valt pas op als een uitgesloten klasse toch een hoog percentage krijgt.
 
-Bouwterrein hoort bovenaan te staan (29,9 procent toegewezen in Y2040 van BAU, gemeten september 2026). Een uitgesloten klasse die daar in de buurt komt wijst op een verkeerde kaart of een verschoven index. Wil je daarna verklaren welke evident-benut-route een cel dichthoudt, kijk dan naar `IsEvidentBenutBinnenPlancapaciteit` en `IsEvidentBenutBuitenPlancapaciteit` in `Zeef_Basisjaar_T`, waar de CBS-lijst en de BGT-tif met een OF samenkomen.
+Bouwterrein hoort bovenaan te staan (29,9 procent toegewezen in Y2040 van BAU, gemeten september 2026). Een uitgesloten klasse die daar in de buurt komt wijst op een verkeerde kaart of een verschoven index. Wil je daarna verklaren welke evident-benut-route een cel dichthoudt, kijk dan naar `IsEvidentBenut` in `Zeef_Basisjaar_T`: dat is de lijst van de sector op de evident-benut-kaart (BaseData/StartState/EvidentBenutKaart, #872), waarin ook de BGT-set en de BRT-functies zijn opgegaan.
 
 ## Landbouw: een claimband van nul legt de arealen vast, niet de plek
 
