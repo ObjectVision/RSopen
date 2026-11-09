@@ -51,8 +51,50 @@ container Landbouw : using = "Classifications/Actor"
 	
 	parameter<String>           VerziltingsScenario                       := 'Stoom2050', Descr = "Welk verziltingsscenario wordt toegepast. Opties: Stoom2050, Stoom2100";
 	
-	parameter<Eur_ton> CO2_prijs_minimum: [30], Descr = "Minimale CO2 prijs (in Eur/ton) die wordt gebruikt in de berekening van de contante waarde van CO2 reductie door landbouwgrond om te zetten naar andere functies.";
-	parameter<Eur_ton> CO2_prijs_maximum: [80], Descr = "Maximale CO2 prijs (in Eur/ton) die wordt gebruikt in de berekening van de contante waarde van CO2 reductie door landbouwgrond om te zetten naar andere functies.";
+	container CO2_Prijs
+	: Descr = "De efficiente CO2-prijzen van WLO 2025 in euro per ton CO2, prijspeil 2021, per WLO-scenario: een reeks per regel van Classifications/CO2/PrijsK, met de prijs op vier ankerjaren. Tussen de ankerjaren lineair per jaar; voor het eerste ankerjaar de prijs van dat jaar, na het laatste die van het laatste (#510, #840)."
+	, Source = "CPB en PBL (2025), WLO 2025: Efficiente CO2-prijzen. Geactualiseerde CO2-prijzen om effecten van broeikasgasreductiemaatregelen uit te drukken. Den Haag: Centraal Planbureau en Planbureau voor de Leefomgeving. Tabel aangeleverd door team effectbepaling in #840."
+	{
+		unit<UInt8> AnkerjaarK : NrOfRows = 4
+		{
+			attribute<YearRange> Jaar          : [2025, 2040, 2050, 2060];
+			attribute<Eur_ton>   LaagSnel      : [ 310,  432,  540,  675];
+			attribute<Eur_ton>   LaagVertraagd : [ 116,  162,  202,  253];
+			attribute<Eur_ton>   HoogSnel      : [ 132,  184,  230,  287];
+			attribute<Eur_ton>   HoogVertraagd : [ 107,  149,  186,  232];
+		}
+
+		parameter<String> Standaard := 'HoogVertraagd'
+		, Descr = "De reeks waarmee de boer rekent als de variant de CO2-kosten aan hem doorberekent (VariantK/CO2_DoorberekendAanBoer), en waarmee de diagnose de CO2-kosten telt. Hoog vertraagd is de reeks die team effectbepaling in #840 voorschrijft.";
+
+		unit<UInt32> JaarK := range(uint32, uint32(/ModelParameters/Model_StartYear), uint32(/ModelParameters/Model_FinalYear) + 1u)
+		, Descr = "Een regel per kalenderjaar, van het basisjaar tot en met het laatste modeljaar."
+		{
+			attribute<Float32>    Jaar             := float32(id(.));
+			attribute<UInt32>     NrAnkersTotEnMet := sum(JaarXAnkerjaarK/TotEnMet, JaarXAnkerjaarK/first_rel);
+			attribute<AnkerjaarK> Onder            := value(min_elem(max_elem(NrAnkersTotEnMet, 1u), uint32(#AnkerjaarK) - 1u) - 1u, AnkerjaarK)
+			, Descr = "Het ankerjaar onder dit jaar: het laatste ankerjaar tot en met dit jaar, en minstens het eerste en hoogstens het voorlaatste.";
+			attribute<AnkerjaarK> Boven            := value(uint32(Onder) + 1u, AnkerjaarK);
+			attribute<Float32>    Gewicht          := min_elem(max_elem((Jaar - float32(AnkerjaarK/Jaar[Onder])) / float32(AnkerjaarK/Jaar[Boven] - AnkerjaarK/Jaar[Onder]), 0f), 1f)
+			, Descr = "Hoe zwaar het bovenste ankerjaar meetelt, tussen nul en een; begrensd, zodat een jaar voor het eerste of na het laatste ankerjaar de prijs van dat ankerjaar krijgt.";
+		}
+
+		unit<UInt32> JaarXAnkerjaarK := combine(JaarK, AnkerjaarK)
+		{
+			attribute<UInt32> TotEnMet := uint32(float32(AnkerjaarK/Jaar[second_rel]) <= JaarK/Jaar[first_rel]);
+		}
+
+		container PerJaar :=
+			for_each_nedv(
+				/Classifications/CO2/PrijsK/name
+				, 'AnkerjaarK/'+/Classifications/CO2/PrijsK/name+'[JaarK/Onder] + (AnkerjaarK/'+/Classifications/CO2/PrijsK/name+'[JaarK/Boven] - AnkerjaarK/'+/Classifications/CO2/PrijsK/name+'[JaarK/Onder]) * JaarK/Gewicht'
+				, JaarK
+				, Eur_ton
+			)
+		, Descr = "Per reeks de CO2-prijs in elk kalenderjaar.";
+	}
+	parameter<String> CO2_EmissieVariant_Boer := 'Mediaan'
+	, Descr = "Welke emissieschatting van SOMERS (Classifications/CO2/EmissieK) de boer betaalt als de variant de CO2-kosten aan hem doorberekent (VariantK/CO2_DoorberekendAanBoer).";
 	
 	attribute<Float32> CO2_Reductie (RegioIndelingen/Provincie) := switch(
 		 case(id(Provincie) == Provincie/v/groningen, 0.06f)

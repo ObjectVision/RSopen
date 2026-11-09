@@ -1,0 +1,100 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De bereikbaarheid van groen vanaf de woning: de invoer per cel en de twee methoden die erop rekenen, obv_BBG en
+// obv_BGT. Een sjabloon voor het basisjaar en de zichtjaren, zodat de invoer en de indicatorlijst op een plek staan
+// (#439).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template BereikbaarheidGroen_T
+: Descr = "De bereikbaarheid van groen vanaf de woning (#439), voor het basisjaar en elk zichtjaar: de invoer per cel, de indicatorlijst en de regio-indeling, en de twee methoden die daarop rekenen, obv_BBG op de groenklasse en de groenfractie van de cel en obv_BGT op het groen van de BGT. Een zichtjaar telt in Woningen alleen de woningen op cellen waar wonen is gealloceerd, het basisjaar alle woningen; zie Live."
+{
+	parameter<String>    Zichtjaar_name;
+	//
+
+	parameter<Bool>      IsStartYear                        := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+
+	// -- de invoer van de potentialen: levend, of teruggelezen uit de export (#824) --
+	// De sjablonen obv_BBG en obv_BGT lezen Woningen0, Woningen, Groen en GroenFractieCel op dit niveau. Met
+	// ModelParameters/TabellenUitExport aan zijn dat in een zichtjaar de vier kaarten die de _Live-items schrijven. De
+	// potentialen per regio worden dan opnieuw gerekend, want een regio snijdt woningen en groen af op haar eigen grens
+	// en de landelijke kaart met een woningmasker geeft daar andere getallen; alleen de landelijke instantie leest haar
+	// indicatorkaarten terug, zie BereikbaarGroen_Indicatoren_T in Templates.dms. Het basisjaar schrijft de vier
+	// kaarten niet en leest zijn invoer altijd levend, zie Live.
+	parameter<string>    StorageStr_Invoer                  := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/BereikbaarheidGroen_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De bestandsnaam van de vier invoerkaarten van de groenbereikbaarheid (#824); @V@ is de grootheid.";
+	attribute<Woning>    Woningen0_Live       (AdminDomain) := ThisYear/Stand/Aantal_Woningen_Totaal[Woning], StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenTotaal')", StorageType = "gdalwrite.grid";
+	attribute<Bool>      AllocatieHeeftPlaatsgevonden (AdminDomain) := ThisYear/Impl/StandVar/Subsector/Sector_rel[ThisYear/Stand/SubSector_rel] == /Classifications/Actor/Sector/V/Wonen;
+	attribute<Woning>    Woningen_Live        (AdminDomain) := Woningen0_Live * float32(AllocatieHeeftPlaatsgevonden), StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenGealloceerd')", StorageType = "gdalwrite.grid";
+	attribute<GroenK>    Groen_Live           (AdminDomain) := ThisYear/LandgebruikskaartNL2120/GroenInZichtjaar, StorageName = "=replace(StorageStr_Invoer, '@V@', 'Groen')", StorageType = "gdalwrite.grid"
+	, Descr = "Het groen van de landgebruikskaart van dit zichtjaar, de klassetak van de BBG-bereikbaarheid; hier en niet in BereikbaarheidGroenBBG_T, zodat een tabelrun het kan teruglezen (#824).";
+	attribute<float32>   GroenFractieCel_Live (AdminDomain) := = IsStartYear ? 'Live/GroenFractieCel' : 'min_elem(MakeDefined(ThisYear/WaardeNabijheidGroen/Fracties/NatuurCel, 0f) + MakeDefined(ThisYear/WaardeNabijheidGroen/Fracties/WaterCel, 0f), 1f)', StorageName = "=replace(StorageStr_Invoer, '@V@', 'GroenFractieCel')", StorageType = "gdalwrite.grid"
+	, Descr = "Het groene deel van de cel, natuur plus water, begrensd op een; de fractietak van de BBG-bereikbaarheid, zonder de regiovlag die Per_GroenK_T er zelf op zet (#824). WaardeNabijheidGroen bestaat alleen in een zichtjaar; in het basisjaar, dat deze kaart niet schrijft, wijst het item naar Live.";
+	container Lees
+	: Descr = "De vier invoerkaarten van dit zichtjaar teruggelezen, voor een tabelrun met ModelParameters/TabellenUitExport aan (#824). Dezelfde bestandsnamen als de _Live-items hierboven."
+	{
+		attribute<Woning>  Woningen0       (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenTotaal')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<Woning>  Woningen        (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'WoningenGealloceerd')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<GroenK>  Groen           (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'Groen')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		attribute<float32> GroenFractieCel (AdminDomain) : StorageName = "=replace(StorageStr_Invoer, '@V@', 'GroenFractieCel')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+	}
+	container Live
+	: Descr = "De levende invoer: in een zichtjaar de _Live-items hierboven. Het basisjaar schrijft hun kaarten niet en rekent hier zelf, met alle woningen van de stand in plaats van alleen die op cellen waar wonen is gealloceerd, en met de natuur- en watercel van de LGN-groenfracties, zoals Groenfracties_T ze leest (#828)."
+	{
+		attribute<Woning>  Woningen0       (AdminDomain) := = IsStartYear ? 'ThisYear/Stand/Aantal_Woningen_Totaal[Woning]' : 'Woningen0_Live';
+		attribute<Woning>  Woningen        (AdminDomain) := = IsStartYear ? 'Woningen0' : 'Woningen_Live';
+		attribute<GroenK>  Groen           (AdminDomain) := = IsStartYear ? 'ThisYear/LandgebruikskaartNL2120/GroenInZichtjaar' : 'Groen_Live';
+		attribute<float32> GroenFractieCel (AdminDomain) := = IsStartYear ? 'min_elem(MakeDefined(/SourceData/Grondgebruik/LGN/Groenfracties/natuur[AdminDomain/rdc_25m_rel], 0f) + MakeDefined(/SourceData/Grondgebruik/LGN/Groenfracties/water[AdminDomain/rdc_25m_rel], 0f), 1f)' : 'GroenFractieCel_Live';
+	}
+	container            Bron                               := = /ModelParameters/TabellenUitExport && !IsStartYear ? 'Lees' : 'Live'
+	, Descr = "Waar de sjablonen hun invoer vandaan halen: Live (berekend) of Lees (de export van dit zichtjaar teruggelezen), gestuurd door ModelParameters/TabellenUitExport (#824); het basisjaar schrijft deze kaarten niet en rekent altijd levend.";
+	attribute<Woning>    Woningen0            (AdminDomain) := Bron/Woningen0;
+	attribute<Woning>    Woningen             (AdminDomain) := Bron/Woningen;
+	attribute<GroenK>    Groen                (AdminDomain) := Bron/Groen;
+	attribute<float32>   GroenFractieCel      (AdminDomain) := Bron/GroenFractieCel;
+	
+	parameter<Float32>   FractieGroenWerken                 := 1f - min_elem(VariantParameters/FractiesGroenInWerken/Default/Verhard * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f);
+	parameter<Float32>   FractieGroenVerblijfsrecreatie     := 1f - min_elem(VariantParameters/FractiesGroenInVerblijfsrecreatie/Default/Verhard * VariantParameters/VariantK/VerhardingTovDefault[Variant_rel], 1f);
+	
+	unit<UInt32>         Regio                              := =/ModelParameters/Advanced/IndicatorRegio_path;
+	unit<uint8>          GroenK                             := /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen;
+	
+	unit<uint8> Indicator : NrOfRows = 3 
+	, Descr = "Groenaanbod = Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
+				Cumulatief_Groenaanbod_over_woningen = Totale oppervlakte groen binnen de gegeven straal maal het aantal woningen in die cel (m²).
+				Drukte_gecorrigeerd_groenaanbod_per_woning = Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning)."
+	{
+		attribute<string> name: 
+		[
+			 'Groenaanbod'                                  // Totale oppervlakte groen (m²) binnen de gegeven straal rond cellen waar woningen aanwezig zijn.
+			,'Cumulatief_Groenaanbod_over_woningen'         // Totale oppervlakte groen binnen de gegeven straal maal het aantal woningen in die cel (m²). In dichtgebouwd gebied nieuw groen toevoegen maak je veel mensen gelukkig mee. Echter, ze realiseren zich dan niet dat je het moet delen met al die andere mensen (indicator 3).
+			,'Drukte_gecorrigeerd_groenaanbod_per_woning'   // Som van drukte-gecorrigeerde groenbijdragen binnen de gegeven straal, waarbij per groencel het aanwezige groen wordt gewogen naar het aantal omliggende woningen (m² per woning).
+		];
+		
+		attribute<string> IndicatorExpr : 
+		[
+			 'Som_GroenInOmgeving_metWoning'                          
+			,'Som_GroenInOmgeving_metWoning * WoningenInThisStRegio_ge1 / 1[woning]' 
+			,'Som_AanwezigGroenPerWoning' 
+		];
+		
+		attribute<string> ValuesUnit : 
+		[
+			 'meter2' 
+			,'meter2' 
+			,'m2_Woning' 
+		];
+	}
+	
+	container            InDezeStudie                       := obv_BBG;
+	
+	container            obv_BBG                            := Templates/Indicatoren/BereikbaarheidGroenBBG_T(..);
+	container            obv_BGT                            := Templates/Indicatoren/BereikbaarheidGroenBGT_T(..);
+}

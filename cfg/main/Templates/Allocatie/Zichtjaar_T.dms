@@ -601,7 +601,7 @@ Template Zichtjaar_T
 																	, Descr = "Wat er bij de start van dit zichtjaar al gealloceerd was, dus in eerdere zichtjaren. De vormtoetsen in Iter_Allocatie trekken dit eraf, zodat clusters wel binnen een zichtjaar kunnen aangroeien maar niet over zichtjaren heen. Staat hier en niet in de iteratie zelf, want binnen een zichtjaar is dit constant en anders wordt het per iteratie per sector-allocregio opnieuw uitgerekend.";
 
 		container TredeDynamischeUrbanContour
-		: Descr = "De trede-ladders van dit zichtjaar, opgebouwd op een bestaand bebouwd gebied dat meegroeit met wat het model in eerdere zichtjaren heeft gebouwd (#749). Hier en niet in VariantData, want de
+		: Descr = "De trede-ladders van dit zichtjaar, opgebouwd op een bestaand bebouwd gebied dat meegroeit met wat het model in eerdere zichtjaren heeft gebouwd (#749), voor zover dat aan een woonkern vastzit (#862). Hier en niet in VariantData, want de
 					UrbanContour van 2060 hangt af van wat er in 2050 is gealloceerd en VariantData is op het basisjaar geankerd; dit is de enige plek waar de vorige zichtjaarstand beschikbaar is, via
 					StateVoorAllocatie0. De ladder zelf, de unit met zijn treden, blijft gedeeld in VariantParameters/Tredes; hier gebeurt per zichtjaar alleen de toewijzing van cellen aan klassen, per as
 					opgebouwd (#775)."
@@ -609,16 +609,31 @@ Template Zichtjaar_T
 			parameter<Bool> IsEersteZichtjaar                          := lowercase(name) == lowercase(first(Time/Zichtjaar/name)), Descr = "In het eerste zichtjaar heeft het model nog niets gebouwd, en draagt StateVoorAllocatie0 bovendien geen SubSector_rel omdat het dan de basisjaarstand is en niet de uitkomst van een vorig zichtjaar.";
 			attribute<Bool> IsModelNieuwbouw    (CompactedAdminDomain) := =IsEersteZichtjaar
 			                                                              ? 'const(FALSE, CompactedAdminDomain)'
-			                                                              : 'IsDefined(StateVoorAllocatie0/SubSector_rel) && /Classifications/Actor/Sector/xSubsector/TeltAlsBebouwdGebied[StateVoorAllocatie0/SubSector_rel]', Descr = "Cellen die het model in een eerder zichtjaar heeft gealloceerd voor wonen of werken. SubSector_rel is eerste-wint en wordt over de zichtjaren heen nooit gewist, dus dit is de cumulatieve modelnieuwbouw tot en met het vorige zichtjaar.";
+			                                                              : 'IsDefined(StateVoorAllocatie0/SubSector_rel) && /Classifications/Actor/Sector/xSubsector/TeltAlsBebouwdGebied[StateVoorAllocatie0/SubSector_rel]', Descr = "Cellen die in een eerder zichtjaar een label voor wonen of werken kregen. SubSector_rel is eerste-wint en wordt over de zichtjaren heen nooit gewist, dus dit is de cumulatieve nieuwbouw tot en met het vorige zichtjaar: wat de allocatie gaf en de BAG-nieuwbouw uit de startstand (StartState_metBAGnieuwbouw).";
 
 			attribute<Bool> IsModelNieuwbouw_AdminDomain (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, IsModelNieuwbouw, FALSE);
-			attribute<Bool> Aangroei                     (AdminDomain) := potential(float32(IsModelNieuwbouw_AdminDomain), /Geography/Distmatrices_25m/pot100m/Flat2) > 0f, Descr = "De schijf van 100 meter rond die nieuwbouw. Honderd meter is een AllocDomain-cel, dus dit is precies 'direct aangrenzend op de resolutie waarop gealloceerd wordt'. Ruimer werkt niet: een schijf van 500 meter rond het bestaande bebouwde gebied voegt al 862.700 hectare toe, bijna tweemaal dat gebied zelf, en dan betekent binnenstedelijk niets meer.";
+			attribute<Bool> IsModelNieuwbouwWonen_AdminDomain (AdminDomain) := =IsEersteZichtjaar
+			                                                              ? 'const(FALSE, AdminDomain)'
+			                                                              : 'recollect_by_cond(AdminDomain/IsCompactedDomain, IsModelNieuwbouw && (/Classifications/Actor/Sector/IsWonen[/Classifications/Actor/Sector/xSubsector/Sector_rel])[StateVoorAllocatie0/SubSector_rel], FALSE)', Descr = "Het deel van die nieuwbouw met een label voor wonen.";
+
+			attribute<Bool> Koppelgebied                 (AdminDomain) := = 'potential(float32(IsModelNieuwbouw_AdminDomain || /BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain), /Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(/ModelParameters/Wonen/Uitbreiding/KoppelStraal / 1[meter]))+'m/Flat2) > 0f'
+			, Descr = "De nieuwbouw en de BRT-woonkernen, verbreed met ModelParameters/Wonen/Uitbreiding/KoppelStraal, zodat nieuwbouw die met een smalle tussenruimte (een weg, een sloot) aan een kern of aan andere nieuwbouw ligt in hetzelfde cluster valt (#862).";
+			unit<UInt32>    Cluster                                    := district_8(Koppelgebied), Descr = "De aaneengesloten delen van Koppelgebied (#862)."
+			{
+				attribute<Bool> HeeftWoonkern := sum(uint32(/BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain), Districts) > 0, Descr = "Bevat het cluster een cel van een BRT-woonkern?";
+			}
+			attribute<Bool> IsAangeslotenNieuwbouw       (AdminDomain) := =IsEersteZichtjaar
+			                                                              ? 'const(FALSE, AdminDomain)'
+			                                                              : 'IsModelNieuwbouw_AdminDomain && Cluster/HeeftWoonkern[Cluster/Districts]'
+			, Descr = "De nieuwbouw die in een cluster met een BRT-woonkern ligt (#862). Een cluster dat over de zichtjaren vanaf een kern doorgroeit blijft meetellen; een los cluster in het buitengebied, zoals BAG-nieuwbouw op een erf of een opnieuw bebouwd vrijgekomen perceel, telt niet mee en wordt zo geen nieuwe kern.";
+			attribute<Bool> Aangroei                     (AdminDomain) := potential(float32(IsAangeslotenNieuwbouw), /Geography/Distmatrices_25m/pot100m/Flat2) > 0f, Descr = "De schijf van 100 meter rond de nieuwbouw die aan een kern vastzit. Honderd meter is een AllocDomain-cel, dus dit is precies 'direct aangrenzend op de resolutie waarop gealloceerd wordt'. Ruimer werkt niet: een schijf van 500 meter rond het bestaande bebouwde gebied voegt al 862.700 hectare toe, bijna tweemaal dat gebied zelf, en dan betekent binnenstedelijk niets meer.";
+			attribute<Bool> AangroeiWonen                (AdminDomain) := potential(float32(IsAangeslotenNieuwbouw && IsModelNieuwbouwWonen_AdminDomain), /Geography/Distmatrices_25m/pot100m/Flat2) > 0f, Descr = "Dezelfde schijf rond alleen de woningbouw daarvan: de aansluitende schijf groeit mee met wonen en niet met werken (#862), zodat een werklocatie aan de rand van een kern de woonuitbreiding niet naar zich toe trekt.";
 
 			attribute<Bool> UrbanContour_AdminDomain     (AdminDomain) := /BaseData/Omgeving/UrbanContour || Aangroei;
 			attribute<Bool> BinnenUrbanContour           (AdminDomain) := UrbanContour_AdminDomain;
 			attribute<Bool> BuitenUrbanContour           (AdminDomain) := !BinnenUrbanContour;
-			attribute<Bool> AansluitendAanUrbanContour   (AdminDomain) := = '!BinnenUrbanContour && potential(float32(/SourceData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain || Aangroei), /Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(/ModelParameters/Wonen/Uitbreiding/AansluitStraal / 1[meter]))+'m/Flat2) > 0f'
-			, Descr = "De aansluitende schijf van dit zichtjaar (#862), rond de BRT-woonkernen aangegroeid met de modelnieuwbouw van eerdere zichtjaren.";
+			attribute<Bool> AansluitendAanUrbanContour   (AdminDomain) := = '!BinnenUrbanContour && potential(float32(/BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain || AangroeiWonen), /Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(/ModelParameters/Wonen/Uitbreiding/AansluitStraal / 1[meter]))+'m/Flat2) > 0f'
+			, Descr = "De aansluitende schijf van dit zichtjaar (#862), rond de BRT-woonkernen aangegroeid met de woningbouw van eerdere zichtjaren die aan een kern vastzit.";
 			attribute<Bool> AanDeBeurt                   (AdminDomain) := = 'ThisVariantData/Herontwikkelingskans/PerZichtjaar/' + name + '/IsVrij_AdminDomain'
 			, Descr = "De cellen met woningen van de percelen die de herontwikkelingskans van wonen uiterlijk in dit zichtjaar vrij laat (#869): de bovenste as van de woonladders (VariantParameters/Tredes/impl/HerontwikkelingK), zodat de allocatie een vrijgekomen perceel bebouwt voordat hij elders uitbreidt.";
 			attribute<Bool> NietAanDeBeurt               (AdminDomain) := !AanDeBeurt;

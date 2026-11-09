@@ -67,7 +67,7 @@ container Diagnose
 	// stil met nulls aangevuld en de uitdraai ziet er dan normaal uit. De IntegrityCheck op elke lijst vangt
 	// dat tweede geval. Hij staat inline op de data, want een check op een aparte parameter geeft Invalid
 	// Recursion in UpdateMetaInfo; zie de skill geodms-valkuilen.
-	unit<uint32> Checks : nrofrows = 56
+	unit<uint32> Checks : nrofrows = 57
 	{
 		//                        pad, aggregatie, item
 		//   pad: Z = onder het zichtjaar van de indicatoren, V = variantdata, A = allocatie, D = een parameter in dit harnas
@@ -100,6 +100,7 @@ container Diagnose
 			,'claimreal_NVM_onder_alarm', 'grondbalans_rest_fractie'
 			,'piekbui_opgave_mln_m3', 'piekbui_aanbod_op_wbcellen_mln_m3', 'piekbui_aanbod_sluiting_mln_m3'
 			,'grondexploitatie_min_boven_drempel'
+			,'nieuwbouw_ver_van_kern'
 		], IntegrityCheck = "all(IsDefined(this))";
 
 		attribute<String> pad :
@@ -127,6 +128,7 @@ container Diagnose
 			,'D', 'D'
 			,'D', 'D', 'D'
 			,'Z'
+			,'D'
 		], IntegrityCheck = "all(IsDefined(this))";
 
 		attribute<String> aggr :
@@ -153,6 +155,7 @@ container Diagnose
 			,'p'
 			,'p', 'p'
 			,'p', 'p', 'p'
+			,'p'
 			,'p'
 		], IntegrityCheck = "all(IsDefined(this))";
 
@@ -181,6 +184,7 @@ container Diagnose
 			,'Claims/NVM_OnderAlarm', 'Grondbalans/RestFractie'
 			,'Piekbuiberging/Opgave_mln_m3', 'Piekbuiberging/AanbodOpWbCellen_mln_m3', 'Piekbuiberging/AanbodSluiting_mln_m3'
 			,'Grondexploitatie/Saldo_Min_BovenDrempel'
+			,'Wonen/NieuwbouwVerVanKern/Aandeel'
 		], IntegrityCheck = "all(IsDefined(this))";
 
 		// vereist: namen uit Voorwaarde, met && te combineren; leeg is altijd.
@@ -209,6 +213,7 @@ container Diagnose
 			,'WonenOpNVM', 'DomeinLandgebruikskaart'
 			,'DomeinWater && MetWonen && MetWerken', 'DomeinWater && MetWonen && MetWerken', 'DomeinWater && MetWonen && MetWerken'
 			,'MetWonen'
+			,'MetWonen'
 		], IntegrityCheck = "all(IsDefined(this))"
 		, Descr = "Onder welke voorwaarde uit Voorwaarde de rij zinvol is. Een rij die niet geldt schrijft null en rekent zijn item niet uit, zodat een verwijzing naar een sector die niet meedoet niet tot een onbekende naam leidt.";
 
@@ -222,6 +227,9 @@ container Diagnose
 		//     woningtype ligt de waarde ruim boven de grens (#847).
 		//   grondexploitatie_min_boven_drempel: het laagste saldo waarop de allocatie koos, van de cellen die de allocatie in dit zichtjaar heeft bebouwd min de
 		//     zeefdrempel hoort nul of positief te zijn; de ondergrens laat een paar euro afronding toe in float32 (#799).
+		//   nieuwbouw_ver_van_kern: van de BAG-nieuwbouw tussen het basisjaar en de recente BAG ligt landelijk een procent verder dan een kilometer
+		//     van een BRT-woonkern; de bovengrens laat ruimte voor de overloop naar de hogere allocatieregio's, die in het eerste zichtjaar al enkele
+		//     procenten zo ver legt (#862). Geldt voor een landelijke run: in een studiegebied met weinig kernen, zoals Flevoland, ligt hij hoger.
 		attribute<String> norm_onder :
 		[
 			 '', ''
@@ -247,6 +255,7 @@ container Diagnose
 			,'0', '0'
 			,'497.013', '0', '0'
 			,'-10'
+			,'0'
 		], IntegrityCheck = "all(IsDefined(this))";
 
 		attribute<String> norm_boven :
@@ -274,6 +283,7 @@ container Diagnose
 			,'15', '0.005'
 			,'497.033', '0', '0.001'
 			,''
+			,'0.10'
 		], IntegrityCheck = "all(IsDefined(this))";
 
 		attribute<Float64> Ondergrens := float64(norm_onder), Descr = "Leeg wordt null, want float64 op een lege tekst geeft null.";
@@ -1208,6 +1218,24 @@ container Diagnose
 			parameter<String>  PerRegio                := = !/Diagnose/Voorwaarde/MetWonen ? quote(/Diagnose/Voorwaarde/Zonder_Wonen) : 'Tabel'
 			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_woningtype_eengezins.txt'", StorageType = "str"
 			, Descr = "Per regio het aantal gebouwde eengezinswoningen in de basisperiode, de eengezinsnieuwbouw van het model, het gebouwde aandeel per groep en het aandeel in het model; de laatste regel is landelijk, met het werkelijk gebouwde landelijke aandeel.";
+		}
+
+		container NieuwbouwVerVanKern
+		: Descr = "Welk deel van de woningen die er in de periode tot dit zichtjaar bij kwamen verder dan Afstand_m van een BRT-woonkern ligt, de regel nieuwbouw_ver_van_kern in Checks (#862). Per cel telt de
+					toename tegen de stand van het vorige zichtjaar, in het eerste zichtjaar tegen het basisjaar, zodat een zichtjaar waarin de uitbreiding losraakt van de kernen niet wegvalt tegen de periodes
+					ervoor. De afstand staat op het raster van AllocDomain, dus op een cel van honderd meter nauwkeurig."
+		{
+			parameter<UInt32>  Afstand_m                        := 1000, Descr = "Vanaf welke afstand van een woonkern een nieuwe woning als ver telt; moet een straal uit Geography/Matrix zijn. Op een kilometer ligt de BAG-nieuwbouw vrijwel nergens.";
+			parameter<Bool>    IsEersteZichtjaar                := rjoin(/Diagnose/Jaar, /Classifications/Time/Zichtjaar/name, /Classifications/Time/Zichtjaar/IsFirstZichtjaar);
+			parameter<String>  PadVorig                         := IsEersteZichtjaar ? '/Indicatoren/'+/Diagnose/Casus+'/Basisjaar/Stand/' : '/Indicatoren/'+/Diagnose/Casus+'/Zichtjaren/'+rjoin(/Diagnose/Jaar, /Classifications/Time/Zichtjaar/name, /Classifications/Time/Zichtjaar/PrevName)+'/Stand/'
+			, Descr = "De stand waartegen de toename telt.";
+			attribute<Float32> Erbij       (/Geography/AdminDomain) := ='max_elem(MakeDefined(float32('+/Diagnose/Pad_Z+'Stand/Aantal_Woningen_Totaal), 0f) - MakeDefined(float32('+PadVorig+'Aantal_Woningen_Totaal), 0f), 0f)'
+			, Descr = "De toename van het aantal woningen per cel in de periode; alleen de toename, zodat sloop elders het aandeel niet verschuift.";
+			attribute<Bool>    IsKern      (/Geography/AllocDomain) := sum(uint32(/BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain), /Geography/AdminDomain/AllocDomain_rel) > 0;
+			attribute<Bool>    IsBijKern   (/Geography/AllocDomain) := ='potential(float32(IsKern), /Geography/Distmatrices_'+/Geography/AllocDomain_ref_short+'/pot'+string(Afstand_m)+'m/Flat2) > 0f';
+			attribute<Bool>    IsVerVanKern (/Geography/AdminDomain) := !IsBijKern[/Geography/AdminDomain/AllocDomain_rel];
+			parameter<Float32> Aandeel                          := sum(Erbij * float32(IsVerVanKern)) / sum(Erbij)
+			, Descr = "Het aandeel van de toename dat verder dan Afstand_m van een woonkern ligt.";
 		}
 	}
 
