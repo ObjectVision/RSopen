@@ -1,0 +1,112 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Wat het model afleidt uit de natuurbronnen die SourceData/Grondgebruik/Natuur inleest (#440): de MNP-kaart op
+// 25 meter en de afstandsringen rond het Natuurnetwerk Nederland. De rest van de natuurbronnen, met de vertaling
+// naar beheertypen en de voorbereiding van de leveringen, staat nog in SourceData/Grondgebruik/Natuur.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Natuur: using = "Units;Geography;Classifications;Classifications/Grondgebruik"
+, Descr = "De afleidingen uit de natuurbronnen die als ontkoppeld bestand in LocalData staan: de MNP-kaart op 25 meter en de ringen rond het NNN op 100 meter. Het inlezen staat in SourceData/Grondgebruik/Natuur (#440)."
+{
+	container Bron
+	{
+		container Landelijk_BAU
+		: Descr = "De MNP-planpotentieelkaart van de WUR op 25 meter, uit de bron op 2,5 meter in SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU (#440). De samenvatting gebeurt in twee stappen,
+					Modus_25m kiest welk beheertype de cel krijgt en Dekking_25m beslist of de cel natuur is, want modus() negeert nulls en zou anders elke cel met een gevulde broncel volledig natuur maken (#795).
+					De drempel staat als MinimumDekking in ModelParameters/Natuur/MNP_Kaart. De kaart op 25 meter is een ontkoppeld bestand met een fingerprint in LocalDataProjDir, omdat de uitkomst van een
+					modelparameter afhangt en de tif rijnummers van INL_Beheertype draagt."
+		{
+			parameter<UInt32> MinimumDekking := /ModelParameters/Natuur/MNP_Kaart/MinimumDekking;
+
+			attribute<UInt32> Dekking_25m (rdc_25m) := sum(uint32(IsDefined(/SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel)), rdc_2_5m/rdc_25m_rel)
+			, Descr = "Hoeveel van de honderd broncellen binnen deze modelcel een beheertype dragen. Nul waar de bron zwijgt, want een som over een lege groep is nul en geen null.";
+
+			attribute<INL_Beheertype> Modus_25m (rdc_25m) := modus(/SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel, rdc_2_5m/rdc_25m_rel)
+			, Descr = "Welk beheertype de meeste broncellen binnen deze modelcel dragen. Nulls tellen daarbij niet mee, dus dit is de meerderheid BINNEN het natuurdeel van de cel. Dat is precies wat je van een typekeuze wilt; de vraag of de cel uberhaupt natuur is beantwoordt Dekking_25m.";
+
+			attribute<INL_Beheertype> Calc_INL_beheertypen_25m (rdc_25m) := Dekking_25m >= MinimumDekking ? Modus_25m : null_b[INL_Beheertype]
+			, Descr = "De kaart op 25 meter: het meerderheidstype, maar alleen op cellen die genoeg gevuld zijn. Dit is het rekenwerk dat de ontkoppelde tif hieronder eenmalig vastlegt; het kost ongeveer drie minuten, want de bron telt ruim veertien miljard cellen.";
+
+			parameter<String> FileName_INL_beheertypen_25m := '%LocalDataProjDir%/BaseData/Grondgebruik/MNP/mnp_bau_INL_Beheertype_25m_dekking' + string(MinimumDekking) + '_' + /ModelParameters/StudyArea + '.tif'
+			, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile. De drempel staat in de naam, zodat twee instellingen naast elkaar kunnen blijven staan.";
+
+			parameter<String> Fingerprint_INL_beheertypen_25m :=
+				  'bron='             + PropValue(/SourceData/Grondgebruik/Natuur/Bron/Landelijk_BAU/NL2120_MNP_BAU_beheertypen_alle_maatregelen_planpotentieel0, 'StorageName')
+				+ ';minimum_dekking=' + string(MinimumDekking)
+				+ ';mnp_val='         + AsList(MakeDefined(string(INL_Beheertype/MNP_BeheertypenKaart_val), 'null'), ',')
+				+ ';beheertypen='     + AsList(INL_Beheertype/code, ',')
+				+ ';study_area='      + /ModelParameters/StudyArea
+			, Descr = "Wat de tif bepaalt: het bronbestand, de dekkingsdrempel, de koppelkolom van de rasterwaarden naar de beheertypen, de nummering van INL_Beheertype (de tif draagt rijnummers) en het studiegebied. Een rij erbij in die classificatie maakt de tif dus ongeldig in plaats van stil verkeerd.";
+
+			container Decoupling_INL_beheertypen_25m := /Templates/DecoupledFile_T(FileName_INL_beheertypen_25m, Fingerprint_INL_beheertypen_25m, 'Write_INL_beheertypen_25m');
+
+			attribute<INL_Beheertype> Write_INL_beheertypen_25m (rdc_25m) := Calc_INL_beheertypen_25m, StorageName = "=Decoupling_INL_beheertypen_25m/StorageFile", StorageType = "gdalwrite.grid"
+			, Descr = "Schrijft de kaart eenmalig weg, zonder zijbestand; dat volgt via Make_INL_beheertypen_25m.";
+			attribute<INL_Beheertype> Make_INL_beheertypen_25m (rdc_25m) := Write_INL_beheertypen_25m, ExplicitSuppliers = "Decoupling_INL_beheertypen_25m/Write_Fingerprint"
+			, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_INL_beheertypen_25m, want alleen langs deze weg ontstaat de fingerprint (#837).";
+			attribute<INL_Beheertype> Read_INL_beheertypen_25m (rdc_25m) : StorageName = "=Decoupling_INL_beheertypen_25m/StorageFile", StorageType = "gdal.grid", StorageReadOnly = "true";
+			attribute<INL_Beheertype> INL_beheertypen_25m      (rdc_25m) := = Decoupling_INL_beheertypen_25m/MayReuse ? 'Read_INL_beheertypen_25m' : 'Make_INL_beheertypen_25m'
+			, Descr = "De kaart zoals het model haar gebruikt, ontkoppeld. Vraag Decoupling_INL_beheertypen_25m/Explanation op als je wilt weten waarom de tif wel of niet opnieuw wordt gemaakt.";
+
+			attribute<INL_Beheertype>  INL_Beheertype_rel_AD (AdminDomain) := INL_beheertypen_25m[AdminDomain/rdc_25m_rel]
+			, Descr = "Dezelfde kaart op het administratiedomein. Op 25 meter een een-op-een-koppeling; op 100 meter de 25-metercel waar de grovere cel op valt.";
+		}
+
+		container Zand_Allocatiebasis
+		: Descr = "De afstandsringen rond het Natuurnetwerk Nederland, voor de claimregio's van de droge natuur in SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis (#652, #440)."
+		{
+			parameter<Meter> Ringresolutie := /ModelParameters/Natuur/Trekking/Zand/Ringresolutie
+			, Descr = "Op welke resolutie de afstandsringen rond het NNN bepaald worden: 100 meter en niet de 25 meter van het AdminDomain, want de ring van 2.000 meter vraagt op 25 meter een kern van 161 bij 161
+						cellen over ruim 27 miljoen cellen, ruwweg zestig keer zo duur. De prijs is dat de ringgrens tot 100 meter kan verspringen op een ringbreedte van 500 tot 1.000 meter. Wie het scherper wil
+						zet de drie potentialen hieronder op Distmatrices_25m en rdc_25m.";
+
+			attribute<Bool> IsNNN_100m       (rdc_100m) := IsDefined(poly2grid(/SourceData/Grondgebruik/Natuur/Bron/Zand_Allocatiebasis/NNN/geometry, rdc_100m));
+			attribute<Bool> Binnen500_100m   (rdc_100m) := potential(float32(IsNNN_100m), /Geography/Distmatrices_100m/pot500m/Flat2)  > 0f;
+			attribute<Bool> Binnen1000_100m  (rdc_100m) := potential(float32(IsNNN_100m), /Geography/Distmatrices_100m/pot1000m/Flat2) > 0f;
+			attribute<Bool> Binnen2000_100m  (rdc_100m) := potential(float32(IsNNN_100m), /Geography/Distmatrices_100m/pot2000m/Flat2) > 0f;
+
+			attribute</ModelParameters/Natuur/Ring> Calc_Ring_rel_100m (rdc_100m) :=
+				  IsNNN_100m      ? /ModelParameters/Natuur/Ring/V/InNNN
+				: Binnen500_100m  ? /ModelParameters/Natuur/Ring/V/Tot500m
+				: Binnen1000_100m ? /ModelParameters/Natuur/Ring/V/Tot1000m
+				: Binnen2000_100m ? /ModelParameters/Natuur/Ring/V/Tot2000m
+				:                   /ModelParameters/Natuur/Ring/V/Verder
+			, Descr = "De ring waar de cel in valt. De reeks is uitputtend, dus dit is overal gevuld; buiten de claimregio's doet het er niet toe.";
+
+			parameter<String> FileName_Ring_rel_100m := '%LocalDataProjDir%/BaseData/Grondgebruik/Natuur/Ring_rel_100m_NNN20230829_'+/ModelParameters/StudyArea+'.tif'
+			, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
+
+			parameter<String> Fingerprint_Ring_rel_100m :=
+				  'nnn_date=20230829'
+				+ ';ring_resolution_m=' + string(Ringresolutie)
+				+ ';ring_kernels_m=500,1000,2000'
+				+ ';ring_count='        + string(#/ModelParameters/Natuur/Ring)
+				+ ';ring_names='        + asList(/ModelParameters/Natuur/Ring/name, ',')
+				+ ';study_area='        + /ModelParameters/StudyArea
+			, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. nnn_date staat als vaste waarde omdat de datum hard in het pad van NNN zit; ring_kernels_m
+						ook, want de drie potentialen kiezen hun kernel via het itempad, net als de keuze van Distmatrices_100m en rdc_100m waar Ringresolutie de documentatieparameter van is. De ringindeling staat
+						erin omdat een gewijzigde klasselijst dezelfde bestandsnaam zou hergebruiken.";
+
+			container Decoupling_Ring_rel_100m := /Templates/DecoupledFile_T(FileName_Ring_rel_100m, Fingerprint_Ring_rel_100m, 'Write_Ring_rel_100m');
+
+			attribute</ModelParameters/Natuur/Ring> Write_Ring_rel_100m (rdc_100m) := Calc_Ring_rel_100m, StorageName = "=Decoupling_Ring_rel_100m/StorageFile", StorageType = "gdalwrite.grid"
+			, Descr = "Schrijft de ringkaart eenmalig weg, zonder zijbestand; dat volgt via Make_Ring_rel_100m.";
+			attribute</ModelParameters/Natuur/Ring> Make_Ring_rel_100m (rdc_100m) := Write_Ring_rel_100m, ExplicitSuppliers = "Decoupling_Ring_rel_100m/Write_Fingerprint"
+			, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_Ring_rel_100m, want alleen langs deze weg ontstaat de fingerprint (#837).";
+			attribute</ModelParameters/Natuur/Ring> Read_Ring_rel_100m (rdc_100m) : StorageName = "=Decoupling_Ring_rel_100m/StorageFile", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+
+			attribute</ModelParameters/Natuur/Ring> Ring_rel_100m (rdc_100m) := = Decoupling_Ring_rel_100m/MayReuse ? 'Read_Ring_rel_100m' : 'Make_Ring_rel_100m'
+			, Descr = "De ring waar de cel in valt, ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_Ring_rel_100m/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+
+			attribute</ModelParameters/Natuur/Ring> Ring_rel_AD (AdminDomain) := Ring_rel_100m[AdminDomain/rdc_100m_rel];
+		}
+	}
+}
