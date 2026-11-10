@@ -20,7 +20,7 @@ RSopen is onderzoekssoftware en volop in ontwikkeling. De uitkomsten zijn verken
 
 ## Aan de slag
 
-1. Installeer een release van [GeoDMS](https://github.com/ObjectVision/GeoDMS/releases). De rekenruns gebruiken nu GeoDms20.23.1.m.
+1. Installeer een release van [GeoDMS](https://github.com/ObjectVision/GeoDMS/releases). De rekenruns gebruiken nu GeoDms20.28.0.m.
 2. Kloon deze repo en kies de tak: `main` is de algemene versie, en elke toepassing heeft een eigen tak (zie hieronder).
 3. Kopieer `cfg/main/ConfigSettings.dms.example` naar `cfg/main/ConfigSettings.dms` en vul de paden naar de brondata en naar LocalData in. Dat bestand staat niet in git.
 4. Open `cfg/main.dms` in de GeoDMS GUI, of draai een batchrun.
