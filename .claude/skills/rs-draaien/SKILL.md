@@ -29,7 +29,7 @@ Gaat er toch een zware run aan, kijk dan eerst wie er kan meeliften. De meeste v
 ## Trap 1: laadt het (seconden)
 
 ```powershell
-& "C:\Program Files\ObjectVision\GeoDms20.23.1.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "<werkkopie>\cfg\main.dms" "/pad/naar/item"
+& "C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe" "/L$env:TEMP\rs.log" "<werkkopie>\cfg\main.dms" "/pad/naar/item"
 ```
 
 Of via het meegeleverde script, dat de projectversie kiest, de tijd meet en de foutregels filtert:
@@ -60,7 +60,7 @@ Op een gedeelde LocalData is zo'n toets dus een schrijvende run; zie Toetsen ter
 
 GeoDmsRun lost voor een opgevraagd item eerst alle namen in de keten op en begint pas daarna te rekenen; een naam die niet oplost geeft een `[E]`-regel (`Unknown identifier`, of `the specified item ... was not found`). Wil je alleen die naamcontrole, vraag het item dan niet op maar laat het beschrijven met `@sourcedescr` (sinds GeoDMS 20.17.0): GeoDmsRun lost de keten dan op, rekent niets uit en schrijft niets. Gemeten op 2026-10-28 op een kopie van main: de allocatieketen van het laatste zichtjaar in 205 s bij 1,5 GB, de variantdata in 7 s bij 0,2 GB, met vrijwel dezelfde foutregels als een opgevraagde run tot aan het rekenen.
 
-Twee dingen om te weten. GeoDmsRun eindigt ook met exit 0 als een naam niet bestaat, dus het oordeel komt uit de `[E]`-regels in het log. En de opslag die `@sourcedescr` per item noemt, is wat de keten direct leest en schrijft: achter een bestand dat de keten zelf wegschrijft kijkt hij niet verder, dus de lijst is geen volledige bronnenlijst.
+Drie dingen om te weten. GeoDmsRun eindigt ook met exit 0 als een naam niet bestaat, dus het oordeel komt uit de `[E]`-regels in het log. De opslag die `@sourcedescr` per item noemt, is wat de keten direct leest en schrijft: achter een bestand dat de keten zelf wegschrijft kijkt hij niet verder, dus de lijst is geen volledige bronnenlijst. En `@sourcedescr` rekent wel uit wat een meta-expressie nodig heeft om haar tak of haar StorageName te kiezen; hangt een schakelaar of een bestandsnaam aan berekende data, dan rekent de naamcontrole die data ook. Zo kostte de controle op de allocatie van NbSGenuanceerd tot november 2026 34 GB, door een controlesom over de veenkaart in een fingerprint (skill rs-fingerprints); met de invoer in de fingerprint is dat 1,2 GB.
 
 `scripts/naamcontrole.ps1` doet dit, met een rem op geheugen en tijd:
 
@@ -138,7 +138,7 @@ In PowerShell bindt de komma sterker dan de plus. `@($g+'a', $g+'b')` wordt daar
 
 ## Welke GeoDMS
 
-Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.23.1.m`. Niet op 20.20.0.m: daar haalde een allocatie van heel Nederland de commit-limiet van de machine (Y2030 van WLO_hoog_BAU, 586 GB toegezegd en gestopt, tegen 279 GB op 20.23.1 en 284 GB op 20.17, gemeten op 2026-10-13), en een iteratie kan er stoppen op "no read lock can be set" (ObjectVision/GeoDMS#1295). Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
+Draai op de geinstalleerde build onder `C:\Program Files\ObjectVision`, op dit moment `GeoDms20.28.0.m`. Niet op 20.20.0.m: daar haalde een allocatie van heel Nederland de commit-limiet van de machine (Y2030 van WLO_hoog_BAU, 586 GB toegezegd en gestopt, tegen 279 GB op 20.23.1 en 284 GB op 20.17, gemeten op 2026-10-13), en een iteratie kan er stoppen op "no read lock can be set" (ObjectVision/GeoDMS#1295). Niet op een build uit Visual Studio: die wordt opnieuw gecompileerd zonder dat de configuratie verandert, dus een run kan halverwege op een andere engine draaien dan waarmee hij begon, en een verschil in uitkomst valt dan niet meer toe te wijzen aan de configuratie.
 
 De versie staat op zes plekken: `geodmsversion` in `batch/RunAll.cmd`, waar `batch/Preflight.py` hem leest, de default van `-Version` in `run-item.ps1` en `naamcontrole.ps1`, en `-Exe` in `Run2120.ps1`, `RunIndicatoren.ps1` en `ToetsOplevering.ps1`. Controleer ze alle zes voordat je een lange run start. De versie staat niet in de fingerprint van de ontkoppelde bestanden: na een wissel blijft een bestand van de vorige versie stil in gebruik, ook waar de nieuwe versie een andere kaart zou maken. Vergelijk na een wissel met `batch/VergelijkUitvoer.py`, of zet `AlwaysRemakeDecoupledFiles` tijdelijk aan.
 
