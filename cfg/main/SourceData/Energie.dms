@@ -27,15 +27,62 @@ container Energie : using = "Units"
 		attribute<string> label       : ['Geen beschikbare informatie','Transportcapaciteit beschikbaar zonder wachtrij', 'Transportcapaciteit beperkt beschikbaar zonder wachtrij', 'Gebied is in onderzoek met wachtrij', 'Tekort aan transportcapaciteit met wachtrij'];
 		attribute<UInt32> SymbolColor : [rgb(200,200,200),rgb(245,245,245),rgb(255,235,0),rgb(255,165,0),rgb(220,0,0)], DialogType = "SymbolColor";
 		attribute<string> name        := AsItemName(label);
+		attribute<Bool>   HeeftWachtrij : [FALSE, FALSE, FALSE, TRUE, TRUE], Descr = "Oranje en rood: een gebied met een wachtrij. Sinds 1 juli 2026 staan nieuwe woningen daar voor afname in dezelfde wachtrij als bedrijven (#448).";
 	}
-	
+
 	unit<uint32> netcongestie_capaciteitskaart_pc6
-	: StorageName = "%RSo_DataDir%/Energie/netcongestie_capaciteitskaart_pc6.csv"
+	: StorageName = "=/ModelParameters/Capaciteitskaart_Dir+'/congestie_pc6.csv'"
 	, StorageType = "gdal.vect"
 	, StorageReadOnly = "true"
+	, Descr = "De kleur voor afname en voor opwek per PC6 op de capaciteitskaart, met het voedingsgebied van de regionale netbeheerder en het station van TenneT dat de postcode voedt. De kleur geldt voor het regionale net; congestie bij TenneT staat in TennetCongestie."
+	, Source = "Netbeheer Nederland, capaciteitskaart, download Brondata per postcode (capaciteitskaart.netbeheernederland.nl); de datum van de download staat in ModelParameters/Capaciteitskaart_filedate."
 	{
-		attribute<rdc_meter>      geometry := rjoin(postcode, /SourceData/Vastgoed/BAG/PerJaar/Y2026/vbo/PC6_centroids/pc6, /SourceData/Vastgoed/BAG/PerJaar/Y2026/vbo/PC6_centroids/geometry);
-		attribute<Netcongestie_K> afname_k := int8(afname)[Netcongestie_K];
-		attribute<Netcongestie_K> opwek_k  := int8(opwek)[Netcongestie_K];
+		attribute<rdc_meter>        geometry            := rjoin(postcode, /SourceData/Vastgoed/BAG/PerJaar/Y2026/vbo/PC6_centroids/pc6, /SourceData/Vastgoed/BAG/PerJaar/Y2026/vbo/PC6_centroids/geometry);
+		attribute<Netcongestie_K>   afname_k            := int8(float64(afname))[Netcongestie_K];
+		attribute<Netcongestie_K>   opwek_k             := int8(float64(opwek))[Netcongestie_K];
+		attribute<Voedingsgebieden> Voedingsgebied_rel  := rlookup(voedingsgebied_id, Voedingsgebieden/voedingsgebied_id);
+		attribute<TennetCongestie>  Tennet_rel          := rlookup(tennet_id, TennetCongestie/tennet_id);
+		attribute<UInt16>           JaarOpgelost_Afname := max_elem(Voedingsgebieden/JaarOpgelost_Afname[Voedingsgebied_rel], TennetCongestie/JaarOpgelost_Afname[Tennet_rel])
+		, Descr = "Het jaar waarin de afnamecongestie voor deze postcode volgens de netbeheerders is opgelost: het laatste van het jaar van het regionale net en dat van TenneT, want beide netten moeten dan zijn uitgebreid. Leeg als geen van beide een jaartal geeft.";
+		attribute<Bool>             HeeftWachtrij       := Netcongestie_K/HeeftWachtrij[afname_k]
+		, Descr = "Staat er voor afname een wachtrij? De kleur van de postcode neemt volgens Netbeheer Nederland de congestie bij TenneT al mee.";
+	}
+
+	unit<uint32> Voedingsgebieden
+	: StorageName = "=/ModelParameters/Capaciteitskaart_Dir+'/voedingsgebieden.csv'"
+	, StorageType = "gdal.vect"
+	, StorageReadOnly = "true"
+	, Descr = "De voedingsgebieden van de regionale netbeheerders, met het jaar waarin de congestie naar verwachting is opgelost."
+	, Source = "Netbeheer Nederland, capaciteitskaart, download Brondata per RNB voedingsgebied; jaartal_opgelost_afname heet in het datamodel demand_alleviation_year."
+	{
+		attribute<UInt16> JaarOpgelost_Afname := uint16(float64(jaartal_opgelost_afname)) == 2099w ? null_w : uint16(float64(jaartal_opgelost_afname))
+		, Descr = "Het jaar waarin de afnamecongestie in dit voedingsgebied naar verwachting is opgelost. Het bestand schrijft 2099 waar er geen datum is; dat telt als leeg.";
+	}
+
+	unit<uint32> TennetCongestie
+	: StorageName = "=/ModelParameters/Capaciteitskaart_Dir+'/tennetcongestie.csv'"
+	, StorageType = "gdal.vect"
+	, StorageReadOnly = "true"
+	, Descr = "De stations van TenneT met het congestiegebied waartoe ze voor afname horen."
+	, Source = "Netbeheer Nederland, capaciteitskaart, download Brondata per TenneT voedingsgebied (congestie)."
+	{
+		attribute<UInt16>         JaarOpgelost_Afname :=TennetGebieden_Afname/JaarOpgelost_Afname[rlookup(congestiegebied_afname, TennetGebieden_Afname/congestiegebied)];
+	}
+
+	unit<uint32> TennetGebieden
+	: StorageName = "=/ModelParameters/Capaciteitskaart_Dir+'/tennetgebieden.csv'"
+	, StorageType = "gdal.vect"
+	, StorageReadOnly = "true"
+	, Descr = "De congestiegebieden van TenneT, met het jaar waarin de congestie voor afname en voor invoeding naar verwachting is opgelost; een gebied kan twee keer voorkomen, een keer per richting."
+	, Source = "Netbeheer Nederland, capaciteitskaart, download Brondata per TenneT voedingsgebied."
+	{
+		attribute<UInt16> JaarOpgelost_Afname := uint16(float64(jaartal_opgelost_afname));
+	}
+
+	unit<uint32> TennetGebieden_Afname := select_with_org_rel(IsDefined(TennetGebieden/JaarOpgelost_Afname))
+	, Descr = "De congestiegebieden van TenneT met een jaartal voor afname; zo vindt de opzoeking op naam niet de rij van dezelfde naam voor invoeding."
+	{
+		attribute<string> congestiegebied     := TennetGebieden/congestiegebied[org_rel];
+		attribute<UInt16> JaarOpgelost_Afname := TennetGebieden/JaarOpgelost_Afname[org_rel];
 	}
 }
