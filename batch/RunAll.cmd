@@ -26,7 +26,7 @@ set ProgramPath=%exe_dir%\GeoDmsRun.exe
 REM set LocalDataProjDir=K:\LD\RSOpen
 REM Moet meebewegen met de naam van de werkkopie: GeoDMS leidt dit pad anders zelf af uit LocalDataDir plus de
 REM configuratienaam. Stond tot #714 op C:\LocalData\RSopen, een map die in deze werkkopie niet bestaat.
-set LocalDataProjDir=C:\LocalData\RSopen_NL2120
+set LocalDataProjDir=C:\LocalData\RSopen_DGWB_Veenweide
 
 set MT_FLAGS=/S1 /S2 /S3
 
