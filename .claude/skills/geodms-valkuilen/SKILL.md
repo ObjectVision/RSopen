@@ -254,7 +254,7 @@ Dezelfde valkuil zit in elke `modus` op een regiokaart: daar verbreedt hij de re
 
 ## `max` en `min` geven op een lege groep geen null
 
-Een groepsaggregatie over een partitie levert voor een groep zonder waarden geen null op maar het uiterste van het waardetype: `max` geeft de kleinste float32, `min` de grootste. Gemeten op 2026-09-02, GeoDms20.17.0.m: `min_jongste_waar_gem_bestaat` kwam uit op -3,4028235e+38.
+Een groepsaggregatie over een partitie levert voor een groep zonder waarden geen null op maar het uiterste van het waardetype: `max` geeft de kleinste float32, `min` de grootste. Gemeten op 2026-09-02, GeoDms20.17.0.m: `min_jongste_waar_gem_bestaat` kwam uit op -3,4028235e+38. Een aggregatie over het hele domein naar een parameter doet hetzelfde: `min` over pakketten die allemaal null zijn gaf op 2026-11-09 (GeoDms20.23.1.m) 3,4028235e+38, en `MakeDefined` eromheen helpt dan niet, want de waarde is niet null. Zo zou `MaxWoningDichtheid_T/MinimumKernrand` voor meergezins, dat geen rijpakket heeft, een ondergrens van 3,4e+38 woningen per hectare hebben gekregen; de guard daar is `AantalRijOP > 0` (#847).
 
 Dat is stil en het propageert. `zichtjaar - max(...)` wordt dan geen null maar 3,4e+38, en een toets als `leeftijd < drempel` geeft daar gewoon FALSE, dus in een wegzeeftoets valt het niet op. Wie later op datzelfde item rekent krijgt wel onzin. `sum` heeft dit niet: die geeft nul op een lege groep, wat zijn eigen valkuil is.
 
