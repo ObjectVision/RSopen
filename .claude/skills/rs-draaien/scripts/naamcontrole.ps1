@@ -51,7 +51,7 @@ param(
     [switch]$EigenLocalData,
 
     # De vaste versie voor dit project, zoals in run-item.ps1; @sourcedescr bestaat sinds 20.17.0.
-    [string]$Version = "20.23.1.m",
+    [string]$Version = "20.28.0.m",
 
     [string]$LogDir = "$env:TEMP\rsopen-check",
 
