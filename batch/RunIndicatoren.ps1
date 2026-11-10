@@ -294,10 +294,12 @@ function Get-KetenNamen {
     $tekst = Get-Content $dms -Raw
     $alle = @([regex]::Matches($tekst, "StorageName\s*=\s*`"=Pad\+'([^']+)'\+Staart`"") | ForEach-Object { $_.Groups[1].Value })
     if ($alle.Count -eq 0) { throw "Geen ketentifs gevonden in $dms" }
-    $begin = $tekst.IndexOf('container Schrijf')
-    $eind  = $tekst.IndexOf('parameter<String> Alles_lijst', $begin)
-    if ($begin -lt 0 -or $eind -lt 0) { throw "Ketens/Schrijf/Lijst niet gevonden in $dms" }
-    $lijst = $tekst.Substring($begin, $eind - $begin)
+    # Gezocht op de declaratieregel en met vrije witruimte: de kop van Ketens.dms noemt de container
+    # Schrijf ook, en een uitlijning van de configuratie verzet de spaties voor Alles_lijst.
+    $b = [regex]::Match($tekst, '(?m)^\s*container\s+Schrijf\b')
+    $e = if ($b.Success) { [regex]::Match($tekst.Substring($b.Index), 'parameter<String>\s+Alles_lijst\b') }
+    if (-not $b.Success -or -not $e.Success) { throw "Ketens/Schrijf/Lijst niet gevonden in $dms" }
+    $lijst = $tekst.Substring($b.Index, $e.Index)
     $perDomein = @{}
     foreach ($m in [regex]::Matches($lijst, "parameter<String>\s+(\w+)\s*:=(.*?);\s*\r?\n", 'Singleline')) {
         $perDomein[$m.Groups[1].Value] = @([regex]::Matches($m.Groups[2].Value, "'([^']*)'") | ForEach-Object { $_.Groups[1].Value.Trim(';') })
