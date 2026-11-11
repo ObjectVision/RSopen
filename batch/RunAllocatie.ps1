@@ -1,6 +1,6 @@
 <#
 ================================================================================================
- Run2120.ps1: de productierun van RSopen NL2120, van de basisdata tot en met zichtjaar 2120
+ RunAllocatie.ps1: de modelrun van RSopen, van de basisdata tot en met het laatste zichtjaar
 ================================================================================================
 
  WAT DIT SCRIPT DOET
@@ -14,13 +14,13 @@
 
  HOE START JE HET (vanuit een PowerShell-venster in de map batch)
    Volledige reeks, alles opnieuw, twee varianten:
-       .\Run2120.ps1 -Varianten BAU,NbSGenuanceerd
+       .\RunAllocatie.ps1 -Varianten BAU,NbSGenuanceerd
    Basisdata en variantdata staan er al, alleen alloceren:
-       .\Run2120.ps1 -Varianten BAU -SkipBasedata -SkipVariantData
+       .\RunAllocatie.ps1 -Varianten BAU -SkipBasedata -SkipVariantData
    Hervatten na een fout, bij een stap uit status.tsv (de naam staat in de kolom stap):
-       .\Run2120.ps1 -Varianten BAU -SkipBasedata -SkipVariantData -StartBij allocatie-BAU-Y2070
+       .\RunAllocatie.ps1 -Varianten BAU -SkipBasedata -SkipVariantData -StartBij allocatie-BAU-Y2070
    Landbouwronde over bestaande standen (BAU2 na BAU, met de stedelijke stand overgenomen):
-       .\Run2120.ps1 -Varianten BAU2 -SkipBasedata -AlleenLandbouw
+       .\RunAllocatie.ps1 -Varianten BAU2 -SkipBasedata -AlleenLandbouw
    Het script stopt bij de eerste stap die misgaat en zegt welke. Elke stap heeft een eigen log
    in de logmap en een regel in status.tsv.
 
@@ -30,7 +30,9 @@
       de standaardwaarde uit het blok param() hieronder.
       -Exe            GeoDmsRun.exe van de geinstalleerde GeoDMS. Niet de build uit Visual Studio:
                       die wordt opnieuw gecompileerd terwijl een reeks loopt.
-      -Cfg            De configuratie, cfg\main.dms van de werkkopie waarmee je rekent.
+      -Cfg            De configuratie, cfg\main.dms van de werkkopie waarmee je rekent. Standaard die
+                      van de werkkopie waarin dit script staat. Het script heette tot 11 november 2026
+                      Run2120.ps1; op een tak die main sindsdien niet binnenhaalde heet het nog zo.
       -LocalData      Waar de uitvoer staat. Standaard C:\LocalData\<naam van de werkkopie>; het script
                       zet de omgevingsvariabele LocalDataProjDir bewust NIET, GeoDMS leidt dit pad
                       zelf af uit de registersleutel LocalDataDir plus de mapnaam boven cfg.
@@ -60,6 +62,10 @@
       -DiagnoseNaZichtjaar  Na welke zichtjaren het diagnoseharnas meedraait (ongeveer acht
                       minuten per zichtjaar per variant), plus een keer per variant de
                       basisjaarcontroles. Leeg is nooit.
+      -WaakhondMinuten  Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als
+                      vastgelopen stopt, standaard 15; 0 zet de waakhond uit. Zie ALS HET MISGAAT.
+      -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
+                      de reeks stopt, standaard 1; 0 stopt de reeks meteen.
 
    B. Schakelaars in de configuratie die dit script NIET zet maar waar de run wel van afhangt.
       Loop ze na voordat je start; ze staan in cfg\main\ModelParameters.dms tenzij anders vermeld.
@@ -89,14 +95,21 @@
    Ontbreekt er basisdata, dan zegt het script welke WriteBasedata-stap die maakt.
    Draai nooit twee GeoDmsRun-processen tegelijk op dezelfde LocalData: ze botsen op bestanden
    die ze allebei openen, en het log zegt dan "being used by another process" of blijft stil.
+   Een GeoDmsRun kan ook vastlopen zonder ooit te eindigen. Daarom kijkt een waakhond elke minuut
+   of het proces nog leeft: groeit het log, of leest of schrijft het proces bytes of maakt het een
+   paginafout. Blijft dat -WaakhondMinuten lang uit, dan stopt het script het proces op zijn PID,
+   zet het een [E]-regel met de reden onder het log van de stap en start het de stap opnieuw, met
+   een eigen log, -HerhalingenNaVastlopen keer. Loopt hij dan nog vast, dan stopt de reeks zoals bij
+   elke andere fout. Een meting (diagnose) mag ook vastlopen; de reeks loopt dan door. Hervat met
+   -StartBij bij de vastgelopen stap.
 ================================================================================================
 #>
 [CmdletBinding()]
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
-    [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
-    [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
-    [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\run2120',
+    [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
+    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\runallocatie'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @(),
@@ -106,7 +119,9 @@ param(
     [string]   $StartBij   = '',
     [switch]   $HerbouwBasedata,
     [switch]   $AlleenLandbouw,
-    [switch]   $ZonderIndicatorBasedata
+    [switch]   $ZonderIndicatorBasedata,
+    [int]      $WaakhondMinuten = 15,
+    [int]      $HerhalingenNaVastlopen = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -138,6 +153,9 @@ function Write-Regel([string]$Tekst) {
     Write-Host "[$t] $Tekst"
 }
 
+# Invoke-GeoDmsRun: GeoDmsRun met een waakhond op voortgang, zie Waakhond.ps1.
+. (Join-Path $PSScriptRoot 'Waakhond.ps1')
+
 function Invoke-Stap {
     # NietFataal is voor stappen die meten en niets produceren waar een latere stap op leunt.
     # Een omvallende meting hoort een reeks van zeventien uur niet te stoppen: de allocatie van het
@@ -151,29 +169,38 @@ function Invoke-Stap {
         else { Write-Regel "overslaan : $Stap"; return }
     }
 
-    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $safe  = ($Stap -replace '[\\/:*?"<>|]', '_')
-    $log   = Join-Path $LogDir "$stamp`_$safe.log"
+    # Een stap die de waakhond als vastgelopen stopt, start het script nog HerhalingenNaVastlopen keer opnieuw, elk met een eigen
+    # log, voordat de reeks stopt: op 11 november 2026 liep een allocatie die twee uur vastzat bij herhaling in negen minuten door.
+    for ($poging = 0; $true; $poging++) {
+        $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+        $log   = Join-Path $LogDir "$stamp`_$safe.log"
 
-    Write-Regel "start     : $Stap"
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af in een proces, maar alleen voor items
-    # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
-    # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
-    & $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg @Item 2>&1 | Out-Null
-    $code = $LASTEXITCODE
-    $sw.Stop()
-    $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+        Write-Regel "start     : $Stap"
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af in een proces, maar alleen voor items
+        # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
+        # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
+        $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $Item) -Log $log -WaakhondMinuten $WaakhondMinuten
+        $code = $run.Code
+        $sw.Stop()
+        $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
 
-    "{0}`t{1}`t{2}`t{3}`t{4}" -f (Get-Date -Format 's'), $Stap, ($Item -join ' '), $code, $sec |
-        Add-Content $status -Encoding UTF8
+        "{0}`t{1}`t{2}`t{3}`t{4}" -f (Get-Date -Format 's'), $Stap, ($Item -join ' '), $code, $sec |
+            Add-Content $status -Encoding UTF8
+
+        # Een vastgelopen proces krijgt zijn reden als [E]-regel onder zijn log, zodat wie het log later opent ziet waarom hij stopte.
+        if ($run.Reden) { "[E] RunAllocatie.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
+        if (-not $run.Reden -or $poging -ge $HerhalingenNaVastlopen) { break }
+        Write-Regel "VASTGELOPEN: $Stap, het script start de stap opnieuw ($($poging + 1) van $HerhalingenNaVastlopen); log van de vastgelopen poging: $log"
+    }
 
     # Exit 0 is niet genoeg. Een ontbrekend bronbestand komt als GDAL-fout in het log terwijl de exitcode
     # 0 blijft; gemeten op 2026-08-27 met een claim-CSV die niet bestond. Daarom ook het log toetsen.
-    $fouten = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
+    $fouten = @(Select-String -LiteralPath $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
 
     if ($code -ne 0 -or $fouten.Count -gt 0) {
-        $reden = if ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
+        $reden = if ($run.Reden) { $run.Reden } elseif ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
         Write-Regel "MISLUKT   : $Stap ($reden, $sec s)"
         Write-Regel "log       : $log"
         $fouten | Select-Object -First 20 | ForEach-Object { Write-Host "   $($_.Line)" }
@@ -347,7 +374,7 @@ function Test-Invoer {
 
 function Test-StedelijkeKlassen {
     # ModelParameters/OntkoppelStedelijkeKlasses is een debugschakelaar zonder omgevingsvariabele: hij
-    # staat in de configuratie en Run2120 zet hem niet. Op TRUE slaat elke niet-landbouwregel in
+    # staat in de configuratie en dit script zet hem niet. Op TRUE slaat elke niet-landbouwregel in
     # SectorAllocRegio zijn allocatie over en geeft hij zijn ingangsstand door, en leest de landbouw
     # de stand van datzelfde zichtjaar van schijf. Dat is de bedoelde route voor een landbouwronde
     # bovenop bestaande standtifs, maar in een volle reeks levert het stedelijke standen op die niet
