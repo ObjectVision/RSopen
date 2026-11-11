@@ -40,7 +40,7 @@ param(
     # regel tekst onderin het script.
     [string] $Issue     = '632',
     # De werkkopie die de cijfers heeft gemaakt, en niet de werkkopie waarin dit script staat.
-    # Run2120.ps1 draait op RSopen_NL2120 terwijl dit script ergens anders kan liggen;
+    # RunAllocatie.ps1 draait op RSopen_NL2120 terwijl dit script ergens anders kan liggen;
     # die twee kunnen los van elkaar uit de pas lopen. Branch, commit en tag komen hier vandaan.
     [string] $Werkkopie = 'C:\ProjDir\RSopen_NL2120',
     # Vervangt de uit git afgeleide herkomstregels door eigen tekst. Nodig zodra de varianten niet
