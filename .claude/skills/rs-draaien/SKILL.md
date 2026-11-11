@@ -22,7 +22,9 @@ Gemeten op 2026-09-01 op GeoDms20.17.0.m:
 | `/Diagnose/GenerateAll` | 400 tot 960 s |
 | allocatie van een zichtjaar | 45 tot 70 min |
 
-De prijs van een vergridding zit in het aantal geometrieen en niet in de omvang van het domein: poly2grid raakt alleen de cellen onder de polygonen. Een geos-bewerking inschatten als een zware rasterbewerking zit er twee ordes naast.
+De prijs van een vergridding zit in het aantal geometrieen en niet in de omvang van het domein: poly2grid raakt alleen de cellen onder de polygonen. Een polygoonbewerking inschatten als een zware rasterbewerking zit er twee ordes naast.
+
+De uitzondering is `dms_buffer_multi_polygon` met een afstand van honderden meters op polygonen met duizenden hoekpunten. Op de 3.536 IBIS-terreinen met een woonbuffer, met buffers tot 1000 m en tot 25.000 hoekpunten per terrein, kost hij 4.200 tot 6.200 s, waar `geos_buffer_multi_polygon` 2 tot 5 s nodig heeft. Rond de 125 bevolkingskernen van 1000 m legt hij meer dan 40 GB vast, waar geos in 64 s klaar is (GeoDms20.28.0.m, 2026-11-10). Daarom staan die twee buffers op geos. Met een kleine afstand of op eenvoudige polygonen is dms even snel als geos of sneller, ook op twee miljoen panden.
 
 Gaat er toch een zware run aan, kijk dan eerst wie er kan meeliften. De meeste vragen zijn indicator- of zeefvragen op een stand die de run toch al maakt, en die kosten niets extra zolang ze in dezelfde aanroep worden meegevraagd (zie Meerdere items in een aanroep). De passagier moet zijn item vooraf aanleveren, want achteraf aanhaken kan niet. Wat een volgende reeks moet meenemen hoef je niet bij te houden: dat is `git log <laatste opleveringstag>..HEAD`.
 
@@ -171,9 +173,9 @@ if (Test-Path $l) { Remove-Item -LiteralPath $l -Force }
 
 Een log toets je op `[E]`, maar niet elke `[W]` vraagt om actie. Deze is bekend en mag blijven staan.
 
-`geos_union_polygon` op `SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/geometry` geeft bij elke berekening van dat item 112 regels `GEOS fix failed. fail-reason="Ring Self-intersection"`. De oorzaak zit in de aangeleverde gpkg van de Basiskaart Natuurlijk Systeem Nederland en niet in de configuratie: 132 van de 6.157 polygonen hebben een ring die zichzelf in een punt raakt, het gewone artefact van een 25 meter raster dat naar polygonen is omgezet. GeoDMS repareert er twintig en geeft op de overige 112 op, een regel per polygoon. De raakpunten hebben geen oppervlak; de unie verschilt van een vergridding van de ruwe features op 58 van 56,1 miljoen cellen op 25 meter. Gemeten op 2026-09-10 met GeoDms20.17.0.m; de volledige meting staat in de memory over de BNSN-waarschuwingen.
+De aangeleverde gpkg van de Basiskaart Natuurlijk Systeem Nederland heeft 132 van de 6.157 polygonen met een ring die zichzelf in een punt raakt, het gewone artefact van een 25 meter raster dat naar polygonen is omgezet. `dms_union_polygon` op `SourceData/Landschap/BasiskaartNatuurlijkSysteemNederlandK/geometry` leest die zonder melding. Een `geos_`-operator op deze polygonen geeft een regel `GEOS fix failed. fail-reason="Ring Self-intersection"` (of `"Hole lies outside shell"`) per polygoon die hij niet kan repareren: `geos_union_polygon` 127 regels op GeoDms20.28.0.m. De raakpunten hebben geen oppervlak; de unie van dms en die van geos verschillen 0,02 m2. Hetzelfde geldt voor vijf polygonen van de bedrijventerreinen onder `SourceData/Energie/Wind`.
 
-Laat de bron staan en schoon hem niet op: een reparatie verandert de oppervlakte niet meetbaar en zou een nieuwe vintage van een bronbestand vragen. Komt het aantal regels of de itemnaam anders uit dan hierboven, dan is het wel iets nieuws.
+Laat de bron staan en schoon hem niet op: een reparatie verandert de oppervlakte niet meetbaar en zou een nieuwe vintage van een bronbestand vragen. Verschijnen er toch `GEOS fix failed`-regels, dan staat er ergens weer een `geos_`-operator op deze bronnen, en dat is iets nieuws.
 
 ## Trap 2: klopt het (seconden tot minuten)
 

@@ -28,14 +28,31 @@ Template Zichtjaar_T
 	unit<UInt8>       AllocRegio        := /Classifications/Modellering/AllocRegiosK;
 	unit<UInt8>       SectorAllocRegio  := CaseClassifications/Actor/SectorAllocRegio;
 	
-	container         SectorAllocRegios := for_each_ne(SectorAllocRegio/name, 'AllocRegios/'+SectorAllocRegio/AllocRegio_name+'/'+SectorAllocRegio/Sector_name);
-	
+	container         SectorAllocRegios := for_each_ne(SectorAllocRegio/name, 'AllocRegios/'+SectorAllocRegio/AllocRegio_name+'/'+(lowercase(SectorAllocRegio/Sector_name) == 'wonen' ? 'Wonen_Bouwbaar' : SectorAllocRegio/Sector_name))
+	, Descr = "Wat elke combinatie van sector en allocatieregio alloceert. Voor wonen is dat niet de vraag (AllocRegios/<regio>/Wonen) maar het deel ervan dat tot het zichtjaar gebouwd kan worden (Wonen_Bouwbaar, #448); de claimrealisatie meet tegen de vraag.";
+
 	container         AllocRegios       :=
 		for_each_ne(
 			AllocRegio/name
 			, 'AllocRegio_T('+string(id(AllocRegio))+'[AllocRegio])'
 		);
-	
+
+	container NetcongestieUitstel
+	: Descr = "Per cel het deel van de woningbouw tot dit zichtjaar dat op de uitbreiding van het net wacht (#448), volgens de regel in ModelParameters/Wonen/Netcongestie, met de woningvoorraad van het basisjaar als gewicht voor het gemiddelde per regio."
+	{
+		parameter<Float32> Zichtjaar    := float32(Zichtjaar_jaartal);
+		parameter<Float32> Basisjaar    := /ModelParameters/Model_StartYear[float32];
+		attribute<UInt16>  Code         (AdminDomain) := MakeDefined(/BaseData/Omgeving/Netcongestie/JaarOpgelost, 0w), Descr = "0 is geen wachtrij, 1 een wachtrij zonder jaartal, anders het jaar waarin de congestie is opgelost.";
+		attribute<Float32> JaarOpgelost (AdminDomain) := Code == 1w ? float32(/ModelParameters/Wonen/Netcongestie/JaarOpgelost_Onbekend) : float32(Code);
+		attribute<Float32> Achterstand  (AdminDomain) := Code == 0w ? 0f : max_elem(
+			  /ModelParameters/Wonen/Netcongestie/Wachtdeel   * (min_elem(JaarOpgelost, Zichtjaar) - /ModelParameters/Wonen/Netcongestie/BeginWachtrij)
+			- /ModelParameters/Wonen/Netcongestie/Inhaaltempo * max_elem(Zichtjaar - JaarOpgelost, 0f)
+			, 0f)
+		, Descr = "De achterstand op het zichtjaar in jaren normale bouw: wat tot het jaar waarin de congestie is opgelost bleef wachten, min wat daarna tot het zichtjaar is ingehaald, en nooit minder dan nul.";
+		attribute<Float32> Uitsteldeel  (AdminDomain) := Achterstand / (Zichtjaar - Basisjaar), Descr = "Het deel van de groei sinds het basisjaar dat op het zichtjaar nog niet gebouwd is.";
+		attribute<Float32> Gewicht      (AdminDomain) := MakeDefined(/BaseData/StartState/StateBasisjaar/State/Wonen/Aantal_Woningen_Totaal[float32], 0f), Descr = "De woningvoorraad van het basisjaar; de modelgroei tot 2040 ligt bijna even sterk in congestiegebied als de voorraad.";
+	}
+
 	Template AllocRegio_T
 	{
 		parameter<AllocRegio> AllocRegio_rel;
@@ -46,7 +63,7 @@ Template Zichtjaar_T
 		unit<UInt32> RegioUnit := = AllocRegio_path
 		{
 			attribute<rdc_meter> geometry          (poly) := =AllocRegio_path+'/geometry';
-			attribute<rdc_meter> geometry_buffered (poly) := geos_buffer_multi_polygon(geometry, float64(/ModelParameters/Advanced/Claimregio_Bufferstraal / 1[meter]), 4b);
+			attribute<rdc_meter> geometry_buffered (poly) := dms_buffer_multi_polygon(geometry, float64(/ModelParameters/Advanced/Claimregio_Bufferstraal / 1[meter]), 4b);
 			attribute<.>         per_TigrisXLSrcRegio_direct (PrivData/Claims/WonenEnWerken/SrcRegio) := point_in_polygon(PrivData/Claims/WonenEnWerken/SrcRegio/centroid, geometry);
 			attribute<.>         per_TigrisXLSrcRegio (PrivData/Claims/WonenEnWerken/SrcRegio) := MakeDefined(per_TigrisXLSrcRegio_direct, point_in_polygon(PrivData/Claims/WonenEnWerken/SrcRegio/centroid, geometry_buffered))
 			,	IntegrityCheck = "all(IsDefined(this))"
@@ -99,7 +116,21 @@ Template Zichtjaar_T
 		}
 		container Wonen := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector && IsTigrisRegio ? 'Wonen_T()' : '/Templates/Leeg'
 		, Descr = "De woonclaim van dit zichtjaar per regio en subsector, zie Wonen_T. Leeg zonder woonsector en in een regio-indeling zonder TIGRIS-claims (pbl-nl/model-RSopen#53).";
-		
+
+		Template Wonen_Bouwbaar_T
+		{
+			attribute<Float32> Uitsteldeel            (RegioUnit) := MakeDefined(sum(NetcongestieUitstel/Uitsteldeel * NetcongestieUitstel/Gewicht, RegioUnit/Per_AdminDomain) / sum(NetcongestieUitstel/Gewicht, RegioUnit/Per_AdminDomain), 0f)
+			, Descr = "Het deel van de groei sinds het basisjaar dat op het zichtjaar op het net wacht, gemiddeld over de regio met de woningvoorraad van het basisjaar als gewicht.";
+			attribute<Woning>  eengezins_VrijeSector  (RegioUnit) := Wonen/eengezins_VrijeSector  - Uitsteldeel * max_elem(Wonen/eengezins_VrijeSector  - Wonen/eengezins_VrijeSector_Proxy,  0[Woning]);
+			attribute<Woning>  eengezins_SocialeHuur  (RegioUnit) := Wonen/eengezins_SocialeHuur  - Uitsteldeel * max_elem(Wonen/eengezins_SocialeHuur  - Wonen/eengezins_SocialeHuur_Proxy,  0[Woning]);
+			attribute<Woning>  meergezins_VrijeSector (RegioUnit) := Wonen/meergezins_VrijeSector - Uitsteldeel * max_elem(Wonen/meergezins_VrijeSector - Wonen/meergezins_VrijeSector_Proxy, 0[Woning]);
+			attribute<Woning>  meergezins_SocialeHuur (RegioUnit) := Wonen/meergezins_SocialeHuur - Uitsteldeel * max_elem(Wonen/meergezins_SocialeHuur - Wonen/meergezins_SocialeHuur_Proxy, 0[Woning]);
+			attribute<Woning>  Totaal                 (RegioUnit) := ='add('+asList(WP2xVSSH/name,',')+')';
+			attribute<Woning>  Uitgesteld             (RegioUnit) := Wonen/Totaal - Totaal, Descr = "De woningen die op het zichtjaar op het net wachten: vraag die nog niet gebouwd kan worden.";
+		}
+		container Wonen_Bouwbaar := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector && IsTigrisRegio ? 'Wonen_Bouwbaar_T()' : '/Templates/Leeg'
+		, Descr = "Het deel van de woonclaim dat tot dit zichtjaar gebouwd kan worden: de vraag in Wonen min de groei die op de uitbreiding van het net wacht (#448). Een rem op het aanbod en geen andere vraag: de allocatie leest dit via SectorAllocRegios, de claimrealisatie meet tegen Wonen. Wat in een zichtjaar wacht, zit in het volgende weer in de vraag. Leeg waar Wonen leeg is (pbl-nl/model-RSopen#53).";
+
 		container             Werken                          := = lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
 		                                                         ? 'Read_werken_CSV'
 		                                                         : lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TrendLISARegio')

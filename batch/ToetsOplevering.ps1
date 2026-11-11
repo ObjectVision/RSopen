@@ -14,15 +14,15 @@
     Elke toets meldt PASS, FAIL of GEEN DATA. GEEN DATA is nadrukkelijk geen PASS.
 
 .EXAMPLE
-    .\ToetsOplevering.ps1 -LocalData C:\LocalData\RSopen_NL2120_productie -Varianten BAU,BAU2
+    .\ToetsOplevering.ps1 -LocalData C:\LocalData\RSopen_NL2120 -Varianten BAU,BAU2
 
 .EXAMPLE
     .\ToetsOplevering.ps1 -TrapC -Varianten NbSGenuanceerd
 #>
 [CmdletBinding()]
 param(
-    [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
-    [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
+    [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120',
+    [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120\cfg\main.dms',
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),

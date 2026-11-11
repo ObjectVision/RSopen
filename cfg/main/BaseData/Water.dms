@@ -1,0 +1,111 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Wat het model afleidt uit de waterbronnen die SourceData/Water inleest (#440): de grondwaterstanden van
+// NbSGenuanceerd, de BAU-stand met daaroverheen de stand die de veenbouwsteen per cel oplegt.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Water
+{
+	container Grondwaterstanden: using = "/SourceData/Water/Grondwaterstanden"
+	, Descr = "De grondwaterstanden die het model zelf samenstelt uit de leveringen van Deltares in SourceData/Water/Grondwaterstanden; de using daarop laat de rekenregels hieronder ongewijzigd naar Referentie en BAU verwijzen (#440)."
+	{
+		Template NbSGenuanceerd_T
+		: Descr = "De grondwaterstanden waarmee het gewasmodel in NbSGenuanceerd rekent (#263, #782): geen eigen levering van Deltares maar de BAU-stand met daaroverheen de stand die de veenbouwsteen per cel
+					oplegt, want de vernatting die het punt van die variant is hoort in de opbrengstderving terug te komen. De bron geeft twee getallen per bouwsteen, kolom M en N van de bouwstenentabel,
+					overgenomen in Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/GLG_cm en GHG_cm; kolom N is maar half gevuld, dus op de bouwstenen met een geleverde GHG neemt de cel die over (een vast
+					peil zonder seizoensgang) en op de andere schuift de GHG met de GLG mee, zodat de plaatselijke afstand tussen hoogste en laagste stand overeind blijft; of dat de bedoelde toestand is staat
+					als vraag in #782. Alle drie de kaarten, ook die van 2017, want het zijn klimaatankers en geen beleidsjaren, en de vernatting geldt direct en volledig vanaf het eerste zichtjaar. De
+					bouwsteen per cel komt rechtstreeks uit VariantData/NbSGenuanceerd, dus de fingerprint van de dervingskaarten van deze levering draagt de invoer van die allocatie (Oplegging_Herkomst)."
+		{
+			// parameter<string> Bouwsteenkaart_Pad := '%LocalDataProjDir%/VariantData/Veenbouwstenen_NbSGenuanceerd_' + /ModelParameters/StudyArea + '.tif'
+			// , Descr = "Waar de gealloceerde veenbouwsteen per cel staat: letterlijk hetzelfde pad als Bouwsteenkaart_Pad in Templates/VariantData/Natuur/Veen_T, dat het bestand schrijft, als tekst herhaald omdat
+						// PropValue op een StorageName de expressietekst teruggeeft. Dit bestand ontstaat niet vanzelf: Write_Bouwsteenkaart staat in geen Generate-lijst, dus vraag er expliciet om (GeoDmsRun ...
+						// /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen/Write_Bouwsteenkaart). Ontbreekt het, dan meldt GeoDMS geen leesfout maar Unknown identifier op een subitem hier beneden. Verandert
+						// de veenlevering of de zeef, dan hoort de kaart opnieuw gemaakt te worden en daarna de opbrengstdervingskaarten; er is geen fingerprint die dat bewaakt.";
+
+			attribute</Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata> Bouwsteen (rdc_25m) := /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen/Bouwsteen_rel
+			// :	StorageName = "=Bouwsteenkaart_Pad"
+			// ,	StorageType = "gdal.grid"
+			// ,	StorageReadOnly = "True"
+			, Descr = "De gealloceerde bouwsteen per cel, null buiten het veengebied en op de cellen die in het type Rest vallen. De klassewaarden zijn de rijnummers van MetBrondata, precies zoals Veen_T ze wegschrijft.";
+
+			attribute<bool>    Opgelegd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/HeeftGLG[Bouwsteen]
+			, Descr = "Legt de bouwsteen op deze cel een grondwaterstand op? Onwaar buiten het veengebied, en ook binnen het veengebied bij open water en bij de twee bebouwde bouwstenen, want daar geeft de bron geen stand. Die cellen houden de BAU-stand.";
+
+			attribute<bool>    GHG_Geleverd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/HeeftGHG[Bouwsteen]
+			, Descr = "Geeft de bron voor de bouwsteen op deze cel een GHG? Waar op de bouwstenen 1, 2, 3a en 4a, onwaar op alle andere, ook op de cellen die wel een GLG opgelegd krijgen. Waar dit onwaar is schuift de GHG mee met de GLG.";
+
+			attribute<float32> GHG_Opgelegd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/GHG_cm[Bouwsteen] / 100f
+			, Descr = "De opgelegde gemiddeld hoogste grondwaterstand in meters onder maaiveld, positief naar beneden. Alleen betekenisvol waar GHG_Geleverd waar is.";
+
+			attribute<float32> GLG_Opgelegd (rdc_25m) := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata/GLG_cm[Bouwsteen] / 100f
+			, IntegrityCheck = "/ModelParameters/Advanced/AdminDomain_ref == '25m'"
+			, Descr = "De opgelegde stand in meters onder maaiveld, positief naar beneden, in dezelfde eenheid en met hetzelfde teken als de tifs van Deltares hierboven, zoals
+						BaseData/Landbouw/Yield_Reduction/OpbrengstenDerving_T met gxg_scale en gxg_sign verwacht. De IntegrityCheck hangt hier zodat hij in de rekengraaf zit, want dit item is leverancier van de
+						vier standen hieronder; hij bewaakt dat het AdminDomain 25 meter is, omdat de bouwsteenkaart op AdminDomain wordt weggeschreven en hier op rdc_25m op georeferentie wordt teruggelezen.";
+
+			attribute<float32> Verschuiving_2017 (rdc_25m) := Referentie/GLG_2017_TR29_11 - GLG_Opgelegd;
+			attribute<float32> Verschuiving_2050 (rdc_25m) := BAU/GLG_2050 - GLG_Opgelegd, Descr = "Hoeveel meter de stand omhoog moet ten opzichte van de BAU-levering om op de opgelegde GLG uit te komen. Positief is natter.";
+			attribute<float32> Verschuiving_2085 (rdc_25m) := BAU/GLG_2085 - GLG_Opgelegd;
+
+			attribute<float32> GLG_2017 (rdc_25m) := Opgelegd ? GLG_Opgelegd : Referentie/GLG_2017_TR29_11;
+			attribute<float32> GHG_2017 (rdc_25m) := Opgelegd ? (GHG_Geleverd ? GHG_Opgelegd : max_elem(0f, Referentie/GHG_2017_TR29_11 - Verschuiving_2017)) : Referentie/GHG_2017_TR29_11
+			, Descr = "De 2017-kaart draagt dezelfde opgelegde standen als die van 2050 en 2085, want de drie kaarten zijn klimaatankers en geen beleidsjaren: Templates/Landbouw/Suitability_T interpoleert tussen
+						de twee ankers die het zichtjaar omsluiten, en met kale referentiestanden op dit anker zou de vernatting in 2040 voor een deel worden weggemengd, terwijl zij direct en volledig vanaf het
+						eerste zichtjaar geldt. Geen enkel zichtjaar leest deze kaart als enige, dus zij is nooit een basisjaarbeeld.";
+
+			attribute<float32> GLG_2050 (rdc_25m) := Opgelegd ? GLG_Opgelegd : BAU/GLG_2050;
+			attribute<float32> GHG_2050 (rdc_25m) := Opgelegd ? (GHG_Geleverd ? GHG_Opgelegd : max_elem(0f, BAU/GHG_2050 - Verschuiving_2050)) : BAU/GHG_2050
+			, Descr = "Twee regels op een opgelegde cel: geeft de bron een GHG (bouwstenen 1, 2, 3a en 4a), dan staat die er; geeft zij er geen, dan schuift de GHG mee met de GLG en wordt hij geklemd op maaiveld,
+						wat de afstand tussen GHG en GLG kleiner kan maken maar de volgorde nooit omdraait. Het null-gedrag verschilt: de geleverde GHG staat er ook waar de BAU-levering niets geeft, net als bij
+						GLG_Opgelegd, terwijl de meeschuifregel daar null blijft en de opbrengstderving terugvalt op de tak zonder treffer.";
+
+			attribute<float32> GLG_2085 (rdc_25m) := Opgelegd ? GLG_Opgelegd : BAU/GLG_2085;
+			attribute<float32> GHG_2085 (rdc_25m) := Opgelegd ? (GHG_Geleverd ? GHG_Opgelegd : max_elem(0f, BAU/GHG_2085 - Verschuiving_2085)) : BAU/GHG_2085;
+
+			parameter<String> Regel_Versie := '782'
+			, Descr = "Sleutel voor de regels in dit blok in de fingerprint van de opbrengstdervingskaarten: waar de opgelegde stand de BAU-stand vervangt en hoe de GHG meeschuift (#782). Een andere waarde dan in
+						het zijbestand maakt de kaarten van deze levering opnieuw, dus de waarde verandert mee met die regels.";
+
+			unit<uint8> Tabel := /Classifications/Grondgebruik/NbSVeen/NbSBouwsteen/MetBrondata;
+
+			parameter<String> Oplegging_Herkomst :=
+				  'veen_rule='           + Regel_Versie
+				+ ';veen_table='         + AsList(Tabel/code + ':' + (Tabel/HeeftGLG ? string(Tabel/GLG_cm) : '-') + '/' + (Tabel/HeeftGHG ? string(Tabel/GHG_cm) : '-'), ',')
+				+ ';bouwsteen_rule='     + /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen/Regel_Versie
+				+ ';natuurdeel='         + AsList(string(/VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen/BouwsteenType/Natuurdeel), ',')
+				+ ';levering_pv='        + PropValue(/SourceData/Grondgebruik/Natuur/Bron/Veen_NbSGenuanceerd/Bron_PerPeilvak, 'StorageName') + ':' + PropValue(/SourceData/Grondgebruik/Natuur/Bron/Veen_NbSGenuanceerd/Bron_PerPeilvak/gebied, 'SqlString')
+				+ ';levering_zpv='       + PropValue(/SourceData/Grondgebruik/Natuur/Bron/Veen_NbSGenuanceerd/Bron_ZonderPeilvak, 'StorageName') + ':' + PropValue(/SourceData/Grondgebruik/Natuur/Bron/Veen_NbSGenuanceerd/Bron_ZonderPeilvak/gebied, 'SqlString')
+				+ ';trekking='           + /ModelParameters/Natuur/Trekking/Veen/Cluster_Straal + ',' + /ModelParameters/Natuur/Trekking/Veen/Cluster_Straal_Bouwsteen
+				                         + ',' + string(/ModelParameters/Natuur/Trekking/Veen/Ruis_Amplitude) + ',' + string(/ModelParameters/Natuur/Trekking/Veen/Diepte_Gewicht)
+				                         + ',' + string(/ModelParameters/Natuur/Trekking/Veen/Voorrang_Gewicht) + ',' + string(/ModelParameters/Natuur/Trekking/Veen/Plan_Gewicht) + ',' + string(/ModelParameters/Natuur/Trekking/Veen/Seed_Bouwsteen)
+				+ ';water_mag_land='     + string(/ModelParameters/Natuur/Veen/WaterMagLandWorden)
+				+ ';claim_excl_bebouwd=' + string(/ModelParameters/Natuur/Veen/ClaimReferentieOppExclBebouwd)
+				+ ';basisjaar=['         + /BaseData/StartState/StateBasisjaar/Fingerprint_Landgebruik + ']'
+				+ ';mnp=['               + /BaseData/Grondgebruik/Natuur/Bron/Landelijk_BAU/Fingerprint_INL_beheertypen_25m + ']'
+				+ ';depth='              + PropValue(/SourceData/Water/Waterdiepte_A_PrimairOnbeschermd, 'StorageName') + ',' + PropValue(/SourceData/Water/Waterdiepte_B_PrimairBeschermd, 'StorageName')
+				                         + ',' + PropValue(/SourceData/Water/Waterdiepte_C_RegionaalBeschermd, 'StorageName') + ',max=' + string(/SourceData/Water/MaxPlausibeleOverstromingsdiepte)
+				+ ';mask=bbg_boundary'   + /ModelParameters/BegrenzingBebouwdGebied_jaar + ',bbg' + /ModelParameters/BBG_Year + ',bag' + string(/ModelParameters/BAG_RecentYear) + '_' + /ModelParameters/BAG_file_date
+				+ ';study_area='         + /ModelParameters/StudyArea
+				+ ';admin_grid='         + /ModelParameters/Advanced/AdminDomain_ref
+			, Descr = "De veenoplegging in de fingerprint van de opbrengstdervingskaarten: de regels en de opgelegde standen per bouwsteen, en de invoer van de bouwsteenallocatie in Veen_T: haar
+						regelsleutel, het natuurdeel per bouwsteen, de twee leveringen, de trekkingsparameters, de twee veenkeuzes, het landgebruik van het basisjaar, de MNP-kaart, de LIWO-dieptekaarten, de
+						jaren van het opleggingsmasker, het studiegebied en het raster. De invoer en niet de uitkomst, want de schakelaar in OpbrengstenDerving_T lost de fingerprint op en zou anders de
+						veenallocatie doorrekenen.";
+
+			parameter<String> Herkomst_2017 := Referentie/Herkomst_TR29_11 + ';' + Oplegging_Herkomst, Descr = "Zie BAU/Herkomst_2017; hier komt op elk anker de veenoplegging erbij.";
+			parameter<String> Herkomst_2050 := BAU/Herkomst_2050 + ';' + Oplegging_Herkomst;
+			parameter<String> Herkomst_2085 := BAU/Herkomst_2085 + ';' + Oplegging_Herkomst;
+		}
+		container NbSGenuanceerd := = any(/Classifications/Landbouw/NL2120_Varianten/WordtGelezen && /Classifications/Landbouw/NL2120_Varianten/label == 'NbSGenuanceerd') ? 'NbSGenuanceerd_T()' : '/Templates/Leeg'
+		, Descr = "De grondwaterstanden van de levering NbSGenuanceerd, zie NbSGenuanceerd_T. Leeg als geen variant die levering leest (pbl-nl/model-RSopen#53).";
+	}
+}
