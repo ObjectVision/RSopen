@@ -120,9 +120,9 @@
 [CmdletBinding()]
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
-    [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
-    [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
-    [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\indicatoren',
+    [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120\cfg\main.dms',
+    [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120',
+    [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120\batch\log\indicatoren',
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @(),
