@@ -29,9 +29,9 @@ geeft exit 1 zodra een laag faalt.
    zonder ontkoppeling.
 
 Wat laag 3 NIET vangt: een meta-expressie instantieert alleen de tak die bij de huidige schakelaars
-hoort, en een item in een Template bestaat pas na instantiatie. Een boomcontrole over alle takken
-vraagt om UpdateMetaInfo in de Python-binding van GeoDMS; aangevraagd in ObjectVision/GeoDMS#1279.
-Zolang die er niet is, dekt laag 3 de gekozen takken van het actieve profiel.
+hoort, en een item in een Template bestaat pas na instantiatie. Laag 3 dekt dus de gekozen takken van
+het actieve profiel. Een controle over de hele boom kan met update_metainfo() in de Python-binding van
+GeoDMS (ObjectVision/GeoDMS#1279); die staat niet in dit script, zie pbl-nl/model-RSopen#53.
 
 WAAROM LAAG 3 STANDAARD UIT STAAT. Hij vindt echte fouten: op 22 september 2026 kwamen ObjectVision/
 RSopen#838 (een toets die twee varianten bij naam noemde) en een pad zonder leidende slash in de
@@ -44,8 +44,9 @@ de echte configuratie. De signaal-ruisverhouding is daarmee omgeslagen.
 
 Zet hem aan met --boom wanneer je gericht naar naamfouten zoekt, bijvoorbeeld na een merge of na het
 verwijderen van een item, en toets elke melding daarna los op de echte configuratie voordat je hem
-gelooft. Structureel wordt dit pas opgelost door UpdateMetaInfo in de Python-binding van GeoDMS
-(ObjectVision/GeoDMS#1279): dan hoeft er geen bestand meer te bestaan om een naam te kunnen opzoeken.
+gelooft. Ook update_metainfo() in de Python-binding lost dat niet op: een lezer van een mmd die er niet
+is, kent zijn kolommen niet. Wie de staart kwijt wil, toetst in een kopie waarvan de LocalData de
+ontkoppelde bestanden van een recente run bevat.
 
 Uitvoer: <uit>/preflight.csv met laag, toets, oordeel en melding, en hetzelfde op het scherm.
 Zie pbl-nl/model-RSopen#53 en ObjectVision/RSopen#833; wat laag 3 als eerste vond staat in
@@ -65,16 +66,19 @@ from pathlib import Path
 # Laag 3 is een naamcontrole. In de wegwerpkopie is de LocalData leeg, dus elk item dat een tif of een
 # mmd van een eerdere stap terugleest meldt daar een bestandsfout. Die zegt niets over de code en hoort
 # bij laag 2; alleen de meldingen hieronder tellen als fout van laag 3.
-BESTANDSFOUT = ("TIFFOpen Error", "cannot open dataset", "No such file or directory", "Cannot open",
+BESTANDSFOUT = ("TIFFOpen Error", "TIFFOpenW Error", "cannot open dataset", "No such file or directory", "Cannot open",
                 "cannot be opened", "Failure(4)")
 
 # Namen die een operator pas bij het rekenen aan zijn unit hangt. De naamcontrole kijkt ervoor en
 # meldt ze als onbekend, terwijl ze in een echte run gewoon bestaan: de allocatielogs van de
 # NL2120-productierun van 29 augustus 2026 (run2120/*allocatie-BAU-Y20*.log) bevatten geen enkele
 # foutregel, terwijl elke iteratie deze items aanroept. Districts komt van district_8 in
-# Templates/Allocatie/Iter_T/Iter_Allocatie.dms, waar het de clusters van aaneengesloten cellen geeft.
-# Voeg een naam hier alleen toe nadat je hebt vastgesteld dat een geslaagde run hem wel oplost.
-OPERATOR_SUBITEM = ("Unknown identifier 'Districts'",)
+# Templates/Allocatie/Iter_T/Iter_Allocatie.dms, waar het de clusters van aaneengesloten cellen geeft. Landuse en
+# statusFlag komen uit de landbouwallocatie in Templates/Allocatie/Iter_Landbouw_T.dms (Alloc_Result en de IntegrityCheck
+# van per_SectorxSubsector); het allocatielog van NbSGenuanceerd Y2040 uit de NL2120-productierun van 11 september 2026
+# rekent die tak zonder foutregel. Voeg een naam hier alleen toe nadat je hebt vastgesteld dat een geslaagde run hem
+# wel oplost.
+OPERATOR_SUBITEM = ("Unknown identifier 'Districts'", "Unknown identifier 'Landuse'", "Unknown identifier 'statusFlag'")
 
 # Een representatief bestand per basedata-stap, met de stap die het maakt. Overgenomen uit de
 # eis-lijst van batch/Run2120.ps1 (ObjectVision/RSopen#816): zeg vooraf welk ontkoppeld bestand
@@ -201,6 +205,10 @@ def wegwerpkopie(cfg: Path) -> tuple[Path, Path]:
     if doel.exists():
         shutil.rmtree(doel, ignore_errors=True)
     shutil.copytree(cfg.parent, doel / "cfg")
+    # Data moet mee: de SOMERS-datasheet, de CBS-kerncijfers per wijk en buurt en twee classificatietabellen hangen
+    # aan %ProjDir%/Data, en zonder die map meldt elke lezer daarvan een onbekende kolom.
+    if (cfg.parent.parent / "Data").is_dir():
+        shutil.copytree(cfg.parent.parent / "Data", doel / "Data")
     # De mmd-stores meenemen. Een mmd levert zijn kolommen uit de dictionary in het bestand, dus zonder
     # die stores meldt elke lezer een onbekende naam in plaats van een ontbrekend bestand, en dat is in
     # een naamcontrole niet van een echte fout te onderscheiden. Het zijn mappen van samen ongeveer 50 MB
