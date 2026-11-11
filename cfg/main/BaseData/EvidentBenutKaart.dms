@@ -210,4 +210,33 @@ container EvidentBenutKaart : using = "Classifications/Grondgebruik;Geography"
 
 	attribute<CBSKlasse> Klasse (AdminDomain) := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc_Klasse' : Decoupling/MayReuse ? 'Read_Klasse' : 'Make_Klasse'
 	, Descr = "Wat de zeef leest. Klopt de fingerprint dan wordt de tif gelezen, anders wordt er gerekend en meteen weggeschreven. Leest de basisjaarstand, dus de eerste keer rekenen hoort na WriteBasedata/Generate_Run3.";
+
+	container GrondInGebruik
+	: Descr = "Grond in gebruik die met een kans vrijkomt voor wonen en werken (#882): per cel de jaarlijkse kans uit VariantParameters/EvidentBenut naar haar klasse op deze kaart en de zone van Stedelijkheid, alleen binnen KernStraal van een BRT-woonkern
+				(Herontwikkelingskans/BijKern_Cel), want daarbuiten gaat zulke grond vrijwel nooit om. Een cel komt vrij in het eerste zichtjaar waarin de cumulatieve kans sinds het basisjaar de vaste trekking van haar perceel haalt,
+				dezelfde trekking als bij de herontwikkelingskans, en blijft daarna vrij. Zeef_Basisjaar_T/Impl/IsGrondInGebruik haalt zulke cellen uit evident benut en Zeef_T/Impl/GrondInGebruikNietAanDeBeurt sluit ze tot ze vrij zijn;
+				of het model er bouwt beslist de geschiktheid."
+	{
+		container          H                         := /BaseData/Suitabilities/Wonen/Herontwikkelingskans;
+		unit<UInt8>        Zichtjaar                 := /Classifications/Time/Zichtjaar;
+
+		attribute<Float32> Kans_Jaar   (AdminDomain) := H/BijKern_Cel && IsDefined(Klasse)
+		                                                ? (/BaseData/Suitabilities/Wonen/Stedelijkheid/IsStedelijk ? /VariantParameters/EvidentBenut/GrondInGebruik_Stad[Klasse] : /VariantParameters/EvidentBenut/GrondInGebruik_Platteland[Klasse])
+		                                                : 0f, Descr = "De jaarlijkse kans dat de cel vrijkomt: die van haar klasse en zone binnen KernStraal van een woonkern, anders nul.";
+		attribute<Bool>    KanVrijkomen (AdminDomain) := Kans_Jaar > 0f && IsDefined(H/Eenheid_rel), Descr = "Kan de cel vrijkomen? Een kans boven nul en een perceel; zonder perceel is er geen trekking en blijft de cel dicht.";
+		attribute<Float32> Jaren         (Zichtjaar) := float32((Zichtjaar/YearRange_rel - /ModelParameters/Model_StartYear) / 1[YearRange]), Descr = "De jaren van het basisjaar tot het zichtjaar, waarover de kans geldt.";
+
+		container          PerZichtjaar              := for_each_ne(Zichtjaar/name, 'PerZichtjaar_T(' + string(id(Zichtjaar)) + '[Zichtjaar])')
+		, Descr = "Per zichtjaar welke cellen van grond in gebruik vrij zijn.";
+
+		Template PerZichtjaar_T
+		{
+			parameter<Zichtjaar> Z_rel;
+			//
+			attribute<Bool>    IsVrij                 (AdminDomain) := KanVrijkomen && 1f - exp(0f - Kans_Jaar * Jaren[Z_rel]) >= H/Trekking[H/Eenheid_rel], Descr = "Is de cel uiterlijk in dit zichtjaar vrij? De cumulatieve kans haalt de trekking van haar perceel; een keer waar blijft waar.";
+			attribute<Bool>    NietVrij_Compacted (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, KanVrijkomen && !IsVrij), Descr = "Een cel die kan vrijkomen maar in dit zichtjaar nog niet aan de beurt is; de zeef van wonen en werken leest dit.";
+			parameter<Float32> Ha_Vrij                              := float32(sum(uint32(IsVrij))) * value(AdminDomain/NrHaPerCell, Float32), Descr = "De hectares grond in gebruik die uiterlijk in dit zichtjaar vrij zijn.";
+			parameter<Float32> Ha_KanVrijkomen                      := float32(sum(uint32(KanVrijkomen))) * value(AdminDomain/NrHaPerCell, Float32), Descr = "De hectares grond in gebruik die kunnen vrijkomen.";
+		}
+	}
 }
