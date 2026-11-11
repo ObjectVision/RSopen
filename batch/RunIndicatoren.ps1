@@ -84,6 +84,8 @@
                             De bereikbaarheid van groen rekent per regio opnieuw, op teruggelezen invoer;
                             alleen de landelijke tabel leest de groenkaarten zelf terug.
       -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
+      -WaakhondMinuten      Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als vastgelopen
+                            stopt, standaard 15; 0 zet de waakhond uit. Zie Waakhond.ps1.
 
       Welke bestanden de export schrijft hangt af van ModelParameters/Productieprofiel. NL2120 en Standaard
       schrijven de bestanden van de indicatordomeinen die het profiel levert (ModelParameters/Indicatoren/
@@ -115,6 +117,8 @@
    configuratiefout, exit 1 een rekenfout of ontbrekend bestand; exit 0 met [E]-regels telt ook als
    mislukt. Een tabel (csv) wordt kolom voor kolom geschreven, dus een csv kan na een fout minder
    kolommen hebben dan de configuratie; vergelijk de kopregel met die van een gave tabel.
+   Een vastgelopen GeoDmsRun stopt de waakhond na -WaakhondMinuten; de reden staat als [E]-regel onder
+   het log van de stap, en de stap telt als mislukt.
 ================================================================================================
 #>
 [CmdletBinding()]
@@ -134,7 +138,8 @@ param(
     [switch]   $Ontkoppeld = $true,
     [switch]   $AlleenExportZichtjaar,
     [switch]   $TabellenUitExport = $true,
-    [switch]   $GeenToets
+    [switch]   $GeenToets,
+    [int]      $WaakhondMinuten = 15
 )
 
 $ErrorActionPreference = 'Stop'
@@ -153,6 +158,8 @@ $status = Join-Path $LogDir 'status.tsv'
 if (-not (Test-Path $status)) { "tijd`tstap`texit`tseconden" | Set-Content $status -Encoding UTF8 }
 
 function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $T" }
+# Invoke-GeoDmsRun: GeoDmsRun met een waakhond op voortgang, zie Waakhond.ps1.
+. (Join-Path $PSScriptRoot 'Waakhond.ps1')
 
 function Get-BagDatum {
     # ModelParameters/BAG_file_date uit de tekst: de BAG-levering waaronder AfleidingPandtype/Write_WP5 de WP5-typering schrijft
@@ -353,8 +360,8 @@ function Invoke-Export([string]$stap, [string[]]$items) {
 
     Write-Regel "start     : $stap"
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    & $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg @items 2>&1 | Out-Null
-    $code = $LASTEXITCODE
+    $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $items) -Log $log -WaakhondMinuten $WaakhondMinuten
+    $code = $run.Code
     $sw.Stop()
     $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
 
@@ -376,9 +383,10 @@ function Invoke-Export([string]$stap, [string[]]$items) {
             }
     }
 
-    $fouten = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
+    if ($run.Reden) { "[E] RunIndicatoren.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
+    $fouten = @(Select-String -LiteralPath $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
     if ($code -ne 0 -or $fouten.Count -gt 0) {
-        $reden = if ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
+        $reden = if ($run.Reden) { $run.Reden } elseif ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
         Write-Regel "MISLUKT   : $stap ($reden, $sec s)"
         Write-Regel "log       : $log"
         $fouten | Select-Object -First 15 | ForEach-Object { Write-Host "   $($_.Line)" }

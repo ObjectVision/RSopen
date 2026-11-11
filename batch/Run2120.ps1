@@ -60,6 +60,8 @@
       -DiagnoseNaZichtjaar  Na welke zichtjaren het diagnoseharnas meedraait (ongeveer acht
                       minuten per zichtjaar per variant), plus een keer per variant de
                       basisjaarcontroles. Leeg is nooit.
+      -WaakhondMinuten  Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als
+                      vastgelopen stopt, standaard 15; 0 zet de waakhond uit. Zie ALS HET MISGAAT.
 
    B. Schakelaars in de configuratie die dit script NIET zet maar waar de run wel van afhangt.
       Loop ze na voordat je start; ze staan in cfg\main\ModelParameters.dms tenzij anders vermeld.
@@ -89,6 +91,12 @@
    Ontbreekt er basisdata, dan zegt het script welke WriteBasedata-stap die maakt.
    Draai nooit twee GeoDmsRun-processen tegelijk op dezelfde LocalData: ze botsen op bestanden
    die ze allebei openen, en het log zegt dan "being used by another process" of blijft stil.
+   Een GeoDmsRun kan ook vastlopen zonder ooit te eindigen. Daarom kijkt een waakhond elke minuut
+   of het proces nog leeft: groeit het log, of leest of schrijft het proces bytes of maakt het een
+   paginafout. Blijft dat -WaakhondMinuten lang uit, dan stopt het script het proces op zijn PID,
+   zet het een [E]-regel met de reden onder het log van de stap en stopt de reeks zoals bij elke
+   andere fout. Een meting (diagnose) mag ook vastlopen; de reeks loopt dan door. Hervat met
+   -StartBij bij de vastgelopen stap.
 ================================================================================================
 #>
 [CmdletBinding()]
@@ -106,7 +114,8 @@ param(
     [string]   $StartBij   = '',
     [switch]   $HerbouwBasedata,
     [switch]   $AlleenLandbouw,
-    [switch]   $ZonderIndicatorBasedata
+    [switch]   $ZonderIndicatorBasedata,
+    [int]      $WaakhondMinuten = 15
 )
 
 $ErrorActionPreference = 'Stop'
@@ -138,6 +147,9 @@ function Write-Regel([string]$Tekst) {
     Write-Host "[$t] $Tekst"
 }
 
+# Invoke-GeoDmsRun: GeoDmsRun met een waakhond op voortgang, zie Waakhond.ps1.
+. (Join-Path $PSScriptRoot 'Waakhond.ps1')
+
 function Invoke-Stap {
     # NietFataal is voor stappen die meten en niets produceren waar een latere stap op leunt.
     # Een omvallende meting hoort een reeks van zeventien uur niet te stoppen: de allocatie van het
@@ -160,8 +172,8 @@ function Invoke-Stap {
     # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af in een proces, maar alleen voor items
     # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
     # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
-    & $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg @Item 2>&1 | Out-Null
-    $code = $LASTEXITCODE
+    $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $Item) -Log $log -WaakhondMinuten $WaakhondMinuten
+    $code = $run.Code
     $sw.Stop()
     $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
 
@@ -170,10 +182,12 @@ function Invoke-Stap {
 
     # Exit 0 is niet genoeg. Een ontbrekend bronbestand komt als GDAL-fout in het log terwijl de exitcode
     # 0 blijft; gemeten op 2026-08-27 met een claim-CSV die niet bestond. Daarom ook het log toetsen.
-    $fouten = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
+    # Een vastgelopen proces krijgt zijn reden als [E]-regel onder zijn log, zodat wie het log later opent ziet waarom hij stopte.
+    if ($run.Reden) { "[E] Run2120.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
+    $fouten = @(Select-String -LiteralPath $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
 
     if ($code -ne 0 -or $fouten.Count -gt 0) {
-        $reden = if ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
+        $reden = if ($run.Reden) { $run.Reden } elseif ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
         Write-Regel "MISLUKT   : $Stap ($reden, $sec s)"
         Write-Regel "log       : $log"
         $fouten | Select-Object -First 20 | ForEach-Object { Write-Host "   $($_.Line)" }
