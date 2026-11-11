@@ -36,6 +36,14 @@ container PeilOptimalisatie: using = "Classifications;Classifications/Vastgoed;C
 			attribute<string> Label            := replace(name, '/', '_');
 		}
 		
+		unit<uint32> WaterbeheerContext := combine(ScenarioK, VariantK, ZichtjaarK) // de waterbeheerkosten hangen af van de drooglegging van de variant en van de periode, niet van CO2 of het grondgebruik (#852)
+		{
+			attribute<string> Scenario_name  := ScenarioK/name[first_rel];
+			attribute<string> Variant_name   := VariantK/name[second_rel];
+			attribute<string> Zichtjaar_name := ZichtjaarK/name[third_rel];
+			attribute<string> name           := Scenario_name+'/'+Variant_name+'/'+Zichtjaar_name;
+		}
+
 		unit<uint32> AggregatieContext := combine(ScenarioK, VariantK, BoerVariantK, BeregeningScenarioK, ZichtjaarK, CO2/EmissieK, CO2/PrijsK) // De aggregatie van NPV grondgebruik en NPV CO2 is afhankelijk van alles wat griondgebruik en de kosten van CO2emissies beinvloedt
 		{
 			attribute<string> Scenario_name           := ScenarioK/name[first_rel];
@@ -71,11 +79,20 @@ container PeilOptimalisatie: using = "Classifications;Classifications/Vastgoed;C
 			,'gdal.grid'
 	);
 	
+	container NPVWaterbeheer :=
+		for_each_ndvat(
+			impl/WaterbeheerContext/name
+			,AdminDomain
+			,EUR
+			,'%LocalDataProjDir%/Indicatoren/'+impl/WaterbeheerContext/Scenario_name+'_'+impl/WaterbeheerContext/variant_name+'/SOMERS_Waterbeheer_Kosten_EUR_NPV_'+impl/WaterbeheerContext/Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+			,'gdal.grid'
+		), Descr = "De waterbeheerkosten per variant als contante waarde, uit Templates/Indicatoren/SOMERS_CO2_T/Waterbeheer (#852).";
+
 	container NPVTotaal :=
 		for_each_nedv(
 			impl/AggregatieContext/name
 			,replace(
-				'NPVGrondgebruik/@S@/@V@/@B@/@B2@/@Z@ - NPVCO2Emissie/@S@/@V@/@Z@/@E@/@P@'
+				'NPVGrondgebruik/@S@/@V@/@B@/@B2@/@Z@ - MakeDefined(NPVCO2Emissie/@S@/@V@/@Z@/@E@/@P@, 0[EUR]) - MakeDefined(NPVWaterbeheer/@S@/@V@/@Z@, 0[EUR])'
 				,'@S@', impl/AggregatieContext/Scenario_name
 				,'@V@', impl/AggregatieContext/Variant_name
 				,'@B@', impl/AggregatieContext/Boervariant_name
@@ -86,7 +103,7 @@ container PeilOptimalisatie: using = "Classifications;Classifications/Vastgoed;C
 			)
 			,AdminDomain,
 			EUR
-		);
+		), Descr = "De landbouw-NPV min de CO2- en waterbeheerkosten per cel. Op minerale grond zijn die kosten er niet en tellen ze als nul, zodat de som per peilvak ook de landbouw buiten het veen meeweegt (#852).";
 		
 	container NPVTotaalPerPeilgebied :=
 		for_each_nedv(
@@ -96,13 +113,16 @@ container PeilOptimalisatie: using = "Classifications;Classifications/Vastgoed;C
 			,EUR
 		);
 	
+	attribute<bool> PeilvakMetVeen (/SourceData/Landbouw/SOMERS/Peilvakken) := MakeDefined(sum(uint32(IsDefined(/SourceData/Landbouw/SOMERS/Veenweide_percelen/AdminDomain_rel)), /PostAllocAnalyses/Landbouw/Peilvak_per_grid), 0) > 0
+	, Descr = "Ligt er in het peilvak binnen het studiegebied minstens een cel met een veenweideperceel van SOMERS? Alleen zo'n peilvak kan een andere variant dan BAU kiezen (#852).";
+	
 	container Optima
 	{
 		container Variant :=
 			for_each_nedv(
 				impl/OptimalisatieContext/name
 				,replace(
-					'ArgMax('+AsItemList('NPVTotaalPerPeilgebied/@S@/'+VariantK/name+'/@B@/@B2@/@Z@/@E@/@P@')+')[VariantK]'
+					'PeilvakMetVeen ? ArgMax('+AsItemList('NPVTotaalPerPeilgebied/@S@/'+VariantK/name+'/@B@/@B2@/@Z@/@E@/@P@')+')[VariantK] : VariantK/V/BAU'
 					,'@S@', impl/OptimalisatieContext/Scenario_name
 					,'@B@', impl/OptimalisatieContext/Boervariant_name
 					,'@B2@', impl/OptimalisatieContext/BeregeningScenario_name
@@ -112,7 +132,7 @@ container PeilOptimalisatie: using = "Classifications;Classifications/Vastgoed;C
 				)
 				,/SourceData/Landbouw/SOMERS/Peilvakken
 				,VariantK
-			);
+			), Descr = "De variant met de hoogste NPV over het hele peilvak. Een peilvak zonder veen blijft op BAU: daar remt een hoger peil geen veenoxidatie, en WBS zou er alleen kunnen winnen op minder droogteschade (#852).";
 		
 		container VariantPerGrid :=
 			for_each_nedv(

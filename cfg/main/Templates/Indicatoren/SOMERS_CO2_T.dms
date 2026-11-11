@@ -45,6 +45,25 @@ Template SOMERS_CO2_T
 	container Emissies := for_each_ne(CO2/EmissieK/name, 'EmissieT('+quote(CO2/EmissieK/name)+')');
 	
 	container Kosten := for_each_ne(CO2/EmissieXPrijsK/name, 'EmissieXPrijsT('+string(id(CO2/EmissieXPrijsK))+'[CO2/EmissieXPrijsK])');
+
+	container Waterbeheer
+	: Descr = "De kosten van het waterbeheer bij de zomerdrooglegging van deze variant, voor de peiloptimalisatie (#852): het kental per meter drooglegging uit ModelParameters/Landbouw maal de drooglegging, op de veenweidepercelen die geen stedelijk gebied of water zijn geworden. PostAllocAnalyses/Landbouw/PeilOptimalisatie leest de NPV terug en trekt hem af van de NPV van de variant."
+	{
+		attribute<float32>       Drooglegging_m     (AdminDomain) := MakeDefined(Uitstoot/Huidige_Percelen/Zomerdrooglegging_m_perGrid, 0f), Descr = "De zomerdrooglegging van deze variant in meters, nul buiten de veenweidepercelen.";
+		attribute<bool>          IsStedelijkOfWater (AdminDomain) :=
+			   /Classifications/Actor/Sector/IsStedelijk[Stand/Sector_rel]
+			|| /Classifications/Actor/Sector/IsWaterberging[Stand/Sector_rel]
+			|| /Classifications/Grondgebruik/LandgebruikType/IsBebouwdeKlasse[Stand/Landgebruik_Type]
+			|| /Classifications/Grondgebruik/LandgebruikType/IsWater[Stand/Landgebruik_Type]
+		, Descr = "Stedelijk gebied of water in dit zichtjaar, dezelfde afbakening als IsStedelijk_Nu en IsWater_Nu in EmissieT. Daar valt het waterbeheer van de landbouw weg.";
+		attribute<EUR_jaarlijks> Jaarlijks          (AdminDomain) := IsStedelijkOfWater ? 0[EUR_jaarlijks] : (/ModelParameters/Landbouw/Waterbeheerkosten_PerMeterDrooglegging * Drooglegging_m * AdminDomain/NrHaPerCell)[EUR_jaarlijks];
+		parameter<string>        StorageStr         := IsStartYear
+			? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/SOMERS_Waterbeheer_Kosten_EUR_NPV_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+			: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/SOMERS_Waterbeheer_Kosten_EUR_NPV_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+		attribute<EUR>           NPV                (AdminDomain) := (Jaarlijks * Verdiscontering/PeriodeFactor)[EUR], StorageName = "=StorageStr", StorageType = "gdalwrite.grid"
+		, Descr = "Contante waarde in het basisjaar van de waterbeheerkosten over de periode sinds het vorige zichtjaar, op dezelfde discontovoeten en peildatum als de CO2-kosten.";
+		parameter<EUR>           NPV_StGebied       := sum(NPV);
+	}
 	
 	Template EmissieT
 	{
@@ -70,7 +89,7 @@ Template SOMERS_CO2_T
 		attribute<bool> IsWater_Nu (AdminDomain) := /Classifications/Grondgebruik/LandgebruikType/IsWater[Stand/Landgebruik_Type]
 		, Descr = "Open water volgens het type in de stand.";
 
-		attribute<kg_jaarlijks> NaLUC (AdminDomain) :=
+		attribute<kg_jaarlijks> NaLUC_SOMERS (AdminDomain) :=
 			IsStedelijk_Nu
 				? (StedelijkeInrichtingStoptOxidatie ? ModelParameters/Landbouw/CO2_Uitstoot_StedelijkGebruik * AdminDomain/NrHaPerCell : Jaarlijks)
 				: IsWater_Nu
@@ -80,19 +99,29 @@ Template SOMERS_CO2_T
 					(#758, zie StedelijkeInrichtingStoptOxidatie). De stedelijke tak is breder dan bebouwing: naast de stedelijke sectoren telt ook gealloceerde waterberging mee, waar hetzelfde antwoord uitkomt
 					als via de watertak, maar langs een andere weg.";
 		
-		// Aanname: de jaarlijkse uitstoot is constant en de veenlaag is oneindig dik. Die tweede helft is in #733 gemeten en
-		// blijkt op de horizon tot 2120 niet onschuldig. Deze reeks blijft doorrekenen op cellen waar volgens de
-		// koolstofboekhouding geen veen meer over is: in BAU gaat het om 96,1 van de 278,7 Mton CO2 die deze reeks tot 2120
-		// op de veenweidepercelen rapporteert, verspreid over 116.007 van de 245.968 hectare, dus bijna de helft van het
-		// areaal. Het grootste deel daarvan ligt op moerige gronden in Friesland, Groningen, Overijssel en Drenthe, waar de
-		// veendiktekaart geen veenpakket geeft en deze reeks toch 14,3 ton CO2 per hectare per jaar blijft vragen,
-		// bovengemiddeld dus.
-		//
-		// De reeks wordt hier bewust niet begrensd: dit is wat SOMERS zegt, en het hoort te blijven staan zoals het is
-		// aangeleverd. Deltares heeft in #657 gemeld dat de terugkoppeling van uitputting wel in de dynamische jaar-op-jaar
-		// berekening zit maar niet in de statische getallen die wij gebruiken. Hoe ver de twee uit elkaar lopen staat in
-		// CarbonStorageSequestration/Zichtjaar/Carbon/Stock/Ongedekt_Cumulatief_StGebied en in de kaart
-		// Write_CO2Ongedekt_Cumulatief; die post is precies het verschil tussen deze reeks en wat de voorraad kon dragen.
+		// SOMERS rekent met een constante jaarlijkse uitstoot op een veenlaag die nooit opraakt. Op de horizon tot 2120 is dat
+		// niet onschuldig: in #733 bleef in BAU 96,1 van de 278,7 Mton CO2 ongedekt door de koolstofvoorraad, op 116.007 van de
+		// 245.968 hectare veenweideperceel en vooral op moerige gronden waar de veendiktekaart geen veenpakket geeft. Deltares
+		// meldde in #657 dat de terugkoppeling van uitputting in de dynamische berekening zit, maar niet in de statische
+		// getallen die wij gebruiken. ModelParameters/Landbouw/SOMERS_BegrensdOpVoorraad kiest. Uit is de reeks zoals hij is
+		// aangeleverd, en het verschil met wat de voorraad kon dragen staat dan in
+		// CarbonStorageSequestration/Zichtjaar/Carbon/Stock/Ongedekt_Cumulatief_StGebied en de kaart Write_CO2Ongedekt_Cumulatief.
+		// Aan stopt de uitstoot van een cel zodra hij de voorraad van het basisjaar heeft opgebruikt, zoals in het proefschrift
+		// uit #852 de uitstoot stopt als het grondwater de onderkant van het veen bereikt.
+		attribute<kg> Voorraad_Basisjaar (AdminDomain) := MakeDefined(CarbonStorageSequestration/BaseYear/CO2/Stock, 0[ton])[kg]
+		, Descr = "De koolstofvoorraad van de cel in het basisjaar als CO2, beide pools: de bovenste 30 cm en de veenreserve daaronder. Het plafond voor de cumulatieve uitstoot als SOMERS_BegrensdOpVoorraad aan staat.";
+		attribute<kg> Cumulatief_Vorig   (AdminDomain) := = IsFirstAllocYear || IsStartYear
+			? 'const(0[kg], AdminDomain)'
+			: 'PrevIndicatoren/SOMERS_CO2_Laagveen/Emissies/'+Emissie_name+'/Cumulatief_sindsStartyear'
+		, Descr = "De uitstoot van deze cel tot en met het vorige zichtjaar, nul in het eerste allocatiezichtjaar.";
+		attribute<kg_jaarlijks> Plafond (AdminDomain) := (max_elem(Voorraad_Basisjaar - Cumulatief_Vorig, 0[kg]) / Periode)[kg_jaarlijks]
+		, Descr = "Wat er van de voorraad van het basisjaar over is, verdeeld over de periode: de hoogste jaarlijkse uitstoot die de cel nog kan dragen.";
+		// Een vergelijking en geen min_elem: min_elem slaat een null over en zou zo buiten de veenweidepercelen, waar
+		// NaLUC_SOMERS null is, het plafond als uitstoot geven. De vergelijking met een null is onwaar en laat de null staan.
+		attribute<kg_jaarlijks> NaLUC (AdminDomain) := = /ModelParameters/Landbouw/SOMERS_BegrensdOpVoorraad && !IsStartYear
+			? 'NaLUC_SOMERS > Plafond ? Plafond : NaLUC_SOMERS'
+			: 'NaLUC_SOMERS'
+		, Descr = "De emissie na de landgebruiksverandering, met SOMERS_BegrensdOpVoorraad aan begrensd op het Plafond. De kosten, de cumulatieve reeks en de koolstofindicator lezen dit item.";
 		attribute<kg> Cumulatief_overZichtjaar  (AdminDomain) := NaLUC * Periode;
 		attribute<kg> Cumulatief_sindsStartyear (AdminDomain) := = IsFirstAllocYear 
 																		? 'Cumulatief_overZichtjaar'
