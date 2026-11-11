@@ -194,6 +194,40 @@ container Actor
 		container         V                               := for_each_nedv(name, string(id(.))+'[..]', void, .);
 	}
 	
+	unit<UInt8> StedelijkGroenK : NrOfRows = 1
+	, Descr = "Nieuw stedelijk groen: parken, stadsbos en blauwgroene parken die de allocatie aanlegt waar woningen te weinig groen in de buurt hebben (#480). De inrichting staat in ModelParameters/StedelijkGroen, de mix per variant in VariantK."
+	{
+		attribute<String> name                            : ['Totaal'];
+		attribute<String> Subsector_name                  := name;
+		attribute<String> Label                           := name, DialogType = "LabelText";
+		attribute<Bool>   KanLokaalHogereDichtheidKrijgen : [FALSE];
+		attribute<Sector> Sector_rel                      := const(rlookup('stedelijkgroen', lowercase(Sector/name)), .), Descr = "Leeg als stedelijk groen geen actieve sector is, zodat deze klasse ook in een productieprofiel zonder de sector oplost.";
+		attribute<String> Sector_name                     := Sector/name[Sector_rel];
+		attribute<String> Sector_name_Thisname            := Sector_name+'/'+name;
+		attribute<Sector/xSubsector> SectorxSubSector_rel := rjoin(lowercase(name), lowercase(Sector/xSubsector/Subsector_name), id(Sector/xSubsector));
+		attribute<Grondgebruik/CBSKlasse/Aggr> CBSKlasse_Aggr_rel := union_data(., Grondgebruik/CBSKlasse/Aggr/V/parken_en_plantsoenen);
+		attribute<UInt32> BrushColor                      : [rgb(120, 200, 60)], DialogType = "BrushColor";
+		attribute<Jobs6>  Jobs6_rel                       := const(null_b,.);
+		attribute<String> ref                             : ['StedelijkGroen'];
+		attribute<String> SrcRefRestricties               : ['StedelijkGroen'];
+		attribute<String> Subsector_ref                   : ['Classifications/Actor/StedelijkGroenK'];
+		attribute<String> ValUnit_ref                     : ['Ha'];
+		attribute<String> ValUnitDens_ref                 : ['Ha_Ha'];
+		attribute<String> ValUnit_ref2                    : ['Ha'];
+		attribute<String> StandVar_name                   : ['Ha_StedelijkGroen'];
+		attribute<String> StandVar_valueType              : ['float32'];
+
+		attribute<Bool>   HasClaims                       : [TRUE];
+		attribute<Bool>   HasAlloc                        : [TRUE];
+		attribute<Bool>   IsVastgoed                      : [FALSE];
+		attribute<Bool>   UseForLeegstandCorr             : [FALSE];
+		attribute<bool>   IsStedelijk                     : [FALSE], Descr = "Een park is geen verstedelijking: het telt niet mee in de verstedelijkingsindicator en krijgt in de koolstofindicator geen bebouwde klasse.";
+
+		attribute<uint16> LGN_code                        : [23], Descr = "LGN 23, gras in primair bebouwd gebied. Een park is voor ruim een derde boom en struik, voor een vijfde gras en voor de rest pad en water; zijn groenheid ligt daarmee dichter bij gras in de stad dan bij bos in de stad (LGN 20). Gelezen door Sector/LGNKlasse_rel, dat de NDVI-band van de indicator draagt.";
+
+		container         V                               := for_each_nedv(name, string(id(.))+'[..]', void, .);
+	}
+
 	// unit<UInt8> WindK: NrOfRows = 1
 	// {
 	// 	attribute<String>                      name                            : ['Totaal'];
@@ -319,10 +353,13 @@ container Actor
 		, Descr = "Is dit de waterbergingsector? Op de sectornaam en niet op V/Waterberging, want die klasse bestaat niet wanneer waterberging uitstaat in ModelParameters/SectorAllocRegio, en dan is een
 					verwijzing ernaar een parsefout. Waterberging is de enige gealloceerde sector die niet stedelijk is, dus de indicatoren moeten hem apart kunnen aanwijzen: de koolstofindicator geeft zo'n cel
 					een waterklasse en SOMERS stopt er de oxidatie (#778).";
+		attribute<bool>   IsStedelijkGroen    := lowercase(name) == lowercase('StedelijkGroen'), Descr = "Is dit de sector nieuw stedelijk groen (#480)? Op de sectornaam, om dezelfde reden als bij IsWaterberging. Een parkcel is groen en geen bebouwing, dus de indicatoren moeten hem apart kunnen aanwijzen.";
 		
 		attribute<Grondgebruik/LGNKlasse> LGNKlasse_rel := rlookup(LGN_code, Grondgebruik/LGNKlasse/code);
 		
 		unit<UInt8>       wo_Landbouw         := select_with_attr_by_cond(., lowercase(name) != lowercase('Landbouw'));
+		unit<UInt8>       MetStimulikaarten   := select_with_attr_by_cond(., lowercase(name) != lowercase('Landbouw') && lowercase(name) != lowercase('StedelijkGroen'))
+		, Descr = "De sectoren waarvoor de brondata stimulikaarten hebben. Landbouw en nieuw stedelijk groen hebben er geen; hun stimuli staan als lege kaarten in SourceData/Stimuli.";
 		
 		container         V                   := for_each_nedv(name, string(id(.))+'[..]', void, .);
 		
@@ -755,6 +792,8 @@ container Actor
 		attribute<String> Sector_name    := Sector/wo_Landbouw/name[first_rel];
 		attribute<String> HardheidK_name := Restrictie_HardheidK/name[second_rel];
 		attribute<String> name           := Sector_name+'_'+HardheidK_name;
+		attribute<String> Bestand_name   := (lowercase(Sector_name) == lowercase('StedelijkGroen') ? 'Wonen' : Sector_name)+'_'+HardheidK_name
+		, Descr = "Het restrictiebestand van deze combinatie. Nieuw stedelijk groen heeft geen eigen restrictiekaarten en volgt die van wonen: waar niet gebouwd mag worden vanwege water, infrastructuur of beschermde natuur, komt ook geen nieuw park (#480). Welke hardheden gelden staat in VariantK/RestrictiesVariant_StedelijkGroen.";
 		attribute<String> Label          := Sector_name+'/'+HardheidK_name;
 	}
 	
@@ -767,9 +806,9 @@ container Actor
 		attribute<String> Label          := Sector_name+'/'+HardheidK_name;
 	}
 	
-	unit<UInt32> Sector_x_StimHardheidK := combine(Sector/wo_Landbouw,Stimuli_HardheidK)
+	unit<UInt32> Sector_x_StimHardheidK := combine(Sector/MetStimulikaarten,Stimuli_HardheidK)
 	{
-		attribute<String> Sector_name    := Sector/wo_Landbouw/name[first_rel];
+		attribute<String> Sector_name    := Sector/MetStimulikaarten/name[first_rel];
 		attribute<String> HardheidK_name := Stimuli_HardheidK/name[second_rel];
 		attribute<String> name           := Sector_name+'_'+HardheidK_name;
 		attribute<String> Label          := Sector_name+'/'+HardheidK_name;

@@ -1,0 +1,43 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De kroonbedekking per cel van 25 meter, uit de bomenkaart die SourceData/Grondgebruik/ANK inleest. Gelezen door de
+// toets op kroonbedekking in Templates/Indicatoren/BereikbaarheidGroen_T/Normtoets (#480).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Kroonbedekking: using = "Units;Geography"
+, Descr = "Het deel van elke cel van 25 meter dat van bovenaf gezien onder een boomkroon ligt, als fractie, uit de bomenkaart van 2022 op 10 meter. De kaart op 25 meter is een ontkoppeld bestand met
+			een fingerprint in LocalDataProjDir, want de samenvatting leest ruim drie miljard cellen van 5 meter (#480)."
+{
+	attribute<UInt8>   Procent_5m (rdc_5m) := MakeDefined(/SourceData/Grondgebruik/ANK/Bomen_5m, 0s) > 0s ? uint8(/SourceData/Grondgebruik/ANK/Bomen_5m) : 0b
+	, Descr = "Het percentage boomkroon van de broncel; een cel zonder boom staat in de bron als nodata en telt hier als nul. Een byte per cel, want het zijn ruim drie miljard cellen.";
+	attribute<Float32> Calc_25m (rdc_25m) := float32(sum_uint32(Procent_5m, rdc_5m/rdc_25m_rel)) / (100f * float32(pcount(rdc_5m/rdc_25m_rel)))
+	, Descr = "De kroonbedekking als fractie: het gemiddelde percentage over de cellen van 5 meter in de cel, gedeeld door honderd. Elke cel van 10 meter in de bron valt in vier cellen van 5 meter, dus elke vierkante meter bron telt een keer.";
+
+	parameter<String> FileName_25m := '%LocalDataProjDir%/BaseData/Grondgebruik/ANK/Kroonbedekking_25m_' + /ModelParameters/StudyArea + '.tif'
+	, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
+	parameter<String> Fingerprint_25m :=
+		  'bron='        + PropValue(/SourceData/Grondgebruik/ANK/Bomen_5m, 'StorageName')
+		+ ';study_area=' + /ModelParameters/StudyArea
+	, Descr = "Wat de tif bepaalt: het bronbestand, met de levering in de naam, en het studiegebied.";
+
+	container Decoupling_25m := /Templates/DecoupledFile_T(FileName_25m, Fingerprint_25m, 'Write_25m');
+
+	attribute<Float32> Write_25m (rdc_25m) := Calc_25m, StorageName = "=Decoupling_25m/StorageFile", StorageType = "gdalwrite.grid"
+	, Descr = "Schrijft de kaart eenmalig weg, zonder zijbestand; dat volgt via Make_25m.";
+	attribute<Float32> Make_25m  (rdc_25m) := Write_25m, ExplicitSuppliers = "Decoupling_25m/Write_Fingerprint"
+	, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_25m, want alleen langs deze weg ontstaat de fingerprint (#837).";
+	attribute<Float32> Read_25m  (rdc_25m) : StorageName = "=Decoupling_25m/StorageFile", StorageType = "gdal.grid", StorageReadOnly = "true";
+	attribute<Float32> Kroon_25m (rdc_25m) := = Decoupling_25m/MayReuse ? 'Read_25m' : 'Make_25m'
+	, Descr = "De kaart zoals het model haar gebruikt, ontkoppeld. Vraag Decoupling_25m/Explanation op als je wilt weten waarom de tif wel of niet opnieuw wordt gemaakt.";
+
+	attribute<Float32> Kroon_AD  (AdminDomain) := Kroon_25m[AdminDomain/rdc_25m_rel]
+	, Descr = "Dezelfde kaart op het administratiedomein. Op 25 meter een een-op-een-koppeling; op 100 meter de 25-metercel waar de grovere cel op valt.";
+}

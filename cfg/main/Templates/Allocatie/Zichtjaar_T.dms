@@ -318,7 +318,7 @@ Template Zichtjaar_T
 			for_each_neidvn(
 				 StandVar/path
 				, 'ReadStand_UNCHECKED/'+StandVar/path
-				, StandVar/IsLandbouw || (NOT(/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'OP_rel' || StandVar/name == 'SubSector_rel' || StandVar/name == 'Landgebruik_Type' ? ' && LegendaKlopt' : '') + (StandVar/name == 'SubSector_rel' && /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector ? ' && LandbouwStandKlopt' : '')
+				, StandVar/IsLandbouw || StandVar/IsStedelijkGroen || (NOT(/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'OP_rel' || StandVar/name == 'SubSector_rel' || StandVar/name == 'Landgebruik_Type' ? ' && LegendaKlopt' : '') + (StandVar/name == 'SubSector_rel' && /ModelParameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector ? ' && LandbouwStandKlopt' : '')
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
@@ -545,7 +545,7 @@ Template Zichtjaar_T
 			for_each_neidvnat(
 				StandVar/path
 				, 'CalcStand/'+StandVar/path
-				, StandVar/IsLandbouw || (NOT(/Modelparameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'SubSector_rel' && /Modelparameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector ? ' && LandbouwStandKlopt' : '')
+				, StandVar/IsLandbouw || StandVar/IsStedelijkGroen || (NOT(/Modelparameters/SectorAllocRegio/Uq_Sectors/HasWonenSector) && StandVar/name == 'OP_rel') ? '' : 'not(all(IsNull(this))) && not(all(IsZero(this)))' + (StandVar/name == 'SubSector_rel' && /Modelparameters/SectorAllocRegio/Uq_Sectors/HasLandbouwSector ? ' && LandbouwStandKlopt' : '')
 				, AdminDomain
 				, StandVar
 				, StandVar/unit_name
@@ -694,6 +694,7 @@ Template Zichtjaar_T
 				attribute<bool>   Mutatie_IsNatuur    (AdminDomain) := /Classifications/Grondgebruik/LandgebruikType/IsNatuur_hedonisch[Type_Mutatie];
 				attribute<bool>   Mutatie_IsWater     (AdminDomain) := IsDefined(Type_Mutatie) ? /Classifications/Grondgebruik/LandgebruikType/IsWater_hedonisch[Type_Mutatie] : Sector/IsWaterberging[Sector_Mutatie];
 				attribute<bool>   Mutatie_IsLandbouw  (AdminDomain) := IsDefined(Type_Mutatie) ? /Classifications/Grondgebruik/LandgebruikType/IsLandbouw[Type_Mutatie] : Sector/IsLandbouw[Sector_Mutatie];
+				attribute<bool>   Mutatie_IsStedelijkGroen (AdminDomain) := !IsDefined(Type_Mutatie) && MakeDefined(Sector/IsStedelijkGroen[Sector_Mutatie], FALSE), Descr = "Heeft de allocatie hier nieuw stedelijk groen aangelegd (#480)? Een oplegging gaat voor, zoals bij de andere vlaggen.";
 			}
 
 			container       Fracties           := Templates/Suitabilities/Groenfracties_T(Bron), Descr = "Zelfde sjabloon, zelfde definities en zelfde noemers als de indicator WaardeNabijheidGroen (#566), maar dan gevoed met de beginstand in plaats van de eindstand.";
@@ -707,6 +708,50 @@ Template Zichtjaar_T
 					, CompactedAdminDomain
 					, float32
 				), Descr = "De relatieve prijsverandering per woningtype op het compacted domain, klaar voor gebruik in de geschiktheid voor wonen (IterSubsector_T_Wonen). In het eerste zichtjaar expliciet nul, zodat de dure schijfberekening daar helemaal niet hoeft te draaien.";
+		}
+
+		container StedelijkGroenClaim
+		: Descr = "De claim en de geschiktheid van nieuw stedelijk groen in dit zichtjaar (#480). De claim, per NVM-regio in hectare, is de stand van het nieuwe groen aan het begin van het zichtjaar plus het deel van het groentekort dat dit
+					zichtjaar moet oplossen. Het tekort is dat van de normtoets van ModelParameters/Indicatoren/Groennorm (Templates/Indicatoren/BereikbaarheidGroen_T/Normtoets), hier gerekend op de stand aan
+					het begin van het zichtjaar en met dezelfde drie maten voor het groen van een cel. Templates/Claims/ZichtjaarXScenarioxAllocRegios/StedelijkGroen leest Totaal; de allocatie trekt er de
+					stand weer af, dus wat ze dit zichtjaar aanlegt is het deel van het tekort. Wat ze niet kwijt kan, blijft in het tekort van het volgende zichtjaar staan."
+		{
+			parameter<String>    Kern              := Normtoets/Kern, Descr = "De schijf van de straal, hemelsbreed, zoals in de normtoets.";
+			attribute<Woning>    Woningen          (AdminDomain) := MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, StateVoorAllocatie/Wonen/Totaal), 0[Woning]), Descr = "Alle woningen van de cel aan het begin van het zichtjaar.";
+			attribute</Classifications/Grondgebruik/CBSKlasse/Aggr/Groen> GroenInBasisjaar (AdminDomain) := invert(/Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/org_rel)[/Classifications/Grondgebruik/CBSKlasse/Aggr_rel[/BaseData/StartState/Bodemstatistiek/gg_CBS]]
+			, Descr = "De groenklasse van het basisjaar, dezelfde als Templates/Indicatoren/Landgebruikskaart/Make_LandgebruikskaartNL2120_T/GroenInBasisjaar.";
+			attribute<Bool>      IsVastgelegd      (AdminDomain) := MakeDefined(/Classifications/Actor/Sector/xSubsector/LegtCelVast[recollect_by_cond(AdminDomain/IsCompactedDomain, StateVoorAllocatie/SubSector_rel)], FALSE), Descr = "Heeft de allocatie de cel sinds het basisjaar vastgelegd? Dan is zijn groen van het basisjaar weg, zoals in GroenInZichtjaar van de landgebruikskaart.";
+			attribute<Bool>      IsGroenKlasse     (AdminDomain) := IsDefined(GroenInBasisjaar) && GroenInBasisjaar != /Classifications/Grondgebruik/CBSKlasse/Aggr/Groen/V/overige_agrarisch_gebruik && !IsVastgelegd, Descr = "De klassetak van de normtoets.";
+			attribute<Float32>   Fractie           (AdminDomain) := max_elem(float32(IsGroenKlasse), MakeDefined(GroenNabijheid/Fracties/NatuurCel, 0f), MakeDefined(GroenNabijheid/Fracties/OpenbaarGroenCel, 0f)), Descr = "Het groene deel van de cel, de ruimste van de drie maten van de normtoets.";
+			container            Normtoets         := Templates/Indicatoren/Groennormtoets_T(Woningen, Fractie), Descr = "Hetzelfde sjabloon als de normtoets van de indicator, zodat de claim het tekort oplost dat de indicator meet.";
+			attribute<meter2>    Tekort            (AdminDomain) := Normtoets/Tekort, Descr = "Het groentekort van de woningen in de cel aan het begin van het zichtjaar.";
+
+			parameter<Float32>   Jaar              := float32(Zichtjaar_value);
+			parameter<Float32>   VorigJaar         := float32(rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevYearRange_rel)), Descr = "Het vorige zichtjaar, of het basisjaar voor het eerste zichtjaar.";
+			parameter<Float32>   WegIn             := float32(VariantParameters/VariantK/StedelijkGroenTekortWegIn[Variant_rel]);
+			parameter<Float32>   Aandeel           := Jaar >= WegIn ? 1f : (Jaar - VorigJaar) / (WegIn - VorigJaar)
+			, Descr = "Het deel van het tekort aan het begin van het zichtjaar dat dit zichtjaar moet oplossen: tot VariantK/StedelijkGroenTekortWegIn een even groot deel per jaar van wat nog openstaat, daarna alles.";
+
+			attribute<Ha>        Stand             (NVM) := sum(StateVoorAllocatie/StedelijkGroen/Totaal, NVM/Per_CompactedAdminDomain), Descr = "Het nieuwe stedelijk groen dat er aan het begin van het zichtjaar al ligt.";
+			attribute<Ha>        TekortHa          (NVM) := convert(sum(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Tekort), NVM/Per_CompactedAdminDomain), Ha), Descr = "Het groentekort van de regio aan het begin van het zichtjaar, een ondergrens voor het groen dat erbij moet.";
+			attribute<Ha>        Totaal            (NVM) := Stand + Aandeel * TekortHa;
+
+			attribute<Bool>      IsWaterOfKas      (CompactedAdminDomain) := MakeDefined(LandgebruikType/IsWater[StateVoorAllocatie/Landgebruik/Type], FALSE) || MakeDefined(LandgebruikType/LandbouwType_afgeleid[StateVoorAllocatie/Landgebruik/Type] == /Classifications/Grondgebruik/LandbouwType/V/Glastuinbouw, FALSE)
+			, Descr = "Water of glastuinbouw in het landgebruik aan het begin van het zichtjaar. Een park op water levert geen groen op, en een kas kost in de verwerving alleen de agrarische grondprijs, want de kas zelf staat niet in de opstalkosten; zonder deze uitsluiting wint de kas het van de akker ernaast. De zeef houdt beide niet tegen: de lijst van evident benut laat kassen open voor stedelijk groen, en een deel van het water in het landgebruik staat op de kaart van evident benut als een andere klasse.";
+			attribute<Bool>      IsKandidaat       (AdminDomain) := ='MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, ThisVariantData/PotentieleState/'+Context/ThisZichtjaar_name+'/per_SectorxSubsectoren/StedelijkGroen/Totaal/IsBeschikbaar_zichtjaar && !/Classifications/Actor/Sector/xSubsector/LegtCelVast[StateVoorAllocatie/SubSector_rel] && !IsWaterOfKas), FALSE)'
+			, Descr = "Kan hier nieuw stedelijk groen komen? De zeef van stedelijk groen laat het toe, de cel is aan het begin van het zichtjaar niet vastgelegd, zoals in Beschikbaar_Init van Templates/Allocatie/IterSubsector_T, en hij is geen water of kas.";
+			attribute<Float32>   KandidatenInOmgeving (AdminDomain) := ='potential(float32(IsKandidaat), ' + Kern + ')', Descr = "Het aantal kandidaatcellen binnen de straal van de cel.";
+			attribute<meter2>    TekortPerKandidaat (AdminDomain) := KandidatenInOmgeving > 0f ? Tekort / KandidatenInOmgeving : 0[meter2], Descr = "Het tekort van de woningen in de cel, gelijk verdeeld over de kandidaatcellen binnen de straal.";
+			attribute<meter2>    TekortInOmgeving  (AdminDomain) := ='IsKandidaat ? potential(TekortPerKandidaat, ' + Kern + ')[meter2] : 0[meter2]'
+			, Descr = "Het deel van het groentekort binnen de straal dat deze cel krijgt: elke woningcel verdeelt zijn tekort over de kandidaatcellen in zijn omgeving, zoals de normtoets het groen van een cel over de woningen eromheen verdeelt. Over alle kandidaatcellen opgeteld telt het tekort zo een keer, en een cel bij een handvol woningen krijgt alleen hun kleine tekort.";
+			attribute<Bool>      IsGeschikt        (AdminDomain) := TekortInOmgeving >= /ModelParameters/StedelijkGroen/MinTekortAandeelVanCel * AdminDomain/NrMeter2PerCell
+			, Descr = "Lost een park op deze cel genoeg tekort op? Alleen als het tekort dat de cel in totaal toebedeeld krijgt minstens ModelParameters/StedelijkGroen/MinTekortAandeelVanCel van zijn oppervlak is. Wat op de geschikte cellen niet past, blijft tekort.";
+			attribute<Eur>       Grond             (CompactedAdminDomain) := MakeDefined(/ModelParameters/Wonen/Grondwaarde/PerKlasse[collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/StartState/Bodemstatistiek/gg_CBS)] * AdminDomain/NrHaPerCell, 0[Eur])
+			, Descr = "De verwerving van de grond, met de grondwaarde per bodemgebruiksklasse die ook het exploitatiesaldo van wonen gebruikt (ModelParameters/Wonen/Grondwaarde).";
+			attribute<Eur>       Opstal            (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, /BaseData/Suitabilities/Wonen/Opstalkosten/Verwerving_NietWoningen/Result + /BaseData/Suitabilities/Wonen/Opstalkosten/Sloop_NietWoningen/Result)
+			, Descr = "Verwerven en slopen van wat er niet om te wonen staat, zoals een bedrijfspand, uitgesmeerd over het perceel zoals bij wonen (#861). Cellen met woningen doen niet mee: de evident-benut-lijst van stedelijk groen sluit woonterrein uit.";
+			attribute<Float32>   Geschiktheid      (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, IsGeschikt) && Grond + Opstal > 0[Eur] ? float32(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TekortInOmgeving)) / float32(Grond + Opstal) : null_f
+			, Descr = "De geschiktheid voor nieuw stedelijk groen: het deel van het groentekort dat de cel krijgt per euro aan verwerving, dus vierkante meter tekort per euro; leeg waar de cel niet geschikt is. De claim legt al vast hoeveel hectare er komt, dus de geschiktheid hoeft alleen te zeggen waar die hectares het meeste tekort per euro oplossen. De aanleg van het park telt niet mee, want die kost per hectare overal hetzelfde. Ook de waarde van de cel voor wonen telt niet mee; die rekent pas de allocatie van wonen, per pakket. Gelezen door Templates/Allocatie/IterSubsector_T, dat een lege geschiktheid hier als onbeschikbaar telt.";
 		}
 
 		container WerkenGeschiktheid
