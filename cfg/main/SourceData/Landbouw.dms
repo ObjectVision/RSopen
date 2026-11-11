@@ -209,6 +209,9 @@ container Landbouw : using = "Classifications/Landbouw"
 				attribute<uint32> code  : [1, 6, 7, 9, 12, 13, 20, 22, 23];
 				attribute<string> label := Classifications/Grondgebruik/WWLKlasse/label[rlookup(code, uint32(Classifications/Grondgebruik/WWLKlasse/EK))];
 				attribute<string> name  := AsItemName(label);
+				attribute<string> Zoutgevoeligheid_name : ['Gras', 'Akkerbouw', 'Akkerbouw', 'Akkerbouw', 'Akkerbouw', 'Hoogwaardig', 'Hoogwaardig', 'Hoogwaardig', 'Hoogwaardig']
+				, Descr = "De gewasgroep voor de grens van de zoutconcentratie van het beregeningswater (#616): gras maaien is gras; snijmais, wintertarwe, consumptieaardappel en suikerbieten zijn akkerbouw; zaai-uien, tulp, appelbomen en laanbomen zijn de hoogwaardige teelten.";
+				attribute</Classifications/Landbouw/ZoutgevoeligheidK> Zoutgevoeligheid_rel := rlookup(Zoutgevoeligheid_name, /Classifications/Landbouw/ZoutgevoeligheidK/name);
 				attribute<string> GeneriekeNaam  := Classifications/Grondgebruik/WWLKlasse/GeneriekeNaam[rlookup(code, uint32(Classifications/Grondgebruik/WWLKlasse/EK))];
 			}				
 		}
@@ -374,6 +377,70 @@ container Landbouw : using = "Classifications/Landbouw"
 		parameter<Float32>                  zaaglijn                          := nth_element(a, n); 
 		attribute<Bool>                     AangetastVerziltGebied  (rdc_25m) := const(FALSE, rdc_25m)
 		, Descr = "Waar de verzilting de opbrengst aantast: sinds #793 nergens, want de verzilting wordt in NL2120 niet meegenomen. De zaaglijn hierboven staat er nog voor wie haar weer wil aansluiten (a <= zaaglijn).";
+
+		// #616: de zoutconcentratie van het oppervlaktewater, als voorwaarde op beregening in BaseData/Landbouw/Yield_Reduction.
+		parameter<String> Levering := '20261111', Descr = "De leverdatum van de concentratiekaart; zo heet de map onder Water/Verzilting.";
+		parameter<String> Bestand  := '%RS_Lb_DataDir%/Water/Verzilting/'+Levering+'/lsw_concentrations_flushed.gpkg'
+		, Descr = "Het pad als eigen parameter, omdat de fingerprint van de opbrengstdervingskaarten het noemt.";
+
+		unit<uint32> LSW
+		: StorageName     = "=Bestand"
+		, StorageType     = "gdal.vect"
+		, StorageReadOnly = "TRUE"
+		, Descr           = "De lokale oppervlaktewatereenheden van het LHM met de zoutconcentratie van het oppervlaktewater in g/l bij 0; 0,5; 1 en 3 meter zeespiegelstijging, bij voortzetting van de huidige doorspoeling. De kaart heeft volgens de memo nog de status concept, en enkele losse eenheden in het binnenland kunnen een artefact zijn."
+		, Source          = "Deltares, lsw_concentrations_flushed.gpkg en de memo Verzilting oppervlaktewater bij zeespiegelstijging, levering van 11 november 2026 (#616); afgeleid van de water- en zoutbalansen van het LHM uit het Kennisprogramma Zeespiegelstijging (Delsman et al., 2022 en 2024)"
+		{
+			attribute<rdc_meter> geometry (poly);
+			attribute<Float64>   C_0m;
+			attribute<Float64>   C_0_5m;
+			attribute<Float64>   C_1m;
+			attribute<Float64>   C_3m;
+		}
+		attribute<LSW> LSW_rel (rdc_25m) := poly2grid(LSW/geometry, rdc_25m), Descr = "De oppervlaktewatereenheid per cel van 25 meter.";
+
+		parameter<Float32> Niveau_C_0_5m := 0.5f, Descr = "De zeespiegelstijging in meter waarbij de kolom C_0_5m geldt; C_0m geldt bij 0.";
+		parameter<Float32> Niveau_C_1m   := 1f,   Descr = "Idem voor C_1m.";
+		parameter<Float32> Niveau_C_3m   := 3f,   Descr = "Idem voor C_3m; daarboven blijft de concentratie die van C_3m.";
+
+		parameter</Classifications/Landbouw/ZeespiegelScenarioK> Scenario_rel := rlookup(ModelParameters/Landbouw/Verzilting/ZeespiegelScenario, /Classifications/Landbouw/ZeespiegelScenarioK/name);
+
+		container PerAnker := for_each_ne(/Classifications/Landbouw/WWL_Zichtjaren/label, 'Concentratie_T('+string(id(/Classifications/Landbouw/WWL_Zichtjaren))+'[/Classifications/Landbouw/WWL_Zichtjaren])')
+		, Descr = "De zoutconcentratie per cel voor elk klimaatanker van de opbrengstderving.";
+
+		Template Concentratie_T
+		{
+			parameter</Classifications/Landbouw/WWL_Zichtjaren> Anker;
+			///
+			container Z := ModelParameters/Landbouw/Verzilting/Zeespiegel;
+			parameter<Float32> X_Anker := float32(/Classifications/Landbouw/WWL_Zichtjaren/jaar[Anker]) / 1[jaar] - 1995f, Descr = "De jaren na 1995 van dit anker, zonder eenheid, zodat de kwadratische term met de lineaire opgeteld kan worden.";
+			parameter<Float32> X_Start := float32(ModelParameters/Model_StartYear) / 1[jaar] - 1995f, Descr = "De jaren na 1995 van het basisjaar van het model.";
+			parameter<Float32> ZSS_Anker := X_Anker <= Z/Knik[Scenario_rel]
+				? Z/Kwadratisch[Scenario_rel] * X_Anker * X_Anker + Z/Lineair[Scenario_rel] * X_Anker
+				: Z/Niveau_Knik[Scenario_rel] + Z/Helling_NaKnik[Scenario_rel] * (X_Anker - Z/Knik[Scenario_rel]);
+			parameter<Float32> ZSS_Start := X_Start <= Z/Knik[Scenario_rel]
+				? Z/Kwadratisch[Scenario_rel] * X_Start * X_Start + Z/Lineair[Scenario_rel] * X_Start
+				: Z/Niveau_Knik[Scenario_rel] + Z/Helling_NaKnik[Scenario_rel] * (X_Start - Z/Knik[Scenario_rel]);
+			parameter<Float32> Stijging := max_elem(ZSS_Anker - ZSS_Start, 0f)
+			, Descr = "De zeespiegelstijging in meter sinds het basisjaar, want de kolom C_0m beschrijft de huidige toestand. Nul voor het anker van het basisjaar.";
+
+			attribute<Float32> Per_LSW (LSW) :=
+				Stijging <= Niveau_C_0_5m ? float32(LSW/C_0m)   + (float32(LSW/C_0_5m) - float32(LSW/C_0m))   * Stijging / Niveau_C_0_5m :
+				Stijging <= Niveau_C_1m   ? float32(LSW/C_0_5m) + (float32(LSW/C_1m)   - float32(LSW/C_0_5m)) * (Stijging - Niveau_C_0_5m) / (Niveau_C_1m - Niveau_C_0_5m) :
+				Stijging <= Niveau_C_3m   ? float32(LSW/C_1m)   + (float32(LSW/C_3m)   - float32(LSW/C_1m))   * (Stijging - Niveau_C_1m) / (Niveau_C_3m - Niveau_C_1m) :
+				float32(LSW/C_3m)
+			, Descr = "De zoutconcentratie in g/l per eenheid bij deze stijging, lineair tussen de twee kolommen eromheen.";
+			attribute<Float32> Per_Cel      (AdminDomain) := Per_LSW[LSW_rel[AdminDomain/rdc_25m_rel]];
+			attribute<Float32> Concentratie (AdminDomain) := Per_Cel < 0f ? 0f : Per_Cel
+			, Descr = "De zoutconcentratie in g/l per cel, met nul waar de kaart een negatieve waarde geeft. Null waar de cel in geen eenheid ligt of de eenheid geen waarde heeft; daar geldt de voorwaarde op beregening niet.";
+		}
+
+		parameter<String> Herkomst :=
+			  'salt_file=' + Bestand
+			+ ';slr_scenario=' + ModelParameters/Landbouw/Verzilting/ZeespiegelScenario
+			+ ';slr_start=' + string(ModelParameters/Model_StartYear)
+			+ ';salt_limits=' + AsList(string(ModelParameters/Landbouw/Verzilting/MaxConcentratie_gl), ',')
+			+ ';surface_water_code=' + string(ModelParameters/Landbouw/Verzilting/Beregeningskaart_Oppervlaktewater)
+		, Descr = "De invoer van de verzilting voor de fingerprint van de opbrengstdervingskaarten.";
 	}
 	
 	
