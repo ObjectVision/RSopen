@@ -15,9 +15,10 @@
 //   rdc_mm_base     : idem in millimeters (integers, voor nauwkeurige geometriebewerkingen)
 //   rdc_km_base     : idem in kilometers (voor grove aggregaties)
 //
-// Studiegebied (rdc_meter): 
+// Studiegebied (rdc_meter):
 //   Wordt bepaald door ModelParameters/StudyArea (standaard: Nederland).
 //   Opties: Nederland, of een provincie met de naam uit SourceData/RegioIndelingen/Provincie/name (zie container StudyAreas hieronder).
+//   rdc_meter heeft altijd het bereik van Nederland, zodat landelijk ingelezen geometrie erbinnen valt; het studiegebied bepaalt alleen de omvang van de rasters (x_min tot en met y_max).
 //
 // Afgeleide domeinen (verderop in dit bestand):
 //   AllocDomain           : gridcellen waarop de allocatie plaatsvindt (100m of 25m, zie Advanced.dms)
@@ -34,8 +35,8 @@ container Geography: using = "Units"
 	unit<DPoint> rdc_meter_NL     := range(rdc_meter_base, point_xy(min_max/x_min_Nederland, min_max/y_min_Nederland,rdc_meter_base), point_xy(min_max/x_max_Nederland, min_max/y_max_Nederland,rdc_meter_base)), Descr = "Geografisch domain in RD-coordinaten, afgebakend tot Nederland.";
 	unit<IPoint> rdc_mm_base      := gridset(rdc_meter_NL,  point_yx(0.001, 0.001), point_yx(0.0, 0.0), ipoint), Descr = "Geografisch domain in RD-coordinaten, afgebakend tot Nederland, in millimeters (en dus integers)";
 	unit<WPoint> rdc_km_base      := gridset(rdc_meter_NL,  point_yx(1000, 1000), point_yx(0.0, 0.0), wpoint), Descr = "Geografisch domain in RD-coordinaten, afgebakend tot Nederland, in kilometers (en dus integers)";
-	unit<DPoint> rdc_meter        := =lowercase(ModelParameters/StudyArea) == 'nederland' ? 'StudyAreas/rdc_Nederland' : 'StudyAreas/rdc_Provincie', Descr = "Geografisch domain in RD-coordinaten, gedefinieerd in meters, afgebakend op het studiegebied: Nederland, of de provincie met de naam uit ModelParameters/StudyArea, gespeld als in SourceData/RegioIndelingen/Provincie/name (bijvoorbeeld Noord_Holland of Friesland).";
-	unit<IPoint> rdc_mm           := gridset(rdc_meter,  point_yx(0.001, 0.001), point_yx(0.0, 0.0), ipoint), Descr = "Geografisch domain in RD-coordinaten, afgebakend op het studiegebied, in millimeters (en dus integers)";
+	unit<DPoint> rdc_meter        := =lowercase(ModelParameters/StudyArea) == 'nederland' ? 'StudyAreas/rdc_Nederland' : 'StudyAreas/rdc_Provincie', Descr = "Geografisch domain in RD-coordinaten in meters, met het bereik van Nederland, ook bij een provincie als studiegebied: de bronnen worden landelijk ingelezen en de dms_-operatoren weigeren geometrie buiten het bereik (ObjectVision/GeoDMS#1353). De subitems beschrijven het studiegebied uit ModelParameters/StudyArea: Nederland of een provincie, gespeld als in SourceData/RegioIndelingen/Provincie/name.";
+	unit<IPoint> rdc_mm           := gridset(rdc_meter,  point_yx(0.001, 0.001), point_yx(0.0, 0.0), ipoint), Descr = "Geografisch domain in RD-coordinaten, met het bereik van Nederland zoals rdc_meter, in millimeters (en dus integers)";
 	
 	// unit<FPoint> LambertEA_base   : SpatialReference = "EPSG:3035", DialogData = "ngr_layer_lea", Descr = "Geografisch domain in Lambert EA coordinaten, gedefinieerd in meters.";
 	// unit<FPoint> LambertEA        := range(LambertEA_base, point_yx(2500000f, 1300000f), point_yx(4900000f, 4300000f)), Descr = "Geografisch domain in Lambert EA coordinaten, afgebakend op Europa.";
@@ -52,7 +53,12 @@ container Geography: using = "Units"
 			attribute<Bool>           IsStudyArea_AllocDomain (AllocDomain) := IsDefined(poly2grid(geometry, AllocDomain));
 			attribute<String>         name                    (UnityDomain) := const('Nederland',UnityDomain);
 			parameter<Ha>             Areaal                                := area(geometry[0], meter2_f64)[ha];
-			
+
+			parameter<Float64>        x_min                                 := Get_X(LowerBound(rdc_meter_NL)), Descr = "Omvang van de rasters (Geography/x_min tot en met y_max): het bereik van Nederland.";
+			parameter<Float64>        x_max                                 := Get_X(UpperBound(rdc_meter_NL));
+			parameter<Float64>        y_min                                 := Get_Y(LowerBound(rdc_meter_NL));
+			parameter<Float64>        y_max                                 := Get_Y(UpperBound(rdc_meter_NL));
+
 			container BoundingBoxPlus := Make_BoundingBoxPlus_T(geometry, 5000[meter_f64]);
 		}
 
@@ -72,13 +78,10 @@ container Geography: using = "Units"
 			parameter<rdc_meter_base> geometry_StudyArea  (poly) := geometry[rlookup(/ModelParameters/StudyArea, name)];
 		}
 		
-		unit<DPoint> rdc_Provincie             := range(rdc_meter_base
-		                                                    , Lower_Bound(Provincie_Omhullende/geometry_StudyArea)[rdc_km_base][rdc_meter_NL]
-		                                                    , (Upper_Bound(Provincie_Omhullende/geometry_StudyArea)[rdc_km_base] + point_xy(1w,1w,rdc_km_base))[rdc_meter_NL]
-		                                            )
-		, Descr = "Geografisch domain in RD-coordinaten, afgebakend tot de provincie uit ModelParameters/StudyArea, op hele kilometers zoals PerProv/<provincie>/rdc_prov. Niet via PerProv: die for_each leest
-					de provincienamen uit CBS/Gekozen terwijl rdc_meter nog wordt opgebouwd (zie Provincie_Omhullende). De grens zelf, met IJburg, komt wel uit SourceData/RegioIndelingen/Provincie; die
-					wordt pas opgezocht als rdc_meter al bestaat."
+		unit<DPoint> rdc_Provincie             := rdc_meter_NL
+		, Descr = "Geografisch domain in RD-coordinaten voor een provincie als studiegebied, met het bereik van Nederland zoals rdc_Nederland (zie rdc_meter). De rasters krijgen de omvang van de provincie
+					uit x_min tot en met y_max, op hele kilometers zoals PerProv/<provincie>/rdc_prov. Niet via PerProv: die for_each leest de provincienamen uit CBS/Gekozen terwijl de rasters nog worden
+					opgebouwd (zie Provincie_Omhullende). De grens zelf, met IJburg, komt wel uit SourceData/RegioIndelingen/Provincie; die wordt pas opgezocht als de rasters al bestaan."
 		{
 			parameter<rdc_meter_base> geometry_base                  (poly) := SourceData/RegioIndelingen/Provincie/geometry_base[rlookup(/ModelParameters/StudyArea, SourceData/RegioIndelingen/Provincie/name)];
 			attribute<rdc_meter>      geometry          (poly, UnityDomain) := union_data(UnityDomain, geometry_base[rdc_meter]);
@@ -86,7 +89,12 @@ container Geography: using = "Units"
 			attribute<Bool>           IsStudyArea_AllocDomain (AllocDomain) := IsDefined(poly2grid(geometry, AllocDomain));
 			attribute<String>         name                    (UnityDomain) := const(/ModelParameters/StudyArea,UnityDomain);
 			parameter<Ha>             Areaal                                := area(geometry[0], meter2_f64)[ha];
-			
+
+			parameter<Float64>        x_min                                 := Get_X(Lower_Bound(Provincie_Omhullende/geometry_StudyArea)[rdc_km_base][rdc_meter_NL]), Descr = "Omvang van de rasters (Geography/x_min tot en met y_max): de omhullende van de provincie, naar buiten afgerond op hele kilometers.";
+			parameter<Float64>        x_max                                 := Get_X((Upper_Bound(Provincie_Omhullende/geometry_StudyArea)[rdc_km_base] + point_xy(1w,1w,rdc_km_base))[rdc_meter_NL]);
+			parameter<Float64>        y_min                                 := Get_Y(Lower_Bound(Provincie_Omhullende/geometry_StudyArea)[rdc_km_base][rdc_meter_NL]);
+			parameter<Float64>        y_max                                 := Get_Y((Upper_Bound(Provincie_Omhullende/geometry_StudyArea)[rdc_km_base] + point_xy(1w,1w,rdc_km_base))[rdc_meter_NL]);
+
 			container BoundingBoxPlus := Make_BoundingBoxPlus_T(geometry, 5000[meter_f64]);
 		}
 		
@@ -182,10 +190,10 @@ container Geography: using = "Units"
 		parameter<Float64> y_max_Nederland     := 625000d;
 	}
 	
-	parameter<Float64> x_min := Get_X(LowerBound(rdc_meter));
-	parameter<Float64> x_max := Get_X(UpperBound(rdc_meter));
-	parameter<Float64> y_min := Get_Y(LowerBound(rdc_meter));
-	parameter<Float64> y_max := Get_Y(UpperBound(rdc_meter));
+	parameter<Float64> x_min := rdc_meter/x_min, Descr = "Omvang van de rasters: die van het studiegebied, en niet het bereik van rdc_meter, dat altijd Nederland is.";
+	parameter<Float64> x_max := rdc_meter/x_max;
+	parameter<Float64> y_min := rdc_meter/y_min;
+	parameter<Float64> y_max := rdc_meter/y_max;
 	
 	container perGridsize := for_each_ne(Gridsizes/name, 'Create_GridDomain_T('+string(Gridsizes/size)+'[float64])'), Descr = "Bevat de verschillende grid domains die gebruikt kunnen worden in het model, op basis van de verschillende gridsizes.";
 	

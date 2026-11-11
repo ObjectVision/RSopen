@@ -12,14 +12,14 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container NWB: using = "Units;Geography;Classifications;Classifications/Grondgebruik"
-, Descr = "De afleidingen uit het Nationaal Wegenbestand: de cellen op de Stichtse Rotonde. Het inlezen staat in SourceData/Grondgebruik/NWB (#440)."
+, Descr = "De afleidingen uit het Nationaal Wegenbestand: de cellen op de Stichtse Rotonde en de afstand tot een op- of afrit van een autosnelweg. Het inlezen staat in SourceData/Grondgebruik/NWB (#440)."
 {
 	unit<uint32> Stichtse_Rotonde := select_with_attr_by_cond(/SourceData/Grondgebruik/NWB/Wegvakken, /SourceData/Grondgebruik/NWB/Wegvakken/STT_NAAM == 'Stichtse Rotonde')
 	, Descr = "hack om de Stichtse Rotondo nabij Amersfoort te identificeren. Zodat daarop niet gealloceerd mag worden. Buffer, dan dissolve, dan negatieve buffer."
 	{
 		attribute<rdc_meter> geometry_buff0           (poly) := bg_buffer_linestring(geometry, 100d, 8b);
-		unit<uint32>         union                           := geos_split_union_polygon(geometry_buff0);
-		attribute<rdc_meter> geometry_buff1    (poly, union) := geos_buffer_multi_polygon(union/geometry, -100d, 4b);
+		unit<uint32>         union                           := dms_split_union_polygon(geometry_buff0);
+		attribute<rdc_meter> geometry_buff1    (poly, union) := dms_buffer_multi_polygon(union/geometry, -100d, 4b);
 		
 		attribute<bool>      Calc_Per_AdminDomain (AdminDomain) := IsDefined(poly2grid(geometry_buff1, AdminDomain));
 
@@ -40,5 +40,20 @@ container NWB: using = "Units;Geography;Classifications;Classifications/Grondgeb
 		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_Per_AdminDomain, want alleen langs deze weg ontstaat de fingerprint (#837).";
 		attribute<bool>      Read_Per_AdminDomain (AdminDomain) : StorageName = "=Decoupling_Per_AdminDomain/StorageFile", StorageType = "tif", StorageReadOnly = "TRUE";
 		attribute<bool>      Per_AdminDomain   (AdminDomain) := = Decoupling_Per_AdminDomain/MayReuse ? 'Read_Per_AdminDomain' : 'Make_Per_AdminDomain', Descr = "Ligt de cel op de Stichtse Rotonde, ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_Per_AdminDomain/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
+	}
+	
+	unit<uint32> Snelwegafritten := select_with_org_rel((/SourceData/Grondgebruik/NWB/Wegvakken/BST_CODE == 'OPR' || /SourceData/Grondgebruik/NWB/Wegvakken/BST_CODE == 'AFR') && substr(/SourceData/Grondgebruik/NWB/Wegvakken/WEGNR_HMP, 0, 1) == 'A')
+	, Descr = "De op- en afritten van autosnelwegen: wegvakken met baansubsoort OPR of AFR aan een weg met een A-hectometreringsnummer. Op- en afritten van N-wegen, ook van het Rijk, en verbindingswegen tussen snelwegen vallen erbuiten. Bron van de afstandskaart hieronder, die alleen op aanvraag wordt gemaakt."
+	{
+		attribute<rdc_meter> geometry          (arc) := org_rel -> geometry;
+		
+		container         Verbinding_rdc_100m := connect_info(geometry, /Geography/rdc_100m/point), Descr = "Voor elk middelpunt van een cel van 100 m het dichtstbijzijnde punt op een op- of afrit.";
+		attribute<uint16> Calc_Afstand_rdc_100m (rdc_100m) := /Geography/rdc_100m/IsStudyArea ? uint16(min_elem(Verbinding_rdc_100m/dist + 0.5d, 65534d)) : null_w, Descr = "Hemelsbrede afstand in meters van het middelpunt van de cel tot de dichtstbijzijnde op- of afrit van een autosnelweg, afgerond op hele meters; buiten het studiegebied null.";
+
+		attribute<uint16> Write_Afstand_rdc_100m (rdc_100m) := Calc_Afstand_rdc_100m, StorageName = "=FileName_Afstand_rdc_100m", StorageType = "tif", Descr = "Schrijft de afstandskaart weg; de leverdatum van het NWB staat in de bestandsnaam.";
+		attribute<uint16> Make_Afstand_rdc_100m  (rdc_100m) := Write_Afstand_rdc_100m, Descr = "Vraag dit item op om de afstandskaart te maken.";
+		attribute<uint16> Read_Afstand_rdc_100m  (rdc_100m) : StorageName = "=FileName_Afstand_rdc_100m", StorageType = "tif", StorageReadOnly = "TRUE";
+		
+		parameter<String> FileName_Afstand_rdc_100m := '%LocalDataProjDir%/BaseData/Grondgebruik/NWB/AfstandSnelwegafrit_NWB'+ModelParameters/NWB_file_date+'_100m_'+/ModelParameters/StudyArea+'.tif';
 	}
 }

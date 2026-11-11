@@ -18,6 +18,9 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 	container BAG_RecentJaar := = 'SourceData/Vastgoed/BAG/PerJaar/Y'+string(BAG_RecentYear), Descr = "Container voor de BAG in het meest recente BAG jaar";
 	
 	#include<Grondgebruik.dms>
+	#include<Landbouw.dms>
+	#include<RegioIndelingen.dms>
+	#include<Water.dms>
 	
 	container StartState
 	{
@@ -181,11 +184,11 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		
 		container RondBevolkingskern 
 		{
-			attribute<Bool> Is100kPlus (AdminDomain) := SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Maak_PopK_Buffers/isMeerdan100Kinw/select/split_geometry/MetBuffer/Is_Buffer
+			attribute<Bool> Is100kPlus (AdminDomain) := BaseData/RegioIndelingen/BegrenzingBebouwdGebied/Maak_PopK_Buffers/isMeerdan100Kinw/select/split_geometry/MetBuffer/Is_Buffer
 			, Label = "100K", Descr = "Een buffer van een kilometer rond de kernen in deze populatieklasse.";
-			attribute<Bool> Is20kPlus  (AdminDomain) := SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Maak_PopK_Buffers/isMeerdan20Kinw/select/split_geometry/MetBuffer/Is_Buffer
+			attribute<Bool> Is20kPlus  (AdminDomain) := BaseData/RegioIndelingen/BegrenzingBebouwdGebied/Maak_PopK_Buffers/isMeerdan20Kinw/select/split_geometry/MetBuffer/Is_Buffer
 			, Label = "25K", Descr = "Een buffer van een kilometer rond de kernen in deze populatieklasse.";
-			attribute<Bool> Is20kMin   (AdminDomain) := SourceData/RegioIndelingen/BegrenzingBebouwdGebied/Maak_PopK_Buffers/isMinderdan20Kinw/select/split_geometry/MetBuffer/Is_Buffer
+			attribute<Bool> Is20kMin   (AdminDomain) := BaseData/RegioIndelingen/BegrenzingBebouwdGebied/Maak_PopK_Buffers/isMinderdan20Kinw/select/split_geometry/MetBuffer/Is_Buffer
 			, Label = "20K", Descr = "Een buffer van een kilometer rond de kernen in deze populatieklasse.";
 		}
 		
@@ -241,10 +244,10 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		{
 			attribute<rdc_meter> geometry (poly) := /SourceData/RegioIndelingen/BegrenzingBebouwdGebied/geometry[org_rel];
 		}
-		unit<UInt32> RandBebouwdGebied := geos_split_polygon(GroteKern/geometry)
+		unit<UInt32> RandBebouwdGebied := dms_split_polygon(GroteKern/geometry)
 		, Descr = "De vlakken van de grote kernen, los van elkaar, met de rand van het stedelijke vrijstaande pakket eromheen; dezelfde opbouw als de buffers rond de bebouwde gebieden in SourceData/RegioIndelingen."
 		{
-			attribute<rdc_meter> Buffer (poly) := geos_buffer_multi_polygon(geometry, float64(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_UrbanContourBuffer / 1[meter]), 4b);
+			attribute<rdc_meter> Buffer (poly) := dms_buffer_multi_polygon(geometry, float64(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_UrbanContourBuffer / 1[meter]), 4b);
 		}
 		attribute<Bool>   Calc_BebouwdGebiedMetRand   (AdminDomain) := IsDefined(poly2grid(RandBebouwdGebied/Buffer, AdminDomain)), Descr = "De grote kernen met hun rand, vergrid; de buffer bevat het vlak zelf. Het bufferen kost ruim een halve minuut, daarom ontkoppeld.";
 		parameter<String> FileName_BebouwdGebiedMetRand             := '%LocalDataProjDir%/BaseData/Omgeving/BebouwdGebiedMetRand_'+/ModelParameters/BegrenzingBebouwdGebied_jaar+'_'+string(uint32(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_UrbanContourBuffer / 1[meter]))+'m_kern'+string(uint32(/ModelParameters/Wonen/StedelijkVrijstaandEGVS_MinimumInwonersKern))+'_'+/ModelParameters/StudyArea+'_'+/ModelParameters/Advanced/AdminDomain_ref+'.tif'
@@ -372,7 +375,44 @@ container BaseData: using = "Classifications;Units;Geography;ModelParameters"
 		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_N2K1000mBuffer, want alleen langs deze weg ontstaat de fingerprint (#837).";
 		attribute<Bool>   Read_N2K1000mBuffer         (AdminDomain) : StorageName = "=Decoupling_N2K1000mBuffer/StorageFile", StorageType = "tif", StorageReadOnly = "TRUE";
 		attribute<Bool>   N2K1000mBuffer              (AdminDomain) := = Decoupling_N2K1000mBuffer/MayReuse ? 'Read_N2K1000mBuffer' : 'Make_N2K1000mBuffer', Descr = "1km buffer rond Natura2000 gebieden, exclusief groot water, ontkoppeld. Met een geldige fingerprint wordt de tif gelezen; anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_N2K1000mBuffer/Explanation op om te zien waarom een bestand wel of niet hergebruikt wordt.";
-		
+
+		container Netcongestie
+		: Descr = "Per cel het jaar waarin de afnamecongestie volgens de capaciteitskaart is opgelost, overgenomen van de dichtstbijzijnde postcode op een raster van 250 meter. Een voedingsgebied is veel groter dan een postcode, dus ook een nieuwe wijk buiten de bestaande postcodes krijgt zo het goede gebied. Het uitstel van de woningbouw in Templates/Claims leest deze kaart (#448)."
+		{
+			unit<uint32> PC6 := select_with_org_rel(IsDefined(/SourceData/Energie/netcongestie_capaciteitskaart_pc6/geometry) && int8(/SourceData/Energie/netcongestie_capaciteitskaart_pc6/afname_k) >= 0c)
+			, Descr = "De postcodes met een ligging in de BAG en een kleur voor afname; zonder kleur (geen beschikbare informatie) neemt een cel de dichtstbijzijnde postcode met kleur."
+			{
+				attribute<rdc_meter> geometry := /SourceData/Energie/netcongestie_capaciteitskaart_pc6/geometry[org_rel];
+				attribute<UInt16>    Jaar     := /SourceData/Energie/netcongestie_capaciteitskaart_pc6/HeeftWachtrij[org_rel] ? MakeDefined(/SourceData/Energie/netcongestie_capaciteitskaart_pc6/JaarOpgelost_Afname[org_rel], 1w) : 0w
+				, Descr = "0 als er geen wachtrij is voor afname, anders het jaar waarin de congestie is opgelost, en 1 voor een wachtrij zonder jaartal.";
+				attribute<Locatie>   Locatie_rel := rlookup(geometry, Locatie/values);
+			}
+			unit<uint32> Locatie := unique(PC6/geometry)
+			, Descr = "De zwaartepunten van de postcodes, elk een keer: een postcode die in twee voedingsgebieden ligt staat twee keer in de levering, en de opzoeking hieronder eist unieke punten."
+			{
+				attribute<rdc_meter> geometry := values;
+				attribute<UInt16>    Jaar     := max(PC6/Jaar, PC6/Locatie_rel), Descr = "Bij meer postcoderegels op een punt het hoogste: een wachtrij gaat voor geen wachtrij, en een later jaartal voor een eerder.";
+			}
+			attribute<Locatie> Locatie_rel_250m (rdc_250m) := connect(Locatie/geometry, rdc_250m/point);
+			attribute<UInt16>  Calc_Jaar     (AdminDomain) := Locatie/Jaar[Locatie_rel_250m[AdminDomain/rdc_250m_rel]];
+			parameter<String> FileName_Jaar := '%LocalDataProjDir%/BaseData/Omgeving/Netcongestie_Capaciteitskaart'+/ModelParameters/Capaciteitskaart_filedate+'_'+/ModelParameters/StudyArea+'_'+/ModelParameters/Advanced/AdminDomain_ref+'.tif'
+			, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
+			parameter<String> Fingerprint_Jaar :=
+				  'capaciteitskaart_date=' + /ModelParameters/Capaciteitskaart_filedate
+				+ ';bag_date='             + /ModelParameters/BAG_file_date
+				+ ';pc6_year=2026'
+				+ ';nearest_grid=250m'
+				+ ';rule=448'
+				+ ';admin_grid='           + /ModelParameters/Advanced/AdminDomain_ref
+				+ ';study_area='           + /ModelParameters/StudyArea
+			, Descr = "De invoeren die de tif bepalen: de download van de capaciteitskaart, de BAG-levering en het BAG-jaar waaruit de ligging van de postcodes komt (dat jaar staat vast in SourceData/Energie), het raster van de opzoeking, de versie van de regel, het raster en het studiegebied.";
+			container         Decoupling_Jaar := /Templates/DecoupledFile_T(FileName_Jaar, Fingerprint_Jaar, 'Write_Jaar');
+			attribute<UInt16> Write_Jaar   (AdminDomain) := Calc_Jaar, StorageName = "=Decoupling_Jaar/StorageFile", StorageType = "tif", Descr = "Schrijft de kaart eenmalig weg, zonder zijbestand; dat volgt via Make_Jaar.";
+			attribute<UInt16> Make_Jaar    (AdminDomain) := Write_Jaar, ExplicitSuppliers = "Decoupling_Jaar/Write_Fingerprint", Descr = "Maakt het bestand en daarna het zijbestand; vraag dit item en niet Write_Jaar.";
+			attribute<UInt16> Read_Jaar    (AdminDomain) : StorageName = "=Decoupling_Jaar/StorageFile", StorageType = "tif", StorageReadOnly = "TRUE";
+			attribute<UInt16> JaarOpgelost (AdminDomain) := = Decoupling_Jaar/MayReuse ? 'Read_Jaar' : 'Make_Jaar'
+			, Descr = "0 als er geen wachtrij is voor afname, anders het jaar waarin de congestie is opgelost, en 1 voor een wachtrij zonder jaartal; ontkoppeld.";
+		}
 	}
 	
 	#include<Suitabilities.dms>
