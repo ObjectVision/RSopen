@@ -81,7 +81,7 @@ BESTANDSFOUT = ("TIFFOpen Error", "TIFFOpenW Error", "cannot open dataset", "No 
 OPERATOR_SUBITEM = ("Unknown identifier 'Districts'", "Unknown identifier 'Landuse'", "Unknown identifier 'statusFlag'")
 
 # Een representatief bestand per basedata-stap, met de stap die het maakt. Overgenomen uit de
-# eis-lijst van batch/Run2120.ps1 (ObjectVision/RSopen#816): zeg vooraf welk ontkoppeld bestand
+# eis-lijst van batch/RunAllocatie.ps1 (ObjectVision/RSopen#816): zeg vooraf welk ontkoppeld bestand
 # ontbreekt, in plaats van na een uur rekenen om te vallen op "Unknown identifier". De lijst is een
 # ondergrens en geen inventaris. Paden zijn relatief aan de LocalData van deze werkkopie.
 BASEDATA = [

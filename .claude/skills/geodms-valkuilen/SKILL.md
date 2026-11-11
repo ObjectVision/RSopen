@@ -189,7 +189,7 @@ Een unit met `nrofrows` en attributen als uitgeschreven lijst, zoals de tabel `C
 
 Zet daarom op elke handmatige lijst `IntegrityCheck = "all(IsDefined(this))"`; dezelfde te korte lijst geeft dan exit 1 met `Only N values were provided, but domain has M values`. Zet de check inline op de data en niet op een aparte parameter, want een check op de parameter die zelf de check is geeft `Invalid Recursion in UpdateMetaInfo`. Alle handmatige lijsten in `Diagnose.dms` dragen die check. Meet zo'n kanarie twee kanten op, met en zonder de bewaking: een kanarie die alleen met de bewaking is gemeten bewijst niet dat de bewaking het verschil maakt, want de engine zelf kan ook omvallen. En tel zo'n lijst op het unitblok via accolade-telling en niet met een vast regelvenster, dat loopt door in de volgende unit.
 
-De grotere les: een meetharnas dat niemand aanroept is even blind als een harnas dat niets meet. Een te lange lijst gaf twee dagen exit 1 op `/Diagnose/GenerateAll` zonder dat iemand het opvroeg. Hang de diagnose daarom achter een run aan, zoals `-DiagnoseNaZichtjaar` in `batch/Run2120.ps1` doet, in plaats van hem los te draaien wanneer het uitkomt.
+De grotere les: een meetharnas dat niemand aanroept is even blind als een harnas dat niets meet. Een te lange lijst gaf twee dagen exit 1 op `/Diagnose/GenerateAll` zonder dat iemand het opvroeg. Hang de diagnose daarom achter een run aan, zoals `-DiagnoseNaZichtjaar` in `batch/RunAllocatie.ps1` doet, in plaats van hem los te draaien wanneer het uitkomt.
 
 ## Eenheidsliteralen werken niet overal
 

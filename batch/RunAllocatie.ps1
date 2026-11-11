@@ -1,6 +1,6 @@
 <#
 ================================================================================================
- Run2120.ps1: de productierun van RSopen NL2120, van de basisdata tot en met zichtjaar 2120
+ RunAllocatie.ps1: de modelrun van RSopen, van de basisdata tot en met het laatste zichtjaar
 ================================================================================================
 
  WAT DIT SCRIPT DOET
@@ -14,13 +14,13 @@
 
  HOE START JE HET (vanuit een PowerShell-venster in de map batch)
    Volledige reeks, alles opnieuw, twee varianten:
-       .\Run2120.ps1 -Varianten BAU,NbSGenuanceerd
+       .\RunAllocatie.ps1 -Varianten BAU,NbSGenuanceerd
    Basisdata en variantdata staan er al, alleen alloceren:
-       .\Run2120.ps1 -Varianten BAU -SkipBasedata -SkipVariantData
+       .\RunAllocatie.ps1 -Varianten BAU -SkipBasedata -SkipVariantData
    Hervatten na een fout, bij een stap uit status.tsv (de naam staat in de kolom stap):
-       .\Run2120.ps1 -Varianten BAU -SkipBasedata -SkipVariantData -StartBij allocatie-BAU-Y2070
+       .\RunAllocatie.ps1 -Varianten BAU -SkipBasedata -SkipVariantData -StartBij allocatie-BAU-Y2070
    Landbouwronde over bestaande standen (BAU2 na BAU, met de stedelijke stand overgenomen):
-       .\Run2120.ps1 -Varianten BAU2 -SkipBasedata -AlleenLandbouw
+       .\RunAllocatie.ps1 -Varianten BAU2 -SkipBasedata -AlleenLandbouw
    Het script stopt bij de eerste stap die misgaat en zegt welke. Elke stap heeft een eigen log
    in de logmap en een regel in status.tsv.
 
@@ -30,7 +30,9 @@
       de standaardwaarde uit het blok param() hieronder.
       -Exe            GeoDmsRun.exe van de geinstalleerde GeoDMS. Niet de build uit Visual Studio:
                       die wordt opnieuw gecompileerd terwijl een reeks loopt.
-      -Cfg            De configuratie, cfg\main.dms van de werkkopie waarmee je rekent.
+      -Cfg            De configuratie, cfg\main.dms van de werkkopie waarmee je rekent. Standaard die
+                      van de werkkopie waarin dit script staat. Het script heette tot 11 november 2026
+                      Run2120.ps1; op een tak die main sindsdien niet binnenhaalde heet het nog zo.
       -LocalData      Waar de uitvoer staat. Standaard C:\LocalData\<naam van de werkkopie>; het script
                       zet de omgevingsvariabele LocalDataProjDir bewust NIET, GeoDMS leidt dit pad
                       zelf af uit de registersleutel LocalDataDir plus de mapnaam boven cfg.
@@ -102,9 +104,9 @@
 [CmdletBinding()]
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
-    [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
-    [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
-    [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\run2120',
+    [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
+    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\runallocatie'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @(),
@@ -183,7 +185,7 @@ function Invoke-Stap {
     # Exit 0 is niet genoeg. Een ontbrekend bronbestand komt als GDAL-fout in het log terwijl de exitcode
     # 0 blijft; gemeten op 2026-08-27 met een claim-CSV die niet bestond. Daarom ook het log toetsen.
     # Een vastgelopen proces krijgt zijn reden als [E]-regel onder zijn log, zodat wie het log later opent ziet waarom hij stopte.
-    if ($run.Reden) { "[E] Run2120.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
+    if ($run.Reden) { "[E] RunAllocatie.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
     $fouten = @(Select-String -LiteralPath $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
 
     if ($code -ne 0 -or $fouten.Count -gt 0) {
@@ -361,7 +363,7 @@ function Test-Invoer {
 
 function Test-StedelijkeKlassen {
     # ModelParameters/OntkoppelStedelijkeKlasses is een debugschakelaar zonder omgevingsvariabele: hij
-    # staat in de configuratie en Run2120 zet hem niet. Op TRUE slaat elke niet-landbouwregel in
+    # staat in de configuratie en dit script zet hem niet. Op TRUE slaat elke niet-landbouwregel in
     # SectorAllocRegio zijn allocatie over en geeft hij zijn ingangsstand door, en leest de landbouw
     # de stand van datzelfde zichtjaar van schijf. Dat is de bedoelde route voor een landbouwronde
     # bovenop bestaande standtifs, maar in een volle reeks levert het stedelijke standen op die niet

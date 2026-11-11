@@ -1,10 +1,10 @@
 <#
 ================================================================================================
- RunIndicatoren.ps1: de indicatorenexport van RSopen NL2120, per variant en zichtjaar
+ RunIndicatoren.ps1: de indicatorenexport van RSopen, per variant en zichtjaar
 ================================================================================================
 
  WAT DIT SCRIPT DOET
-   Leest de stand die de allocatie (Run2120.ps1) per zichtjaar heeft weggeschreven en rekent daar
+   Leest de stand die de allocatie (RunAllocatie.ps1) per zichtjaar heeft weggeschreven en rekent daar
    de indicatoren op uit: de kaarten, de tabellen en de gpkg's die de levering vormen. Het rekent
    dus niet opnieuw wat de allocatie deed. Per zichtjaar een aanroep van GeoDmsRun, gestuurd door
    de omgevingsvariabele ExportZichtjaar; per zichtjaar een log en een regel in status.tsv.
@@ -33,7 +33,7 @@
  INSTELLINGEN
 
    A. Parameters van dit script (commandoregel; standaardwaarden in het blok param() hieronder).
-      -Exe, -Cfg, -LogDir   Zoals bij Run2120.ps1: de geinstalleerde GeoDMS, cfg\main.dms van de
+      -Exe, -Cfg, -LogDir   Zoals bij RunAllocatie.ps1: de geinstalleerde GeoDMS, cfg\main.dms van de
                             werkkopie, en de logmap.
       -Scenario             Standaard WLO_hoog; casusnamen zijn <scenario>_<variant>.
       -Varianten            Lijst, bijvoorbeeld BAU,BAU2,NbSGenuanceerd. De namen staan in
@@ -107,10 +107,10 @@
         indicatoren (contante waarden, koolstof, sterfte) rekenen alle voorgaande zichtjaren mee,
         in een proces (-Ontkoppeld:$false) of zichtjaar voor zichtjaar (standaard).
       - De basisdata van WriteBasedata/Generate_Run3 en Generate_Run4_IndicatorenData en de
-        variantdata van WriteVariantData. Run2120.ps1 maakt ze allemaal; de toets hieronder meldt
+        variantdata van WriteVariantData. RunAllocatie.ps1 maakt ze allemaal; de toets hieronder meldt
         wat ontbreekt en welk item het maakt.
       - De legenda's (Export/Legendas/Schrijf) schrijft dit script zelf, ze zijn casusonafhankelijk.
-      - De schakelaars in cfg\main\ModelParameters.dms, zie blok B van Run2120.ps1.
+      - De schakelaars in cfg\main\ModelParameters.dms, zie blok B van RunAllocatie.ps1.
 
  ALS HET MISGAAT
    status.tsv (kolom exit) en het log van de stap; regels met [E] zijn de fouten. Exit 2 is een
@@ -124,9 +124,9 @@
 [CmdletBinding()]
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
-    [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
-    [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
-    [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\indicatoren',
+    [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
+    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\indicatoren'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @(),
@@ -223,7 +223,7 @@ function Get-VariantKolom([string]$CfgPad, [string]$Kolom) {
 
 function Get-Zichtjaren {
     # Alle zichtjaren uit de configuratie, nodig om te toetsen of elke stand tot aan het
-    # exportzichtjaar er staat. Zelfde aanroep als in Run2120.ps1.
+    # exportzichtjaar er staat. Zelfde aanroep als in RunAllocatie.ps1.
     $log = Join-Path $LogDir 'zichtjaren.log'
     $uit = & $Exe "/L$log" $Cfg '@statistics' '/Classifications/Time/Zichtjaar/YearRange_rel' 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Kon de zichtjaren niet uit de configuratie lezen, zie $log" }
@@ -267,7 +267,7 @@ function Test-Invoer {
             $tot = $alleJaren.IndexOf($y)
             if ($tot -lt 0) { throw "Zichtjaar $y staat niet in de configuratie ($($alleJaren -join ', '))" }
             foreach ($j in $alleJaren[0..$tot]) {
-                $eisen += ,@("Allocatie\${Scenario}_$standVan\Stand$j\OP_rel_*.tif", "stand $j van ${Scenario}_$standVan (variant $v)", "batch\Run2120.ps1, stap allocatie-$standVan-$j")
+                $eisen += ,@("Allocatie\${Scenario}_$standVan\Stand$j\OP_rel_*.tif", "stand $j van ${Scenario}_$standVan (variant $v)", "batch\RunAllocatie.ps1, stap allocatie-$standVan-$j")
             }
         }
         if ($Domeinen['Landbouw']) {
