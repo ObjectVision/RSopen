@@ -154,9 +154,17 @@ $Beschrijving = [ordered]@{
     'NPV_Landbouw'                                                                                   = @('euro', '', 'Contante waarde van datzelfde landbouwsaldo per cel, met de omschakelkosten van de landbouwtransitie erin; negatief waar die kosten het saldo overtreffen')
     'SOMERS_CO2_Emissies_kg_Minimum_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Dezelfde oxidatie, ondergrens van de bandbreedte')
     'SOMERS_CO2_Emissies_kg_Maximum_Cumulatief_sindsStartyear'                                       = @('kg CO2', '', 'Dezelfde oxidatie, bovengrens van de bandbreedte')
-    'Piekbuiberging_Gedekt_m3_per500m'                                                               = @('m3', '', 'Hoeveel regenwater van een piekbui in dit blok van 500 meter wordt geborgen')
-    'Piekbuiberging_Ongedekt_m3_per500m'                                                             = @('m3', '', 'Hoeveel er in datzelfde blok blijft liggen')
-    'Piekbuiberging_Dekkingsgraad_per500m'                                                           = @('aandeel 0 tot 1', '', 'Het geborgen deel van de opgave in dit blok')
+    'Piekbuiberging_Dekkingsgraad_per500m'                                                           = @('aandeel 0 tot 1', '', 'Het geborgen deel van de opgave in dit blok van 500 meter')
+    'Piekbuiberging_Diepteverlaging'                                                                 = @('cm', '', 'Hoeveel de maatregelen de maximale waterdiepte op het natte deel van de cel verlagen, bij de bui van 155 mm in 2 uur; de diepte maal de dekkingsgraad van het blok en geen hydraulisch berekende verlaging')
+    'Piekbuiberging_Diepteverlaging_70mm_1h'                                                         = @('cm', '', 'Dezelfde verlaging bij de bui van 70 mm in 1 uur')
+    'Piekbuiberging_BovenDrempel_Zonder_Woningen'                                                    = @('woningen', '', 'Woningen op de begane grond waar het water bij de bui van 155 mm in 2 uur boven het vloerpeil komt, zonder maatregelen; alleen het natte deel van de cel telt, dus een verwachting per cel')
+    'Piekbuiberging_BovenDrempel_Met_Woningen'                                                       = @('woningen', '', 'Hetzelfde met de maatregelen van het zichtjaar')
+    'Piekbuiberging_BovenDrempel_Zonder_Bedrijven'                                                   = @('m2', '', 'Bedrijfsvloer op de begane grond waar het water bij de bui van 155 mm in 2 uur boven het vloerpeil komt, zonder maatregelen')
+    'Piekbuiberging_BovenDrempel_Met_Bedrijven'                                                      = @('m2', '', 'Hetzelfde met de maatregelen van het zichtjaar')
+    'Piekbuiberging_BovenDrempel_Zonder_70mm_1h_Woningen'                                            = @('woningen', '', 'Woningen boven het vloerpeil bij de bui van 70 mm in 1 uur, zonder maatregelen')
+    'Piekbuiberging_BovenDrempel_Met_70mm_1h_Woningen'                                               = @('woningen', '', 'Hetzelfde met de maatregelen')
+    'Piekbuiberging_BovenDrempel_Zonder_70mm_1h_Bedrijven'                                           = @('m2', '', 'Bedrijfsvloer boven het vloerpeil bij de bui van 70 mm in 1 uur, zonder maatregelen')
+    'Piekbuiberging_BovenDrempel_Met_70mm_1h_Bedrijven'                                              = @('m2', '', 'Hetzelfde met de maatregelen')
     'Regenwaterhergebruik_Drinkwatervraag'                                                           = @('m3 per jaar', '', 'Drinkwatervraag van de woningen in de cel (#507)')
     'Regenwaterhergebruik_VasteTank_Besparing'                                                       = @('m3 per jaar', '', 'Drinkwater dat een regenwatertank van vaste grootte per woning bespaart met regen van het eigen dak')
     'Regenwaterhergebruik_VasteTank_Besparingsaandeel'                                               = @('aandeel 0 tot 1', '', 'Diezelfde besparing als deel van de drinkwatervraag')
@@ -250,7 +258,10 @@ function Schoon([string]$Naam) {
 # fractiegebaseerde opvolger. De bestanden blijven wel gewoon in LocalData staan.
 # Ook de losse per-itemkaarten (naamvorm Bereikbaarheid_Groen_...) vallen onder de uitsluiting;
 # op verzoek van Deltares (#717) gaat alleen de niet-druktegecorrigeerde fractiemaat mee.
-$NietUitleveren = @('BereikbaarheidGroen', 'Bereikbaarheid_Groen_')
+#
+# De blokposten van de piekbuiberging in m3 (Piekbuiberging_PerGrid_*) staan in de casusmap omdat de tabelstap
+# ze terugleest (#824). Ze gaan niet mee: op verzoek van Deltares levert de piekbuiberging geen volumes (#875).
+$NietUitleveren = @('BereikbaarheidGroen', 'Bereikbaarheid_Groen_', 'Piekbuiberging_PerGrid_')
 $NietUitleverenKolommen = @(
     'BereikbaarheidGroen_BBG_Tot300m_ExAgr_Groenaanbod_over_woning'
     'BereikbaarheidGroen_BBG_Tot300m_Groenaanbod_over_woning'
@@ -561,16 +572,19 @@ $regels += "  Waterberging_RestvraagPositief en Waterberging_Afname."
 $regels += ""
 $regels += "  Lees Piekbuiberging_Dekkingsgraad nooit los van Piekbuiberging_Dekkingsgraad_Ongeklemd."
 $regels += "  Opgave en aanbod worden per blok van 500 meter tegen elkaar weggestreept, en aanbod boven de"
-$regels += "  opgave in datzelfde blok vervalt, zichtbaar in Piekbuiberging_AanbodZonderOpgave_m3. De twee"
-$regels += "  dekkingsgraden zijn de onder- en bovengrens van dezelfde uitkomst. De blokmaat zelf is een"
-$regels += "  keuze zonder onderbouwing: op 100 meter komt de dekkingsgraad lager uit. Zie #720."
+$regels += "  opgave in datzelfde blok vervalt. De twee dekkingsgraden zijn de onder- en bovengrens van"
+$regels += "  dezelfde uitkomst. De blokmaat zelf is een keuze zonder onderbouwing: op 100 meter komt de"
+$regels += "  dekkingsgraad lager uit. Zie #720."
 $regels += ""
-$regels += "  Piekbuiberging_Aanbod_m3 is sinds #741 van betekenis veranderd zonder van naam te veranderen."
-$regels += "  Hij telde alle bergingscapaciteit en telt nu alleen die binnen bestaand bebouwd gebied, want"
-$regels += "  daar stond de opgave al op gemaskeerd. Het aanbod wordt daarmee kleiner en de dekkingsgraad"
-$regels += "  ook. Wat eruit valt staat als Piekbuiberging_AanbodBuitenBBG_m3 ernaast, dus de oude kolom is"
-$regels += "  terug te krijgen door die twee op te tellen. Leg een levering van voor en na #741 niet naast"
-$regels += "  elkaar zonder die optelling: het aanbod daalt dan zonder dat er iets aan het model is veranderd."
+$regels += "  De piekbuiberging rapporteert wat de maatregelen aan gevolgen wegnemen, in drie maten, elk"
+$regels += "  zonder en met de maatregelen (#875): de schade in euro, de verlaging van de waterdiepte in cm"
+$regels += "  en de woningen en de bedrijfsvloer waar het water boven het vloerpeil komt. Opgave en aanbod"
+$regels += "  in m3 staan er niet meer in; het model rekent ze wel, om de dekking per blok af te leiden. De"
+$regels += "  diepteverlaging is geen hydraulisch berekende verlaging: elke cel in een blok verliest hetzelfde"
+$regels += "  aandeel van zijn diepte, het aandeel dat de maatregelen in dat blok bergen. De telling boven het"
+$regels += "  vloerpeil is een verwachting per cel, want het model kent geen kaart per pand: een cel die voor"
+$regels += "  een kwart nat is, telt een kwart van zijn woningen. Alleen woningen op de begane grond tellen,"
+$regels += "  en bedrijven in m2 vloer op de begane grond."
 $regels | Set-Content (Join-Path $Doel 'LEESMIJ.txt') -Encoding UTF8
 
 $totaal = Get-ChildItem $Doel -Recurse -File | Measure-Object Length -Sum

@@ -24,6 +24,7 @@ container Schade
 	{
 		attribute<String> name : ['Wonen', 'Bedrijven', 'Overig'], IntegrityCheck = "all(IsDefined(this))";
 		attribute<String> Termen := AsList('PerCategorie/' + SSM/name, ', ', CategorieInfo/Groep_rel);
+		attribute<String> Blootstellingen := AsList(CategorieInfo/Blootstelling, ', ', CategorieInfo/Groep_rel), Descr = "De blootstellingen van de categorieen per groep, voor de telling boven de drempel.";
 		container V := for_each_nedv(name, string(id(.)) + '[..]', void, .);
 	}
 
@@ -53,6 +54,15 @@ container Schade
 
 	parameter<string> StorageStr := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Piekbuiberging_Schade_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
 	, Descr = "De schadekaarten als tif per cel; @V@ is de bui, de situatie en de groep.";
+	parameter<string> StorageStr_BovenDrempel := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Piekbuiberging_BovenDrempel_@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De kaarten van de woningen en de bedrijfsvloer boven de drempel; @V@ is de bui, de situatie en de groep.";
+	parameter<string> StorageStr_Diepteverlaging := '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/Piekbuiberging_Diepteverlaging@V@_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+	, Descr = "De kaarten van de diepteverlaging; @V@ is leeg voor de bui van Bui_ref en _70mm_1h voor de tweede bui.";
+
+	attribute<Woning> WoningenBeganeGrond (AdminDomain) := (Overstromingsschade/Grondgebruik/Zichtjaar/Woningen/eengezinsWoningen/Aantal_Woningen + Overstromingsschade/Grondgebruik/Zichtjaar/Woningen/meergezins_bg/Aantal_Woningen) / 1[verblijfsobject] * 1[Woning]
+	, Descr = "De woningen met hun vloer op de begane grond: de eengezinswoningen en de meergezinswoningen op de begane grond, zoals de overstromingsschade ze telt. Een woning op een verdieping krijgt bij een piekbui geen water binnen en telt daarom niet mee in BovenDrempel.";
+	attribute<meter2> BedrijfsvloerBeganeGrond (AdminDomain) := ='add(' + Groep/Blootstellingen[Groep/V/Bedrijven] + ')'
+	, Descr = "Het bedrijfsvloeroppervlak op de begane grond, dezelfde blootstelling als de schade aan bedrijven. Het model kent in een zichtjaar geen bedrijfspanden per cel, dus de telling boven de drempel staat voor bedrijven in m2 en niet in panden.";
 
 	unit<UInt32> Regio := =/ModelParameters/Advanced/IndicatorRegio_path;
 
@@ -145,6 +155,34 @@ container Schade
 			parameter<Eur> Overig    := sum(Bron/Overig);
 			parameter<Eur> Totaal    := Wonen + Bedrijven + Overig;
 		}
+
+		container BovenDrempel
+		: Descr = "Hoeveel woningen en hoeveel bedrijfsvloer water binnen krijgen (#875). Een cel telt mee als de diepte waarmee de schade rekent (DiepteCm) boven nul komt, dus als het water na aftrek van de bouwwijze boven ModelParameters/Piekbuiberging/VloerpeilBovenMaaiveld uitkomt; zo staan schade en telling op dezelfde vloer. Net als de schade telt alleen het natte deel van de cel. Zonder kaart per pand is dit een verwachting per cel en geen telling per pand: een cel die voor een kwart nat is, telt een kwart van zijn woningen. Woningen zijn alleen de woningen op de begane grond (WoningenBeganeGrond), bedrijven het vloeroppervlak op de begane grond in m2 (BedrijfsvloerBeganeGrond)."
+		{
+			container Schrijf
+			{
+				attribute<Woning> Woningen  (AdminDomain) := MakeDefined(DiepteCm/Wonen > 0f, FALSE) ? Fractie * WoningenBeganeGrond : 0[Woning], StorageName = "=replace(StorageStr_BovenDrempel, '@V@', Naam+'_Woningen')", StorageType = "gdalwrite.grid";
+				attribute<meter2> Bedrijven (AdminDomain) := MakeDefined(DiepteCm/Bedrijven > 0f, FALSE) ? Fractie * BedrijfsvloerBeganeGrond : 0[meter2], StorageName = "=replace(StorageStr_BovenDrempel, '@V@', Naam+'_Bedrijven')", StorageType = "gdalwrite.grid";
+			}
+			container Lees
+			: Descr = "De twee kaarten teruggelezen voor een tabelrun met ModelParameters/TabellenUitExport aan (#824)."
+			{
+				attribute<Woning> Woningen  (AdminDomain) : StorageName = "=replace(StorageStr_BovenDrempel, '@V@', Naam+'_Woningen')",  StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+				attribute<meter2> Bedrijven (AdminDomain) : StorageName = "=replace(StorageStr_BovenDrempel, '@V@', Naam+'_Bedrijven')", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+			}
+			container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Schrijf';
+
+			container PerRegio
+			{
+				attribute<Woning> Woningen  (Regio) := sum(Bron/Woningen,  Regio/Per_AdminDomain_Fijn);
+				attribute<meter2> Bedrijven (Regio) := sum(Bron/Bedrijven, Regio/Per_AdminDomain_Fijn);
+			}
+			container PerNL
+			{
+				parameter<Woning> Woningen  := sum(Bron/Woningen);
+				parameter<meter2> Bedrijven := sum(Bron/Bedrijven);
+			}
+		}
 	}
 
 	Template Vermeden_T
@@ -166,6 +204,8 @@ container Schade
 			attribute<Eur> Overig    (Regio) := Zonder/PerRegio/Overig    - Met/PerRegio/Overig;
 			attribute<Eur> Totaal    (Regio) := Zonder/PerRegio/Totaal    - Met/PerRegio/Totaal;
 			attribute<Eur> Totaal_NCW (Regio) := Totaal * Verdiscontering/Factor;
+			attribute<Woning> WoningenBovenDrempel     (Regio) := Zonder/BovenDrempel/PerRegio/Woningen  - Met/BovenDrempel/PerRegio/Woningen, Descr = "De woningen die door de maatregelen geen water meer binnen krijgen.";
+			attribute<meter2> BedrijfsvloerBovenDrempel (Regio) := Zonder/BovenDrempel/PerRegio/Bedrijven - Met/BovenDrempel/PerRegio/Bedrijven;
 		}
 		container PerNL
 		{
@@ -174,6 +214,41 @@ container Schade
 			parameter<Eur> Overig    := Zonder/PerNL/Overig    - Met/PerNL/Overig;
 			parameter<Eur> Totaal    := Zonder/PerNL/Totaal    - Met/PerNL/Totaal;
 			parameter<Eur> Totaal_NCW := Totaal * Verdiscontering/Factor;
+			parameter<Woning> WoningenBovenDrempel      := Zonder/BovenDrempel/PerNL/Woningen  - Met/BovenDrempel/PerNL/Woningen;
+			parameter<meter2> BedrijfsvloerBovenDrempel := Zonder/BovenDrempel/PerNL/Bedrijven - Met/BovenDrempel/PerNL/Bedrijven;
+		}
+	}
+
+	Template Diepteverlaging_T
+	: Descr = "Hoeveel de maatregelen de maximale waterdiepte verlagen, in cm op het natte deel van de cel (#875). Dit is geen hydraulisch berekende verlaging. De maatregelen werken in het model per blok van Grid_ref, dus elke cel in een blok verliest hetzelfde aandeel van zijn diepte, en de verlaging is de diepte maal de dekkingsgraad van het blok (Diepte_Zonder min Diepte_Met). De kaart is leeg waar de cel droog blijft en buiten GebiedMetOpgave. Per regio staat het gemiddelde, gewogen naar het natte oppervlak."
+	{
+		//
+		parameter<String>  Naam;
+		attribute<Meter>   Zonder  (AdminDomain);
+		attribute<Meter>   Met     (AdminDomain);
+		attribute<Float32> Fractie (AdminDomain);
+		//
+
+		container Schrijf
+		{
+			attribute<cm> Verlaging (AdminDomain) := GebiedMetOpgave && Fractie > 0f ? convert(Zonder - Met, cm) : const(null_f, AdminDomain, cm), StorageName = "=replace(StorageStr_Diepteverlaging, '@V@', Naam)", StorageType = "gdalwrite.grid";
+		}
+		container Lees
+		: Descr = "De kaart teruggelezen voor een tabelrun met ModelParameters/TabellenUitExport aan (#824)."
+		{
+			attribute<cm> Verlaging (AdminDomain) : StorageName = "=replace(StorageStr_Diepteverlaging, '@V@', Naam)", StorageType = "gdal.grid", StorageReadOnly = "TRUE";
+		}
+		container Bron := = /ModelParameters/TabellenUitExport ? 'Lees' : 'Schrijf';
+
+		attribute<Float32> Gewicht (AdminDomain) := IsDefined(Bron/Verlaging) ? Fractie : 0f, Descr = "Het natte deel van de cellen waar de kaart een waarde heeft.";
+
+		container PerRegio
+		{
+			attribute<cm> Gemiddeld (Regio) := sum(Bron/Verlaging * Gewicht, Regio/Per_AdminDomain_Fijn) / sum(Gewicht, Regio/Per_AdminDomain_Fijn);
+		}
+		container PerNL
+		{
+			parameter<cm> Gemiddeld := sum(Bron/Verlaging * Gewicht) / sum(Gewicht);
 		}
 	}
 
@@ -196,4 +271,7 @@ container Schade
 	container Zonder_70mm_1h := Situatie_T('Zonder_70mm_1h', Diepte_Zonder_70mm_1h, FractieNat_70mm_1h);
 	container Met_70mm_1h    := Situatie_T('Met_70mm_1h', Diepte_Met_70mm_1h, FractieNat_70mm_1h);
 	container Vermeden_70mm_1h := Vermeden_T('Vermeden_70mm_1h', Zonder_70mm_1h, Met_70mm_1h);
+
+	container Diepteverlaging         := Diepteverlaging_T('', Diepte_Zonder, Diepte_Met, FractieNat);
+	container Diepteverlaging_70mm_1h := Diepteverlaging_T('_70mm_1h', Diepte_Zonder_70mm_1h, Diepte_Met_70mm_1h, FractieNat_70mm_1h);
 }
