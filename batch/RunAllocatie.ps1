@@ -64,6 +64,8 @@
                       basisjaarcontroles. Leeg is nooit.
       -WaakhondMinuten  Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als
                       vastgelopen stopt, standaard 15; 0 zet de waakhond uit. Zie ALS HET MISGAAT.
+      -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
+                      de reeks stopt, standaard 1; 0 stopt de reeks meteen.
 
    B. Schakelaars in de configuratie die dit script NIET zet maar waar de run wel van afhangt.
       Loop ze na voordat je start; ze staan in cfg\main\ModelParameters.dms tenzij anders vermeld.
@@ -96,8 +98,9 @@
    Een GeoDmsRun kan ook vastlopen zonder ooit te eindigen. Daarom kijkt een waakhond elke minuut
    of het proces nog leeft: groeit het log, of leest of schrijft het proces bytes of maakt het een
    paginafout. Blijft dat -WaakhondMinuten lang uit, dan stopt het script het proces op zijn PID,
-   zet het een [E]-regel met de reden onder het log van de stap en stopt de reeks zoals bij elke
-   andere fout. Een meting (diagnose) mag ook vastlopen; de reeks loopt dan door. Hervat met
+   zet het een [E]-regel met de reden onder het log van de stap en start het de stap opnieuw, met
+   een eigen log, -HerhalingenNaVastlopen keer. Loopt hij dan nog vast, dan stopt de reeks zoals bij
+   elke andere fout. Een meting (diagnose) mag ook vastlopen; de reeks loopt dan door. Hervat met
    -StartBij bij de vastgelopen stap.
 ================================================================================================
 #>
@@ -117,7 +120,8 @@ param(
     [switch]   $HerbouwBasedata,
     [switch]   $AlleenLandbouw,
     [switch]   $ZonderIndicatorBasedata,
-    [int]      $WaakhondMinuten = 15
+    [int]      $WaakhondMinuten = 15,
+    [int]      $HerhalingenNaVastlopen = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -165,27 +169,34 @@ function Invoke-Stap {
         else { Write-Regel "overslaan : $Stap"; return }
     }
 
-    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $safe  = ($Stap -replace '[\\/:*?"<>|]', '_')
-    $log   = Join-Path $LogDir "$stamp`_$safe.log"
+    # Een stap die de waakhond als vastgelopen stopt, start het script nog HerhalingenNaVastlopen keer opnieuw, elk met een eigen
+    # log, voordat de reeks stopt: op 11 november 2026 liep een allocatie die twee uur vastzat bij herhaling in negen minuten door.
+    for ($poging = 0; $true; $poging++) {
+        $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+        $log   = Join-Path $LogDir "$stamp`_$safe.log"
 
-    Write-Regel "start     : $Stap"
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af in een proces, maar alleen voor items
-    # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
-    # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
-    $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $Item) -Log $log -WaakhondMinuten $WaakhondMinuten
-    $code = $run.Code
-    $sw.Stop()
-    $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+        Write-Regel "start     : $Stap"
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af in een proces, maar alleen voor items
+        # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
+        # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
+        $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $Item) -Log $log -WaakhondMinuten $WaakhondMinuten
+        $code = $run.Code
+        $sw.Stop()
+        $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
 
-    "{0}`t{1}`t{2}`t{3}`t{4}" -f (Get-Date -Format 's'), $Stap, ($Item -join ' '), $code, $sec |
-        Add-Content $status -Encoding UTF8
+        "{0}`t{1}`t{2}`t{3}`t{4}" -f (Get-Date -Format 's'), $Stap, ($Item -join ' '), $code, $sec |
+            Add-Content $status -Encoding UTF8
+
+        # Een vastgelopen proces krijgt zijn reden als [E]-regel onder zijn log, zodat wie het log later opent ziet waarom hij stopte.
+        if ($run.Reden) { "[E] RunAllocatie.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
+        if (-not $run.Reden -or $poging -ge $HerhalingenNaVastlopen) { break }
+        Write-Regel "VASTGELOPEN: $Stap, het script start de stap opnieuw ($($poging + 1) van $HerhalingenNaVastlopen); log van de vastgelopen poging: $log"
+    }
 
     # Exit 0 is niet genoeg. Een ontbrekend bronbestand komt als GDAL-fout in het log terwijl de exitcode
     # 0 blijft; gemeten op 2026-08-27 met een claim-CSV die niet bestond. Daarom ook het log toetsen.
-    # Een vastgelopen proces krijgt zijn reden als [E]-regel onder zijn log, zodat wie het log later opent ziet waarom hij stopte.
-    if ($run.Reden) { "[E] RunAllocatie.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
     $fouten = @(Select-String -LiteralPath $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
 
     if ($code -ne 0 -or $fouten.Count -gt 0) {

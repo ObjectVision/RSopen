@@ -86,6 +86,8 @@
       -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
       -WaakhondMinuten      Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als vastgelopen
                             stopt, standaard 15; 0 zet de waakhond uit. Zie Waakhond.ps1.
+      -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
+                            het stopt, standaard 1; 0 stopt meteen.
 
       Welke bestanden de export schrijft hangt af van ModelParameters/Productieprofiel. NL2120 en Standaard
       schrijven de bestanden van de indicatordomeinen die het profiel levert (ModelParameters/Indicatoren/
@@ -118,7 +120,8 @@
    mislukt. Een tabel (csv) wordt kolom voor kolom geschreven, dus een csv kan na een fout minder
    kolommen hebben dan de configuratie; vergelijk de kopregel met die van een gave tabel.
    Een vastgelopen GeoDmsRun stopt de waakhond na -WaakhondMinuten; de reden staat als [E]-regel onder
-   het log van de stap, en de stap telt als mislukt.
+   het log van de stap. Het script start de stap dan opnieuw, met een eigen log, -HerhalingenNaVastlopen
+   keer; loopt hij dan nog vast, dan telt de stap als mislukt.
 ================================================================================================
 #>
 [CmdletBinding()]
@@ -139,7 +142,8 @@ param(
     [switch]   $AlleenExportZichtjaar,
     [switch]   $TabellenUitExport = $true,
     [switch]   $GeenToets,
-    [int]      $WaakhondMinuten = 15
+    [int]      $WaakhondMinuten = 15,
+    [int]      $HerhalingenNaVastlopen = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -356,17 +360,25 @@ foreach ($y in $Zichtjaren) { if ($alleJaren.IndexOf($y) -lt 0) { throw "Zichtja
 if (-not $GeenToets) { Test-Invoer }
 
 function Invoke-Export([string]$stap, [string[]]$items) {
-    $log = Join-Path $LogDir ("{0}_{1}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'), $stap)
+    # Een stap die de waakhond als vastgelopen stopt, start het script nog HerhalingenNaVastlopen keer opnieuw, elk met een
+    # eigen log, zoals RunAllocatie.ps1 dat doet.
+    for ($poging = 0; $true; $poging++) {
+        $log = Join-Path $LogDir ("{0}_{1}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'), $stap)
 
-    Write-Regel "start     : $stap"
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $items) -Log $log -WaakhondMinuten $WaakhondMinuten
-    $code = $run.Code
-    $sw.Stop()
-    $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+        Write-Regel "start     : $stap"
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $items) -Log $log -WaakhondMinuten $WaakhondMinuten
+        $code = $run.Code
+        $sw.Stop()
+        $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
 
-    "{0}`t{1}`t{2}`t{3}" -f (Get-Date -Format 's'), $stap, $code, $sec |
-        Add-Content $status -Encoding UTF8
+        "{0}`t{1}`t{2}`t{3}" -f (Get-Date -Format 's'), $stap, $code, $sec |
+            Add-Content $status -Encoding UTF8
+
+        if ($run.Reden) { "[E] RunIndicatoren.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
+        if (-not $run.Reden -or $poging -ge $HerhalingenNaVastlopen) { break }
+        Write-Regel "VASTGELOPEN: $stap, het script start de stap opnieuw ($($poging + 1) van $HerhalingenNaVastlopen); log van de vastgelopen poging: $log"
+    }
 
     # Gebundeld geeft GeoDmsRun een exitcode voor alle casussen samen. De rekentijd per casus
     # staat wel in het log: elk opdrachtregelitem krijgt zijn eigen Updating-paar. Die komt
@@ -383,8 +395,7 @@ function Invoke-Export([string]$stap, [string[]]$items) {
             }
     }
 
-    if ($run.Reden) { "[E] RunIndicatoren.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
-    $fouten = @(Select-String -LiteralPath $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
+    $fouten =@(Select-String -LiteralPath $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
     if ($code -ne 0 -or $fouten.Count -gt 0) {
         $reden = if ($run.Reden) { $run.Reden } elseif ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
         Write-Regel "MISLUKT   : $stap ($reden, $sec s)"
