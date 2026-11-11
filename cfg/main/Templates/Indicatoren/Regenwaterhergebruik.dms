@@ -102,6 +102,54 @@ container Regenwaterhergebruik
 		}
 	}
 
+	container KostendekkendePrijs
+	: Descr = "Bij welke drinkwaterprijs per m3 een tank zich binnen een termijn terugverdient, met het onderhoud en de discontovoet van het model (#507): de aanleg gedeeld door de annuiteitfactor over de termijn, plus het onderhoud per jaar, gedeeld door het bespaarde leidingwater per jaar. Bij die prijs is de netto contante waarde over de termijn nul. De vaste tank staat er twee keer, bij de lage en de hoge schatting van de aanleg; de doeltank telt alleen de woningen waar het besparingsdoel haalbaar is. Per provincie en landelijk, voor elke termijn uit ModelParameters/Regenwaterhergebruik/Kosten/Terugverdientermijn; de prijs van nu is ModelParameters/Regenwaterhergebruik/Kosten/VermedenPerM3."
+	{
+		unit<UInt8>  Termijn   := /ModelParameters/Regenwaterhergebruik/Kosten/Terugverdientermijn;
+		unit<UInt32> Provincie := /SourceData/RegioIndelingen/Provincie;
+
+		container Annuiteit := for_each_ne(Termijn/name, '/Templates/Verdiscontering_Stroom_T(0[jaar], ' + string(Termijn/Jaren) + '[jaar])')
+		, Descr = "De annuiteitfactor per termijn, geteld vanaf het jaar van aanleg, zoals Annuiteit hierboven voor de levensduur.";
+		attribute<jaar> Factor (Termijn) := ='union_data(Termijn, ' + AsItemList('Annuiteit/' + Termijn/name + '/Factor') + ')';
+
+		unit<UInt32> Gebied := range(uint32, 0, #Provincie + 1)
+		, Descr = "De provincies en daarna een regel voor heel Nederland."
+		{
+			attribute<Bool>      IsNL          := id(.) == #Provincie;
+			attribute<Provincie> Provincie_rel := IsNL ? null_u[Provincie] : value(id(.), Provincie);
+			attribute<String>    name          := IsNL ? 'Nederland' : Provincie/name[Provincie_rel];
+
+			attribute<Eur>           VasteTank_AanlegMin        := IsNL ? sum(VasteTank_AanlegMin_Prov)        : VasteTank_AanlegMin_Prov[Provincie_rel];
+			attribute<Eur>           VasteTank_AanlegMax        := IsNL ? sum(VasteTank_AanlegMax_Prov)        : VasteTank_AanlegMax_Prov[Provincie_rel];
+			attribute<Eur_jaarlijks> VasteTank_OnderhoudPerJaar := IsNL ? sum(VasteTank_OnderhoudPerJaar_Prov) : VasteTank_OnderhoudPerJaar_Prov[Provincie_rel];
+			attribute<m3_jaar>       VasteTank_Besparing        := IsNL ? sum(VasteTank_Besparing_Prov)        : VasteTank_Besparing_Prov[Provincie_rel];
+			attribute<Eur>           Doeltank_Aanleg            := IsNL ? sum(Doeltank_Aanleg_Prov)            : Doeltank_Aanleg_Prov[Provincie_rel];
+			attribute<Eur_jaarlijks> Doeltank_OnderhoudPerJaar  := IsNL ? sum(Doeltank_OnderhoudPerJaar_Prov)  : Doeltank_OnderhoudPerJaar_Prov[Provincie_rel];
+			attribute<m3_jaar>       Doeltank_Besparing         := IsNL ? sum(Doeltank_Besparing_Prov)         : Doeltank_Besparing_Prov[Provincie_rel];
+		}
+
+		attribute<Eur>           VasteTank_AanlegMin_Prov        (Provincie) := sum(MakeDefined(VasteTank/Kosten/AanlegMin, 0[Eur]), Provincie_rel);
+		attribute<Eur>           VasteTank_AanlegMax_Prov        (Provincie) := sum(MakeDefined(VasteTank/Kosten/AanlegMax, 0[Eur]), Provincie_rel);
+		attribute<Eur_jaarlijks> VasteTank_OnderhoudPerJaar_Prov (Provincie) := sum(MakeDefined(VasteTank/Kosten/OnderhoudPerJaar, 0[Eur_jaarlijks]), Provincie_rel);
+		attribute<m3_jaar>       VasteTank_Besparing_Prov        (Provincie) := sum(MakeDefined(VasteTank/Besparing, 0[m3_jaar]), Provincie_rel);
+		attribute<Eur>           Doeltank_Aanleg_Prov            (Provincie) := sum(MakeDefined(Doeltank/Kosten/Aanleg, 0[Eur]), Provincie_rel);
+		attribute<Eur_jaarlijks> Doeltank_OnderhoudPerJaar_Prov  (Provincie) := sum(MakeDefined(Doeltank/Kosten/OnderhoudPerJaar, 0[Eur_jaarlijks]), Provincie_rel);
+		attribute<m3_jaar>       Doeltank_Besparing_Prov         (Provincie) := sum(MakeDefined(Doeltank/Besparing, 0[m3_jaar]), Provincie_rel);
+
+		unit<UInt32> Regel := range(uint32, 0, #Gebied * #Termijn)
+		, Descr = "Een regel per gebied en termijn, de termijnen van een gebied onder elkaar."
+		{
+			attribute<Gebied>  Gebied_rel  := value(id(.) / #Termijn, Gebied);
+			attribute<Termijn> Termijn_rel := value(id(.) % #Termijn, Termijn);
+			attribute<String>  Gebied_name := Gebied/name[Gebied_rel];
+			attribute<jaar>    Termijn_jaar := Termijn/Jaren[Termijn_rel];
+
+			attribute<Eur_m3> VasteTank_PrijsMin := (Gebied/VasteTank_AanlegMin[Gebied_rel] / Factor[Termijn_rel] + Gebied/VasteTank_OnderhoudPerJaar[Gebied_rel]) / Gebied/VasteTank_Besparing[Gebied_rel], Descr = "De kostendekkende prijs bij de lage schatting van de aanleg.";
+			attribute<Eur_m3> VasteTank_PrijsMax := (Gebied/VasteTank_AanlegMax[Gebied_rel] / Factor[Termijn_rel] + Gebied/VasteTank_OnderhoudPerJaar[Gebied_rel]) / Gebied/VasteTank_Besparing[Gebied_rel], Descr = "Hetzelfde bij de hoge schatting.";
+			attribute<Eur_m3> Doeltank_Prijs     := (Gebied/Doeltank_Aanleg[Gebied_rel]     / Factor[Termijn_rel] + Gebied/Doeltank_OnderhoudPerJaar[Gebied_rel])  / Gebied/Doeltank_Besparing[Gebied_rel];
+		}
+	}
+
 	parameter<String> Pad    := '%LocalDataProjDir%/Indicatoren/' + Casus_name + '/Regenwaterhergebruik_', Descr = "Begin van de bestandsnaam van de kaarten; daarna volgen de grootheid en Staart.";
 	parameter<String> Staart := '_' + Zichtjaar_name + '_' + /ModelParameters/StudyArea + '.tif';
 

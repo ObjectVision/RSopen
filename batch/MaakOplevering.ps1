@@ -165,6 +165,7 @@ $Beschrijving = [ordered]@{
     'Piekbuiberging_BovenDrempel_Met_70mm_1h_Woningen'                                               = @('woningen', '', 'Hetzelfde met de maatregelen')
     'Piekbuiberging_BovenDrempel_Zonder_70mm_1h_Bedrijven'                                           = @('m2', '', 'Bedrijfsvloer boven het vloerpeil bij de bui van 70 mm in 1 uur, zonder maatregelen')
     'Piekbuiberging_BovenDrempel_Met_70mm_1h_Bedrijven'                                              = @('m2', '', 'Hetzelfde met de maatregelen')
+    'Regenwaterhergebruik_KostendekkendePrijs'                                                       = @('tabel, euro per m3', '', 'Bij welke drinkwaterprijs een regentank zich binnen een termijn terugverdient, per provincie en landelijk')
     'Regenwaterhergebruik_Drinkwatervraag'                                                           = @('m3 per jaar', '', 'Drinkwatervraag van de woningen in de cel (#507)')
     'Regenwaterhergebruik_VasteTank_Besparing'                                                       = @('m3 per jaar', '', 'Drinkwater dat een regenwatertank van vaste grootte per woning bespaart met regen van het eigen dak')
     'Regenwaterhergebruik_VasteTank_Besparingsaandeel'                                               = @('aandeel 0 tot 1', '', 'Diezelfde besparing als deel van de drinkwatervraag')
