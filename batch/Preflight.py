@@ -195,7 +195,7 @@ def wegwerpkopie(cfg: Path) -> tuple[Path, Path]:
     De kopie is ongeveer 5 MB en gaat na afloop weg; de brondata staat buiten cfg en wordt niet geraakt.
 
     In de kopie gaan de ontkoppel-schakelaars uit. Die LocalData is leeg, en een unit die haar kolommen
-    uit een mmd-storage haalt (AfleidingPandType/Results) heeft zonder dat bestand geen kolom WP5_rel;
+    uit een mmd-storage haalt (AfleidingPandType/Results/Levering) heeft zonder dat bestand geen kolom WP5_rel;
     de naamcontrole meldt dan een onbekende naam voor een bestand dat ontbreekt, niet voor code die fout is.
     Met de schakelaars uit kiest elke meta-expressie de tak die rekent, en dat is de tak die in de
     configuratie staat en dus de tak die deze laag hoort te toetsen. Of de ontkoppelde bestanden er zijn
