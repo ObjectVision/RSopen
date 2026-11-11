@@ -48,6 +48,10 @@ Eruit blijven: meetuitkomsten en de datum ervan, de geschiedenis van wat er eerd
 
 Geen persoonsnamen in Descr, Source of commentaar. Wie een bestand heeft aangeleverd, gemaild of een expert judgement heeft gegeven staat in de code als organisatie plus volgnummer: `PBL-3`, `Deltares-7`, `ObjectVision-1`, `WUR-5`. De koppeling van nummer naar persoon staat in een afgeschermde lijst buiten de repo (pbl-nl/model-RSopen#1); een nieuwe persoon krijgt het eerstvolgende nummer binnen de organisatie en komt eerst in die lijst. Wat wel blijft: auteurs van gepubliceerd werk met titel of DOI, de contactpersonen in de bestandsheaders en organisatienamen. Een gebruikersnaam in een pad telt ook als persoonsnaam.
 
+## SourceData en BaseData
+
+SourceData leest de bronnen in en koppelt ze aan de klassen. Een afleiding hoort in BaseData als zijn uitkomst een eigen kaart of tabel is, zoals een vergridding, een buffer of een afstandskaart; de afnemers lezen hem dan ook in BaseData. Een eigenschap van een ingelezen object, zoals de typering of een telling per pand, blijft bij dat object in SourceData, ook als hij ontkoppeld wordt weggeschreven naar `%LocalDataProjDir%/BaseData`. SourceData mag in een richting uit BaseData lezen. Een verwijzing die heen en weer gaat, van een object in SourceData naar een afleiding in BaseData en weer terug naar datzelfde object, hoort er niet in (#440).
+
 ## Meetharnassen
 
 Een harnas dat een vraag uit een issue beantwoordt is tijdelijk en gaat weg zodra het issue dicht is; de meting staat dan in het issue. Wat blijft staat in een thematische container van `cfg/main/Diagnose.dms` (Waterberging, Natuur, Groen, Werken en zo verder) onder een naam die zegt wat er gemeten wordt, draait mee in `GenerateAll` of `GenerateBasisjaar` of zegt in zijn Descr dat het op aanvraag is, en heeft als controlewaarde een norm in de kolommen `norm_onder` en `norm_boven` van `Checks` of `ChecksBasisjaar`. Geen containers of bestanden met een issuenummer als naam.
