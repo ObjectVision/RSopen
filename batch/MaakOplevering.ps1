@@ -27,7 +27,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Bron      = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren',
+    [string] $Bron      = 'C:\LocalData\RSopen_NL2120\Indicatoren',
     # Standaard naar de gedeelde projectmap, zodat de levering meteen bij het team staat.
     # Let op twee dingen bij het bijwerken van dit pad. De projectmap staat sinds begin
     # september op E: en niet meer onder de gebruikersmap op C:; het oude pad bestond niet
@@ -40,9 +40,9 @@ param(
     # regel tekst onderin het script.
     [string] $Issue     = '632',
     # De werkkopie die de cijfers heeft gemaakt, en niet de werkkopie waarin dit script staat.
-    # Run2120.ps1 draait op RSopen_NL2120_productie terwijl dit script ergens anders kan liggen;
+    # RunAllocatie.ps1 draait op RSopen_NL2120 terwijl dit script ergens anders kan liggen;
     # die twee kunnen los van elkaar uit de pas lopen. Branch, commit en tag komen hier vandaan.
-    [string] $Werkkopie = 'C:\ProjDir\RSopen_NL2120_productie',
+    [string] $Werkkopie = 'C:\ProjDir\RSopen_NL2120',
     # Vervangt de uit git afgeleide herkomstregels door eigen tekst. Nodig zodra de varianten niet
     # allemaal op dezelfde commit zijn doorgerekend.
     [string[]] $Herkomst = @(),
@@ -228,7 +228,7 @@ $Beschrijving = [ordered]@{
 # Waar de legenda's staan die de configuratie schrijft. Ze komen uit Export/Legendas en zijn
 # variantonafhankelijk, dus een enkele GeoDmsRun op /Indicatoren/<casus>/Zichtjaren/Export/Legendas/Schrijf
 # volstaat voor een hele levering.
-$LegendaBron = 'C:\LocalData\RSopen_NL2120_productie\Indicatoren\Legendas'
+$LegendaBron = 'C:\LocalData\RSopen_NL2120\Indicatoren\Legendas'
 $Issue = $Issue.TrimStart('#')
 
 function Schoon([string]$Naam) {

@@ -44,51 +44,64 @@ container ClaimRealisatie : using = "Impl"
 		
 		unit<UInt32> ClaimRegio   := =ClaimRegio_path;
 		
+		parameter<Bool> HeeftTigrisClaim        := ='ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/IsTigrisRegio'
+		, Descr = "Heeft deze regio-indeling een claim voor wonen en werken? Alleen de TIGRIS-indelingen, zie IsTigrisRegio in de claims.";
+		parameter<Bool> HeeftWaterbergingsclaim := ='ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/HeeftWaterbergingsopgave'
+		, Descr = "Heeft deze regio-indeling een waterbergingsopgave? Alleen de indeling waarop het model waterberging alloceert.";
+		parameter<Bool> MetWonen                := HeeftTigrisClaim && /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector;
+		parameter<Bool> MetWerken               := HeeftTigrisClaim && /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector;
+		
+		unit<UInt8> Claims_sub := select_with_attr_by_cond(StandVar/Claims_sub
+		                       , lowercase(StandVar/Claims_sub/Sector_name) == 'waterberging' ? HeeftWaterbergingsclaim
+		                       : lowercase(StandVar/Claims_sub/Sector_name) == 'wonen' || lowercase(StandVar/Claims_sub/Sector_name) == 'werken' ? HeeftTigrisClaim
+		                       : TRUE)
+		, Descr = "De standvariabelen met een claim op deze regio-indeling: een deelverzameling van StandVar/Claims_sub (pbl-nl/model-RSopen#53).";
+		unit<UInt8> WonenHier  := select_with_attr_by_cond(Classifications/Vastgoed/WP2xVSSH, const(MetWonen, Classifications/Vastgoed/WP2xVSSH)), Descr = "De woningtypen, of geen als deze indeling geen woonclaim heeft.";
+		unit<UInt8> WerkenHier := select_with_attr_by_cond(Classifications/Actor/Jobs6, const(MetWerken, Classifications/Actor/Jobs6)), Descr = "De werksectoren, of geen als deze indeling geen banenclaim heeft.";
+		
 		container Impl := ThisYear/Impl
 		{
 			container Claims := // Voor het gemak pakken we hier voor elke sector de nationale claim, om te checken of deze uiteindelijk ergens wordt gealloceerd (de vraag tav claimrealisatie in in evt kleinere AllocRegio'sblijft dus over)
 				for_each_nedvn(
-					StandVar/Claims_sub/name,
-					'ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/'+StandVar/Claims_sub/path
+					Claims_sub/name,
+					'ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/'+Claims_sub/path
 					, ClaimRegio
-					, StandVar/Claims_sub
-					, StandVar/Claims_sub/unit_name
+					, Claims_sub
+					, Claims_sub/unit_name
 				)
 			{
-				attribute<Woning> Aantal_Woningen_Totaal (ClaimRegio) := = 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Wonen/Subsector/StandVar_name)+')';
-				attribute<Job>    Banen_Totaal           (ClaimRegio) := = 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/StandVar_name)+')';
-				
-				attribute<verblijfsobject> Verblijfsrecreatie_NL (RegioIndelingen/NL) := sum(ThisYear/Impl/Claims/AllocRegios/NL/Verblijfsrecreatie/Totaal, RegioIndelingen/CBS/Gekozen/Provincie/NL_rel);
+				attribute<Woning> Aantal_Woningen_Totaal (ClaimRegio) := = MetWonen  ? 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Wonen/Subsector/StandVar_name)+')' : 'const(null_f[Woning], ClaimRegio)';
+				attribute<Job>    Banen_Totaal           (ClaimRegio) := = MetWerken ? 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/StandVar_name)+')' : 'const(null_f[Job], ClaimRegio)';
 			}
 			
 			container MinClaims :=  // /VariantData/Claims/Y2050/AllocRegios/Provincie/Landbouw_min
 				for_each_nedvn(
-					StandVar/Claims_sub/name
-					, StandVar/Claims_sub/IsLandbouw 
-						? 'ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/Landbouw/MinClaims/'+StandVar/Claims_sub/Subsector_name 
-						: 'min_elem(Claims/'+StandVar/Claims_sub/name+', sum(StandKeuze/'+StandVar/Claims_sub/name+', ClaimRegio/Per_AdminDomain))'
+					Claims_sub/name
+					, Claims_sub/IsLandbouw 
+						? 'ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/Landbouw/MinClaims/'+Claims_sub/Subsector_name 
+						: 'min_elem(Claims/'+Claims_sub/name+', sum(StandKeuze/'+Claims_sub/name+', ClaimRegio/Per_AdminDomain))'
 					, ClaimRegio
-					, StandVar/Claims_sub
-					, StandVar/Claims_sub/unit_name
+					, Claims_sub
+					, Claims_sub/unit_name
 				), Descr = "Per sector met een claim het kleinste van de claim van dit zichtjaar en de stand van het basisjaar in de regio; voor landbouw de minimumclaim van de variant."
 			{
-				attribute<Woning> Aantal_Woningen_Totaal (ClaimRegio) := = 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Wonen/Subsector/StandVar_name)+')';
-				attribute<Job>    Banen_Totaal           (ClaimRegio) := = 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/StandVar_name)+')';
+				attribute<Woning> Aantal_Woningen_Totaal (ClaimRegio) := = MetWonen  ? 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Wonen/Subsector/StandVar_name)+')' : 'const(null_f[Woning], ClaimRegio)';
+				attribute<Job>    Banen_Totaal           (ClaimRegio) := = MetWerken ? 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/StandVar_name)+')' : 'const(null_f[Job], ClaimRegio)';
 			}
 			
 			container MaxClaims := 
 				for_each_nedvn(
-					StandVar/Claims_sub/name
-					, StandVar/Claims_sub/IsLandbouw 
-						? 'ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/Landbouw/MaxClaims/'+StandVar/Claims_sub/Subsector_name 
-						: '	max_elem(Claims/'+StandVar/Claims_sub/name+', sum(StandKeuze/'+StandVar/Claims_sub/name+', ClaimRegio/Per_AdminDomain))'
+					Claims_sub/name
+					, Claims_sub/IsLandbouw 
+						? 'ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/Landbouw/MaxClaims/'+Claims_sub/Subsector_name 
+						: '	max_elem(Claims/'+Claims_sub/name+', sum(StandKeuze/'+Claims_sub/name+', ClaimRegio/Per_AdminDomain))'
 					, ClaimRegio
-					, StandVar/Claims_sub
-					, StandVar/Claims_sub/unit_name
+					, Claims_sub
+					, Claims_sub/unit_name
 				), Descr = "Per sector met een claim het grootste van de claim van dit zichtjaar en de stand van het basisjaar in de regio; voor landbouw de maximumclaim van de variant."
 			{
-				attribute<Woning> Aantal_Woningen_Totaal (ClaimRegio) := = 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Wonen/Subsector/StandVar_name)+')';
-				attribute<Job>    Banen_Totaal           (ClaimRegio) := = 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/StandVar_name)+')';
+				attribute<Woning> Aantal_Woningen_Totaal (ClaimRegio) := = MetWonen  ? 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Wonen/Subsector/StandVar_name)+')' : 'const(null_f[Woning], ClaimRegio)';
+				attribute<Job>    Banen_Totaal           (ClaimRegio) := = MetWerken ? 'add('+AsItemList(Classifications/Actor/Sector/xSubsectoren/Werken/Subsector/StandVar_name)+')' : 'const(null_f[Job], ClaimRegio)';
 			}
 			
 			container Stand_PerAllocRegio := 
@@ -119,15 +132,15 @@ container ClaimRealisatie : using = "Impl"
 		container Bouwbaar_realisatie
 		: Descr = "De woningstand gedeeld door het grootste van het bouwbare deel van de woonclaim en de stand van het basisjaar: de realisatie tegen wat de allocatie moest halen, zonder de woningen die op het net wachten (#448). De controles op de allocatie van wonen lezen deze; InDezeStudie meet tegen de vraag."
 		{
-			attribute<Woning>  Doel                   (ClaimRegio) := ='max_elem(ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/Wonen_Bouwbaar/Totaal, sum(StandKeuze/Aantal_Woningen_Totaal, ClaimRegio/Per_AdminDomain))';
-			attribute<Woning>  Uitgesteld             (ClaimRegio) := ='ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/Wonen_Bouwbaar/Uitgesteld', Descr = "De woningen die op het zichtjaar op het net wachten.";
+			attribute<Woning>  Doel                   (ClaimRegio) := = MetWonen ? 'max_elem(ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/Wonen_Bouwbaar/Totaal, sum(StandKeuze/Aantal_Woningen_Totaal, ClaimRegio/Per_AdminDomain))' : 'const(null_f[Woning], ClaimRegio)';
+			attribute<Woning>  Uitgesteld             (ClaimRegio) := = MetWonen ? 'ThisYear/Impl/Claims/AllocRegios/'+ClaimRegio_name+'/Wonen_Bouwbaar/Uitgesteld' : 'const(null_f[Woning], ClaimRegio)', Descr = "De woningen die op het zichtjaar op het net wachten; leeg in een indeling zonder woonclaim.";
 			attribute<float32> Aantal_Woningen_Totaal (ClaimRegio) := Impl/Stand_PerAllocRegio/Aantal_Woningen_Totaal / Doel;
 		}
 
 		container MinClaim_realisatie := 
 			for_each_nedv(
-				StandVar/Claims_sub/name
-				, 'Impl/Stand_PerAllocRegio/'+StandVar/Claims_sub/name+' / Impl/MinClaims/'+StandVar/Claims_sub/name
+				Claims_sub/name
+				, 'Impl/Stand_PerAllocRegio/'+Claims_sub/name+' / Impl/MinClaims/'+Claims_sub/name
 				, ClaimRegio
 				, float32
 			), Descr = "De stand gedeeld door MinClaims: het kleinste van de claim van dit zichtjaar en de stand van het basisjaar, voor landbouw de minimumclaim; alleen bij minimumclaims informatief."
@@ -139,8 +152,8 @@ container ClaimRealisatie : using = "Impl"
 		
 		container MaxClaim_realisatie :=
 			for_each_nedv(
-				StandVar/Claims_sub/name
-				, 'Impl/Stand_PerAllocRegio/'+StandVar/Claims_sub/name+' / Impl/MaxClaims/'+StandVar/Claims_sub/name
+				Claims_sub/name
+				, 'Impl/Stand_PerAllocRegio/'+Claims_sub/name+' / Impl/MaxClaims/'+Claims_sub/name
 				, ClaimRegio
 				, float32
 			), Descr = "De stand gedeeld door MaxClaims: het grootste van de claim van dit zichtjaar en de stand van het basisjaar, voor landbouw de maximumclaim. Een claim onder de basisjaarstand telt zo niet als overrealisatie; het is niet de hoogste claim over de zichtjaren (#666)."
@@ -171,8 +184,8 @@ container ClaimRealisatie : using = "Impl"
 		{
 			container Wonen	:= 
 				for_each_nedv(
-					Classifications/Vastgoed/WP2xVSSH/name
-					, 'Impl/Stand_PerAllocRegio/Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name+' / Impl/Claims/Aantal_Woningen_'+/Classifications/Vastgoed/WP2xVSSH/name
+					WonenHier/name
+					, 'Impl/Stand_PerAllocRegio/Aantal_Woningen_'+WonenHier/name+' / Impl/Claims/Aantal_Woningen_'+WonenHier/name
 					, ClaimRegio
 					, float32
 				)
@@ -182,8 +195,8 @@ container ClaimRealisatie : using = "Impl"
 			
 			container Werken := 
 				for_each_nedv(
-					Classifications/Actor/Jobs6/name
-					, 'Impl/Stand_PerAllocRegio/Banen_'+Classifications/Actor/Jobs6/name+' / Impl/Claims/Banen_'+Classifications/Actor/Jobs6/name
+					WerkenHier/name
+					, 'Impl/Stand_PerAllocRegio/Banen_'+WerkenHier/name+' / Impl/Claims/Banen_'+WerkenHier/name
 					, ClaimRegio
 					, float32
 				)
@@ -201,7 +214,7 @@ container ClaimRealisatie : using = "Impl"
 					// , float32
 				// );
 				
-			parameter<String> All                := 'Ready', ExplicitSuppliers = "=asList('Wonen/'+Classifications/Vastgoed/WP2xVSSH/name, ';')+';'+asList('Werken/'+Classifications/Actor/Jobs6/name, ';')";
+			parameter<String> All                := 'Ready', ExplicitSuppliers = "=asList('Wonen/'+WonenHier/name, ';')+(MetWonen && MetWerken ? ';' : '')+asList('Werken/'+WerkenHier/name, ';')";
 			
 			// container Wind := 
 				// for_each_nedv(
