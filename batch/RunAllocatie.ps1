@@ -347,7 +347,7 @@ function Test-Invoer {
             $eisen += ,@('BaseData\Suitabilities\Waterberging\Depth_Norm_*.tif', 'waterbergingsnormen', '/WriteBasedata/Generate_Run3')
         }
         $hydro  = Get-VariantKolom $Cfg 'Hydrologie_Levering'
-        $opbr   = Get-VariantKolom $Cfg 'OpbrengstenVariant_Wonen'
+        $opbr   = Get-VariantKolom $Cfg 'OpbrengstenSet_Wonen'
         foreach ($v in $Varianten) {
             if (-not $opbr.ContainsKey($v)) { throw "Variant $v staat niet in VariantK.dms (kolom name); bekende varianten: $($opbr.Keys -join ', ')" }
             if (Test-SectorActief 'Landbouw') {
