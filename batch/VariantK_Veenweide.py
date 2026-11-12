@@ -21,7 +21,7 @@ PAD = Path(__file__).resolve().parent.parent / 'cfg' / 'main' / 'VariantParamete
 WBS = {
     'name':                                          "'WBS'",
     'HoogbouwToegestaanInZeerMooiLandschap':         'TRUE',
-    'VerhardingTovDefault':                          '0.75',
+    'Verhardingsfactor':                             '0.75',
     'GeenSlooptotLeeftijd_BuitenHardePlancapaciteit': '30',
     'NietBouwenInNatura2000Buffer':                  'TRUE',
     'NietBouwenWaarSlap':                            'TRUE',
@@ -29,19 +29,19 @@ WBS = {
     'NietBouwenWaarZettingsgevoelig':                'TRUE',
     # Drooglegging en infiltratie zoals in #501 voor WBS in DGWB-Veen afgesproken, gelijk aan BAU2 in NL2120: 40 cm in zomer en
     # winter met AWIS. In februari stond hier 20 cm in de zomer met het winterpeil aan maaiveld, en dat keurde Deltares in #501 af.
-    'WinterdroogleggingK_ref':                       "'_0'",
-    'ZomerdroogleggingK_ref':                        "'_0_4'",
-    'InfiltratieMaatregelK_ref':                     "'AWIS'",
+    'Winterdrooglegging':                            "'_0'",
+    'Zomerdrooglegging':                             "'_0_4'",
+    'Infiltratiemaatregel':                          "'AWIS'",
     # De grondwaterstanden voor de opbrengstderving: de levering WBS, de BAU-stand met de vaste stand van veenbouwsteen 1 op de
     # percelen die WBS vernat (SourceData/Water/Grondwaterstanden/WBS), totdat Deltares grondwaterstanden bij vernatting levert.
     'Hydrologie_Levering':                           "'WBS'",
-    'ReserverenVoorRivierAfvoer_ref':                "'Transformatief'",  # in februari 'Ruim'; in NL2120 heet die keuze Transformatief
+    'ReserveringRivierafvoer':                       "'Transformatief'",  # in februari 'Ruim'; in NL2120 heet die keuze Transformatief
     'EvidentBenutVariant_Wonen':                     "'Transformeren'",   # in februari 'WBS', dat in EvidentBenut gelijk was aan Transformeren
     'EvidentBenutVariant_Werken':                    "'Transformeren'",
     'EvidentBenutVariant_Verblijfsrecreatie':        "'Transformeren'",
 }
 # Niet meer te zetten in NL2120, zie het issue over de gaten in veenweide:
-#   Trede_Variant 'WBS': de werkentrede van WBS leunde op de eigendomslaag, die NL2120 heeft geschrapt (#874)
+#   Tredeset 'WBS': de werkentrede van WBS leunde op de eigendomslaag, die NL2120 heeft geschrapt (#874)
 #   Claim_agrarisch_Variant 'claims_ggvee_minfractie': verdwenen met het voedermodel (#780)
 #   MaatregelKanAangepastBouwenZijn, Waterbeheeroptie, RVF_beleidsscenario: uit NL2120 verwijderd
 LABEL_WBS = "'WaterEnBodemSturend'"
