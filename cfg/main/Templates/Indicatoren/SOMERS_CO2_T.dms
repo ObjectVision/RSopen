@@ -65,6 +65,55 @@ Template SOMERS_CO2_T
 		parameter<EUR>           NPV_StGebied       := sum(NPV);
 	}
 	
+	container Lachgas
+	: Descr = "De kosten van de lachgasuitstoot van deze variant, voor de peiloptimalisatie (#852): Lachgas_PerMeterWortelzone maal de wortelzone, in CO2-equivalenten met Lachgas_GWP, tegen de CO2-prijs van elk prijspad, op de veenweidepercelen die geen stedelijk gebied of water zijn. De wortelzone volgt het grondwater van de hydrologische levering van de variant, zoals in het proefschrift uit #852. SOMERS rekent alleen CO2. PostAllocAnalyses/Landbouw/PeilOptimalisatie leest de NPV per prijspad terug en trekt hem af van de NPV van de variant."
+	{
+		parameter<string>  Levering     := /VariantParameters/VariantK/Hydrologie_Levering[Variant_rel];
+		parameter<string>  Pad          := Levering == 'NbSGenuanceerd' || Levering == 'WBS' ? '/BaseData/Water/Grondwaterstanden/'+Levering : '/SourceData/Water/Grondwaterstanden/'+Levering
+		, Descr = "Waar de grondwaterstanden van deze levering staan, zoals Grondwaterstanden_pad in BaseData/Landbouw.";
+		parameter<float32> Jaar         := IsStartYear ? float32(/ModelParameters/Model_StartYear) : float32(Zichtjaar_value);
+		parameter<uint32>  i_boven      := min_elem(sum(uint32(float32(/Classifications/Landbouw/WWL_Zichtjaren/jaar) < Jaar)), uint32(#/Classifications/Landbouw/WWL_Zichtjaren) - 1u);
+		parameter<uint32>  i_onder      := max_elem(i_boven, 1u) - 1u;
+		parameter<float32> jr_onder     := float32(/Classifications/Landbouw/WWL_Zichtjaren/jaar[value(i_onder, /Classifications/Landbouw/WWL_Zichtjaren)]);
+		parameter<float32> jr_boven     := float32(/Classifications/Landbouw/WWL_Zichtjaren/jaar[value(i_boven, /Classifications/Landbouw/WWL_Zichtjaren)]);
+		parameter<float32> Gewicht      := jr_boven > jr_onder ? min_elem(max_elem((Jaar - jr_onder) / (jr_boven - jr_onder), 0f), 1f) : 1f
+		, Descr = "Hoe zwaar het bovenste klimaatanker meetelt, lineair tussen de twee ankers die het zichtjaar omsluiten, zoals WWL_Gewicht in Templates/Landbouw/Suitability_T.";
+		parameter<string>  Anker_Onder  := /Classifications/Landbouw/WWL_Zichtjaren/name[value(i_onder, /Classifications/Landbouw/WWL_Zichtjaren)];
+		parameter<string>  Anker_Boven  := /Classifications/Landbouw/WWL_Zichtjaren/name[value(i_boven, /Classifications/Landbouw/WWL_Zichtjaren)];
+		attribute<float32> GLG_Onder    (AdminDomain) := ='float32('+Pad+'/GLG_'+Anker_Onder+')';
+		attribute<float32> GLG_Boven    (AdminDomain) := ='float32('+Pad+'/GLG_'+Anker_Boven+')';
+		attribute<float32> GLG          (AdminDomain) := MakeDefined((1f - Gewicht) * GLG_Onder + Gewicht * GLG_Boven, MakeDefined(GLG_Onder, GLG_Boven))
+		, Descr = "De GLG van dit zichtjaar in meters onder maaiveld; waar maar een anker een waarde heeft, die ene.";
+		attribute<bool>    Opgelegd     (AdminDomain) := = Levering == 'NbSGenuanceerd' || Levering == 'WBS' ? 'MakeDefined('+Pad+'/Opgelegd, FALSE)' : 'const(FALSE, AdminDomain)'
+		, Descr = "Legt de levering op deze cel een grondwaterstand op, zoals VernattingOpgelegd in BaseData/Landbouw?";
+		attribute<float32> Wortelzone_m (AdminDomain) := IsDefined(GLG) ? (Opgelegd ? GLG : max_elem(GLG - /ModelParameters/Landbouw/Lachgas_GLG_Correctie_m, 0f)) : Waterbeheer/Drooglegging_m
+		, Descr = "De wortelzone in meters: de GLG min Lachgas_GLG_Correctie_m, op een opgelegde stand de GLG zelf, en waar de levering geen GLG geeft de zomerdrooglegging.";
+		attribute<kg_jaarlijks>  CO2eq_Jaarlijks    (AdminDomain) := Waterbeheer/IsStedelijkOfWater || !IsDefined(Veenweide_percelen/AdminDomain_rel) ? 0[kg_jaarlijks] : (/ModelParameters/Landbouw/Lachgas_PerMeterWortelzone * /ModelParameters/Landbouw/Lachgas_GWP * Wortelzone_m * AdminDomain/NrHaPerCell)[kg_jaarlijks]
+		, Descr = "De lachgasuitstoot per cel in kg CO2-equivalent per jaar.";
+		parameter<ton_jaarlijks> CO2eq_StGebied     := sum(CO2eq_Jaarlijks)[ton_jaarlijks];
+		container                Kosten             := for_each_ne(CO2/PrijsK/name, 'LachgasXPrijsT('+string(id(CO2/PrijsK))+'[CO2/PrijsK])');
+	}
+	
+	Template LachgasXPrijsT
+	{
+		//
+		parameter<CO2/PrijsK> id;
+		//
+		
+		parameter<string>  Prijs_name    := CO2/PrijsK/name[id];
+		parameter<Eur_ton> Prijs         := = '/ModelParameters/Landbouw/CO2_Prijs/PerJaar/'+Prijs_name+'[value(uint32(Verdiscontering/Zichtjaar_value), /ModelParameters/Landbouw/CO2_Prijs/JaarK)]';
+		attribute<Eur_ton> Prijs_PerJaar (Verdiscontering/Stroom/JaarK) := = '/ModelParameters/Landbouw/CO2_Prijs/PerJaar/'+Prijs_name+'[value(uint32(/ModelParameters/Model_StartYear) + uint32(Verdiscontering/Stroom/JaarK/Horizon / 1[jaar]), /ModelParameters/Landbouw/CO2_Prijs/JaarK)]';
+		parameter<Eur_ton> Prijs_Contant := Verdiscontering/PeriodeFactor > 0[jaar] ? sum(Prijs_PerJaar * Verdiscontering/Stroom/JaarK/Factor) / (Verdiscontering/PeriodeFactor / 1[jaar]) : Prijs
+		, Descr = "De contante prijs van dit prijspad over de periode sinds het vorige zichtjaar, zoals Prijs_Contant in EmissieXPrijsT.";
+		
+		parameter<string>  StorageStr    := IsStartYear
+			? '%LocalDataProjDir%/Indicatoren/'+Zichtjaar_name+'/SOMERS_Lachgas_Kosten_EUR_'+Prijs_name+'_NPV_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif'
+			: '%LocalDataProjDir%/Indicatoren/'+Casus_name+'/SOMERS_Lachgas_Kosten_EUR_'+Prijs_name+'_NPV_'+Zichtjaar_name+'_'+/ModelParameters/StudyArea+'.tif';
+		attribute<EUR>     NPV           (AdminDomain) := Lachgas/CO2eq_Jaarlijks[ton_jaarlijks] * Prijs_Contant * Verdiscontering/PeriodeFactor, StorageName = "=StorageStr", StorageType = "gdalwrite.grid"
+		, Descr = "Contante waarde in het basisjaar van de lachgaskosten over de periode sinds het vorige zichtjaar, op dezelfde discontovoeten en peildatum als de CO2-kosten.";
+		parameter<EUR>     NPV_StGebied  := sum(NPV);
+	}
+
 	Template EmissieT
 	{
 		//
