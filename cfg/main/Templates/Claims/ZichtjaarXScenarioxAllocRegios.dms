@@ -53,6 +53,70 @@ Template Zichtjaar_T
 		attribute<Float32> Gewicht      (AdminDomain) := MakeDefined(/BaseData/StartState/StateBasisjaar/State/Wonen/Aantal_Woningen_Totaal[float32], 0f), Descr = "De woningvoorraad van het basisjaar; de modelgroei tot 2040 ligt bijna even sterk in congestiegebied als de voorraad.";
 	}
 
+	container EengezinsOmzetting
+	: Descr = "Hoeveel eengezinswoningen van de groei sinds het basisjaar in de bouwbare claim van dit zichtjaar naar meergezins gaan (#879). Elke allocatieregio van wonen toetst voor zijn eigen regio's
+				(PerIndeling): de groei die na de startstand van de allocatie nog gebouwd moet worden, vraagt grond tegen de dichtheid van de nieuwbouw van de regio in de basisperiode, en die grond gaat tegen
+				de grond die in dit of een eerder zichtjaar door de woonzeef en de vormtoets van de allocatie komt en niet al in de startstand bebouwd is. Past de groei niet, dan gaat zoveel eengezinsgroei naar
+				meergezins tot hij past, maar het aandeel meergezins in de groei sinds het basisjaar komt niet boven het aandeel in de nieuwbouw van de basisperiode, of in de claim als dat hoger is. Wat een regio
+				niet kwijt kan en naar een grotere regio overloopt, krijgt zo de omzetting van de kleinere regio niet mee: de grotere regio zet alleen om wat hij zelf tekortkomt. De omzetting hangt niet af van
+				de allocatie van een eerder zichtjaar; wat al anders gebouwd is dan een indeling vraagt, verrekent de restclaim van de allocatie (IterSubsector_T_Wonen/AllocRegio/Meegeteld)."
+	{
+		unit<UInt8>          Indeling                               := /BaseData/StartState/EengezinsOmzetting/Indeling;
+
+		attribute<Bool>      Beschikbaar      (CompactedAdminDomain) := ='const(FALSE, CompactedAdminDomain)'+AsList(Time/Zichtjaar/YearRange_rel[UInt16] <= Zichtjaar_jaartal ? ' || ThisVariant/Zeef/'+Time/Zichtjaar/name+'/Wonen/Beschikbaar' : '', '')
+		, Descr = "De cellen die in dit of een eerder zichtjaar voor ten minste een woonsubsector door de zeef kwamen, want de groei sinds het basisjaar staat ook op grond die de zeef later sluit; hangt niet af van de allocatie.";
+		attribute<Woning>    StartEengezins            (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, /BaseData/StartState/BAG_nieuwbouw/Wonen/eengezins_VrijeSector + /BaseData/StartState/BAG_nieuwbouw/Wonen/eengezins_SocialeHuur, 0[Woning])
+		, Descr = "De netto BAG-nieuwbouw van eengezinswoningen na het basisjaar, die al in de startstand van de allocatie staat (Allocatie_T/StartState_metBAGnieuwbouw).";
+		attribute<Woning>    StartMeergezins           (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, /BaseData/StartState/BAG_nieuwbouw/Wonen/meergezins_VrijeSector + /BaseData/StartState/BAG_nieuwbouw/Wonen/meergezins_SocialeHuur, 0[Woning]);
+		attribute<Bool>      InStartstand              (AdminDomain) := StartEengezins + StartMeergezins >= 1[Woning], Descr = "De cellen met BAG-nieuwbouw in de startstand; die zijn al bebouwd.";
+		attribute<Bool>      Vrijgekomen               (AdminDomain) := ='ThisVariant/Herontwikkelingskans/PerZichtjaar/'+Zichtjaar_name+'/IsVrij_AdminDomain', Descr = "De cellen van de percelen die de herontwikkelingskans uiterlijk in dit zichtjaar vrij liet (#869); de vormtoets geldt daar niet.";
+		attribute<Bool>      Basis                     (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, Beschikbaar, FALSE);
+		attribute<Bool>      Geerodeerd                (AdminDomain) := potential(float32(Basis), /Geography/Distmatrices_25m/pot25m/binair) >= /ModelParameters/Advanced/MorfologischeCleaning_BuurCellen_Wonen + 1f;
+		attribute<Bool>      Opgeschoond               (AdminDomain) := Basis && potential(float32(Geerodeerd), /Geography/Distmatrices_25m/pot25m/binair) >= 1f, Descr = "De erosie en dilatie van Iter_Allocatie, met de beukmaat van wonen.";
+		unit<UInt32>         Cluster                                 := district_8(Opgeschoond)
+		{
+			attribute<Ha>    Oppervlakte               (AdminDomain) := (pcount(Districts)[float32] * AdminDomain/NrHaPerCell)[Districts];
+		}
+		attribute<Bool>      Bruikbaar                 (AdminDomain) := Basis && !InStartstand
+		                                                                && (Vrijgekomen || Opgeschoond && (/BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain
+		                                                                    ? Cluster/Oppervlakte >= /ModelParameters/Advanced/Minimum_alloc_group_size_Binnenstedelijk_Wonen
+		                                                                    : Cluster/Oppervlakte >= /ModelParameters/Advanced/Minimum_alloc_group_size_Buitenstedelijk_Wonen))
+		, Descr = "De cellen die door de zeef en de vormtoets van Iter_Allocatie komen als alles bebouwd wordt, zoals SchaarseGrond in IterSubsector_T_Wonen, zonder de cellen die de startstand al bebouwt.";
+
+		Template PerIndeling_T
+		{
+			parameter<String>    Regio_name;
+			// end case parameters
+
+			parameter<String>    R                    := 'AllocRegios/'+Regio_name+'/';
+			unit<UInt32>         Regio                := =R+'RegioUnit';
+			container            Nieuwbouw            := ='/BaseData/StartState/EengezinsOmzetting/PerIndeling/'+Regio_name+'/Resultaat';
+
+			attribute<Woning>    Groei_eengezins  (Regio) := =R+'Wonen_Bouwbaar/Groei_eengezins_VrijeSector + '+R+'Wonen_Bouwbaar/Groei_eengezins_SocialeHuur', Descr = "De groei van de bouwbare eengezinsclaim sinds het basisjaar, na het uitstel door de netcongestie.";
+			attribute<Woning>    Groei_meergezins (Regio) := =R+'Wonen_Bouwbaar/Groei_meergezins';
+			attribute<Woning>    NaStart_eengezins  (Regio) := max_elem(Groei_eengezins  - sum(StartEengezins,  Regio/Per_AdminDomain), 0[Woning]), Descr = "De groei van eengezins die na de startstand nog gebouwd moet worden.";
+			attribute<Woning>    NaStart_meergezins (Regio) := max_elem(Groei_meergezins - sum(StartMeergezins, Regio/Per_AdminDomain), 0[Woning]);
+			attribute<Ha>        Grond            (Regio) := value(float32(sum_uint32(Bruikbaar, Regio/Per_AdminDomain)) * value(AdminDomain/NrHaPerCell, Float32), Ha);
+
+			attribute<Ha>        Grondvraag       (Regio) := value(value(NaStart_eengezins, Float32) / value(Nieuwbouw/DichtheidEengezins, Float32) + value(NaStart_meergezins, Float32) / value(Nieuwbouw/DichtheidMeergezins, Float32), Ha)
+			, Descr = "De grond die de groei na de startstand vraagt, elk woningtype tegen de dichtheid van de nieuwbouw in de regio.";
+			attribute<Float32>   Besparing        (Regio) := max_elem(1f / value(Nieuwbouw/DichtheidEengezins, Float32) - 1f / value(Nieuwbouw/DichtheidMeergezins, Float32), 0f), Descr = "Hoeveel hectare een eengezinswoning die meergezins wordt minder vraagt.";
+			attribute<Float32>   NodigOmTePassen  (Regio) := Besparing > 0f ? value(max_elem(Grondvraag - Grond, 0[Ha]), Float32) / Besparing : 0f, Descr = "Hoeveel eengezinswoningen naar meergezins moeten om de grondvraag op de grond te laten passen.";
+			attribute<Float32>   AandeelMax       (Regio) := max_elem(Nieuwbouw/AandeelMeergezins, MakeDefined(value(Groei_meergezins, Float32) / value(Groei_eengezins + Groei_meergezins, Float32), 0f))
+			, Descr = "Het hoogste aandeel meergezins in de groei: dat van de nieuwbouw in de basisperiode, of dat van de claim als dat hoger is.";
+			attribute<Float32>   RuimteTotGrens   (Regio) := max_elem(AandeelMax * value(Groei_eengezins + Groei_meergezins, Float32) - value(Groei_meergezins, Float32), 0f);
+			attribute<Woning>    Omzetting        (Regio) := value(min_elem(NodigOmTePassen, RuimteTotGrens, value(NaStart_eengezins, Float32)), Woning), Descr = "De eengezinswoningen die naar meergezins gaan; hooguit de eengezinsgroei die na de startstand nog gebouwd moet worden.";
+
+			attribute<Float32>   PerCel                    (AdminDomain) := MakeDefined(value(Omzetting, Float32)[Regio/Per_AdminDomain] * NetcongestieUitstel/Gewicht / sum(NetcongestieUitstel/Gewicht, Regio/Per_AdminDomain)[Regio/Per_AdminDomain], 0f)
+			, Descr = "De omzetting van de regio verdeeld over zijn cellen naar de woningvoorraad van het basisjaar.";
+		}
+		container PerIndeling := for_each_ne(Indeling/name, 'PerIndeling_T('+quote(Indeling/name)+')')
+		, Descr = "Per allocatieregio van wonen de toets en de omzetting voor de regio's van die indeling.";
+
+		attribute<Float32>   MaxPerCel                 (AdminDomain) := ='max_elem(const(0f, AdminDomain)'+AsList(', PerIndeling/'+Indeling/name+'/PerCel', '')+')'
+		, Descr = "Per cel de grootste omzetting over de indelingen; de som per regio is wat de restclaim hooguit verrekent (Wonen_Bouwbaar/MeegeteldMax).";
+	}
+
 	Template AllocRegio_T
 	{
 		parameter<AllocRegio> AllocRegio_rel;
@@ -121,15 +185,33 @@ Template Zichtjaar_T
 		{
 			attribute<Float32> Uitsteldeel            (RegioUnit) := MakeDefined(sum(NetcongestieUitstel/Uitsteldeel * NetcongestieUitstel/Gewicht, RegioUnit/Per_AdminDomain) / sum(NetcongestieUitstel/Gewicht, RegioUnit/Per_AdminDomain), 0f)
 			, Descr = "Het deel van de groei sinds het basisjaar dat op het zichtjaar op het net wacht, gemiddeld over de regio met de woningvoorraad van het basisjaar als gewicht.";
-			attribute<Woning>  eengezins_VrijeSector  (RegioUnit) := Wonen/eengezins_VrijeSector  - Uitsteldeel * max_elem(Wonen/eengezins_VrijeSector  - Wonen/Read_Wonen_WP2xVSSH/eengezins_VrijeSector_Proxy,  0[Woning]);
-			attribute<Woning>  eengezins_SocialeHuur  (RegioUnit) := Wonen/eengezins_SocialeHuur  - Uitsteldeel * max_elem(Wonen/eengezins_SocialeHuur  - Wonen/Read_Wonen_WP2xVSSH/eengezins_SocialeHuur_Proxy,  0[Woning]);
-			attribute<Woning>  meergezins_VrijeSector (RegioUnit) := Wonen/meergezins_VrijeSector - Uitsteldeel * max_elem(Wonen/meergezins_VrijeSector - Wonen/Read_Wonen_WP2xVSSH/meergezins_VrijeSector_Proxy, 0[Woning]);
-			attribute<Woning>  meergezins_SocialeHuur (RegioUnit) := Wonen/meergezins_SocialeHuur - Uitsteldeel * max_elem(Wonen/meergezins_SocialeHuur - Wonen/Read_Wonen_WP2xVSSH/meergezins_SocialeHuur_Proxy, 0[Woning]);
+			container NaUitstel
+			: Descr = "De vraag min de groei die op het net wacht, per subsector, voordat eengezins naar meergezins gaat."
+			{
+				attribute<Woning> eengezins_VrijeSector  (RegioUnit) := Wonen/eengezins_VrijeSector  - Uitsteldeel * max_elem(Wonen/eengezins_VrijeSector  - Wonen/Read_Wonen_WP2xVSSH/eengezins_VrijeSector_Proxy,  0[Woning]);
+				attribute<Woning> eengezins_SocialeHuur  (RegioUnit) := Wonen/eengezins_SocialeHuur  - Uitsteldeel * max_elem(Wonen/eengezins_SocialeHuur  - Wonen/Read_Wonen_WP2xVSSH/eengezins_SocialeHuur_Proxy,  0[Woning]);
+				attribute<Woning> meergezins_VrijeSector (RegioUnit) := Wonen/meergezins_VrijeSector - Uitsteldeel * max_elem(Wonen/meergezins_VrijeSector - Wonen/Read_Wonen_WP2xVSSH/meergezins_VrijeSector_Proxy, 0[Woning]);
+				attribute<Woning> meergezins_SocialeHuur (RegioUnit) := Wonen/meergezins_SocialeHuur - Uitsteldeel * max_elem(Wonen/meergezins_SocialeHuur - Wonen/Read_Wonen_WP2xVSSH/meergezins_SocialeHuur_Proxy, 0[Woning]);
+			}
+			attribute<Woning>  Groei_eengezins_VrijeSector (RegioUnit) := max_elem(NaUitstel/eengezins_VrijeSector - Wonen/Read_Wonen_WP2xVSSH/eengezins_VrijeSector_Proxy, 0[Woning]), Descr = "De groei sinds het basisjaar die naar meergezins kan.";
+			attribute<Woning>  Groei_eengezins_SocialeHuur (RegioUnit) := max_elem(NaUitstel/eengezins_SocialeHuur - Wonen/Read_Wonen_WP2xVSSH/eengezins_SocialeHuur_Proxy, 0[Woning]);
+			attribute<Woning>  Groei_meergezins            (RegioUnit) := max_elem(NaUitstel/meergezins_VrijeSector - Wonen/Read_Wonen_WP2xVSSH/meergezins_VrijeSector_Proxy, 0[Woning]) + max_elem(NaUitstel/meergezins_SocialeHuur - Wonen/Read_Wonen_WP2xVSSH/meergezins_SocialeHuur_Proxy, 0[Woning]);
+			attribute<Woning>  Omgezet                     (RegioUnit) := = IsDefined(rlookup(lowercase(AllocRegio_name), lowercase(EengezinsOmzetting/Indeling/name))) ? 'EengezinsOmzetting/PerIndeling/'+AllocRegio_name+'/Omzetting' : 'const(0[Woning], RegioUnit)'
+			, Descr = "De eengezinswoningen die naar meergezins gaan (#879): de omzetting uit de eigen toets van deze indeling, EengezinsOmzetting/PerIndeling. Nul op een indeling waarop wonen niet alloceert.";
+			attribute<Woning>  Omgezet_VrijeSector         (RegioUnit) := Omgezet * MakeDefined(value(Groei_eengezins_VrijeSector, Float32) / value(Groei_eengezins_VrijeSector + Groei_eengezins_SocialeHuur, Float32), 0f), Descr = "Het deel van Omgezet in de vrije sector, naar zijn aandeel in de eengezinsgroei; vrije sector blijft vrije sector.";
+			attribute<Woning>  Omgezet_SocialeHuur         (RegioUnit) := Omgezet - Omgezet_VrijeSector;
+			attribute<Woning>  eengezins_VrijeSector  (RegioUnit) := NaUitstel/eengezins_VrijeSector  - Omgezet_VrijeSector;
+			attribute<Woning>  eengezins_SocialeHuur  (RegioUnit) := NaUitstel/eengezins_SocialeHuur  - Omgezet_SocialeHuur;
+			attribute<Woning>  meergezins_VrijeSector (RegioUnit) := Omgezet_VrijeSector > 0[Woning] ? max_elem(NaUitstel/meergezins_VrijeSector, Wonen/Read_Wonen_WP2xVSSH/meergezins_VrijeSector_Proxy) + Omgezet_VrijeSector : NaUitstel/meergezins_VrijeSector
+			, Descr = "De meergezinsclaim met de omgezette woningen erbij. Ligt de claim onder de voorraad van het basisjaar, dan komen de omgezette woningen boven op die voorraad; anders verdween de omzetting in een krimpende claim.";
+			attribute<Woning>  meergezins_SocialeHuur (RegioUnit) := Omgezet_SocialeHuur > 0[Woning] ? max_elem(NaUitstel/meergezins_SocialeHuur, Wonen/Read_Wonen_WP2xVSSH/meergezins_SocialeHuur_Proxy) + Omgezet_SocialeHuur : NaUitstel/meergezins_SocialeHuur;
 			attribute<Woning>  Totaal                 (RegioUnit) := ='add('+asList(WP2xVSSH/name,',')+')';
 			attribute<Woning>  Uitgesteld             (RegioUnit) := Wonen/Totaal - Totaal, Descr = "De woningen die op het zichtjaar op het net wachten: vraag die nog niet gebouwd kan worden.";
+			attribute<Woning>  MeegeteldMax           (RegioUnit) := value(sum(EengezinsOmzetting/MaxPerCel, RegioUnit/Per_AdminDomain), Woning)
+			, Descr = "Hoeveel woningen van het ene woningtype in de allocatie hooguit meetellen voor het andere (#879, IterSubsector_T_Wonen/AllocRegio/Meegeteld): de som over de cellen van de regio van de grootste omzetting per cel over de indelingen. Nul waar geen indeling iets omzet; de restclaim is daar wat hij zonder omzetting is.";
 		}
 		container Wonen_Bouwbaar := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector && IsTigrisRegio ? 'Wonen_Bouwbaar_T()' : '/Templates/Leeg'
-		, Descr = "Het deel van de woonclaim dat tot dit zichtjaar gebouwd kan worden: de vraag in Wonen min de groei die op de uitbreiding van het net wacht (#448). Een rem op het aanbod en geen andere vraag: de allocatie leest dit via SectorAllocRegios, de claimrealisatie meet tegen Wonen. Wat in een zichtjaar wacht, zit in het volgende weer in de vraag. Leeg waar Wonen leeg is (pbl-nl/model-RSopen#53).";
+		, Descr = "Het deel van de woonclaim dat tot dit zichtjaar gebouwd kan worden: de vraag in Wonen min de groei die op de uitbreiding van het net wacht (#448), met eengezinsgroei die naar meergezins gaat waar de grond niet genoeg is (#879, EengezinsOmzetting). Een rem op het aanbod en geen andere vraag: de allocatie leest dit via SectorAllocRegios, de claimrealisatie meet tegen Wonen. Wat in een zichtjaar wacht, zit in het volgende weer in de vraag. Leeg waar Wonen leeg is (pbl-nl/model-RSopen#53).";
 
 		container             Werken                          := = lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
 		                                                         ? 'Read_werken_CSV'
