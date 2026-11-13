@@ -1,10 +1,10 @@
 <#
 ================================================================================================
- RunIndicatoren.ps1: de indicatorenexport van RSopen NL2120, per variant en zichtjaar
+ RunIndicatoren.ps1: de indicatorenexport van RSopen, per variant en zichtjaar
 ================================================================================================
 
  WAT DIT SCRIPT DOET
-   Leest de stand die de allocatie (Run2120.ps1) per zichtjaar heeft weggeschreven en rekent daar
+   Leest de stand die de allocatie (RunAllocatie.ps1) per zichtjaar heeft weggeschreven en rekent daar
    de indicatoren op uit: de kaarten, de tabellen en de gpkg's die de levering vormen. Het rekent
    dus niet opnieuw wat de allocatie deed. Per zichtjaar een aanroep van GeoDmsRun, gestuurd door
    de omgevingsvariabele ExportZichtjaar; per zichtjaar een log en een regel in status.tsv.
@@ -33,7 +33,7 @@
  INSTELLINGEN
 
    A. Parameters van dit script (commandoregel; standaardwaarden in het blok param() hieronder).
-      -Exe, -Cfg, -LogDir   Zoals bij Run2120.ps1: de geinstalleerde GeoDMS, cfg\main.dms van de
+      -Exe, -Cfg, -LogDir   Zoals bij RunAllocatie.ps1: de geinstalleerde GeoDMS, cfg\main.dms van de
                             werkkopie, en de logmap.
       -Scenario             Standaard WLO_hoog; casusnamen zijn <scenario>_<variant>.
       -Varianten            Lijst, bijvoorbeeld BAU,BAU2,NbSGenuanceerd. De namen staan in
@@ -84,6 +84,10 @@
                             De bereikbaarheid van groen rekent per regio opnieuw, op teruggelezen invoer;
                             alleen de landelijke tabel leest de groenkaarten zelf terug.
       -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
+      -WaakhondMinuten      Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als vastgelopen
+                            stopt, standaard 15; 0 zet de waakhond uit. Zie Waakhond.ps1.
+      -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
+                            het stopt, standaard 1; 0 stopt meteen.
 
       Welke bestanden de export schrijft hangt af van ModelParameters/Productieprofiel. NL2120 en Standaard
       schrijven de bestanden van de indicatordomeinen die het profiel levert (ModelParameters/Indicatoren/
@@ -105,24 +109,27 @@
         indicatoren (contante waarden, koolstof, sterfte) rekenen alle voorgaande zichtjaren mee,
         in een proces (-Ontkoppeld:$false) of zichtjaar voor zichtjaar (standaard).
       - De basisdata van WriteBasedata/Generate_Run3 en Generate_Run4_IndicatorenData en de
-        variantdata van WriteVariantData. Run2120.ps1 maakt ze allemaal; de toets hieronder meldt
+        variantdata van WriteVariantData. RunAllocatie.ps1 maakt ze allemaal; de toets hieronder meldt
         wat ontbreekt en welk item het maakt.
       - De legenda's (Export/Legendas/Schrijf) schrijft dit script zelf, ze zijn casusonafhankelijk.
-      - De schakelaars in cfg\main\ModelParameters.dms, zie blok B van Run2120.ps1.
+      - De schakelaars in cfg\main\ModelParameters.dms, zie blok B van RunAllocatie.ps1.
 
  ALS HET MISGAAT
    status.tsv (kolom exit) en het log van de stap; regels met [E] zijn de fouten. Exit 2 is een
    configuratiefout, exit 1 een rekenfout of ontbrekend bestand; exit 0 met [E]-regels telt ook als
    mislukt. Een tabel (csv) wordt kolom voor kolom geschreven, dus een csv kan na een fout minder
    kolommen hebben dan de configuratie; vergelijk de kopregel met die van een gave tabel.
+   Een vastgelopen GeoDmsRun stopt de waakhond na -WaakhondMinuten; de reden staat als [E]-regel onder
+   het log van de stap. Het script start de stap dan opnieuw, met een eigen log, -HerhalingenNaVastlopen
+   keer; loopt hij dan nog vast, dan telt de stap als mislukt.
 ================================================================================================
 #>
 [CmdletBinding()]
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
-    [string]   $Cfg        = 'C:\ProjDir\RSopen_NL2120_productie\cfg\main.dms',
-    [string]   $LocalData  = 'C:\LocalData\RSopen_NL2120_productie',
-    [string]   $LogDir     = 'C:\ProjDir\RSopen_NL2120_productie\batch\log\indicatoren',
+    [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
+    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\indicatoren'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @(),
@@ -134,7 +141,9 @@ param(
     [switch]   $Ontkoppeld = $true,
     [switch]   $AlleenExportZichtjaar,
     [switch]   $TabellenUitExport = $true,
-    [switch]   $GeenToets
+    [switch]   $GeenToets,
+    [int]      $WaakhondMinuten = 15,
+    [int]      $HerhalingenNaVastlopen = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -153,6 +162,8 @@ $status = Join-Path $LogDir 'status.tsv'
 if (-not (Test-Path $status)) { "tijd`tstap`texit`tseconden" | Set-Content $status -Encoding UTF8 }
 
 function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $T" }
+# Invoke-GeoDmsRun: GeoDmsRun met een waakhond op voortgang, zie Waakhond.ps1.
+. (Join-Path $PSScriptRoot 'Waakhond.ps1')
 
 function Get-BagDatum {
     # ModelParameters/BAG_file_date uit de tekst: de BAG-levering waaronder AfleidingPandtype/Write_WP5 de WP5-typering schrijft
@@ -216,7 +227,7 @@ function Get-VariantKolom([string]$CfgPad, [string]$Kolom) {
 
 function Get-Zichtjaren {
     # Alle zichtjaren uit de configuratie, nodig om te toetsen of elke stand tot aan het
-    # exportzichtjaar er staat. Zelfde aanroep als in Run2120.ps1.
+    # exportzichtjaar er staat. Zelfde aanroep als in RunAllocatie.ps1.
     $log = Join-Path $LogDir 'zichtjaren.log'
     $uit = & $Exe "/L$log" $Cfg '@statistics' '/Classifications/Time/Zichtjaar/YearRange_rel' 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Kon de zichtjaren niet uit de configuratie lezen, zie $log" }
@@ -260,7 +271,7 @@ function Test-Invoer {
             $tot = $alleJaren.IndexOf($y)
             if ($tot -lt 0) { throw "Zichtjaar $y staat niet in de configuratie ($($alleJaren -join ', '))" }
             foreach ($j in $alleJaren[0..$tot]) {
-                $eisen += ,@("Allocatie\${Scenario}_$standVan\Stand$j\OP_rel_*.tif", "stand $j van ${Scenario}_$standVan (variant $v)", "batch\Run2120.ps1, stap allocatie-$standVan-$j")
+                $eisen += ,@("Allocatie\${Scenario}_$standVan\Stand$j\OP_rel_*.tif", "stand $j van ${Scenario}_$standVan (variant $v)", "batch\RunAllocatie.ps1, stap allocatie-$standVan-$j")
             }
         }
         if ($Domeinen['Landbouw']) {
@@ -349,17 +360,25 @@ foreach ($y in $Zichtjaren) { if ($alleJaren.IndexOf($y) -lt 0) { throw "Zichtja
 if (-not $GeenToets) { Test-Invoer }
 
 function Invoke-Export([string]$stap, [string[]]$items) {
-    $log = Join-Path $LogDir ("{0}_{1}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'), $stap)
+    # Een stap die de waakhond als vastgelopen stopt, start het script nog HerhalingenNaVastlopen keer opnieuw, elk met een
+    # eigen log, zoals RunAllocatie.ps1 dat doet.
+    for ($poging = 0; $true; $poging++) {
+        $log = Join-Path $LogDir ("{0}_{1}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'), $stap)
 
-    Write-Regel "start     : $stap"
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    & $Exe "/L$log" '/S1' '/S2' '/S3' $Cfg @items 2>&1 | Out-Null
-    $code = $LASTEXITCODE
-    $sw.Stop()
-    $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+        Write-Regel "start     : $stap"
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $items) -Log $log -WaakhondMinuten $WaakhondMinuten
+        $code = $run.Code
+        $sw.Stop()
+        $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
 
-    "{0}`t{1}`t{2}`t{3}" -f (Get-Date -Format 's'), $stap, $code, $sec |
-        Add-Content $status -Encoding UTF8
+        "{0}`t{1}`t{2}`t{3}" -f (Get-Date -Format 's'), $stap, $code, $sec |
+            Add-Content $status -Encoding UTF8
+
+        if ($run.Reden) { "[E] RunIndicatoren.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
+        if (-not $run.Reden -or $poging -ge $HerhalingenNaVastlopen) { break }
+        Write-Regel "VASTGELOPEN: $stap, het script start de stap opnieuw ($($poging + 1) van $HerhalingenNaVastlopen); log van de vastgelopen poging: $log"
+    }
 
     # Gebundeld geeft GeoDmsRun een exitcode voor alle casussen samen. De rekentijd per casus
     # staat wel in het log: elk opdrachtregelitem krijgt zijn eigen Updating-paar. Die komt
@@ -376,9 +395,9 @@ function Invoke-Export([string]$stap, [string[]]$items) {
             }
     }
 
-    $fouten = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
+    $fouten =@(Select-String -LiteralPath $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
     if ($code -ne 0 -or $fouten.Count -gt 0) {
-        $reden = if ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
+        $reden = if ($run.Reden) { $run.Reden } elseif ($code -ne 0) { "exit $code" } else { "exit 0 maar $($fouten.Count) foutregels in het log" }
         Write-Regel "MISLUKT   : $stap ($reden, $sec s)"
         Write-Regel "log       : $log"
         $fouten | Select-Object -First 15 | ForEach-Object { Write-Host "   $($_.Line)" }
