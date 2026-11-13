@@ -27,22 +27,24 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Bron      = 'C:\LocalData\RSopen_NL2120\Indicatoren',
-    # Standaard naar de gedeelde projectmap, zodat de levering meteen bij het team staat.
-    # Let op twee dingen bij het bijwerken van dit pad. De projectmap staat sinds begin
-    # september op E: en niet meer onder de gebruikersmap op C:; het oude pad bestond niet
-    # meer, en omdat het script zijn doelmap met -Force aanmaakt zou een levering daar stil
-    # buiten de cloudmap zijn beland. En de gecureerde levering hoort in Oplevering, naast
-    # de ruwe mappen Allocatie, Indicatoren en VariantData van de betreffende run.
-    [string] $Doel      = 'E:\Objectvision\Object Vision - General\LocalData\RSOpen_NL2120\Productierun_20260903\Oplevering',
+    # Standaard de indicatoren in C:\LocalData\<naam van de werkkopie>, de map waarin RunIndicatoren.ps1
+    # uit dezelfde werkkopie schrijft.
+    [string] $Bron      = (Join-Path (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)) 'Indicatoren'),
+    # De opleveringsmap, zonder standaard omdat elke levering een eigen map krijgt. Hij hoort in de
+    # gedeelde projectmap, zodat de levering meteen bij het team staat, in Oplevering naast de ruwe
+    # mappen Allocatie, Indicatoren en VariantData van de run, bijvoorbeeld
+    # E:\Objectvision\Object Vision - General\LocalData\RSOpen_NL2120\Productierun_20260910\Oplevering.
+    # Het script maakt de doelmap met -Force aan, dus een verkeerd pad levert stil buiten de cloudmap.
+    [Parameter(Mandatory)]
+    [string] $Doel,
     [string] $Zichtjaar = 'Y2120',
     # Het issue waaronder deze oplevering valt. Verandert per levering, dus een parameter en geen
     # regel tekst onderin het script.
     [string] $Issue     = '632',
-    # De werkkopie die de cijfers heeft gemaakt, en niet de werkkopie waarin dit script staat.
-    # RunAllocatie.ps1 draait op RSopen_NL2120 terwijl dit script ergens anders kan liggen;
-    # die twee kunnen los van elkaar uit de pas lopen. Branch, commit en tag komen hier vandaan.
-    [string] $Werkkopie = 'C:\ProjDir\RSopen_NL2120',
+    # De werkkopie die de cijfers heeft gemaakt; branch, commit en tag in de LEESMIJ komen hier vandaan.
+    # Standaard de werkkopie waarin dit script staat, net als bij RunAllocatie.ps1 en RunIndicatoren.ps1.
+    # Geef hem mee als de run in een andere werkkopie draaide dan waar dit script staat.
+    [string] $Werkkopie = (Split-Path $PSScriptRoot -Parent),
     # Vervangt de uit git afgeleide herkomstregels door eigen tekst. Nodig zodra de varianten niet
     # allemaal op dezelfde commit zijn doorgerekend.
     [string[]] $Herkomst = @(),
@@ -237,7 +239,7 @@ $Beschrijving = [ordered]@{
 # Waar de legenda's staan die de configuratie schrijft. Ze komen uit Export/Legendas en zijn
 # variantonafhankelijk, dus een enkele GeoDmsRun op /Indicatoren/<casus>/Zichtjaren/Export/Legendas/Schrijf
 # volstaat voor een hele levering.
-$LegendaBron = 'C:\LocalData\RSopen_NL2120\Indicatoren\Legendas'
+$LegendaBron = Join-Path $Bron 'Legendas'
 $Issue = $Issue.TrimStart('#')
 
 function Schoon([string]$Naam) {

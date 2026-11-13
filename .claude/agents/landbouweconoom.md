@@ -40,11 +40,6 @@ gewassen tegenover een kansenkaartscore voor de exotische en natte gewassen. Dat
 getallen in dezelfde formule. Toets of de schaal vergelijkbaar is, want anders scoren de exotische
 teelten systematisch te goed of te slecht en verschuift daarmee de hele NbS-kant.
 
-Kijk kritisch naar de verziltingsaanpak. Een instelbare fractie van het gevoelige areaal wordt
-aangetast verklaard via een trekking met een ruimtelijk cluster. Dat is een stochastische stap in een
-verder deterministisch model. Ga na of de trekking reproduceerbaar is tussen varianten en zichtjaren.
-Zo niet, dan verschilt een variantvergelijking deels door toeval en dat moet in de rapportage staan.
-
 Toets de gewaskeuze binnen een klasse. Het best renderende gewas per cel kiezen is iets anders dan een
 bouwplan volgen, en de rotatie moet dat verschil opvangen. Controleer of meerjarige teelten en
 rotatiegewassen consistent worden behandeld.
