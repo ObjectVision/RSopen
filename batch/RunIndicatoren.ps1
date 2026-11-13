@@ -247,7 +247,7 @@ function Test-Invoer {
     # volledige inventaris; wat de configuratie zelf met een fingerprint bewaakt (verwervings- en
     # sloopkosten, BRP, NBP, MNP) maakt zij bij een verouderd bestand zelf opnieuw.
     $hydro = Get-VariantKolom $Cfg 'Hydrologie_Levering'
-    $opbr  = Get-VariantKolom $Cfg 'OpbrengstenVariant_Wonen'
+    $opbr  = Get-VariantKolom $Cfg 'OpbrengstenSet_Wonen'
 
     $eisen = @()
     $eisen += ,@("BaseData\Vastgoed\BAG_$(Get-BagDatum)_History\WP5\*.mmd",   'WP5-pandtypering',           '/WriteBasedata/Generate_Run1')
