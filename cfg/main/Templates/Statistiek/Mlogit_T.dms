@@ -1,0 +1,227 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+//
+// Generieke multinomiale logit, volledig in GeoDMS-expressies geschat met Newton-Raphson op de loglikelihood,
+// de uitbreiding van Logit_T naar meer dan twee alternatieven (#708). Er zijn M geschatte alternatieven en een
+// referentiealternatief met nut nul, en K covariaten inclusief de constante, dus M*K parameters. Per iteratie:
+// p_j = exp(eta_j) / (1 + som_l exp(eta_l)); de informatiematrix heeft M*M blokken van K bij K met gewicht
+// p_j * (delta_jl - p_l); beta_nieuw = beta + inv(I) * g met g_jk = som (y_j - p_j) * x_k. Omdat elk blok
+// symmetrisch is en blok jl gelijk is aan blok lj, worden alleen M*(M+1)/2 maal K*(K+1)/2 kruissommen gerekend.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Mlogit_T
+: Descr = "Multinomiale logit met Newton-Raphson (#708). Argumenten: Naam (voor het rapportbestand), Obs (het waarnemingsdomein), Var (de covariaten met attribute name, waaronder een rij Constant), Alt (de geschatte alternatieven zonder het referentiealternatief, met attribute name), Data (per Var/name een attribute over Obs, keuze als attribute<Alt> met null voor het referentiealternatief, InSample als bool en Trekkingskans, het deel van de cellen van het referentiealternatief dat in de steekproef zit) en Start (per Alt/name een attribute over Var met de startcoefficienten). Resultaat: beta en se per Par, beta_gecorrigeerd met de constanten gecorrigeerd voor de trekking, en een Rapport."
+{
+	parameter<String> Naam;
+	unit<uint32>      Obs;
+	unit<uint8>       Var;
+	unit<uint8>       Alt;
+	container         Data;
+	container         Start;
+
+	parameter<uint32> K    := #Var, Descr = "Aantal covariaten, inclusief de constante.";
+	parameter<uint32> M    := #Alt, Descr = "Aantal geschatte alternatieven, zonder het referentiealternatief.";
+	parameter<uint32> NPar := M * K, Descr = "Aantal te schatten parameters.";
+
+	container X :=
+		for_each_nedv(
+			'x' + string(id(Var))
+			, 'MakeDefined(float64(Data/' + Var/name + '), 0d)'
+			, Obs
+			, float64
+		), Descr = "De ontwerpmatrix als kolommen x0..x{K-1} in float64, op volgorde van Var. Nulls worden 0: buiten InSample telt de waarneming toch niet mee.";
+
+	attribute<float64> msk (Obs) := Data/InSample ? 1d : 0d, Descr = "Steekproefmasker als 0/1.";
+
+	container Y :=
+		for_each_nedv(
+			Alt/name
+			, 'msk * (MakeDefined(Data/keuze == ' + string(id(Alt)) + '[Alt], FALSE) ? 1d : 0d)'
+			, Obs
+			, float64
+		), Descr = "Per alternatief 1 waar de waarneming dat alternatief koos, binnen de steekproef; het referentiealternatief is waar alle Y nul zijn.";
+
+	parameter<float64> N_     := sum(msk), Descr = "Aantal waarnemingen in de steekproef.";
+	container          Aantal := for_each_nedv(Alt/name, 'sum(Y/' + Alt/name + ')', void, float64);
+	attribute<float64> n_alt (Alt) := ='union_data(Alt, ' + asItemList('Aantal/' + Alt/name) + ')', Descr = "Aantal waarnemingen per geschat alternatief.";
+	parameter<float64> n_ref  := N_ - sum(n_alt), Descr = "Aantal waarnemingen van het referentiealternatief.";
+	parameter<float64> LL0    := sum(n_alt * log(n_alt / N_)) + n_ref * log(n_ref / N_), Descr = "Loglikelihood van het model met alleen constanten, de referentie voor McFadden pseudo-R2.";
+
+	parameter<Var> ConstIdx := rlookup('Constant', Var/name), Descr = "Positie van de constante in Var.";
+
+	unit<uint32> Par := range(uint32, 0, NPar)
+	, Descr = "De parameters, per alternatief alle covariaten achter elkaar."
+	{
+		attribute<Alt>    alt_rel := uint8(id(.) / K)[Alt];
+		attribute<Var>    var_rel := uint8(mod(id(.), K))[Var];
+		attribute<String> name    := Alt/name[alt_rel] + '_' + Var/name[var_rel];
+	}
+
+	unit<spoint> MatrixDom := range(spoint, point_xy(0s, 0s), point_xy(int16(NPar), int16(NPar))), Descr = "NPar bij NPar griddomein voor de informatiematrix en zijn inverse.";
+
+	unit<uint32> Cells := range(uint32, 0, NPar * NPar)
+	, Descr = "Alle cellen van de informatiematrix. Elke cel verwijst naar het som-item van zijn unieke combinatie van alternatievenpaar en covariatenpaar (S_ref), omdat de matrix per blok en tussen de blokken symmetrisch is."
+	{
+		attribute<uint32>    a0       := id(.) / NPar;
+		attribute<uint32>    b0       := mod(id(.), NPar);
+		attribute<uint32>    ja       := a0 / K;
+		attribute<uint32>    ka       := mod(a0, K);
+		attribute<uint32>    jb       := b0 / K;
+		attribute<uint32>    kb       := mod(b0, K);
+		attribute<String>    S_ref    := 'S_' + string(min_elem(ja, jb)) + '_' + string(max_elem(ja, jb)) + '_' + string(min_elem(ka, kb)) + '_' + string(max_elem(ka, kb));
+		attribute<MatrixDom> cell_rel := point_xy(int16(a0), int16(b0))[MatrixDom];
+		attribute<Par>       a_rel    := a0[Par];
+		attribute<Par>       b_rel    := b0[Par];
+	}
+
+	unit<uint32> UCells := select_with_org_rel(Cells/ja <= Cells/jb && Cells/ka <= Cells/kb)
+	, Descr = "De kruissommen die echt gerekend worden: M*(M+1)/2 alternatievenparen maal K*(K+1)/2 covariatenparen."
+	{
+		attribute<String> name := Cells/S_ref[org_rel];
+		attribute<String> expr := 'sum(W/w' + string(Cells/ja[org_rel]) + '_' + string(Cells/jb[org_rel]) + ' * X/x' + string(Cells/ka[org_rel]) + ' * X/x' + string(Cells/kb[org_rel]) + ')';
+	}
+
+	unit<uint32> Paren := select_with_org_rel(Cells/ka == 0 && Cells/kb == 0 && Cells/ja <= Cells/jb)
+	, Descr = "De alternatievenparen met j <= l, met het gewicht p_j * (delta_jl - p_l) als expressie."
+	{
+		attribute<uint32> j0   := Cells/ja[org_rel];
+		attribute<uint32> l0   := Cells/jb[org_rel];
+		attribute<String> aj   := Alt/name[uint8(j0)[Alt]];
+		attribute<String> al   := Alt/name[uint8(l0)[Alt]];
+		attribute<String> name := 'w' + string(j0) + '_' + string(l0);
+		attribute<String> expr := j0 == l0 ? 'msk * P/' + aj + ' * (1d - P/' + aj + ')' : '0d - msk * P/' + aj + ' * P/' + al;
+	}
+
+	attribute<MatrixDom> diag_rel (Par) := point_xy(int16(id(Par)), int16(id(Par)))[MatrixDom], Descr = "Diagonaalcellen van de matrix, voor de standaardfouten.";
+
+	container It0
+	: Descr = "Startpunt uit Start, per alternatief een vector over Var."
+	{
+		attribute<float64> beta (Par) := ='union_data(Par, ' + asItemList('Start/' + Alt/name) + ')';
+	}
+
+	unit<uint8> Stap : NrOfRows = 6
+	, Descr = "De staplengtes die elke iteratie probeert: de volle Newton-stap en vijf keer gehalveerd. Ver van het optimum kan een volle stap overschieten, vooral bij een covariaat met weinig spreiding; de iteratie neemt daarom de stap met de hoogste loglikelihood."
+	{
+		attribute<float64> factor : [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125];
+		attribute<String>  name := 'f' + string(id(.));
+	}
+
+	Template EtaAlt_T
+	: Descr = "De lineaire index van een alternatief, X * beta_j, op de coefficienten in de dichtstbijzijnde container prev."
+	{
+		parameter<uint32>  j;
+		attribute<float64> eta (Obs) := = AsList('prev/beta[' + string(j * K + uint32(id(Var))) + '[Par]] * X/x' + string(id(Var)), ' + ');
+	}
+
+	Template Proef_T
+	: Descr = "De loglikelihood op een kortere stap, beta_prev + f * delta van de iteratie waarin hij staat."
+	{
+		parameter<float64> f;
+		container prev
+		{
+			attribute<float64> beta (Par) := beta_prev + f * delta;
+		}
+		container Eta := for_each_ne(Alt/name, 'EtaAlt_T(' + string(uint32(id(Alt))) + '[uint32])');
+		attribute<float64> m     (Obs) := ='max_elem(0d, ' + asItemList('Eta/' + Alt/name + '/eta') + ')';
+		attribute<float64> den   (Obs) := ='exp(0d - m) + ' + AsList('exp(Eta/' + Alt/name + '/eta - m)', ' + ');
+		attribute<float64> eta_y (Obs) := = AsList('Y/' + Alt/name + ' * Eta/' + Alt/name + '/eta', ' + ');
+		parameter<float64> LL := sum(eta_y - msk * (m + log(den)));
+	}
+
+	Template Iter_T
+	: Descr = "Een Newton-iteratie: neemt de coefficienten-container van de vorige iteratie (prev) en levert beta = prev/beta + f * inv(I) * g, met f de staplengte uit Stap met de hoogste loglikelihood. LL is de loglikelihood bij intrede, dus op prev/beta."
+	{
+		container prev;
+
+		container Eta := for_each_ne(Alt/name, 'EtaAlt_T(' + string(uint32(id(Alt))) + '[uint32])');
+
+		attribute<float64> m   (Obs) := ='max_elem(0d, ' + asItemList('Eta/' + Alt/name + '/eta') + ')', Descr = "Het grootste nut, met het referentiealternatief op nul; wordt van elk nut afgetrokken zodat exp nooit overloopt.";
+		attribute<float64> den (Obs) := ='exp(0d - m) + ' + AsList('exp(Eta/' + Alt/name + '/eta - m)', ' + '), Descr = "De noemer van de kansen, gedeeld door exp(m).";
+
+		container P := for_each_nedv(Alt/name, 'exp(Eta/' + Alt/name + '/eta - m) / den', Obs, float64), Descr = "De kans op elk geschat alternatief.";
+		container W := for_each_nedv(Paren/name, Paren/expr, Obs, float64), Descr = "De gewichten van de blokken van de informatiematrix.";
+
+		attribute<float64> eta_y (Obs) := = AsList('Y/' + Alt/name + ' * Eta/' + Alt/name + '/eta', ' + '), Descr = "Het nut van het gekozen alternatief; nul voor het referentiealternatief en buiten de steekproef.";
+		parameter<float64> LL := sum(eta_y - msk * (m + log(den))), Descr = "Loglikelihood op prev/beta.";
+
+		container S := for_each_nedv(UCells/name, UCells/expr, void, float64), Descr = "De unieke kruissommen van de informatiematrix.";
+		container G := for_each_nedv('g' + string(id(Par)), 'sum((Y/' + Alt/name[Par/alt_rel] + ' - msk * P/' + Alt/name[Par/alt_rel] + ') * X/x' + string(Par/var_rel) + ')', void, float64), Descr = "De gradient per parameter.";
+
+		attribute<float64> g_vec (Par)       := ='union_data(Par, ' + asItemList('G/g' + string(id(Par))) + ')';
+		attribute<float64> Info  (MatrixDom) := ='union_data(MatrixDom, ' + asItemList('S/' + Cells/S_ref) + ')', Descr = "De informatiematrix, gevuld uit de unieke kruissommen.";
+		attribute<float64> Sinv  (MatrixDom) := matr_inv(Info), Descr = "Inverse van de informatiematrix, tevens de covariantiematrix van de schatter.";
+
+		attribute<float64> Sinv_flat (Cells) := Sinv[Cells/cell_rel];
+		attribute<float64> gflat     (Cells) := g_vec[Cells/b_rel];
+		attribute<float64> delta     (Par)   := sum(Sinv_flat * gflat, Cells/a_rel), Descr = "Newton-stap inv(I) * g.";
+
+		attribute<float64> beta_prev (Par)  := prev/beta;
+		container          Proef            := for_each_ne(Stap/name, 'Proef_T(' + string(Stap/factor) + 'd)'), Descr = "De loglikelihood op elke staplengte.";
+		attribute<float64> LL_proef  (Stap) := ='union_data(Stap, ' + asItemList('Proef/' + Stap/name + '/LL') + ')';
+		parameter<Stap>    Beste            := rlookup(max(LL_proef), LL_proef), Descr = "De staplengte met de hoogste loglikelihood.";
+		parameter<float64> StapFactor       := Stap/factor[Beste];
+
+		attribute<float64> beta (Par) := prev/beta + StapFactor * delta;
+		attribute<float64> se   (Par) := sqrt(Sinv[diag_rel]), Descr = "Standaardfouten; gebruik die van Eind, op de eindcoefficienten.";
+	}
+
+	container It1  := Iter_T(It0);
+	container It2  := Iter_T(It1);
+	container It3  := Iter_T(It2);
+	container It4  := Iter_T(It3);
+	container It5  := Iter_T(It4);
+	container It6  := Iter_T(It5);
+	container It7  := Iter_T(It6);
+	container It8  := Iter_T(It7);
+	container It9  := Iter_T(It8);
+	container It10 := Iter_T(It9);
+	container It11 := Iter_T(It10);
+	container It12 := Iter_T(It11);
+	container It13 := Iter_T(It12);
+	container It14 := Iter_T(It13);
+	container It15 := Iter_T(It14);
+	container It16 := Iter_T(It15);
+	container It17 := Iter_T(It16);
+	container It18 := Iter_T(It17);
+	container It19 := Iter_T(It18);
+	container It20 := Iter_T(It19);
+	container Eind := Iter_T(It20), Descr = "Extra evaluatie op de eindcoefficienten: levert LL en de standaardfouten op It20/beta, plus de restestap als convergentiebewijs.";
+
+	unit<uint8> Iteratie : NrOfRows = 20
+	{
+		attribute<String> name := 'It' + string(id(.) + 1b);
+	}
+	attribute<float64> LL_per_iteratie   (Iteratie) := ='union_data(Iteratie, ' + asItemList(Iteratie/name + '/LL') + ')', Descr = "De loglikelihood bij intrede van elke iteratie.";
+	attribute<float64> Stap_per_iteratie (Iteratie) := ='union_data(Iteratie, ' + asItemList(Iteratie/name + '/StapFactor') + ')', Descr = "De gekozen staplengte in elke iteratie.";
+
+	attribute<float64> beta (Par) := It20/beta, Descr = "De geschatte coefficienten, op de steekproef.";
+	attribute<float64> se   (Par) := Eind/se, Descr = "De standaardfouten.";
+	attribute<float64> beta_gecorrigeerd (Par) := beta + (Par/var_rel == ConstIdx ? log(Data/Trekkingskans) : 0d)
+	, Descr = "De coefficienten met de constanten gecorrigeerd voor de trekking uit het referentiealternatief: is daarvan een deel s in de steekproef, dan ligt elke geschatte constante log(s) te hoog, en de andere coefficienten veranderen niet.";
+
+	parameter<float64> LL_eind          := Eind/LL, Descr = "Loglikelihood op de eindcoefficienten.";
+	parameter<float64> McFaddenR2       := 1d - LL_eind / LL0, Descr = "McFadden pseudo-R2 ten opzichte van het model met alleen constanten.";
+	parameter<float64> ConvergentieStap := max(abs(Eind/delta)), Descr = "Grootste absolute Newton-stap na It20. Orde machineprecisie betekent uitgeconvergeerd.";
+
+	attribute<String> RegelPerPar (Par) := Alt/name[Par/alt_rel] + ';' + Var/name[Par/var_rel] + ';' + string(beta) + ';' + string(se) + ';' + string(beta_gecorrigeerd);
+
+	parameter<String> Rapport :=
+		  'alternatief;variabele;coefficient;standaardfout;gecorrigeerd\n'
+		+ AsList(RegelPerPar, '\n') + '\n'
+		+ 'N;'                  + string(N_)    + '\n'
+		+ 'referentie;'         + string(n_ref) + '\n'
+		+ 'LL0_constanten;'     + string(LL0)   + '\n'
+		+ 'LL_eind;'            + string(LL_eind) + '\n'
+		+ 'McFaddenR2;'         + string(McFaddenR2) + '\n'
+		+ 'ConvergentieStap;'   + string(ConvergentieStap) + '\n'
+		+ 'LL_verloop;'         + AsList(string(LL_per_iteratie), ';') + '\n'
+		+ 'staplengte_verloop;' + AsList(string(Stap_per_iteratie), ';') + '\n'
+		, StorageName = "='%LocalDataProjDir%/Diagnose/mlogit_' + Naam + '.txt'"
+		, StorageType = "str"
+		, Descr = "Leesbaar schattingsrapport: coefficienten met standaardfouten, steekproefomvang, loglikelihood-verloop en pseudo-R2, als txt in de Diagnose-map.";
+}

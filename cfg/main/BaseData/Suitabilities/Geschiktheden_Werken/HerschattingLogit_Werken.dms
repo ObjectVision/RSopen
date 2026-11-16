@@ -1,0 +1,209 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+//
+// Herschatting van de geschiktheidslogit voor werken binnen het model zelf, met Templates/Statistiek/Mlogit_T (#708). De
+// coefficienten die het model nu leest komen uit logitcoeff_mlogit_devType_20220401.csv, de schatting uit de studie Ruimte voor
+// werken (2022): een multinomiale logit over zes werksectoren en geen ontwikkeling, op de groei van de pandvoetafdruk per functie
+// tussen 2012 en 2022 op cellen van 100 m. Klein schat met de dertien covariaten en de constante van de huidige geschiktheidskaart,
+// op de kaarten die het model nu leest; Klein2012 doet hetzelfde op de kaarten van rond 2012; Vol schat op die kaarten ook de
+// beleidsdummy's vinex, natura2000 en ehs_1990 en de provinciale fixed effects mee. Voor de bundelingsgebieden en de bufferzones
+// van 2005 uit die schatting heeft het model geen kaart. Het model leest de herschatte coefficienten nog niet.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Herschatting
+: Descr = "Herschatting van de werken-geschiktheidslogit (#708). De keuze per cel van 100 m is de werksector met de grootste groei van de pandvoetafdruk tussen de BAG-standen van 2012 en 2022, als die groei ModelParameters/Werken_Herschatting_Drempel haalt, en anders geen ontwikkeling."
+{
+	unit<uint8> Var : NrOfRows = 14
+	, Descr = "De dertien termen van Calc_raw plus de constante, benoemd naar de rijen in de logitcoeff-csv, zodat de rapporten naast de oorspronkelijke schatting te leggen zijn."
+	{
+		attribute<String> name :
+		[ 'lndistto_cargoair_km', 'lndist_highway_km_2018', 'lndist_seaport_km_2019', 'lndist_train_km_2019', 'ln_tt_100kinhab_min_2017'
+		, 'lnlandprice', 'lndist_urbancontour_km_2000', 'uai_2018', 'lu_share_unavailable_2012', 'lu_share_construction_2012'
+		, 'lu_share_nature_2012', 'lu_share_residential_2012', 'avgshr_LU12_ngh_1000r_otherbu', 'Constant'
+		];
+	}
+
+	unit<uint8> VarVast : NrOfRows = 17
+	, Descr = "De termen van Var plus de drie beleidsdummy's waarvoor het model een kaart heeft, met de namen uit de logitcoeff-csv."
+	{
+		attribute<String> name :
+		[ 'lndistto_cargoair_km', 'lndist_highway_km_2018', 'lndist_seaport_km_2019', 'lndist_train_km_2019', 'ln_tt_100kinhab_min_2017'
+		, 'lnlandprice', 'lndist_urbancontour_km_2000', 'uai_2018', 'lu_share_unavailable_2012', 'lu_share_construction_2012'
+		, 'lu_share_nature_2012', 'lu_share_residential_2012', 'avgshr_LU12_ngh_1000r_otherbu', 'vinex', 'natura2000', 'ehs_1990', 'Constant'
+		];
+	}
+
+	unit<uint8> ProvTermen := range(uint8, 0b, uint8(#/SourceData/RegioIndelingen/CBS/Gekozen/Provincie - 1))
+	, Descr = "Een dummy per provincie behalve de eerste, die de basis is."
+	{
+		attribute</SourceData/RegioIndelingen/CBS/Gekozen/Provincie> org_rel := (uint32(id(.)) + 1)[/SourceData/RegioIndelingen/CBS/Gekozen/Provincie];
+		attribute<String> naam := /SourceData/RegioIndelingen/CBS/Gekozen/Provincie/name[org_rel];
+		attribute<String> name := 'Prov/' + naam;
+	}
+
+	unit<uint8> VarVol := union_unit_uint8(VarVast, ProvTermen)
+	, Descr = "Alle termen van de volledige schatting: de covariaten, de drie beleidsdummy's, de constante en de provinciale fixed effects."
+	{
+		attribute<String> name := union_data(., VarVast/name, ProvTermen/name);
+	}
+
+	container Groei
+	: Descr = "Groei van de pandvoetafdruk per werksector per cel van 100 m tussen de BAG-standen van 1 januari 2012 en 1 januari 2022; sloop telt mee als krimp."
+	{
+		container PerSector :=
+			for_each_nedv(
+				TXLJobs6/name
+				, 'float32(/BaseData/StartState/PandFootprint/PerYear_AdminDomain/Y2022/pand_met_vbo/Footprint_perJobs6_AllocDomain/' + TXLJobs6/name + ')'
+				+ ' - float32(/BaseData/StartState/PandFootprint/PerYear_AdminDomain/Y2012/pand_met_vbo/Footprint_perJobs6_AllocDomain/' + TXLJobs6/name + ')'
+				, AllocDomain
+				, float32
+			);
+		attribute<float32>  Max      (AllocDomain) := ='max_elem(' + asItemList('MakeDefined(PerSector/' + TXLJobs6/name + ', 0f)') + ')';
+		attribute<TXLJobs6> Grootste (AllocDomain) := ='ArgMax(' + asItemList('MakeDefined(PerSector/' + TXLJobs6/name + ', 0f)') + ')[TXLJobs6]', Descr = "De werksector met de grootste groei.";
+		attribute<TXLJobs6> keuze    (AllocDomain) := Max >= /ModelParameters/Werken_Herschatting_Drempel ? Grootste : (0/0)[TXLJobs6]
+		, Descr = "De werksector met de grootste groei, als die groei de drempel haalt; null is geen ontwikkeling, het referentiealternatief.";
+	}
+
+	Template Covariaten_T
+	: Descr = "De covariaten op cellen van 100 m, met de transformaties van Calc_raw. LU_jaar kiest de BBG-jaargang van de landgebruiksaandelen, UAI_item de UAI uit SourceData/Diversen en TT_item de reistijd naar 100.000 inwoners uit SourceData/Diversen/Impl/Reistijden. De afstanden en de grondprijs zijn in beide gevallen die van de huidige kaart; ze zijn op 100 m gemaakt en naar 25 m gezet, dus het gemiddelde over de zestien cellen is die waarde zelf. De beleidsdummy's en de provincie gebruikt alleen de volledige schatting."
+	{
+		parameter<String> LU_jaar;
+		parameter<String> UAI_item;
+		parameter<String> TT_item;
+		//
+		parameter<String> BBG := '/BaseData/Grondgebruik/BBG/Dominant/Share_LU_Type/Y' + LU_jaar + '/';
+		attribute<float32> lndistto_cargoair_km          (AllocDomain) := mean(log(/SourceData/Diversen/Per_AdminDomain/DistTo_CargoAir / 1[km]), AdminDomain/AllocDomain_rel);
+		attribute<float32> lndist_highway_km_2018        (AllocDomain) := mean(log(/SourceData/Diversen/Per_AdminDomain/DistTo_Highway_acces_exit_2018 / 1[km]), AdminDomain/AllocDomain_rel);
+		attribute<float32> lndist_seaport_km_2019        (AllocDomain) := mean(log(/SourceData/Diversen/Per_AdminDomain/DistTo_Zeehavens_2019 / 1[km]), AdminDomain/AllocDomain_rel);
+		attribute<float32> lndist_train_km_2019          (AllocDomain) := mean(log(/SourceData/Diversen/Per_AdminDomain/DistTo_Trainstation_2019 / 1[km]), AdminDomain/AllocDomain_rel);
+		attribute<float32> ln_tt_100kinhab_min_2017      (AllocDomain) := ='log(max_elem(/SourceData/Diversen/Impl/Reistijden/' + TT_item + ', 1[min]) / 1[min])[AllocDomain/rdc_100m_rel]';
+		attribute<float32> lnlandprice                   (AllocDomain) := mean(log(/SourceData/Diversen/Per_AdminDomain/Hedonic_landPrice_2007 / 1[Eur_m2]), AdminDomain/AllocDomain_rel);
+		attribute<float32> lndist_urbancontour_km_2000   (AllocDomain) := mean(log(/SourceData/Diversen/Per_AdminDomain/DistTo_Urban_Contour_2000 / 1[km]), AdminDomain/AllocDomain_rel);
+		attribute<float32> uai_2018                      (AllocDomain) := ='mean(/SourceData/Diversen/Per_AdminDomain/' + UAI_item + ', AdminDomain/AllocDomain_rel)';
+		attribute<float32> lu_share_unavailable_2012     (AllocDomain) := ='(' + BBG + 'infrastructure + ' + BBG + 'water)[AllocDomain/rdc_100m_rel]';
+		attribute<float32> lu_share_construction_2012    (AllocDomain) := ='' + BBG + 'construction[AllocDomain/rdc_100m_rel]';
+		attribute<float32> lu_share_nature_2012          (AllocDomain) := ='(' + BBG + 'othernature + ' + BBG + 'forest)[AllocDomain/rdc_100m_rel]';
+		attribute<float32> lu_share_residential_2012     (AllocDomain) := ='' + BBG + 'residential[AllocDomain/rdc_100m_rel]';
+		attribute<float32> avgshr_LU12_ngh_1000r_otherbu (AllocDomain) := ='/BaseData/Grondgebruik/BBG/Dominant/Avg_shr_LUType_neigh/Y' + LU_jaar + '/r1000/otherbuiltup[AllocDomain/rdc_100m_rel]';
+		attribute<float32> Constant                      (AllocDomain) := const(1f, AllocDomain);
+
+		attribute<float32> vinex      (AllocDomain) := float32(MakeDefined(/SourceData/Diversen/Impl/VinexPlans == 1f, FALSE))[AllocDomain/rdc_100m_rel];
+		attribute<float32> natura2000 (AllocDomain) := float32(MakeDefined(/SourceData/Diversen/Impl/Natura2000_0908 == 1b, FALSE))[AllocDomain/rdc_100m_rel];
+		attribute<float32> ehs_1990   (AllocDomain) := float32(IsDefined(/SourceData/Diversen/Impl/EHS_1990_src/Per_AllocDomain));
+		attribute</SourceData/RegioIndelingen/CBS/Gekozen/Provincie> prov_rel (AllocDomain) := /SourceData/RegioIndelingen/CBS/Gekozen/Provincie/Per_AllocDomain;
+
+		attribute<bool> IsEindig (AllocDomain) := ='AND(' + AsList('abs(' + Var/name + ') < 1e30f', ',') + ') && IsDefined(prov_rel)', Descr = "Alle termen zijn gedefinieerd en eindig en de cel ligt in een provincie; een afstand van nul geeft een log van min oneindig.";
+	}
+	container Covariaten     := Covariaten_T(/ModelParameters/BBG_Year, 'UAI_dynamisch', 'tt_100kinhab_min'), Descr = "De covariaten zoals de huidige geschiktheidskaart ze leest.";
+	container Covariaten2012 := Covariaten_T('2012', 'UAI_2018', 'tt_100kinhab_min_2017'), Descr = "De covariaten op de kaarten van rond 2012: de landgebruiksaandelen van BBG 2012, de UAI van 2018 en de reistijd van 2017, zoals de namen van de termen in de oorspronkelijke schatting.";
+
+	attribute<float32> Lot      (AllocDomain) := rnd_uniform(/ModelParameters/Werken_Herschatting_Seed, AllocDomain, range(float32, 0f, 1f));
+	attribute<bool>    InSample (AllocDomain) := AllocDomain/IsStudyArea && Covariaten/IsEindig && Covariaten2012/IsEindig && (IsDefined(Groei/keuze) || Lot < /ModelParameters/Werken_Herschatting_Trekking)
+	, Descr = "Alle cellen met een ontwikkeling en een trekking uit de cellen zonder, binnen het studiegebied en met eindige waarden op beide sets termen, zodat alle schattingen dezelfde steekproef hebben.";
+
+	attribute<bool>   ValtWeg (AllocDomain) := AllocDomain/IsStudyArea && !(Covariaten/IsEindig && Covariaten2012/IsEindig), Descr = "Cellen in het studiegebied die niet mee kunnen doen, omdat een term geen eindige waarde heeft of de cel buiten een provincie ligt.";
+	parameter<uint32> Weggevallen                := sum(uint32(ValtWeg)), Descr = "Aantal cellen in het studiegebied dat wegvalt.";
+	parameter<uint32> WeggevallenMetOntwikkeling := sum(uint32(ValtWeg && IsDefined(Groei/keuze))), Descr = "Aantal cellen met een ontwikkeling dat wegvalt.";
+
+	unit<uint64> Selectie := select_with_org_rel(InSample), Descr = "De cellen van 100 m in de steekproef; een selectie uit een grid is uint64.";
+	unit<uint32> Obs := range(uint32, 0, uint32(#Selectie))
+	, Descr = "De waarnemingen, als uint32 zoals Mlogit_T vraagt."
+	{
+		attribute<AllocDomain> org_rel := Selectie/org_rel[uint64(id(.))[Selectie]];
+	}
+
+	Template Data_T
+	: Descr = "De invoer van Mlogit_T op de waarnemingen: de termen uit Cov, de keuze, het steekproefmasker en de trekkingskans."
+	{
+		container Cov;
+		//
+		attribute<float64> lndistto_cargoair_km          (Obs) := float64(Cov/lndistto_cargoair_km[Obs/org_rel]);
+		attribute<float64> lndist_highway_km_2018        (Obs) := float64(Cov/lndist_highway_km_2018[Obs/org_rel]);
+		attribute<float64> lndist_seaport_km_2019        (Obs) := float64(Cov/lndist_seaport_km_2019[Obs/org_rel]);
+		attribute<float64> lndist_train_km_2019          (Obs) := float64(Cov/lndist_train_km_2019[Obs/org_rel]);
+		attribute<float64> ln_tt_100kinhab_min_2017      (Obs) := float64(Cov/ln_tt_100kinhab_min_2017[Obs/org_rel]);
+		attribute<float64> lnlandprice                   (Obs) := float64(Cov/lnlandprice[Obs/org_rel]);
+		attribute<float64> lndist_urbancontour_km_2000   (Obs) := float64(Cov/lndist_urbancontour_km_2000[Obs/org_rel]);
+		attribute<float64> uai_2018                      (Obs) := float64(Cov/uai_2018[Obs/org_rel]);
+		attribute<float64> lu_share_unavailable_2012     (Obs) := float64(Cov/lu_share_unavailable_2012[Obs/org_rel]);
+		attribute<float64> lu_share_construction_2012    (Obs) := float64(Cov/lu_share_construction_2012[Obs/org_rel]);
+		attribute<float64> lu_share_nature_2012          (Obs) := float64(Cov/lu_share_nature_2012[Obs/org_rel]);
+		attribute<float64> lu_share_residential_2012     (Obs) := float64(Cov/lu_share_residential_2012[Obs/org_rel]);
+		attribute<float64> avgshr_LU12_ngh_1000r_otherbu (Obs) := float64(Cov/avgshr_LU12_ngh_1000r_otherbu[Obs/org_rel]);
+		attribute<float64> vinex                         (Obs) := float64(Cov/vinex[Obs/org_rel]);
+		attribute<float64> natura2000                    (Obs) := float64(Cov/natura2000[Obs/org_rel]);
+		attribute<float64> ehs_1990                      (Obs) := float64(Cov/ehs_1990[Obs/org_rel]);
+		attribute<float64> Constant                      (Obs) := const(1d, Obs);
+		container Prov :=
+			for_each_nedv(
+				ProvTermen/naam
+				, 'MakeDefined(Cov/prov_rel[Obs/org_rel] == ' + string(uint32(ProvTermen/org_rel)) + '[/SourceData/RegioIndelingen/CBS/Gekozen/Provincie], FALSE) ? 1d : 0d'
+				, Obs
+				, float64
+			), Descr = "De provinciale fixed effects, een dummy per provincie behalve de eerste.";
+
+		attribute<TXLJobs6> keuze    (Obs) := Groei/keuze[Obs/org_rel];
+		attribute<bool>     InSample (Obs) := const(TRUE, Obs);
+		parameter<float64>  Trekkingskans := float64(/ModelParameters/Werken_Herschatting_Trekking);
+	}
+	container Data     := Data_T(Covariaten);
+	container Data2012 := Data_T(Covariaten2012);
+
+	Template Coef2022_T
+	{
+		parameter<String>  Sector;
+		attribute<float64> beta (VarVast) := ='union_data(VarVast, ' + AsList('float64(/BaseData/Suitabilities/Werken/ReadCoefficients/' + Sector + '/Result/' + VarVast/name + ')', ', ') + ')';
+	}
+	container Coef2022PerSector := for_each_ne(TXLJobs6/name, 'Coef2022_T(' + quote(TXLJobs6/name) + ')');
+	container Coef2022 := for_each_nedv(TXLJobs6/name, 'Coef2022PerSector/' + TXLJobs6/name + '/beta', VarVast, float64), Descr = "De coefficienten van de oorspronkelijke schatting voor de termen van VarVast, om de herschatting mee te vergelijken.";
+
+	parameter<float64> n_ref := sum(IsDefined(Data/keuze) ? 0d : 1d), Descr = "Aantal waarnemingen zonder ontwikkeling in de steekproef.";
+	Template Start_T
+	: Descr = "Startpunt: per sector de constante op de log van het aantal ontwikkelingen gedeeld door het aantal zonder, het optimum van het model met alleen constanten, en de overige coefficienten op 0, zoals in Logit_T. Vanaf de oorspronkelijke coefficienten is de fit slechter dan met alleen constanten, omdat de steekproef en de weggelaten termen de constanten verschuiven."
+	{
+		unit<uint8> V;
+		//
+		parameter<V> ConstIdx := rlookup('Constant', V/name);
+		container Start :=
+			for_each_nedv(
+				TXLJobs6/name
+				, 'id(V) == ConstIdx ? log(sum(MakeDefined(Data/keuze == ' + string(id(TXLJobs6)) + '[TXLJobs6], FALSE) ? 1d : 0d) / n_ref) : 0d'
+				, V
+				, float64
+			);
+	}
+	container StartKlein := Start_T(Var);
+	container StartVol   := Start_T(VarVol);
+
+	container Klein     := Templates/Statistiek/Mlogit_T('werken_klein', Obs, Var, TXLJobs6, Data, StartKlein/Start), Descr = "De schatting op de termen en de kaarten van de huidige geschiktheidskaart, zonder beleidsdummy's en provincies.";
+	container Klein2012 := Templates/Statistiek/Mlogit_T('werken_klein_2012', Obs, Var, TXLJobs6, Data2012, StartKlein/Start), Descr = "Dezelfde schatting op de kaarten van rond 2012.";
+	container Vol       := Templates/Statistiek/Mlogit_T('werken_vol_2012', Obs, VarVol, TXLJobs6, Data2012, StartVol/Start), Descr = "De schatting op de kaarten van rond 2012 met de beleidsdummy's vinex, natura2000 en ehs_1990 en de provinciale fixed effects.";
+
+	attribute<VarVast> VarVast_van_Var    (Var)    := rlookup(Var/name, VarVast/name);
+	attribute<VarVast> VarVast_van_VarVol (VarVol) := rlookup(VarVol/name, VarVast/name), Descr = "Leeg voor de provincies, die geen vergelijkbare oorspronkelijke waarde hebben.";
+	attribute<float64> Coef2022_klein (Klein/Par) := ='union_data(Klein/Par, ' + asItemList('Coef2022/' + TXLJobs6/name + '[VarVast_van_Var]') + ')';
+	attribute<String>  RegelKlein (Klein/Par) := Klein/Par/name + ';' + string(Coef2022_klein) + ';' + string(Klein/beta_gecorrigeerd) + ';' + string(Klein/se) + ';' + string(Klein2012/beta_gecorrigeerd) + ';' + string(Klein2012/se);
+
+	attribute<float64> Coef2022_vol    (Vol/Par) := ='union_data(Vol/Par, ' + asItemList('Coef2022/' + TXLJobs6/name + '[VarVast_van_VarVol]') + ')';
+	attribute<String>  RegelVol        (Vol/Par) := Vol/Par/name + ';' + MakeDefined(string(Coef2022_vol), '') + ';' + string(Vol/beta_gecorrigeerd) + ';' + string(Vol/se);
+
+	parameter<String>  Vergelijking := 'parameter;oorspronkelijk;kaarten_nu;se_kaarten_nu;kaarten_2012;se_kaarten_2012\n' + AsList(RegelKlein, '\n') + '\n'
+		+ 'waarnemingen;' + string(Klein/N_) + '\nreferentie;' + string(Klein/n_ref) + '\nLL0;' + string(Klein/LL0)
+		+ '\nLL_kaarten_nu;' + string(Klein/LL_eind) + '\nLL_kaarten_2012;' + string(Klein2012/LL_eind)
+		+ '\nMcFaddenR2_kaarten_nu;' + string(Klein/McFaddenR2) + '\nMcFaddenR2_kaarten_2012;' + string(Klein2012/McFaddenR2)
+		+ '\nConvergentieStap_kaarten_nu;' + string(Klein/ConvergentieStap) + '\nConvergentieStap_kaarten_2012;' + string(Klein2012/ConvergentieStap) + '\n'
+	, StorageName = "='%LocalDataProjDir%/Diagnose/mlogit_werken_vergelijking.txt'"
+	, StorageType = "str"
+	, Descr = "De kleine herschattingen naast de oorspronkelijke coefficienten, als txt in de Diagnose-map; op aanvraag.";
+
+	parameter<String>  VergelijkingVol := 'parameter;oorspronkelijk;vol_kaarten_2012;se\n' + AsList(RegelVol, '\n') + '\n'
+		+ 'waarnemingen;' + string(Vol/N_) + '\nLL0;' + string(Vol/LL0) + '\nLL;' + string(Vol/LL_eind) + '\nMcFaddenR2;' + string(Vol/McFaddenR2)
+		+ '\nConvergentieStap;' + string(Vol/ConvergentieStap) + '\nstaplengte_verloop;' + AsList(string(Vol/Stap_per_iteratie), ';') + '\n'
+	, StorageName = "='%LocalDataProjDir%/Diagnose/mlogit_werken_vergelijking_vol.txt'"
+	, StorageType = "str"
+	, Descr = "De volledige herschatting naast de oorspronkelijke coefficienten; de provincies hebben geen vergelijkbare oorspronkelijke waarde. Op aanvraag.";
+}
