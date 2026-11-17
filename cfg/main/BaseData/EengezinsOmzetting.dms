@@ -1,0 +1,122 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Het aandeel meergezins en de dichtheid per woningtype in de woningnieuwbouw van de basisperiode, per regio van elke
+// allocatieregio van wonen, uit de BAG naar bouwjaar van het pand. De omzetting van eengezins naar meergezins
+// in Templates/Claims/ZichtjaarXScenarioxAllocRegios rekent daarmee de grond uit die de woninggroei vraagt (#879).
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container EengezinsOmzetting
+: Descr = "Het aandeel meergezins en de dichtheid van eengezins en meergezins in de woningen die in de basisperiode van WoningtypeEengezins zijn gebouwd, per regio van elke allocatieregio van wonen
+			(#879): de omzetting toetst op elk allocatieniveau met de waarden van de regio's van dat niveau. Geteld zijn de woningen in de BAG-stand van BAG_RecentYear in een pand met een bouwjaar in de
+			basisperiode, zoals in WoningtypeEengezins. De dichtheid van een type is het aantal nieuwe woningen van dat type in de cellen van 25 m waar dat type de meeste nieuwe woningen kreeg, gedeeld
+			door het oppervlak van die cellen. Per indeling ontkoppeld als mmd met een fingerprint, want elk zichtjaar leest hem en de telling vraagt de hele BAG-stand."
+{
+	unit<UInt8> WP2      := /Classifications/Vastgoed/WP2;
+	unit<UInt8> Indeling := /BaseData/StartState/WoningtypeEengezins/Indeling, Descr = "De allocatieregio's van wonen in de volgorde van de regeltabel, elk met een eigen telling en mmd.";
+
+	unit<UInt32> Gebouwd := select_with_org_rel(
+			/BaseData/BAG_RecentJaar/vbo/Bovengrens_geldt
+		&&	IsDefined(/Classifications/Vastgoed/WP4/WP2_rel[/BaseData/BAG_RecentJaar/vbo/WP4_rel])
+		&&	/BaseData/BAG_RecentJaar/vbo/Bouwjaar_trunc >= /ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeVan
+		&&	/BaseData/BAG_RecentJaar/vbo/Bouwjaar_trunc <= /ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeTotEnMet
+		&&	IsDefined(/BaseData/BAG_RecentJaar/vbo/AdminDomain_rel))
+	, Descr = "De woon-vbo's in een eengezins- of meergezinspand met een bouwjaar in de basisperiode, binnen het studiegebied; dezelfde selectie voor elke indeling."
+	{
+		attribute<Bool>                IsMeergezins := /Classifications/Vastgoed/WP4/WP2_rel[/BaseData/BAG_RecentJaar/vbo/WP4_rel[org_rel]] == WP2/V/meergezins;
+		attribute</Geography/AdminDomain> Cel_rel   := /BaseData/BAG_RecentJaar/vbo/AdminDomain_rel[org_rel], Descr = "De cel van 25 m.";
+		attribute<Bool>                InEigenCel   := IsMeergezins ? Cel/IsMeergezins[Cel_rel] : Cel/IsEengezins[Cel_rel], Descr = "Ligt de woning in een cel waar het type van de woning de meeste nieuwe woningen kreeg?";
+		attribute<Float32>             CelDeel      := InEigenCel ? 1f / float32(IsMeergezins ? Cel/Meergezins[Cel_rel] : Cel/Eengezins[Cel_rel]) : 0f
+		, Descr = "Het deel van de cel dat bij deze woning hoort: de som over de woningen van een cel is 1, zodat de som per regio het aantal cellen is.";
+	}
+
+	container Cel
+	: Descr = "Per cel van 25 m het aantal nieuwe woningen per type, en of een type er genoeg en de meeste nieuwe woningen kreeg om voor zijn dichtheid mee te tellen."
+	{
+		attribute<UInt32> Eengezins    (/Geography/AdminDomain) := sum_uint32(!Gebouwd/IsMeergezins, Gebouwd/Cel_rel);
+		attribute<UInt32> Meergezins   (/Geography/AdminDomain) := sum_uint32(Gebouwd/IsMeergezins, Gebouwd/Cel_rel);
+		attribute<Bool>   IsEengezins  (/Geography/AdminDomain) := Eengezins  >= /ModelParameters/Wonen/EengezinsOmzetting/MinimumWoningenPerCel && Eengezins >= Meergezins;
+		attribute<Bool>   IsMeergezins (/Geography/AdminDomain) := Meergezins >= /ModelParameters/Wonen/EengezinsOmzetting/MinimumWoningenPerCel && Meergezins >  Eengezins;
+	}
+
+	parameter<Float32> AandeelMeergezinsNL   := float32(sum_uint32(Gebouwd/IsMeergezins)) / float32(#Gebouwd), Descr = "Het aandeel meergezins in de nieuwbouw van het hele studiegebied, de terugval voor een regio met te weinig nieuwbouw.";
+	parameter<Woning_ha> DichtheidEengezinsNL  := value(float32(sum_uint32(Gebouwd/InEigenCel && !Gebouwd/IsMeergezins)) / (sum(Gebouwd/IsMeergezins ? 0f : Gebouwd/CelDeel) * value(/Geography/AdminDomain/NrHaPerCell, Float32)), Woning_ha);
+	parameter<Woning_ha> DichtheidMeergezinsNL := value(float32(sum_uint32(Gebouwd/InEigenCel &&  Gebouwd/IsMeergezins)) / (sum(Gebouwd/IsMeergezins ? Gebouwd/CelDeel : 0f) * value(/Geography/AdminDomain/NrHaPerCell, Float32)), Woning_ha);
+
+	Template PerIndeling_T
+	{
+		parameter<String> Regio_name;
+		parameter<String> Regio_path;
+		// end case parameters
+
+		unit<UInt32>         RegioUnit           := ='/SourceData/'+Regio_path, Descr = "De indeling waarop de omzetting op dit allocatieniveau toetst.";
+		attribute<RegioUnit> Regio_rel (Gebouwd) := RegioUnit/Per_AdminDomain[/BaseData/BAG_RecentJaar/vbo/AdminDomain_rel[Gebouwd/org_rel]];
+
+		container Calc
+		: Descr = "Per regio het aandeel meergezins in de nieuwbouw en de dichtheid per type, met de waarde van het hele studiegebied waar te weinig is gebouwd. De aantallen staan ernaast voor de diagnose."
+		{
+			attribute<UInt32>    AantalEengezins           (RegioUnit) := sum_uint32(!Gebouwd/IsMeergezins, Regio_rel);
+			attribute<UInt32>    AantalMeergezins          (RegioUnit) := sum_uint32(Gebouwd/IsMeergezins, Regio_rel);
+			attribute<UInt32>    InCelEengezins            (RegioUnit) := sum_uint32(Gebouwd/InEigenCel && !Gebouwd/IsMeergezins, Regio_rel);
+			attribute<UInt32>    InCelMeergezins           (RegioUnit) := sum_uint32(Gebouwd/InEigenCel &&  Gebouwd/IsMeergezins, Regio_rel);
+			attribute<Ha>        CellenEengezins           (RegioUnit) := value(sum(Gebouwd/IsMeergezins ? 0f : Gebouwd/CelDeel, Regio_rel) * value(/Geography/AdminDomain/NrHaPerCell, Float32), Ha);
+			attribute<Ha>        CellenMeergezins          (RegioUnit) := value(sum(Gebouwd/IsMeergezins ? Gebouwd/CelDeel : 0f, Regio_rel) * value(/Geography/AdminDomain/NrHaPerCell, Float32), Ha);
+
+			attribute<Float32>   AandeelMeergezins         (RegioUnit) := AantalEengezins + AantalMeergezins >= /ModelParameters/Wonen/EengezinsOmzetting/MinimumAantalPerRegio
+			                                                              ? float32(AantalMeergezins) / float32(AantalEengezins + AantalMeergezins)
+			                                                              : AandeelMeergezinsNL
+			, Descr = "Het aandeel meergezins in de nieuwbouw van de basisperiode; de grens van de omzetting.";
+			attribute<Woning_ha> DichtheidEengezins        (RegioUnit) := InCelEengezins  >= /ModelParameters/Wonen/EengezinsOmzetting/MinimumAantalPerRegio ? value(float32(InCelEengezins)  / value(CellenEengezins, Float32), Woning_ha)  : DichtheidEengezinsNL;
+			attribute<Woning_ha> DichtheidMeergezins       (RegioUnit) := InCelMeergezins >= /ModelParameters/Wonen/EengezinsOmzetting/MinimumAantalPerRegio ? value(float32(InCelMeergezins) / value(CellenMeergezins, Float32), Woning_ha) : DichtheidMeergezinsNL;
+		}
+
+		parameter<String> FileName := '%LocalDataProjDir%/BaseData/Vastgoed/EengezinsOmzetting/'+Regio_name+'_'+string(/ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeVan)+'_'+string(/ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeTotEnMet)+'_BAG'+string(/ModelParameters/BAG_RecentYear)+'_'+/ModelParameters/StudyArea+'.mmd'
+		, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
+
+		container Write : StorageName = "=Decoupling/StorageFile"
+		, Descr = "Schrijft het aandeel, de dichtheden en de aantallen weg. Elk attribuut leest uit Calc, buiten deze opslag, zodat de mmd de waarden zelf bevat."
+		{
+			attribute<UInt32>    AantalEengezins     (RegioUnit) := Calc/AantalEengezins;
+			attribute<UInt32>    AantalMeergezins    (RegioUnit) := Calc/AantalMeergezins;
+			attribute<UInt32>    InCelEengezins      (RegioUnit) := Calc/InCelEengezins;
+			attribute<UInt32>    InCelMeergezins     (RegioUnit) := Calc/InCelMeergezins;
+			attribute<Ha>        CellenEengezins     (RegioUnit) := Calc/CellenEengezins;
+			attribute<Ha>        CellenMeergezins    (RegioUnit) := Calc/CellenMeergezins;
+			attribute<Float32>   AandeelMeergezins   (RegioUnit) := Calc/AandeelMeergezins;
+			attribute<Woning_ha> DichtheidEengezins  (RegioUnit) := Calc/DichtheidEengezins;
+			attribute<Woning_ha> DichtheidMeergezins (RegioUnit) := Calc/DichtheidMeergezins;
+		}
+
+		container Read : StorageName = "=Decoupling/StorageFile", StorageReadOnly = "TRUE", Descr = "Leest de weggeschreven waarden terug.";
+
+		parameter<String> Fingerprint :=
+			  'alloc_region='  + Regio_name
+			+ ';cbs_year='     + /ModelParameters/RegioIndelingen_CBSjaar
+			+ ';build_years='  + string(/ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeVan) + '-' + string(/ModelParameters/Wonen/WoningtypeEengezins/BasisperiodeTotEnMet)
+			+ ';bag_year='     + string(/ModelParameters/BAG_RecentYear)
+			+ ';bag_date='     + /ModelParameters/BAG_file_date
+			+ ';study_area='   + /ModelParameters/StudyArea
+			+ ';min_count='    + string(/ModelParameters/Wonen/EengezinsOmzetting/MinimumAantalPerRegio)
+			+ ';min_cell='     + string(/ModelParameters/Wonen/EengezinsOmzetting/MinimumWoningenPerCel)
+			+ ';cell_ha='      + string(/Geography/AdminDomain/NrHaPerCell)
+			+ ';types='        + AsList(/Classifications/Vastgoed/WP4/name + ':' + WP2/name[/Classifications/Vastgoed/WP4/WP2_rel], ',')
+			+ ';rule='         + /ModelParameters/Wonen/EengezinsOmzetting/Rekenregel
+		, Descr = "De invoeren die het aandeel en de dichtheden bepalen. De indeling, de basisperiode, het BAG-jaar en het studiegebied zitten ook in de bestandsnaam.";
+
+		parameter<String>  Writers    := 'Write/AantalEengezins;Write/AantalMeergezins;Write/InCelEengezins;Write/InCelMeergezins;Write/CellenEengezins;Write/CellenMeergezins;Write/AandeelMeergezins;Write/DichtheidEengezins;Write/DichtheidMeergezins';
+		container          Decoupling := /Templates/DecoupledFile_T(FileName, Fingerprint, Writers);
+
+		container Resultaat := = !/ModelParameters/BaseDataOntkoppeld ? 'Calc' : Decoupling/MayReuse ? 'Read' : 'Write'
+		, Descr = "Wat de omzetting leest: de mmd als die er staat en de fingerprint klopt, anders opnieuw gerekend en weggeschreven. Het zijbestand met de fingerprint wordt geschreven door WriteBaseData/Impl/EengezinsOmzetting.";
+	}
+
+	container PerIndeling := for_each_ne(Indeling/name, 'PerIndeling_T('+quote(Indeling/name)+', '+quote(Indeling/path)+')')
+	, Descr = "Per allocatieregio van wonen de telling, de mmd en de waarden die de omzetting op dat niveau leest (Templates/Claims/ZichtjaarXScenarioxAllocRegios, Zichtjaar_T/EengezinsOmzetting/PerIndeling).";
+}
