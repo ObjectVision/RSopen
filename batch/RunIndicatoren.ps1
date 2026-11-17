@@ -87,13 +87,15 @@
       -WaakhondMinuten      Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als vastgelopen
                             stopt, standaard 15; 0 zet de waakhond uit. Zie Waakhond.ps1.
       -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
-                            het stopt, standaard 1; 0 stopt meteen.
+                            het stopt, standaard 1; 0 stopt meteen. Een stap die de geheugenrem stopte,
+                            start het niet opnieuw.
       -RijSoort, -RijPiekGB, -RijMap  De gedeelde rij van zware runs op de machine, zoals bij RunAllocatie.ps1:
                             elke stap wacht tot zijn verwachte piek naast de lopende runs past, en de wachttijd
                             telt niet mee in status.tsv. RijSoort is standaard regionaal als ModelParameters/
                             StudyArea een ander gebied dan Nederland is, anders landelijk. RijPiekGB is standaard
                             200 voor landelijk en 100 voor regionaal, met marge boven de zwaarste exports die in
-                            november 2026 op OVSRV08 gemeten zijn.
+                            november 2026 op OVSRV08 gemeten zijn. Een stap die meer dan 25 procent boven
+                            RijPiekGB komt, stopt de geheugenrem (zie ALS HET MISGAAT).
 
       Welke bestanden de export schrijft hangt af van ModelParameters/Productieprofiel. NL2120 en Standaard
       schrijven de bestanden van de indicatordomeinen die het profiel levert (ModelParameters/Indicatoren/
@@ -129,6 +131,11 @@
    het log van de stap. Het script start de stap dan opnieuw, met een eigen log, -HerhalingenNaVastlopen
    keer; loopt hij dan nog vast, dan telt de stap als mislukt.
    Staat een stap op 'wacht', dan past hij niet in de gedeelde rij; de regel zegt waarom en wie er voor gaan.
+   Een geheugenrem meet elke vijf seconden het eigen geheugen van de GeoDmsRun en de commit van de machine. Komt
+   het eigen geheugen meer dan 25 procent boven -RijPiekGB, of komt de machine boven 540 GB commit terwijl deze
+   stap van de runs in de rij het verst boven zijn claim zit, dan stopt hij het proces op zijn PID en zet hij een
+   [E]-regel met de reden onder het log (de regels en de drempels staan in Waakhond.ps1). Zo'n stap start het
+   script niet opnieuw; hij telt als mislukt. Geef hem een hogere -RijPiekGB als hij echt zoveel nodig heeft.
 ================================================================================================
 #>
 [CmdletBinding()]
@@ -375,7 +382,7 @@ if (-not $GeenToets) { Test-Invoer }
 
 function Invoke-Export([string]$stap, [string[]]$items) {
     # Een stap die de waakhond als vastgelopen stopt, start het script nog HerhalingenNaVastlopen keer opnieuw, elk met een
-    # eigen log, zoals RunAllocatie.ps1 dat doet.
+    # eigen log, zoals RunAllocatie.ps1 dat doet; een stap die de geheugenrem stopt niet.
     for ($poging = 0; $true; $poging++) {
         $log = Join-Path $LogDir ("{0}_{1}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'), $stap)
 
@@ -390,8 +397,9 @@ function Invoke-Export([string]$stap, [string[]]$items) {
         "{0}`t{1}`t{2}`t{3}" -f (Get-Date -Format 's'), $stap, $code, $sec |
             Add-Content $status -Encoding UTF8
 
-        if ($run.Reden) { "[E] RunIndicatoren.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
-        if (-not $run.Reden -or $poging -ge $HerhalingenNaVastlopen) { break }
+        # Een stap die de waakhond of de geheugenrem stopte, heeft zijn reden als [E]-regel onder zijn log (Waakhond.ps1). Alleen een
+        # vastgelopen stap start opnieuw, zoals in RunAllocatie.ps1.
+        if ($run.Gestopt -ne 'vastgelopen' -or $poging -ge $HerhalingenNaVastlopen) { break }
         Write-Regel "VASTGELOPEN: $stap, het script start de stap opnieuw ($($poging + 1) van $HerhalingenNaVastlopen); log van de vastgelopen poging: $log"
     }
 

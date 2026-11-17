@@ -65,7 +65,8 @@
       -WaakhondMinuten  Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als
                       vastgelopen stopt, standaard 15; 0 zet de waakhond uit. Zie ALS HET MISGAAT.
       -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
-                      de reeks stopt, standaard 1; 0 stopt de reeks meteen.
+                      de reeks stopt, standaard 1; 0 stopt de reeks meteen. Een stap die de
+                      geheugenrem stopte, start het niet opnieuw.
       -RijSoort       landelijk of regionaal, voor de gedeelde rij van zware runs op de machine (zie
                       Waakhond.ps1): een landelijke stap start niet naast een andere landelijke run, en
                       naast een landelijke loopt hooguit een regionale. Standaard regionaal als
@@ -74,7 +75,8 @@
                       die piek naast de lopende runs onder het budget van de rij past. Standaard 350 voor
                       landelijk en 50 voor regionaal, met marge boven de zwaarste allocaties die in november
                       2026 op OVSRV08 gemeten zijn. Te laag laat runs naast elkaar starten die samen niet
-                      passen, te hoog laat ze onnodig wachten.
+                      passen en laat de geheugenrem een stap stoppen die meer dan 25 procent boven
+                      deze piek komt (zie ALS HET MISGAAT); te hoog laat ze onnodig wachten.
       -RijMap         Alleen voor een toets: een andere map dan de gedeelde rij van de machine.
 
    B. Schakelaars in de configuratie die dit script NIET zet maar waar de run wel van afhangt.
@@ -114,6 +116,13 @@
    -StartBij bij de vastgelopen stap.
    Staat een stap op 'wacht', dan past hij niet in de gedeelde rij (zie -RijPiekGB); de regel zegt
    waarom en wie er voor gaan. De wachttijd telt niet mee in de seconden van status.tsv.
+   Een geheugenrem meet elke vijf seconden het eigen geheugen van de GeoDmsRun en de commit van de
+   machine. Komt het eigen geheugen meer dan 25 procent boven -RijPiekGB, of komt de machine boven
+   540 GB commit terwijl deze stap van de runs in de rij het verst boven zijn claim zit, dan stopt
+   hij het proces op zijn PID en zet hij een [E]-regel met de reden onder het log van de stap (de
+   regels en de drempels staan in Waakhond.ps1). Zo'n stap start het script niet opnieuw: de reeks
+   stopt, behalve na een meting. Geef de stap een hogere -RijPiekGB als hij echt zoveel nodig heeft,
+   en hervat met -StartBij.
 ================================================================================================
 #>
 [CmdletBinding()]
@@ -190,6 +199,7 @@ function Invoke-Stap {
     $safe  = ($Stap -replace '[\\/:*?"<>|]', '_')
     # Een stap die de waakhond als vastgelopen stopt, start het script nog HerhalingenNaVastlopen keer opnieuw, elk met een eigen
     # log, voordat de reeks stopt: op 11 november 2026 liep een allocatie die twee uur vastzat bij herhaling in negen minuten door.
+    # Een stap die de geheugenrem stopt, start het niet opnieuw.
     for ($poging = 0; $true; $poging++) {
         $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
         $log   = Join-Path $LogDir "$stamp`_$safe.log"
@@ -208,9 +218,9 @@ function Invoke-Stap {
         "{0}`t{1}`t{2}`t{3}`t{4}" -f (Get-Date -Format 's'), $Stap, ($Item -join ' '), $code, $sec |
             Add-Content $status -Encoding UTF8
 
-        # Een vastgelopen proces krijgt zijn reden als [E]-regel onder zijn log, zodat wie het log later opent ziet waarom hij stopte.
-        if ($run.Reden) { "[E] RunAllocatie.ps1: $($run.Reden)" | Add-Content -LiteralPath $log -Encoding UTF8 }
-        if (-not $run.Reden -or $poging -ge $HerhalingenNaVastlopen) { break }
+        # Een stap die de waakhond of de geheugenrem stopte, heeft zijn reden als [E]-regel onder zijn log (Waakhond.ps1). Alleen een
+        # vastgelopen stap start opnieuw: een stap die de rem stopte, groeit bij herhaling weer tot dezelfde grens.
+        if ($run.Gestopt -ne 'vastgelopen' -or $poging -ge $HerhalingenNaVastlopen) { break }
         Write-Regel "VASTGELOPEN: $Stap, het script start de stap opnieuw ($($poging + 1) van $HerhalingenNaVastlopen); log van de vastgelopen poging: $log"
     }
 
