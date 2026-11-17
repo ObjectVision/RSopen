@@ -12,7 +12,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 container BRT: using = "Units;Geography;Classifications;Classifications/Grondgebruik"
-, Descr = "Wat het model uit de BRT afleidt: welke cellen in een woonkern liggen, als ontkoppelde tif op AdminDomain; de functioneelgebieden voor evident benut leest de evident-benut-kaart zelf (#872). Het
+, Descr = "Wat het model uit de BRT afleidt: welke cellen in een woonkern liggen en welke in de band langs grote wegen en spoor waar geen nieuw stedelijk groen komt, elk als ontkoppelde tif op AdminDomain; de functioneelgebieden voor evident benut leest de evident-benut-kaart zelf (#872). Het
 			inlezen van de BRT staat in SourceData/Grondgebruik/BRT (#440)."
 {
 	unit<UInt32> IsWoonkern := /SourceData/Grondgebruik/BRT/Compleet/MaakLosseCat_plaats/Plaats_woonkern/combined_vlak
@@ -51,5 +51,39 @@ container BRT: using = "Units;Geography;Classifications;Classifications/Grondgeb
 		attribute<bool>      Read_Per_AdminDomain (AdminDomain) : StorageName = "=Decoupling_Per_AdminDomain/StorageFile", StorageType = "tif", StorageReadOnly = "TRUE", Descr = "Leest de eerder weggeschreven tif terug. Domein en waardetype zijn gelijk aan die van Calc_Per_AdminDomain.";
 		attribute<bool>      Per_AdminDomain      (AdminDomain) := = Decoupling_Per_AdminDomain/MayReuse ? 'Read_Per_AdminDomain' : 'Make_Per_AdminDomain'
 		, Descr = "De schakel met de oorspronkelijke naam, zodat de lezers elders in de configuratie ongemoeid blijven. Klopt de fingerprint dan wordt de tif gelezen, anders wordt er gerekend en geschreven, inclusief het zijbestand. Vraag Decoupling_Per_AdminDomain/Explanation op om te zien waarom een bestand wel of niet opnieuw gemaakt wordt.";
+	}
+
+	container LangsHoofdinfra
+	: Descr = "De cellen binnen ModelParameters/StedelijkGroen/AfstandHoofdinfra van de hartlijn van een autosnelweg of hoofdweg, of van een spoorlijn. Daar komt geen nieuw stedelijk groen; de claim in Zichtjaar_T leest de kaart (#480)."
+	{
+		parameter<Float64>   Afstand := float64(/ModelParameters/StedelijkGroen/AfstandHoofdinfra / 1[meter]);
+
+		attribute<rdc_meter> WegBuffer   (poly, /SourceData/Grondgebruik/BRT/IsHoofdinfraWeg) := bg_buffer_linestring(/SourceData/Grondgebruik/BRT/IsHoofdinfraWeg/geometry, Afstand, 8b);
+		attribute<rdc_meter> SpoorBuffer (poly, /SourceData/Grondgebruik/BRT/IsSpoor)         := bg_buffer_linestring(/SourceData/Grondgebruik/BRT/IsSpoor/geometry, Afstand, 8b);
+
+		attribute<bool>      Calc_Per_AdminDomain (AdminDomain) := IsDefined(poly2grid(WegBuffer, AdminDomain)) || IsDefined(poly2grid(SpoorBuffer, AdminDomain)), Descr = "De vergridding: elke cel waarvan het middelpunt in een buffer rond een weg of spoorlijn ligt.";
+
+		parameter<String> FileName_Per_AdminDomain := '%LocalDataProjDir%/BaseData/Grondgebruik/BRT/LangsHoofdinfra_'+string(uint32(Afstand))+'m_'+/ModelParameters/BRT_file_date+'_'+/ModelParameters/StudyArea+'.tif'
+		, Descr = "Het pad zonder hash; DecoupledFile_T zet de hash erin en geeft het pad door als StorageFile.";
+
+		parameter<String> Fingerprint_Per_AdminDomain :=
+			  'brt_date='         + /ModelParameters/BRT_file_date
+			+ ';study_area='      + /ModelParameters/StudyArea
+			+ ';admin_grid='      + /ModelParameters/Advanced/AdminDomain_ref
+			+ ';grid_size='       + string(AdminDomain/gridsize)
+			+ ';source_layers=wegdeel_hartlijn,spoorbaandeel_lijn'
+			+ ';road_types='      + asList(lowercase(/ModelParameters/StedelijkGroen/HoofdinfraWegtype/name), ',')
+			+ ';rail_type=trein'
+			+ ';distance_m='      + string(Afstand)
+		, Descr = "De volledige lijst invoeren die de tif bepaalt, ook de waarden die al in de bestandsnaam zitten. rail_type ligt vast in SourceData/Grondgebruik/BRT/IsSpoor en staat hier als leesbaar verslag.";
+
+		container Decoupling_Per_AdminDomain := /Templates/DecoupledFile_T(FileName_Per_AdminDomain, Fingerprint_Per_AdminDomain, 'Write_Per_AdminDomain');
+
+		attribute<bool>      Write_Per_AdminDomain (AdminDomain) := Calc_Per_AdminDomain, StorageName = "=Decoupling_Per_AdminDomain/StorageFile", StorageType = "tif", Descr = "Schrijft de vergridding eenmalig als tif, zonder zijbestand; dat volgt via Make_Per_AdminDomain.";
+		attribute<bool>      Make_Per_AdminDomain (AdminDomain) := Write_Per_AdminDomain, ExplicitSuppliers = "Decoupling_Per_AdminDomain/Write_Fingerprint"
+		, Descr = "Maakt het bestand en daarna het zijbestand. Vraag dit item en niet Write_Per_AdminDomain, want alleen langs deze weg ontstaat de fingerprint (#837).";
+		attribute<bool>      Read_Per_AdminDomain (AdminDomain) : StorageName = "=Decoupling_Per_AdminDomain/StorageFile", StorageType = "tif", StorageReadOnly = "TRUE", Descr = "Leest de eerder weggeschreven tif terug. Domein en waardetype zijn gelijk aan die van Calc_Per_AdminDomain.";
+		attribute<bool>      Per_AdminDomain      (AdminDomain) := = Decoupling_Per_AdminDomain/MayReuse ? 'Read_Per_AdminDomain' : 'Make_Per_AdminDomain'
+		, Descr = "Klopt de fingerprint dan wordt de tif gelezen, anders wordt er gerekend en geschreven, inclusief het zijbestand.";
 	}
 }
