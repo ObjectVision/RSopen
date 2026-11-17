@@ -419,20 +419,27 @@ container RegioIndelingen
 	,	URL             = "https://github.com/ObjectVision/RSopen/issues/392"
 	,	Descr           = "Per gemeente de pendelregio en de stadregio, gemaakt door batch/Pendelregio_maken.py uit de CBS-pendel van woon- naar werkgemeente en de CBS-vierkanten, volgens de FUA-methode van EC, JRC en OECD, binnen de provincie (#392)."
 	{
-		attribute<String> GM_code     : Descr = "CBS-gemeentecode.";
-		attribute<String> Gemeente    : Descr = "Naam van de gemeente.";
-		attribute<String> Pendelregio : Descr = "Naam van de pendelregio: de grootste stad van een FUA, of Rest plus de provincie als die geen stad heeft.";
-		attribute<String> Soort       : Descr = "FUA of rest.";
-		attribute<String> Stadregio   : Descr = "Naam van de stadregio: Stad plus de grootste gemeente van een stad uit de FUA-methode, of Ommeland plus de pendelregio.";
+		attribute<String> GM_code  : Descr = "CBS-gemeentecode.";
+		attribute<String> Gemeente : Descr = "Naam van de gemeente.";
+		attribute<Classifications/Modellering/PendelregioK> Pendelregio_rel := rlookup(uint32(Pendelregio_code), Classifications/Modellering/PendelregioK/code), IntegrityCheck = "all(IsDefined(this))", Descr = "De pendelregio van de gemeente; elke code moet in de codelijst staan.";
+		attribute<Classifications/Modellering/StadregioK> Stadregio_rel := rlookup(uint32(Stadregio_code), Classifications/Modellering/StadregioK/code)
+		, IntegrityCheck = "all(IsDefined(this)) && all(Classifications/Modellering/StadregioK/Pendelregio_rel[this] == Pendelregio_rel)"
+		, Descr = "De stadregio van de gemeente; elke code moet in de codelijst staan, en de stadregio moet in de pendelregio van de gemeente liggen.";
+		attribute<UInt64> GM_nr := uint64(uint32(substr(GM_code, 2, 4))), Descr = "Het nummer uit de CBS-gemeentecode, voor de controlesom in Definitie.";
+		parameter<String> Definitie := string(#.) + '-' + string(sum(GM_nr * GM_nr * uint64(Pendelregio_rel))) + '-' + string(sum(GM_nr * GM_nr * uint64(Stadregio_rel)))
+		, Descr = "Een controlesom over de toewijzing van gemeente naar pendelregio en stadregio. De fingerprints van de ontkoppelde bestanden per allocatieregio nemen hem op, zodat een nieuwe toewijzing nieuwe bestanden geeft in plaats van de oude te hergebruiken.";
 	}
 
-	unit<UInt32> Pendelregio := unique(Pendelregio_Gemeente/Pendelregio)
+	attribute<String> AllocRegio_Definitie (Classifications/Modellering/AllocRegiosK) := Classifications/Modellering/AllocRegiosK/name == 'Pendelregio' || Classifications/Modellering/AllocRegiosK/name == 'Stadregio' ? Pendelregio_Gemeente/Definitie : ''
+	, Descr = "Wat de fingerprints van de ontkoppelde bestanden per allocatieregio naast de naam en de CBS-jaargang nodig hebben om een gewijzigde indeling te zien: voor de pendelregio's en stadregio's de controlesom over hun toewijzing, voor de indelingen van het CBS niets, want die volgen uit de jaargang (#392).";
+
+	unit<UInt32> Pendelregio := Classifications/Modellering/PendelregioK
 	, Descr = "Pendelregio's: gemeenten gegroepeerd naar de stad waar minstens vijftien procent van hun werkende inwoners werkt, binnen de provincie; een stad met een eigen pendelzone gaat niet op in een andere stad, en de overige gemeenten gaan naar de
 				aangrenzende regio waar ze de meeste pendel naartoe sturen (#392). Opgebouwd uit hele gemeenten van de gekozen CBS-jaargang, zoals NVM; de toewijzing staat in Pendelregio_Gemeente."
 	{
-		attribute<String>       Label                    := values;
-		attribute<String>       name                     := AsItemName(Label);
-		attribute<rdc_meter>    geometry                 (poly) := outer_multi_polygon(dms_union_polygon(CBS/Gekozen/Gemeente_Gegeneraliseerd/geometry[rdc_meter], rlookup(Pendelregio_Gemeente/Pendelregio[rlookup(CBS/Gekozen/Gemeente_Gegeneraliseerd/statcode, Pendelregio_Gemeente/GM_code)], values)))
+		attribute<String>       Label                    := Classifications/Modellering/PendelregioK/Label;
+		attribute<String>       name                     := Classifications/Modellering/PendelregioK/name;
+		attribute<rdc_meter>    geometry                 (poly) := outer_multi_polygon(dms_union_polygon(CBS/Gekozen/Gemeente_Gegeneraliseerd/geometry[rdc_meter], Pendelregio_Gemeente/Pendelregio_rel[rlookup(CBS/Gekozen/Gemeente_Gegeneraliseerd/statcode, Pendelregio_Gemeente/GM_code)]))
 		, IntegrityCheck = "all(IsDefined(rlookup(CBS/Gekozen/Gemeente_Gegeneraliseerd/statcode, Pendelregio_Gemeente/GM_code)))"
 		, Descr = "De vereniging van de gemeenten van de regio. De controle eist dat elke gemeente van de gekozen CBS-jaargang in de tabel staat; na een herindeling moet batch/Pendelregio_maken.py opnieuw draaien.";
 		attribute<.>            Per_AdminDomain          (AdminDomain) := Per_AllocDomain[AdminDomain/AllocDomain_rel];
@@ -453,13 +460,13 @@ container RegioIndelingen
 		}
 	}
 
-	unit<UInt32> Stadregio := unique(Pendelregio_Gemeente/Stadregio)
+	unit<UInt32> Stadregio := Classifications/Modellering/StadregioK
 	, Descr = "Stadregio's: binnen elke pendelregio elke stad uit de FUA-methode (de gemeenten met minstens de helft van hun inwoners in een stedelijk centrum, zonder samenvoegen) en de overige gemeenten samen als ommeland. Wonen alloceert eerst per stadregio, zodat de vraag van
 				een stad eerst in de stad landt en pas daarna in de pendelregio (#392). Opgebouwd uit hele gemeenten; de toewijzing staat in Pendelregio_Gemeente."
 	{
-		attribute<String>       Label                    := values;
-		attribute<String>       name                     := AsItemName(Label);
-		attribute<rdc_meter>    geometry                 (poly) := outer_multi_polygon(dms_union_polygon(CBS/Gekozen/Gemeente_Gegeneraliseerd/geometry[rdc_meter], rlookup(Pendelregio_Gemeente/Stadregio[rlookup(CBS/Gekozen/Gemeente_Gegeneraliseerd/statcode, Pendelregio_Gemeente/GM_code)], values)))
+		attribute<String>       Label                    := Classifications/Modellering/StadregioK/Label;
+		attribute<String>       name                     := Classifications/Modellering/StadregioK/name;
+		attribute<rdc_meter>    geometry                 (poly) := outer_multi_polygon(dms_union_polygon(CBS/Gekozen/Gemeente_Gegeneraliseerd/geometry[rdc_meter], Pendelregio_Gemeente/Stadregio_rel[rlookup(CBS/Gekozen/Gemeente_Gegeneraliseerd/statcode, Pendelregio_Gemeente/GM_code)]))
 		, IntegrityCheck = "all(IsDefined(rlookup(CBS/Gekozen/Gemeente_Gegeneraliseerd/statcode, Pendelregio_Gemeente/GM_code)))"
 		, Descr = "De vereniging van de gemeenten van de regio. De controle eist dat elke gemeente van de gekozen CBS-jaargang in de tabel staat; na een herindeling moet batch/Pendelregio_maken.py opnieuw draaien.";
 		attribute<.>            Per_AdminDomain          (AdminDomain) := Per_AllocDomain[AdminDomain/AllocDomain_rel];

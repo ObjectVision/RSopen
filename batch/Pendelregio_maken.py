@@ -1,4 +1,5 @@
-"""Maakt de indeling van Nederland in pendelregio's op gemeenten (#392) en schrijft hem naar data/Pendelregio/Pendelregio_gemeente.csv.
+"""Maakt de indeling van Nederland in pendelregio's op gemeenten (#392) en schrijft hem naar data/Pendelregio/Pendelregio_gemeente.csv, met
+de codelijsten van de pendelregio's en de stadregio's in Pendelregio.csv en Stadregio.csv ernaast.
 
 De indeling volgt de methode voor functional urban areas (FUA) van de Europese Commissie, het JRC en de OECD:
 1. Een stedelijk centrum is een aaneengesloten gebied van vierkanten van 1 km (4-buren) met minstens DICHT inwoners per km2, samen
@@ -101,6 +102,22 @@ def pendel(werkmap, codes):
     for (wo, we), v in g.items():
         F[idx[wo], idx[we]] = v
     return F
+
+
+def codelijsten(tabel):
+    """Schrijft de codelijsten van de pendelregio's en de stadregio's naast de gemeentetabel; Classifications/Modellering leest ze en de
+    gemeentetabel verwijst er met de codes naar. Een stadregio ligt in een pendelregio, dus de stadregio's krijgen de code van hun pendelregio."""
+    pr = tabel.groupby('Pendelregio_code').agg(Pendelregio=('Pendelregio', 'first'), Soort=('Soort', 'first')).reset_index()
+    sr = tabel.groupby('Stadregio_code').agg(Stadregio=('Stadregio', 'first'), Pendelregio_code=('Pendelregio_code', 'first')).reset_index()
+    for naam, deel, code in [('Pendelregio', pr, 'Pendelregio_code'), ('Stadregio', sr, 'Stadregio_code')]:
+        if tabel.groupby(code)[naam].nunique().max() > 1 or deel[naam].duplicated().any():
+            sys.exit(f"De codes en namen van de {naam.lower()}'s horen een op een bij elkaar.")
+        if list(deel[code]) != list(range(1, len(deel) + 1)):
+            sys.exit(f"De codes van de {naam.lower()}'s lopen niet van 1 tot en met {len(deel)}.")
+    if tabel.groupby('Stadregio_code')['Pendelregio_code'].nunique().max() > 1:
+        sys.exit("Een stadregio ligt in meer dan een pendelregio.")
+    pr.to_csv(UIT.parent / "Pendelregio.csv", index=False, sep=',', encoding='utf-8', lineterminator='\r\n')
+    sr.to_csv(UIT.parent / "Stadregio.csv", index=False, sep=',', encoding='utf-8', lineterminator='\r\n')
 
 
 def main():
@@ -299,10 +316,12 @@ def main():
 
     # uitvoer en samenvatting
     UIT.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({'GM_code': codes, 'Gemeente': naam, 'Pendelregio_code': [nieuw[r] for r in regio], 'Pendelregio': [namen[r] for r in regio],
-                  'Soort': [soort[r] for r in regio], 'Stadregio_code': [sr_code[s] for s in stadregio], 'Stadregio': stadregio,
-                  'COROP': corop, 'Provincie': prov,
-                  'Inwoners': inw_gm.round(0).astype(int), 'Woningen': won_gm.round(0).astype(int)}).to_csv(UIT, index=False, sep=',', encoding='utf-8', lineterminator='\r\n')
+    tabel = pd.DataFrame({'GM_code': codes, 'Gemeente': naam, 'Pendelregio_code': [nieuw[r] for r in regio], 'Pendelregio': [namen[r] for r in regio],
+                          'Soort': [soort[r] for r in regio], 'Stadregio_code': [sr_code[s] for s in stadregio], 'Stadregio': stadregio,
+                          'COROP': corop, 'Provincie': prov,
+                          'Inwoners': inw_gm.round(0).astype(int), 'Woningen': won_gm.round(0).astype(int)})
+    tabel.to_csv(UIT, index=False, sep=',', encoding='utf-8', lineterminator='\r\n')
+    codelijsten(tabel)
     def binnen_deel(r):
         return F[r[:, None] == r[None, :]].sum() / F.sum()
     _, r_corop = np.unique(corop, return_inverse=True)
