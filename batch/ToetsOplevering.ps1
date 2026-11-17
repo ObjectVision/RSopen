@@ -13,6 +13,10 @@
 
     Elke toets meldt PASS, FAIL of GEEN DATA. GEEN DATA is nadrukkelijk geen PASS.
 
+    De GeoDmsRun-stappen van trap C lopen via Invoke-GeoDmsRun (Waakhond.ps1): ze wachten op een plek in de
+    gedeelde rij van zware runs, met -RijSoort, -RijPiekGB en -RijMap zoals bij RunIndicatoren.ps1, en een
+    waakhond stopt een stap die -WaakhondMinuten lang niets doet (standaard 15; 0 zet hem uit).
+
 .EXAMPLE
     .\ToetsOplevering.ps1 -Varianten BAU,BAU2
 
@@ -34,10 +38,19 @@ param(
     # te ontmaskeren. Vorm: 'yyyy-MM-dd HH:mm'.
     [string]   $RunGestartOp = '',
     [switch]   $TrapC,
-    [string]   $Rapport    = ''
+    [string]   $Rapport    = '',
+    [int]      $WaakhondMinuten = 15,
+    # ModelParameters/StudyArea uit de tekst, zoals in RunIndicatoren.ps1. Is hij niet te lezen, dan landelijk:
+    # liever onnodig wachten dan naast een andere landelijke run starten.
+    [ValidateSet('landelijk','regionaal')]
+    [string]   $RijSoort   = $(if ((Get-Content (Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms') -Raw -ErrorAction SilentlyContinue) -match "(?m)^\s*parameter<String>\s+StudyArea\s*:=\s*'(?!Nederland')") { 'regionaal' } else { 'landelijk' }),
+    [double]   $RijPiekGB  = $(if ($RijSoort -eq 'landelijk') { 200 } else { 100 }),
+    [string]   $RijMap     = ''
 )
 
 $ErrorActionPreference = 'Continue'
+# Invoke-GeoDmsRun: de gedeelde rij en de waakhond voor de stappen van trap C.
+. (Join-Path $PSScriptRoot 'Waakhond.ps1')
 if (-not $Rapport) { $Rapport = Join-Path $LocalData 'toets_oplevering.md' }
 $vers = if ($RunGestartOp) { [datetime]::ParseExact($RunGestartOp, 'yyyy-MM-dd HH:mm', $null) } else { $null }
 
@@ -220,10 +233,11 @@ function TrapC([string]$variant, [string]$jaar) {
     $log = Join-Path $env:TEMP "toets_${casus}_$j.log"
     if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
 
-    & $Exe "/L$log" $Cfg '/Diagnose/GenerateAll' 2>&1 | Out-Null
-    $code = $LASTEXITCODE
+    $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten @("/L$log", $Cfg, '/Diagnose/GenerateAll') -Log $log -WaakhondMinuten $WaakhondMinuten `
+                -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "ToetsOplevering GenerateAll $casus $j" -RijMap $RijMap
+    $code = $run.Code
     $errs = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
-    Meld 'C' $casus "$j diagnoseharnas gedraaid" $(if ($code -eq 0 -and $errs.Count -eq 0) {'PASS'} else {'FAIL'}) "exit $code, $($errs.Count) foutregels" 'exit 0, geen foutregels'
+    Meld 'C' $casus "$j diagnoseharnas gedraaid" $(if ($code -eq 0 -and $errs.Count -eq 0 -and -not $run.Reden) {'PASS'} else {'FAIL'}) "exit $code, $($errs.Count) foutregels$(if ($run.Reden) { ", $($run.Reden)" })" 'exit 0, geen foutregels'
 }
 
 function TrapCBasisjaar([string]$variant) {
@@ -233,10 +247,11 @@ function TrapCBasisjaar([string]$variant) {
     $log = Join-Path $env:TEMP "toets_${casus}_basisjaar.log"
     if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
 
-    & $Exe "/L$log" $Cfg '/Diagnose/GenerateBasisjaar' 2>&1 | Out-Null
-    $code = $LASTEXITCODE
+    $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten @("/L$log", $Cfg, '/Diagnose/GenerateBasisjaar') -Log $log -WaakhondMinuten $WaakhondMinuten `
+                -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "ToetsOplevering GenerateBasisjaar $casus" -RijMap $RijMap
+    $code = $run.Code
     $errs = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
-    Meld 'C' $casus 'basisjaarcontroles gedraaid' $(if ($code -eq 0 -and $errs.Count -eq 0) {'PASS'} else {'FAIL'}) "exit $code, $($errs.Count) foutregels" 'exit 0, geen foutregels'
+    Meld 'C' $casus 'basisjaarcontroles gedraaid' $(if ($code -eq 0 -and $errs.Count -eq 0 -and -not $run.Reden) {'PASS'} else {'FAIL'}) "exit $code, $($errs.Count) foutregels$(if ($run.Reden) { ", $($run.Reden)" })" 'exit 0, geen foutregels'
 }
 
 # ----------------------------------------------------------------------------------- uitvoeren

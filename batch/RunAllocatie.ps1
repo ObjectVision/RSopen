@@ -66,6 +66,16 @@
                       vastgelopen stopt, standaard 15; 0 zet de waakhond uit. Zie ALS HET MISGAAT.
       -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
                       de reeks stopt, standaard 1; 0 stopt de reeks meteen.
+      -RijSoort       landelijk of regionaal, voor de gedeelde rij van zware runs op de machine (zie
+                      Waakhond.ps1): een landelijke stap start niet naast een andere landelijke run, en
+                      naast een landelijke loopt hooguit een regionale. Standaard regionaal als
+                      ModelParameters/StudyArea een ander gebied dan Nederland is, anders landelijk.
+      -RijPiekGB      Het eigen geheugen dat een stap op zijn hoogst gebruikt, in GB. Elke stap wacht tot
+                      die piek naast de lopende runs onder het budget van de rij past. Standaard 350 voor
+                      landelijk en 50 voor regionaal, met marge boven de zwaarste allocaties die in november
+                      2026 op OVSRV08 gemeten zijn. Te laag laat runs naast elkaar starten die samen niet
+                      passen, te hoog laat ze onnodig wachten.
+      -RijMap         Alleen voor een toets: een andere map dan de gedeelde rij van de machine.
 
    B. Schakelaars in de configuratie die dit script NIET zet maar waar de run wel van afhangt.
       Loop ze na voordat je start; ze staan in cfg\main\ModelParameters.dms tenzij anders vermeld.
@@ -102,6 +112,8 @@
    een eigen log, -HerhalingenNaVastlopen keer. Loopt hij dan nog vast, dan stopt de reeks zoals bij
    elke andere fout. Een meting (diagnose) mag ook vastlopen; de reeks loopt dan door. Hervat met
    -StartBij bij de vastgelopen stap.
+   Staat een stap op 'wacht', dan past hij niet in de gedeelde rij (zie -RijPiekGB); de regel zegt
+   waarom en wie er voor gaan. De wachttijd telt niet mee in de seconden van status.tsv.
 ================================================================================================
 #>
 [CmdletBinding()]
@@ -121,7 +133,13 @@ param(
     [switch]   $AlleenLandbouw,
     [switch]   $ZonderIndicatorBasedata,
     [int]      $WaakhondMinuten = 15,
-    [int]      $HerhalingenNaVastlopen = 1
+    [int]      $HerhalingenNaVastlopen = 1,
+    # ModelParameters/StudyArea uit de tekst, zoals de functies hieronder de configuratie lezen. Is hij niet te
+    # lezen, dan landelijk: liever onnodig wachten dan naast een andere landelijke run starten.
+    [ValidateSet('landelijk','regionaal')]
+    [string]   $RijSoort   = $(if ((Get-Content (Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms') -Raw -ErrorAction SilentlyContinue) -match "(?m)^\s*parameter<String>\s+StudyArea\s*:=\s*'(?!Nederland')") { 'regionaal' } else { 'landelijk' }),
+    [double]   $RijPiekGB  = $(if ($RijSoort -eq 'landelijk') { 350 } else { 50 }),
+    [string]   $RijMap     = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -153,7 +171,7 @@ function Write-Regel([string]$Tekst) {
     Write-Host "[$t] $Tekst"
 }
 
-# Invoke-GeoDmsRun: GeoDmsRun met een waakhond op voortgang, zie Waakhond.ps1.
+# Invoke-GeoDmsRun: GeoDmsRun met een plek in de gedeelde rij en een waakhond op voortgang, zie Waakhond.ps1.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
 
 function Invoke-Stap {
@@ -181,10 +199,11 @@ function Invoke-Stap {
         # Meerdere items in een aanroep werkt GeoDmsRun na elkaar af in een proces, maar alleen voor items
         # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
         # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
-        $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $Item) -Log $log -WaakhondMinuten $WaakhondMinuten
+        $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $Item) -Log $log -WaakhondMinuten $WaakhondMinuten `
+                    -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "RunAllocatie $Stap" -RijMap $RijMap
         $code = $run.Code
         $sw.Stop()
-        $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+        $sec = [math]::Round($sw.Elapsed.TotalSeconds - $run.Wacht, 1)
 
         "{0}`t{1}`t{2}`t{3}`t{4}" -f (Get-Date -Format 's'), $Stap, ($Item -join ' '), $code, $sec |
             Add-Content $status -Encoding UTF8
@@ -423,6 +442,7 @@ Write-Regel "build     : $(Split-Path (Split-Path $Exe -Parent) -Leaf)"
 Write-Regel "config    : $Cfg"
 Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
+Write-Regel "rij       : $RijSoort, verwachte piek $RijPiekGB GB per stap, budget $RijBudgetGB GB, $(if ($RijMap) { $RijMap } else { $RijStandaardMap })"
 
 Show-Schakelaars
 Test-StedelijkeKlassen

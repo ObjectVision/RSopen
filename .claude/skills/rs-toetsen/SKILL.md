@@ -58,6 +58,8 @@ Gooi het uitvoerbestand tussen twee losse metingen weg, zodat een oude uitdraai 
 
 Een meetharnas leest een item onder een kolomnaam, en die naam blijft staan als het item van betekenis verandert. Bij #684 las het harnas een item dat inmiddels de afstand tussen twee leveringen mat in plaats van wat er nog geleegd werd, en de uitdraai suggereerde dat de fix niets deed; rechtstreeks meten op HEAD gaf het tegendeel. Controleer bij een harnas dat ouder is dan de wijziging of het nog hetzelfde item leest, en meet na een dag met meerdere gedragswijzigingen opnieuw voordat je een getal uit een commit message overneemt: commits van dezelfde ochtend kunnen elkaars conditie al hebben verzet.
 
+Hetzelfde geldt voor een analysescript buiten het model. Op 2026-11-16 stonden na zo'n kopie in de tabellen voor #879 op een paar plekken waarden van de nieuwe run onder de kop van de vorige. Controleer na het kopieren van een analysescript per kolom of de kop nog zegt welke run of welk item eronder staat, bijvoorbeeld door in elke kolom een waarde in het bronbestand na te lezen, voordat er een getal in een rapport of issue komt.
+
 Een ontbrekende uitdraai telt als GEEN DATA en nooit als PASS. Wat de run niet wegschrijft is achteraf niet te beoordelen zonder opnieuw te rekenen.
 
 ## Laag 1b: lees eerst de wikipagina van de indicator
@@ -78,6 +80,8 @@ Let ook op tekenafspraken. `SterfteAfname` is positief wanneer het groen bij won
 ## Laag 2: orde van grootte
 
 Een getal dat optelt kan nog steeds onzin zijn. Zet elke uitkomst naast een referentie: hetzelfde getal in het vorige zichtjaar, in de vorige ronde, of in de BAU-variant. Springt het meer dan een factor, dan is dat een bevinding tot het tegendeel is aangetoond.
+
+Ook de referentie kan scheef zijn. De BAG zet alle woningen van een complex op de punten van hun adressen, en die liggen vaak in een paar cellen van 25 m, dus een dichtheid per cel uit de BAG ligt in de piek waarschijnlijk te hoog. Van de nieuwe meergezinswoningen van 2012 tot en met 2021 in de grote steden van Noord- en Zuid-Holland stond 63 procent op een cel met meer dan 17,5 nieuwe woningen, het hoogste dat het model op een cel zet (het pakket SuperStedelijk in de sociale huur, gemeten op 2026-11-16). Lees een piek per cel uit de BAG daarom als bovengrens, en zet er de dichtheid per blok van 100 m naast.
 
 ### Referentiewaarden staan op de huidige zichtjarenreeks
 
@@ -168,9 +172,11 @@ Draai na elke run die alloceert `kaarten/patroonkaarten.py` uit de RS-testomgevi
 python kaarten\patroonkaarten.py --run <LocalData> --casus WLO_hoog_BAU --zichtjaren Y2040 Y2050 Y2060 --naam <run> --out <map>
 ```
 
-Lees een gedeelde LocalData niet terwijl een GeoDMS-proces erop schrijft: een bestand dat jij openhoudt kan dat proces laten omvallen. Kopieer de standmappen dan eerst. Het gereedschap ziet niet of een los cluster een erf, een bedrijf of een geplande wijk is, en of verre bouw op een hard plan ligt; daarvoor is de kaart. Wat je ziet, gaat in het rapport aan Jip, met de kaart erbij en de plek bij naam, ook als alle controlewaarden groen zijn.
+Lees een gedeelde LocalData niet terwijl een GeoDMS-proces erop schrijft: een bestand dat jij openhoudt kan dat proces laten omvallen. Kopieer de standmappen dan eerst. Het gereedschap ziet niet of een los cluster een erf, een bedrijf of een geplande wijk is, en of verre bouw op een hard plan ligt; daarvoor is de kaart. Wat je ziet, gaat in het rapport, met de kaart erbij en de plek bij naam, ook als alle controlewaarden groen zijn.
 
 Aanleiding (november 2026): in de slotrun van NL2120 lag in 2050 35 procent en in 2060 46 procent van de nieuwe modelwoningen in een ring rond een los cluster van het zichtjaar ervoor, en rond de kernen groeide de nieuwbouw als uienschillen, een smalle band per zichtjaar rondom het hele dorp. Geen controlewaarde zag het, want het meegroeien van het bebouwd gebied (#749, met de schijf van #862) werkt pas vanaf het tweede zichtjaar en de proefruns van #862 stopten bij 2040. Een proefrun voor een ingreep aan de locatiekeuze loopt daarom minstens twee zichtjaren.
+
+Een proef per provincie rekent elke provincie als eigen studiegebied. De provinciegrens is dan de rand van het studiegebied, en een kaart van zo'n proef toont alleen nieuwbouw in de eigen provincie. Een rechte rand van de nieuwbouw op de provinciegrens zegt in zo'n proef dus niets: bij Gorinchem lag 40 procent van de buitenrand van wat de proef voor Zuid-Holland tussen 2050 en 2060 bouwde, op de grens met Gelderland (gemeten op 2026-11-14). Ook in een landelijke run gaat de overloop van wonen niet over de provinciegrens, want de provincie is de grootste allocatieregio van wonen (`ModelParameters/SectorAllocRegio`, de regel voor NL staat uit). Of zo'n rand landelijk ook recht blijft, zie je dus alleen in een landelijke run, met de allocatie aan de overkant erbij.
 
 ## Meet naast de code in plaats van een A/B te draaien
 
@@ -224,6 +230,8 @@ Concreet voor die vergelijking, mocht hij herhaald moeten worden. De basis was `
 Meld altijd expliciet wat je niet getoetst hebt. Bij die vergelijking waren dat de werken-schakelaars afzonderlijk, de NbS-variant en de zeeflaag.
 
 En neem als tegenhanger nooit een variant die er toevallig naast ligt. Bij #715 leek uit NbSMax, dat met de BAU-dichtheidsfactoren op 28,0 woningen per hectare uitkwam, te volgen dat tweederde van het dichtheidsverschil van de pakketten kwam; NbSMax heeft andere pakketten dan NbSGenuanceerd, dus die vergelijking verschilde op twee assen tegelijk en kon de vraag niet beantwoorden. Twee runs van dezelfde variant waarin alleen de parameter verschilt gaven het antwoord: 22,6 tegen 33,9 woningen per hectare en 30.897 hectare ruimtebeslag uit alleen de dichtheidsfactoren. Een controlegroep is dezelfde variant met een ding anders, en anders is het geen controlegroep.
+
+Lees bij een referentie ook na waarmee hij werkelijk rekent, niet alleen welke commits erin zitten. De landelijke run van #879 is op 2026-11-16 vergeleken met een run van main op fd88f1f4 van 14 november. Daarin staat de herschatting van werken uit #708, maar het model leest de herschatte coefficienten nog niet (zie de kop van `HerschattingLogit_Werken.dms`). Voor de uitkomst telt die herschatting dus niet mee, en het verschil tussen de twee runs kwam alleen uit de wijziging op de tak voor #879. Zoek in `cfg` of het model de nieuwe invoer van een issue leest, voordat je een verschil aan dat issue toeschrijft of het uitsluit.
 
 ### Scheid het effect van de code van het effect van de allocatie
 
@@ -287,13 +295,17 @@ Leg de oordelen per wijziging vast in het issue van de toetsronde, met de codest
 
 ### Noemer en masker
 
-Drie toetsregels die elk terugkomen zodra een getal een aandeel, een uitval of een landelijk totaal is. Voor de codekant (teller en noemer op hetzelfde masker) zie de skill geodms-valkuilen.
+Vijf toetsregels die elk terugkomen zodra een getal een aandeel, een uitval, een groei of een totaal per regio of voor het land is. Voor de codekant (teller en noemer op hetzelfde masker) zie de skill geodms-valkuilen.
 
 Een aandeel zonder noemer is geen uitkomst. Zeg bij elk oppervlakteaandeel welk gebied de noemer is: het studiegebied op 25 meter (`CompactedAdminDomain`, 56.146.816 cellen, 35.092 km2), het allocatiedomein, alleen het beschikbare areaal, of alleen de cellen met bebouwing. Bij #669 stond 54,8 procent in de issuetekst en gaf een herhaalde meting op dezelfde regel 65,1 procent; het verschil zat volledig in de noemer, en zonder die erbij leest zo'n herhaling als een tegenspraak. Zet naast het aandeel altijd een absolute maat die niet met de noemer meebeweegt, daar de harde plancapaciteit industrieterrein (4.320 tegen 4.328 hectare op de twee metingen).
 
 Een bruto getal dat niet strookt met het netto effect is een meetfout tot het tegendeel is aangetoond. Alle posten in het exploitatiesaldo van wonen worden vermenigvuldigd met `IsBeschikbaar_zichtjaar` (#597), zodat een cel die voor de sector niet beschikbaar is saldo 0 heeft. Ontbreekt die maskering bij een post, dan krijgt elke niet-beschikbare cel een saldo van precies min die post, en telt de zeefpoort `Impl/ExploitatieSaldo` in `Zeef_Wonen_perOP_T` die cel als saldo-uitval. De allocatie merkt daar niets van, want `Beschikbaar_voorOP` toetst daarnaast op `Beschikbaar_src`; elke meting op de zeefpoort meet dan de sectorbeschikbaarheid en niet de economie. Bij #787 mat de grondprijs zo 204.000 hectare uitval op de saldopoort en tegelijk 6 hectare verschil in het woonareaal; na de maskering was de uitval 0,5 tot 1,0 procent. Twee controles: draagt een nieuwe post in `Suitability_Wonen_perOP_T` dezelfde maskering als zijn buren (kijk in de expressie, niet alleen in de Descr), en zet een uitvalgetal op een zeefpoort tegen het aantal beschikbare cellen voor die subsector en niet tegen het hele domein.
 
 Tabelsom en rastersom meten niet hetzelfde. De tabellen in RegionaleIndicatoren sommeren een weggeschreven kaart per regio; de kaart zelf is gemaskeerd op het studiegebied (`IsStudyArea_AdminDomain`), de tabel op de regio-indeling, en een cel die wel in het studiegebied ligt maar geen regio draagt valt stil uit elke kolom. Het Diagnose-harnas telt met aggregatiecode s over het hele AdminDomain en ziet dat gat niet. Op een voorraad is een gat van een paar duizend hectare verwaarloosbaar; een residu-indicator is een klein verschil tussen twee grote getallen en daar telt hetzelfde gat vele malen zwaarder (op BAU 2120 miste `CO2Stock_Zichtjaar` 0,08 procent en `CO2Flow_TovBasisjaar` 3,7 procent, voordat #748 de toewijzing verfijnde). Sinds #748 lezen de indicatorensjablonen `Per_AdminDomain_Fijn`, dezelfde geometrie op dezelfde resolutie als het kaartmasker, en is het resolutiegat voor NL, Provincie, NVM en COROP nul. Twee verschillen blijven en zijn dekking, geen artefact: de gemeentelijke indeling dekt 3.836,81 hectare studiegebied niet, en de landschapsindeling laat 15.394,56 hectare grote wateren bewust buiten het indelingsgebied. Vraag daarom bij elk landelijk getal of het uit de tabel of uit de kaart komt, en leg bij een oplevering de rastersom naast de tabelsom; verschillen ze op een indeling die het studiegebied dekt, dan is de toewijzing of het masker veranderd en niet de indicator. Er staat nog geen controle voor in de configuratie of in `batch/ToetsOplevering.ps1` (open punt bij #748).
+
+Tel een tekort per regio op de regio-indeling van het model. Het model hangt elke gemeente als geheel aan het NVM-vlak waarin het zwaartepunt van de gemeente ligt, en de NVM-shapefile heeft zijn eigen grenzen. Voor Amsterdam, Den Haag en Rotterdam samen gaf de shapefile als masker in 2050 een tekort op de claim van 164.408 woningen en de indeling van het model 150.865 (geteld op 2026-11-13, in een proefrun voor Noord- en Zuid-Holland met de dichtheidsrem zoals die op main staat). Het verschil zat bijna helemaal in Amsterdam. Een tekort op een ander masker dan dat van de allocatie is niet te vergelijken met de claimrealisatie van het model.
+
+Zeg bij een groei vanaf welke stand hij geteld is. De claims gaan uit van de voorraad van het basisjaar (`Read_Wonen_WP2xVSSH/<subsector>_Proxy`), maar de allocatie begint bij de startstand (`StartState_metBAGnieuwbouw`), en die bevat ook de nieuwbouw die de BAG na het basisjaar kent. In Noord-Holland lag de startstand netto 115.255 woningen boven de voorraad van het basisjaar, waarvan 99.230 meergezins (gemeten op 2026-11-13). Een toets die de groei van de woningvraag afzet tegen de vrije grond, komt dan anders uit naar gelang hij vanaf het basisjaar of vanaf de startstand telt. Tel groei en grond daarom vanaf hetzelfde moment, en zeg welk dat is.
 
 ## Bewaar de oude uitdraaien voordat je opnieuw meet
 

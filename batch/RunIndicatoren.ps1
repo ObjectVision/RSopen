@@ -88,6 +88,12 @@
                             stopt, standaard 15; 0 zet de waakhond uit. Zie Waakhond.ps1.
       -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
                             het stopt, standaard 1; 0 stopt meteen.
+      -RijSoort, -RijPiekGB, -RijMap  De gedeelde rij van zware runs op de machine, zoals bij RunAllocatie.ps1:
+                            elke stap wacht tot zijn verwachte piek naast de lopende runs past, en de wachttijd
+                            telt niet mee in status.tsv. RijSoort is standaard regionaal als ModelParameters/
+                            StudyArea een ander gebied dan Nederland is, anders landelijk. RijPiekGB is standaard
+                            200 voor landelijk en 100 voor regionaal, met marge boven de zwaarste exports die in
+                            november 2026 op OVSRV08 gemeten zijn.
 
       Welke bestanden de export schrijft hangt af van ModelParameters/Productieprofiel. NL2120 en Standaard
       schrijven de bestanden van de indicatordomeinen die het profiel levert (ModelParameters/Indicatoren/
@@ -122,6 +128,7 @@
    Een vastgelopen GeoDmsRun stopt de waakhond na -WaakhondMinuten; de reden staat als [E]-regel onder
    het log van de stap. Het script start de stap dan opnieuw, met een eigen log, -HerhalingenNaVastlopen
    keer; loopt hij dan nog vast, dan telt de stap als mislukt.
+   Staat een stap op 'wacht', dan past hij niet in de gedeelde rij; de regel zegt waarom en wie er voor gaan.
 ================================================================================================
 #>
 [CmdletBinding()]
@@ -143,7 +150,13 @@ param(
     [switch]   $TabellenUitExport = $true,
     [switch]   $GeenToets,
     [int]      $WaakhondMinuten = 15,
-    [int]      $HerhalingenNaVastlopen = 1
+    [int]      $HerhalingenNaVastlopen = 1,
+    # ModelParameters/StudyArea uit de tekst, zoals de functies hieronder de configuratie lezen. Is hij niet te
+    # lezen, dan landelijk: liever onnodig wachten dan naast een andere landelijke run starten.
+    [ValidateSet('landelijk','regionaal')]
+    [string]   $RijSoort   = $(if ((Get-Content (Join-Path (Split-Path $Cfg -Parent) 'main\ModelParameters.dms') -Raw -ErrorAction SilentlyContinue) -match "(?m)^\s*parameter<String>\s+StudyArea\s*:=\s*'(?!Nederland')") { 'regionaal' } else { 'landelijk' }),
+    [double]   $RijPiekGB  = $(if ($RijSoort -eq 'landelijk') { 200 } else { 100 }),
+    [string]   $RijMap     = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -162,7 +175,7 @@ $status = Join-Path $LogDir 'status.tsv'
 if (-not (Test-Path $status)) { "tijd`tstap`texit`tseconden" | Set-Content $status -Encoding UTF8 }
 
 function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $T" }
-# Invoke-GeoDmsRun: GeoDmsRun met een waakhond op voortgang, zie Waakhond.ps1.
+# Invoke-GeoDmsRun: GeoDmsRun met een plek in de gedeelde rij en een waakhond op voortgang, zie Waakhond.ps1.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
 
 function Get-BagDatum {
@@ -351,6 +364,7 @@ Write-Regel "config    : $Cfg"
 Write-Regel "profiel   : $Profiel (ModelParameters/Productieprofiel)$(if ($Set -eq 'RuimteVoorWoningbouw') { ', woningbouwset' } else { ', domeinen ' + ((@($Domeinen.Keys | Where-Object { $Domeinen[$_] }) | Sort-Object) -join ', ') })"
 Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
+Write-Regel "rij       : $RijSoort, verwachte piek $RijPiekGB GB per stap, budget $RijBudgetGB GB, $(if ($RijMap) { $RijMap } else { $RijStandaardMap })"
 Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"
 Write-Regel "regio     : $IndicatorRegio$(if ($IndicatorRegio -eq 'Landschappen') { ', de vier landschapsgebieden van #760 na elkaar' })"
 Write-Regel "ketens    : $(if ($Ontkoppeld) { 'ontkoppeld, via tifs per zichtjaar (#824)' } else { 'in een proces, elke export rekent alle voorgaande zichtjaren mee' })"
@@ -367,10 +381,11 @@ function Invoke-Export([string]$stap, [string[]]$items) {
 
         Write-Regel "start     : $stap"
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $items) -Log $log -WaakhondMinuten $WaakhondMinuten
+        $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $items) -Log $log -WaakhondMinuten $WaakhondMinuten `
+                    -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "RunIndicatoren $stap" -RijMap $RijMap
         $code = $run.Code
         $sw.Stop()
-        $sec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+        $sec = [math]::Round($sw.Elapsed.TotalSeconds - $run.Wacht, 1)
 
         "{0}`t{1}`t{2}`t{3}" -f (Get-Date -Format 's'), $stap, $code, $sec |
             Add-Content $status -Encoding UTF8
