@@ -254,7 +254,7 @@ Template Zichtjaar_T
 					voorwaardelijke geval en de legenda hangt niet aan een sector; het pad wijst naar het kind zelf en niet naar de container, want ExplicitSuppliers op een container lift niet mee wanneer je
 					een los kind opvraagt. Zonder deze regel wordt het zijbestand nooit geschreven, en de leeskant weigert een stand zonder kloppend zijbestand (#721).";
 		
-		parameter<string> Extra_str                      := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';WriteStand/wonen/Footprint' : '';
+		parameter<string> Extra_str                      := (/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';WriteStand/wonen/Footprint' : '') + (/ModelParameters/SectorAllocRegio/Uq_Sectors/HasStedelijkGroenSector ? ';WriteStand/StedelijkGroen/ParkMogelijk;WriteStand/StedelijkGroen/KernVoorClaim' : '');
 		parameter<Bool>   IsEersteZichtjaar              := first(lowercase(Time/Zichtjaar/name)) == lowercase(name);
 		parameter<String> PrevZichtjaar_name             := rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevName);
 		parameter<string> Extra_prev                     := Ontkoppeld || IsEersteZichtjaar ? '' : ';'+PrevZichtjaar_name+'/Impl/Generate'
@@ -561,6 +561,13 @@ Template Zichtjaar_T
 				attribute<m2PandFootprint> Footprint (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? 'CalcStand/Wonen/Footprint' : 'const(null_f, AdminDomain, m2PandFootprint)', StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Wonen/Footprint')", StorageType = "gdalwrite.grid";
 			}
 
+			container StedelijkGroen
+			: Descr = "Twee kaarten van nieuw stedelijk groen voor de indicator van de bereikbaarheid van groen, die het tekort telt dat met de regels van #480 niet op te lossen is (Templates/Indicatoren/BereikbaarheidGroen_T/Normtoets/TekortOnoplosbaar). Geen stand: het volgende zichtjaar leest ze niet."
+			{
+				attribute<UInt8> ParkMogelijk  (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasStedelijkGroenSector ? 'UInt8(StedelijkGroenClaim/NaAllocatie/IsParkMogelijk)' : 'const(0b, AdminDomain)', StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'StedelijkGroen/ParkMogelijk')", StorageType = "gdalwrite.grid", Descr = "1 waar na de allocatie nog een park kan komen, zie StedelijkGroenClaim/NaAllocatie.";
+				attribute<UInt8> KernVoorClaim (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasStedelijkGroenSector ? 'UInt8(StedelijkGroenClaim/IsKernVoorClaim)' : 'const(0b, AdminDomain)', StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'StedelijkGroen/KernVoorClaim')", StorageType = "gdalwrite.grid", Descr = "1 in de kernen waarvan de claim van dit zichtjaar het tekort telt, zie StedelijkGroenClaim/IsKernVoorClaim.";
+			}
+
 		}
 			
 		container WriteStand_Compacted := 
@@ -710,7 +717,9 @@ Template Zichtjaar_T
 			, Descr = "Het gemiddelde aantal inwoners van de woonkerncellen binnen de koppelstraal; nul als er geen woonkern binnen die straal ligt.";
 			attribute<UInt32>    InwonersWoonkern  (AdminDomain) := /BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain ? MakeDefined(/BaseData/Grondgebruik/BRT/IsWoonkern/Inwoners_Per_AdminDomain, 0) : Nieuwbouwgebied ? uint32(max(KernInwonersOmgeving, Nieuwbouwwijk/Districts)[Nieuwbouwwijk/Districts]) : 0
 			, Descr = "De inwoners van de woonkern bij de cel. In een BRT-woonkern zijn dat de inwoners van die kern zelf, zodat een dorp of voorstad die tegen een stad aan ligt als zichzelf telt. In een nieuwbouwwijk buiten de woonkernen zijn het de inwoners van de grootste kern waar de wijk aan vastzit, zodat een nieuwe wijk aan een stad als die stad telt. Elders nul (#480).";
-			attribute<meter2>    TekortVoorClaim   (AdminDomain) := InwonersWoonkern >= /ModelParameters/StedelijkGroen/MinInwonersWoonkern ? Tekort : 0[meter2]
+			attribute<Bool>      IsKernVoorClaim   (AdminDomain) := InwonersWoonkern >= /ModelParameters/StedelijkGroen/MinInwonersWoonkern
+			, Descr = "Ligt de cel in een kern met minstens ModelParameters/StedelijkGroen/MinInwonersWoonkern inwoners? Alleen het tekort daar wordt claim. Ook weggeschreven naast de stand, zodat de indicator het tekort in dezelfde kernen telt (WriteStand/StedelijkGroen/KernVoorClaim).";
+			attribute<meter2>    TekortVoorClaim   (AdminDomain) := IsKernVoorClaim ? Tekort : 0[meter2]
 			, Descr = "Het tekort dat nieuw stedelijk groen moet oplossen: alleen dat van woningen in een kern met minstens ModelParameters/StedelijkGroen/MinInwonersWoonkern inwoners. Het tekort van dorpen en het buitengebied blijft in de indicator staan, maar wordt geen claim.";
 
 			parameter<Float32>   Jaar              := float32(Zichtjaar_value);
@@ -743,6 +752,24 @@ Template Zichtjaar_T
 			, Descr = "Verwerven en slopen van wat er niet om te wonen staat, zoals een bedrijfspand, uitgesmeerd over het perceel zoals bij wonen (#861). Cellen met woningen doen niet mee: de evident-benut-lijst van stedelijk groen sluit woonterrein uit.";
 			attribute<Float32>   Geschiktheid      (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, IsGeschikt) && Grond + Opstal > 0[Eur] ? float32(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TekortInOmgeving)) / float32(Grond + Opstal) : null_f
 			, Descr = "De geschiktheid voor nieuw stedelijk groen: het deel van het groentekort dat de cel krijgt per euro aan verwerving, dus vierkante meter tekort per euro; leeg waar de cel niet geschikt is. De claim legt al vast hoeveel hectare er komt, dus de geschiktheid hoeft alleen te zeggen waar die hectares het meeste tekort per euro oplossen. De aanleg van het park telt niet mee, want die kost per hectare overal hetzelfde. Ook de waarde van de cel voor wonen telt niet mee; die rekent pas de allocatie van wonen, per pakket. Gelezen door Templates/Allocatie/IterSubsector_T, dat een lege geschiktheid hier als onbeschikbaar telt.";
+
+			container NaAllocatie
+			: Descr = "De grond waar na de allocatie van dit zichtjaar nog een park kan komen, voor het tekort dat met de regels van #480 niet op te lossen is (Templates/Indicatoren/BereikbaarheidGroen_T/Normtoets/TekortOnoplosbaar). Dat is de geschikte grond van dit zichtjaar die de allocatie niet
+						heeft vastgelegd, en daarvan alleen wat de vormtoets haalt als die grond in een keer helemaal park wordt. De vormtoets is een kopie van die in Templates/Allocatie/Iter_T/Iter_Allocatie voor stedelijk groen, met wat er dit zichtjaar al is aangelegd als aanhechting; een wijziging daar hoort hier ook."
+			{
+				attribute<Bool>    IsVastgelegd   (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, /Classifications/Actor/Sector/xSubsector/LegtCelVast[StateNaAllocatie/SubSector_rel], FALSE), Descr = "Heeft de allocatie de cel tot en met dit zichtjaar vastgelegd, voor welke sector ook?";
+				attribute<Bool>    IsVrij         (AdminDomain) := IsGeschikt && !IsVastgelegd, Descr = "Grond die aan het begin van het zichtjaar geschikt was voor een park en na de allocatie nog vrij is.";
+				attribute<Bool>    Basis          (AdminDomain) := IsVrij || (IsVastgelegd && !AlGealloceerdVoorDitZichtjaar), Descr = "De vrije grond plus alles wat er dit zichtjaar is aangelegd, voor welke sector ook, zoals Gealloceerd_Basis in Iter_Allocatie: een nieuw park mag aanhechten aan wat er dit zichtjaar bijkwam.";
+				attribute<Bool>    Eroded         (AdminDomain) := potential(float32(Basis), /Geography/Distmatrices_25m/pot25m/binair) >= /ModelParameters/Advanced/MorfologischeCleaning_BuurCellen_StedelijkGroen + 1f, Descr = "De breedte-eis van de vormtoets: de cel en minstens zoveel buren als MorfologischeCleaning_BuurCellen_StedelijkGroen liggen in Basis.";
+				attribute<Bool>    Dilated        (AdminDomain) := potential(float32(Eroded), /Geography/Distmatrices_25m/pot25m/binair) >= 1f, Descr = "Een cel met een buur die de breedte-eis haalt.";
+				attribute<Bool>    Cleaned        (AdminDomain) := Basis && Dilated, Descr = "De cellen van Basis die de breedte-eis halen.";
+				unit<UInt32>       Park           := district_8(Cleaned), Descr = "De aaneengesloten stukken van Cleaned, met 8-connectiviteit zoals in de vormtoets."
+				{
+					attribute<ha>  Oppervlakte    := pcount(Districts)[float32] * AdminDomain/NrHaPerCell;
+				}
+				attribute<Bool>    IsParkMogelijk (AdminDomain) := IsVrij && Cleaned && Park/Oppervlakte[Park/Districts] >= (/BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain ? /ModelParameters/Advanced/Minimum_alloc_group_size_Binnenstedelijk_StedelijkGroen : /ModelParameters/Advanced/Minimum_alloc_group_size_Buitenstedelijk_StedelijkGroen)
+				, Descr = "Kan hier na de allocatie nog een park komen? De cel is vrij, haalt de breedte-eis en ligt in een stuk dat de minimale omvang haalt, in een woonkern Minimum_alloc_group_size_Binnenstedelijk_StedelijkGroen en daarbuiten Minimum_alloc_group_size_Buitenstedelijk_StedelijkGroen. Weggeschreven als WriteStand/StedelijkGroen/ParkMogelijk.";
+			}
 		}
 
 		container WerkenGeschiktheid
