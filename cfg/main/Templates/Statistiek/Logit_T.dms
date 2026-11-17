@@ -12,26 +12,27 @@
 // Per iteratie: p = 1/(1+exp(-X*beta)); W = diag(p*(1-p)); beta_nieuw = beta + inv(X'WX) * X'(y-p).
 // De K bij K matrix X'WX wordt opgebouwd uit sum(...)-scalars per variabelenpaar (alleen de
 // bovendriehoek wordt gesommeerd, de spiegelcellen verwijzen naar hetzelfde item), als grid over
-// een spoint-domein gelegd en met matr_inv geinverteerd. Vijftien iteraties volstaan ruim:
-// Newton convergeert kwadratisch en is in de praktijk na zes tot acht iteraties uitgeconvergeerd
-// (zie ConvergentieStap in het Rapport als controle).
+// een spoint-domein gelegd en met matr_inv geinverteerd. Elke iteratie neemt van de volle Newton-stap
+// en vijf keer gehalveerd de stap met de hoogste loglikelihood, zoals Mlogit_T: ver van het optimum
+// kan een volle stap overschieten. Twintig iteraties laten daar ruimte voor; ConvergentieStap in het
+// Rapport is de controle.
 //
 // Dezelfde modelvorm als de logit-schattingen achter de geschiktheidskaarten, zie Koomen,
 // Claassens & Konig (2021), de schattingsrapportage achter de logitcoeff-bestanden in
 // SourceData/Vastgoed. Hiermee zijn die schattingen binnen het model zelf te reproduceren of
 // te herzien, op exact de data die de toepassing gebruikt.
 //
-// Beperking: het waarnemingsdomein is AdminDomain via naamresolutie (vanuit Templates werkt dat
-// via using Geography), geen template-argument. Een unit<ipoint>-argument doorgeven kan wel, maar
-// alle aanroepen werken op AdminDomain en de Data-container moet toch al op hetzelfde domein
-// leveren; een argument zou hier alleen schijnflexibiliteit toevoegen.
+// Het waarnemingsdomein is het argument Obs, zoals in Mlogit_T, zodat de schatting op een steekproef
+// van cellen kan lopen. Neemt de steekproef maar een deel van de waarnemingen zonder positieve uitkomst,
+// dan geeft beta_gecorrigeerd de coefficienten met de constante gecorrigeerd voor die trekking.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 Template Logit_T
-: Descr = "Binomiale logit via IRLS. Argumenten: Naam (voor het rapportbestand), Var (variabelenlijst met attribute name, waaronder een rij Constant) en Data (levert per Var/name een attribute over AdminDomain, plus y en InSample als bool). Resultaat: It15/beta en Eind/se per Var, met loglikelihood-verloop en McFadden pseudo-R2 in het Rapport."
+: Descr = "Binomiale logit via IRLS. Argumenten: Naam (voor het rapportbestand), Obs (de waarnemingen), Var (variabelenlijst met attribute name, waaronder een rij Constant) en Data (levert per Var/name een attribute over Obs, plus y en InSample als bool en de parameter Trekkingskans). Resultaat: It20/beta, beta_gecorrigeerd en Eind/se per Var, met loglikelihood-verloop en McFadden pseudo-R2 in het Rapport."
 {
 	parameter<String> Naam;
+	unit<uint32>      Obs;
 	unit<uint8>       Var;
 	container         Data;
 
@@ -39,12 +40,12 @@ Template Logit_T
 		for_each_nedv(
 			'x' + string(id(Var))
 			, 'MakeDefined(float64(Data/' + Var/name + '), 0d)'
-			, AdminDomain
+			, Obs
 			, float64
 		), Descr = "De ontwerpmatrix als kolommen x0..x{K-1} in float64, op volgorde van Var. Nulls worden 0: buiten InSample telt de cel toch niet mee, en zo blijven de sommen gedefinieerd.";
 
-	attribute<float64> msk (AdminDomain) := Data/InSample ? 1d : 0d, Descr = "Steekproefmasker als 0/1. Alle kruissommen en de loglikelihood worden hiermee vermenigvuldigd.";
-	attribute<float64> y64 (AdminDomain) := msk * MakeDefined(Data/y ? 1d : 0d, 0d), Descr = "De afhankelijke variabele als 0/1 binnen de steekproef.";
+	attribute<float64> msk (Obs) := Data/InSample ? 1d : 0d, Descr = "Steekproefmasker als 0/1. Alle kruissommen en de loglikelihood worden hiermee vermenigvuldigd.";
+	attribute<float64> y64 (Obs) := msk * MakeDefined(Data/y ? 1d : 0d, 0d), Descr = "De afhankelijke variabele als 0/1 binnen de steekproef.";
 
 	parameter<uint32>  K    := #Var, Descr = "Aantal te schatten coefficienten, inclusief de constante.";
 	parameter<float64> N_   := sum(msk), Descr = "Aantal waarnemingen in de steekproef.";
@@ -81,15 +82,31 @@ Template Logit_T
 		attribute<float64> beta (Var) := id(Var) == ConstIdx ? log(pos_ / (N_ - pos_)) : 0d;
 	}
 
+	unit<uint8> Stap : NrOfRows = 6
+	, Descr = "De staplengtes die elke iteratie probeert: de volle Newton-stap en vijf keer gehalveerd, zoals in Mlogit_T. Ver van het optimum kan een volle stap overschieten; de iteratie neemt daarom de stap met de hoogste loglikelihood."
+	{
+		attribute<float64> factor : [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125];
+		attribute<String>  name := 'f' + string(id(.));
+	}
+
+	Template Proef_T
+	: Descr = "De loglikelihood op een kortere stap, beta_prev + f * delta van de iteratie waarin hij staat."
+	{
+		parameter<float64> f;
+		attribute<float64> beta (Var) := beta_prev + f * delta;
+		attribute<float64> eta  (Obs) := ='add(' + asItemList('beta[' + string(id(Var)) + '[Var]] * X/x' + string(id(Var))) + ')';
+		parameter<float64> LL         := sum(y64 * eta - msk * (max_elem(eta, 0d) + log(1d + exp(0d - abs(eta)))));
+	}
+
 	Template Iter_T
-	: Descr = "Een IRLS-iteratie: neemt de coefficienten-container van de vorige iteratie (prev) en levert beta = prev/beta + inv(X'WX) * X'(y-p). LL is de loglikelihood bij intrede, dus geevalueerd op prev/beta."
+	: Descr = "Een IRLS-iteratie: neemt de coefficienten-container van de vorige iteratie (prev) en levert beta = prev/beta + f * inv(X'WX) * X'(y-p), met f de staplengte uit Stap met de hoogste loglikelihood. LL is de loglikelihood bij intrede, dus geevalueerd op prev/beta."
 	{
 		container prev;
 
-		attribute<float64> eta (AdminDomain) := ='add(' + asItemList('prev/beta[' + string(id(Var)) + '[Var]] * X/x' + string(id(Var))) + ')', Descr = "Lineaire index X*beta.";
-		attribute<float64> p   (AdminDomain) := eta > 0d ? 1d / (1d + exp(-eta)) : exp(eta) / (1d + exp(eta)), Descr = "Kans, numeriek veilig: er wordt altijd een niet-positief getal geexponentieerd.";
-		attribute<float64> w   (AdminDomain) := msk * p * (1d - p), Descr = "IRLS-gewicht binnen de steekproef.";
-		attribute<float64> r   (AdminDomain) := y64 - msk * p, Descr = "Werkresidu y - p binnen de steekproef.";
+		attribute<float64> eta (Obs) := ='add(' + asItemList('prev/beta[' + string(id(Var)) + '[Var]] * X/x' + string(id(Var))) + ')', Descr = "Lineaire index X*beta.";
+		attribute<float64> p   (Obs) := eta > 0d ? 1d / (1d + exp(-eta)) : exp(eta) / (1d + exp(eta)), Descr = "Kans, numeriek veilig: er wordt altijd een niet-positief getal geexponentieerd.";
+		attribute<float64> w   (Obs) := msk * p * (1d - p), Descr = "IRLS-gewicht binnen de steekproef.";
+		attribute<float64> r   (Obs) := y64 - msk * p, Descr = "Werkresidu y - p binnen de steekproef.";
 
 		parameter<float64> LL := sum(y64 * eta - msk * (max_elem(eta, 0d) + log(1d + exp(0d - abs(eta))))), Descr = "Loglikelihood op prev/beta, met de log1pexp-vorm zodat grote |eta| niet overloopt.";
 
@@ -104,7 +121,13 @@ Template Logit_T
 		attribute<float64> gflat     (Cells) := g_vec[Cells/j_rel];
 		attribute<float64> delta     (Var)   := sum(Sinv_flat * gflat, Cells/i_rel), Descr = "Newton-stap inv(X'WX) * X'(y-p), als matrixproduct in celvorm gesommeerd per rij.";
 
-		attribute<float64> beta (Var) := prev/beta + delta;
+		attribute<float64> beta_prev (Var)  := prev/beta;
+		container          Proef            := for_each_ne(Stap/name, 'Proef_T(' + string(Stap/factor) + 'd)'), Descr = "De loglikelihood op elke staplengte.";
+		attribute<float64> LL_proef  (Stap) := ='union_data(Stap, ' + asItemList('Proef/' + Stap/name + '/LL') + ')';
+		parameter<Stap>    Beste            := rlookup(max(LL_proef), LL_proef), Descr = "De staplengte met de hoogste loglikelihood.";
+		parameter<float64> StapFactor       := Stap/factor[Beste];
+
+		attribute<float64> beta (Var) := prev/beta + StapFactor * delta;
 		attribute<float64> se   (Var) := sqrt(Sinv[diag_rel]), Descr = "Standaardfouten: wortel van de diagonaal van inv(X'WX). Gebruik die van Eind, geevalueerd op de eindcoefficienten.";
 	}
 
@@ -123,16 +146,24 @@ Template Logit_T
 	container It13 := Iter_T(It12);
 	container It14 := Iter_T(It13);
 	container It15 := Iter_T(It14);
-	container Eind := Iter_T(It15), Descr = "Extra evaluatie op de eindcoefficienten: levert LL en de standaardfouten op It15/beta, plus de restestap (ConvergentieStap) als convergentiebewijs.";
+	container It16 := Iter_T(It15);
+	container It17 := Iter_T(It16);
+	container It18 := Iter_T(It17);
+	container It19 := Iter_T(It18);
+	container It20 := Iter_T(It19);
+	container Eind := Iter_T(It20), Descr = "Extra evaluatie op de eindcoefficienten: levert LL en de standaardfouten op It20/beta, plus de restestap (ConvergentieStap) als convergentiebewijs.";
 
 	parameter<float64> LL_eind          := Eind/LL, Descr = "Loglikelihood op de eindcoefficienten.";
 	parameter<float64> McFaddenR2       := 1d - LL_eind / LL0, Descr = "McFadden pseudo-R2 ten opzichte van het intercept-only model.";
-	parameter<float64> ConvergentieStap := max(abs(Eind/delta)), Descr = "Grootste absolute Newton-stap na It15. Orde machineprecisie betekent uitgeconvergeerd; is dit niet zo, verleng dan de keten of inspecteer de data op separatie.";
+	parameter<float64> ConvergentieStap := max(abs(Eind/delta)), Descr = "Grootste absolute Newton-stap na It20. Orde machineprecisie betekent uitgeconvergeerd; is dit niet zo, verleng dan de keten of inspecteer de data op separatie.";
 
-	attribute<String> RegelPerVar (Var) := Var/name + ';' + string(It15/beta) + ';' + string(Eind/se);
+	attribute<float64> beta_gecorrigeerd (Var) := It20/beta + (id(Var) == ConstIdx ? log(Data/Trekkingskans) : 0d)
+	, Descr = "De coefficienten met de constante gecorrigeerd voor de trekking uit de waarnemingen zonder positieve uitkomst: neemt de steekproef een deel s daarvan, dan ligt de geschatte constante log(1/s) te hoog, en daarom telt hier log(s) op bij de constante. De andere coefficienten veranderen niet.";
+
+	attribute<String> RegelPerVar (Var) := Var/name + ';' + string(It20/beta) + ';' + string(Eind/se) + ';' + string(beta_gecorrigeerd);
 
 	parameter<String> Rapport :=
-		  'variabele;coefficient;standaardfout\n'
+		  'variabele;coefficient;standaardfout;gecorrigeerd\n'
 		+ AsList(RegelPerVar, '\n') + '\n'
 		+ 'N;'                + string(N_)   + '\n'
 		+ 'positieven;'       + string(pos_) + '\n'
@@ -143,7 +174,8 @@ Template Logit_T
 		+ 'LL_verloop;'
 		+ string(It1/LL)  + ';' + string(It2/LL)  + ';' + string(It3/LL)  + ';' + string(It4/LL)  + ';' + string(It5/LL)  + ';'
 		+ string(It6/LL)  + ';' + string(It7/LL)  + ';' + string(It8/LL)  + ';' + string(It9/LL)  + ';' + string(It10/LL) + ';'
-		+ string(It11/LL) + ';' + string(It12/LL) + ';' + string(It13/LL) + ';' + string(It14/LL) + ';' + string(It15/LL) + '\n'
+		+ string(It11/LL) + ';' + string(It12/LL) + ';' + string(It13/LL) + ';' + string(It14/LL) + ';' + string(It15/LL) + ';'
+		+ string(It16/LL) + ';' + string(It17/LL) + ';' + string(It18/LL) + ';' + string(It19/LL) + ';' + string(It20/LL) + '\n'
 		, StorageName = "='%LocalDataProjDir%/Diagnose/logit_' + Naam + '.txt'"
 		, StorageType = "str"
 		, Descr = "Leesbaar schattingsrapport: coefficienten met standaardfouten, steekproefomvang, loglikelihood-verloop en pseudo-R2. Wordt als txt weggeschreven naar de Diagnose-map.";
