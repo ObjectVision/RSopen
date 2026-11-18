@@ -44,7 +44,7 @@ Alle tekstbestanden staan in de werkkopie op CRLF en in git op LF; `.gitattribut
 
 Een Descr zegt wat het item doet of betekent, in een zin; waar nodig waarom het er is, en bij een instelling wat de consequentie van de waarde is. Een verwijzing met hekje naar het issue waar de afweging staat blijft. De bron van een kental of een dataset staat in de property `Source`, met jaargang of leveringsdatum; een afleiding van een regel mag daar ook staan, een afleiding van een alinea staat in het issue.
 
-Eruit blijven: meetuitkomsten en de datum ervan, de geschiedenis van wat er eerder stond, de weg waarlangs een fout is gevonden, lessen over GeoDMS (skill geodms-valkuilen), instructies aan de volgende lezer (skills) en versienummers of exitcodes. Vorm: een aaneengesloten tekst zonder witregels, inline waar dat kan, vervolgregels ingesprongen op de itemregel plus drie tabs. Richtpunt: parameters en attributen onder de 300 tekens, containers en sjablonen onder de 800.
+Eruit blijven: meetuitkomsten en de datum ervan, de geschiedenis van wat er eerder stond, de weg waarlangs een fout is gevonden, lessen over GeoDMS (skill geodms-valkuilen), instructies aan de volgende lezer (skills) en versienummers of exitcodes. Een ijkwaarde die zegt welke waarde de praktijk van de laatste jaren nodig had, mag wel in de Descr van een parameter, met het issue erbij, ook als de Descr daardoor langer wordt dan het richtpunt. Vorm: een aaneengesloten tekst zonder witregels, inline waar dat kan, vervolgregels ingesprongen op de itemregel plus drie tabs. Richtpunt: parameters en attributen onder de 300 tekens, containers en sjablonen onder de 800.
 
 Geen persoonsnamen in Descr, Source of commentaar. Wie een bestand heeft aangeleverd, gemaild of een expert judgement heeft gegeven staat in de code als organisatie plus volgnummer: `PBL-3`, `Deltares-7`, `ObjectVision-1`, `WUR-5`. De koppeling van nummer naar persoon staat in een afgeschermde lijst buiten de repo (pbl-nl/model-RSopen#1); een nieuwe persoon krijgt het eerstvolgende nummer binnen de organisatie en komt eerst in die lijst. Wat wel blijft: auteurs van gepubliceerd werk met titel of DOI, de contactpersonen in de bestandsheaders en organisatienamen. Een gebruikersnaam in een pad telt ook als persoonsnaam.
 
@@ -55,6 +55,10 @@ SourceData leest de bronnen in en koppelt ze aan de klassen. Een afleiding hoort
 ## Meetharnassen
 
 Een harnas dat een vraag uit een issue beantwoordt is tijdelijk en gaat weg zodra het issue dicht is; de meting staat dan in het issue. Wat blijft staat in een thematische container van `cfg/main/Diagnose.dms` (Waterberging, Natuur, Groen, Werken en zo verder) onder een naam die zegt wat er gemeten wordt, draait mee in `GenerateAll` of `GenerateBasisjaar` of zegt in zijn Descr dat het op aanvraag is, en heeft als controlewaarde een norm in de kolommen `norm_onder` en `norm_boven` van `Checks` of `ChecksBasisjaar`. Geen containers of bestanden met een issuenummer als naam.
+
+## Runs
+
+Een sessie start geen run zonder overleg met de coördinatiesessie, of met de gebruiker als er geen coördinatiesessie draait: geen RunAllocatie, RunIndicatoren of ToetsOplevering, en geen GeoDmsRun groter dan een check van een paar items. Toets een wijziging eerst goedkoop (trap 1 of 2 van rs-draaien). Vind je hem goed, commit hem dan op je tak; de coördinatie bundelt de takken van een paar issues in één run, en wat daar niet plausibel uitkomt, wordt een nieuw issue.
 
 ## Takken
 
