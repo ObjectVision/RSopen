@@ -751,6 +751,35 @@ Template Zichtjaar_T
 				                                                        : 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, raw_ordinaal)', Descr = "Raw-nut met null voor nodata: statisch of per zichtjaar bijgewerkt. De allocatie-input, want binnen een subsector telt alleen de rangorde en de MNL-noemer verstoort die.";
 			}
 		}
+
+		container VerblijfsrecreatieGeschiktheid
+		: Descr = "Geschiktheid voor verblijfsrecreatie met de logies van het begin van dit zichtjaar (#649), zoals WerkenGeschiktheid. De logit is geschat op de logies aan het begin van de periode;
+							de statische kaart neemt die uit de basisjaarstand. Hier tellen de objecten die het model sinds het basisjaar heeft gebouwd mee, met de gemiddelde voetafdruk per object, zodat nieuwe
+							verblijfsrecreatie de cellen eromheen geschikter maakt. In het eerste zichtjaar is de kaart exact de statische kaart."
+		{
+			parameter<bool>    IsEersteZichtjaar := Impl/GroenNabijheid/IsEersteZichtjaar;
+			parameter<bool>    HeeftSector       := ModelParameters/SectorAllocRegio/Uq_Sectors/HasVerblijfsrecreatieSector;
+			container          Statisch          := /BaseData/Suitabilities/Verblijfsrecreatie/ProbabilityMap_Verblijfsrecreatie/Variant_Dist_1000m_Neighbourhood;
+
+			parameter<Float32> VoetafdrukPerObject := = HeeftSector
+			                                          ? 'value(sum(MakeDefined(/BaseData/StartState/StateBasisjaar/State/Verblijfsrecreatie/Footprint, 0[meter2])), Float32) / value(sum(MakeDefined(/BaseData/StartState/StateBasisjaar/State/Verblijfsrecreatie/Totaal, 0f)), Float32)'
+			                                          : '0f'
+			, Descr = "Gemiddelde voetafdruk van logies per object in de basisjaarstand, in m2: de voetafdruk die een gebouwd object aan de logiesterm toevoegt.";
+			attribute<Float32> ObjectenErbij (AdminDomain) := = HeeftSector
+			                                          ? 'max_elem(MakeDefined(recollect_by_cond(AdminDomain/IsCompactedDomain, StateVoorAllocatie0/Verblijfsrecreatie/Totaal), 0f) - MakeDefined(value(/BaseData/StartState/StateBasisjaar/State/Verblijfsrecreatie/Totaal, Float32), 0f), 0f)'
+			                                          : 'const(0f, AdminDomain)'
+			, Descr = "Objecten verblijfsrecreatie die er aan het begin van dit zichtjaar meer staan dan in het basisjaar. Alleen toevoegingen tellen, zoals bij werken.";
+			attribute<Float32> Logies_100m         (rdc_100m) := Statisch/Logies_100m + value(sum(ObjectenErbij, AdminDomain/rdc_100m_rel), Float32) * VoetafdrukPerObject;
+			attribute<Float32> Logies_Venster_100m (rdc_100m) := Logies_100m + potential(Logies_100m, /Geography/Distmatrices/Impl_100m/pot100m/PotRange/neighbourhood), Descr = "Zelfde venster als de statische kaart: de cel zelf en de acht cellen eromheen.";
+			attribute<Float32> Delta_raw           (rdc_100m) := (log(1f + Logies_100m) - log(1f + Statisch/Logies_100m)) * Statisch/Coef/ln_vr_bag
+			                                                   + (log(1f + Logies_Venster_100m) - log(1f + Statisch/Logies_Venster_100m)) * Statisch/Coef/ln_vr_venster_bag
+			, Descr = "Wat de logit erbij krijgt door de logies die sinds het basisjaar zijn gebouwd.";
+			attribute<Float32> raw           (AdminDomain) := Statisch/raw + Delta_raw[AdminDomain/rdc_100m_rel], Descr = "Statische raw plus de toename van de logiesterm. Nodata blijft rond -1e9 (kans 0, #599).";
+			attribute<Float32> exponentiated (AdminDomain) := AdminDomain/IsStudyArea ? exp(raw) / (1f + exp(raw)) : 0f;
+			attribute<Float32> Totaal (CompactedAdminDomain) := = IsEersteZichtjaar
+			                                                    ? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Statisch/exponentiated)'
+			                                                    : 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, exponentiated)', Descr = "De kans op verblijfsrecreatie: statisch in het eerste zichtjaar, daarna met de logies van het begin van het zichtjaar. De allocatie-input van verblijfsrecreatie (IterSubsector_T).";
+		}
 	}
 	
 	container StateNaAllocatie := = Impl/Ontkoppeld ? 'Impl/ReadStand_Compacted' : 'Impl/WriteStand_Compacted'
