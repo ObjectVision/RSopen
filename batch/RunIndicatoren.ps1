@@ -28,6 +28,8 @@
        .\RunIndicatoren.ps1 -Varianten BAU -Zichtjaren Y2040,Y2120
    Gekoppeld, zoals voor #824: alle zichtjaren en de tabellen levend, in een proces per variant:
        .\RunIndicatoren.ps1 -Varianten BAU -Ontkoppeld:$false -TabellenUitExport:$false
+   Alleen de items die een inhoudelijke vraag beantwoorden, zonder de rest van de export:
+       .\RunIndicatoren.ps1 -Varianten BAU -Items Export/generates/NieuweNatuur,Export/generates/ClaimRealisatie
    Daarna de oplevering samenstellen met batch\MaakOplevering.ps1.
 
  INSTELLINGEN
@@ -83,7 +85,19 @@
                             werden geschreven; een tabel op zo'n oudere export vraagt -TabellenUitExport:$false.
                             De bereikbaarheid van groen rekent per regio opnieuw, op teruggelezen invoer;
                             alleen de landelijke tabel leest de groenkaarten zelf terug.
-      -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
+      -Items                Alleen deze items rekenen in plaats van de hele export: een run is er voor een
+                            inhoudelijke vraag, dus reken alleen wat die vraag beantwoordt. De paden zijn
+                            relatief aan /Indicatoren/<casus>/Zichtjaren/, bijvoorbeeld
+                            Export/Tabellen/PerNederland/Tabel, Export/generates/NieuweNatuur of
+                            Export/generates/ClaimRealisatie. Het script slaat dan de legenda's, de reeks en
+                            de vaste stappen over en draait per variant en zichtjaar een GeoDmsRun op alle
+                            items samen (met -Gebundeld per zichtjaar een voor alle varianten). Daarin staan
+                            IndicatorenOntkoppeld en TabellenUitExport op FALSE, zodat er geen ketentifs en
+                            geen geschreven kaarten nodig zijn; een cumulatieve indicator rekent de voorgaande
+                            zichtjaren dan wel in hetzelfde proces mee. Bij Landschappen komt er een run per
+                            gebied. Gaat niet samen met -AlleenExportZichtjaar, -AlleenLandschapstabellen of
+                            een expliciet gegeven -Ontkoppeld of -TabellenUitExport.
+      -GeenToets           Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
       -WaakhondMinuten      Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als vastgelopen
                             stopt, standaard 15; 0 zet de waakhond uit. Zie Waakhond.ps1.
       -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
@@ -147,6 +161,7 @@ param(
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @(),
+    [string[]] $Items      = @(),
     [ValidateSet('NL','Provincie','COROP','Gemeente','NVM','Landschappen',
                  'Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand')]
     [string]   $IndicatorRegio = 'NL',
@@ -225,6 +240,20 @@ $Set = if ($Profiel -eq 'RuimteVoorWoningbouw') { 'RuimteVoorWoningbouw' } else 
 if ($Set -eq 'RuimteVoorWoningbouw') {
     if (-not $PSBoundParameters.ContainsKey('Ontkoppeld'))        { $Ontkoppeld = $false }
     if (-not $PSBoundParameters.ContainsKey('TabellenUitExport')) { $TabellenUitExport = $false }
+}
+# Met -Items rekent het script alleen de gevraagde items, gekoppeld en met de tabellen levend: zo zijn er
+# geen ketentifs of geschreven kaarten van een eerdere export nodig. De schakelaars die de reeks of de
+# vaste stappen sturen, hebben dan geen betekenis en worden geweigerd als ze expliciet zijn gegeven.
+if ($Items.Count -gt 0) {
+    foreach ($p in @('AlleenExportZichtjaar', 'AlleenLandschapstabellen', 'Ontkoppeld', 'TabellenUitExport')) {
+        if ($PSBoundParameters.ContainsKey($p)) { throw "-$p gaat niet samen met -Items: met -Items rekent het script alleen de gevraagde items, gekoppeld en met de tabellen levend" }
+    }
+    $Ontkoppeld        = $false
+    $TabellenUitExport = $false
+    $Items = @($Items | ForEach-Object { $_.Trim().TrimStart('/') } | Where-Object { $_ })
+    if ($Items.Count -eq 0) { throw "-Items bevat geen itempaden" }
+    $absoluut = @($Items | Where-Object { $_ -match '^Indicatoren/' })
+    if ($absoluut.Count -gt 0) { throw "Geef de items relatief aan /Indicatoren/<casus>/Zichtjaren/, dus zonder Indicatoren/<casus>/Zichtjaren ervoor: $($absoluut -join ', ')" }
 }
 $env:IndicatorenOntkoppeld = if ($Ontkoppeld) { 'TRUE' } else { 'FALSE' }
 
@@ -376,6 +405,7 @@ Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"
 Write-Regel "regio     : $IndicatorRegio$(if ($IndicatorRegio -eq 'Landschappen') { ', de vier landschapsgebieden van #760 na elkaar' })"
 Write-Regel "ketens    : $(if ($Ontkoppeld) { 'ontkoppeld, via tifs per zichtjaar (#824)' } else { 'in een proces, elke export rekent alle voorgaande zichtjaren mee' })"
 Write-Regel "tabellen  : $(if ($TabellenUitExport) { 'uit de geschreven kaarten, in een eigen proces na de kaarten (#824)' } else { 'levend, in hetzelfde proces als de kaarten' })"
+if ($Items.Count -gt 0) { Write-Regel "items     : $($Items -join ', ') (onder Zichtjaren/; geen legenda's, reeks of vaste stappen)" }
 
 foreach ($y in $Zichtjaren) { if ($alleJaren.IndexOf($y) -lt 0) { throw "Zichtjaar $y staat niet in de configuratie ($($alleJaren -join ', '))" } }
 if (-not $GeenToets) { Test-Invoer }
@@ -431,8 +461,11 @@ function Invoke-Export([string]$stap, [string[]]$items) {
 
 # De legenda's zijn casusonafhankelijk en kosten een seconde; zonder deze bestanden mist de
 # oplevering de klassenamen bij elke klassekaart (MaakOplevering.ps1 meldt dat als waarschuwing).
-$eerste = "/Indicatoren/${Scenario}_$($Varianten[0])/Zichtjaren/Export/Legendas/Schrijf"
-Invoke-Export "legendas" @($eerste)
+# Met -Items niet: dan rekent het script alleen de gevraagde items.
+if ($Items.Count -eq 0) {
+    $eerste = "/Indicatoren/${Scenario}_$($Varianten[0])/Zichtjaren/Export/Legendas/Schrijf"
+    Invoke-Export "legendas" @($eerste)
+}
 
 # De regio's om te draaien: Landschappen is de vier aangeleverde gebieden van #760 na elkaar, een
 # proces per gebied, want IndicatorRegio geldt per proces voor alle indicatoren tegelijk. De eerste
@@ -488,6 +521,24 @@ function Assert-Voorganger([string]$v, [string]$y) {
 for ($r = 0; $r -lt $regios.Count; $r++) {
     $regio = $regios[$r]
     $env:IndicatorRegio = $regio
+    # Met -Items alleen die items, per variant en zichtjaar een proces (gebundeld per zichtjaar een voor alle
+    # varianten), in plaats van de stappen hieronder.
+    if ($Items.Count -gt 0) {
+        $env:TabellenUitExport = 'FALSE'
+        $voorRegio = if ($regios.Count -gt 1) { "$regio-" } else { '' }
+        foreach ($y in $Zichtjaren) {
+            $env:ExportZichtjaar = $y
+            if ($Gebundeld) {
+                $paden = @(foreach ($v in $Varianten) { foreach ($it in $Items) { "/Indicatoren/${Scenario}_$v/Zichtjaren/$it" } })
+                Invoke-Export "items-${voorRegio}gebundeld-$y" $paden
+            } else {
+                foreach ($v in $Varianten) {
+                    Invoke-Export "items-$voorRegio$v-$y" @($Items | ForEach-Object { "/Indicatoren/${Scenario}_$v/Zichtjaren/$_" })
+                }
+            }
+        }
+        continue
+    }
     $alleenTabel = $AlleenLandschapstabellen -or ($r -gt 0)
     # De stappen voor deze regio. Zonder -TabellenUitExport is dat een aanroep: de volledige export, of
     # alleen de regionale tabel. Met de schakelaar gaat de volledige export in twee processen (#824): eerst
