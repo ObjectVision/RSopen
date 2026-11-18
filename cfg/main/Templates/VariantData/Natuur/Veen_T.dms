@@ -32,15 +32,103 @@ Template Veen_T
 	attribute<Src/Bron_ZonderPeilvak/gebied> ZonderPeilvak_rel (AdminDomain) := poly2grid(Src/Bron_ZonderPeilvak/gebied/geometry, AdminDomain);
 	attribute<bool>                      IsVeengebied      (AdminDomain) := IsDefined(PerPeilvak_rel) || IsDefined(ZonderPeilvak_rel), Descr = "Cel valt binnen het door Deltares aangeleverde veengebied. Bouwsteen 0, 1 en 10 zijn niet aangeleverd en vallen hier dus grotendeels buiten.";
 
-	container Fr_perBouwsteen := 
+	container Fr_perBouwsteen :=
+		for_each_nedv(
+			NbSVeen/NbSBouwsteen/MetBrondata/name
+			, HeeftOmzetting
+				? 'Omzet/Fr_perPeilvak/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[Peilvak/Per_AdminDomain] * NbSVeen/Controle/Sluitend * Omzet/Sluitend'
+				: 'Fr_perBouwsteen_Levering/'+NbSVeen/NbSBouwsteen/MetBrondata/name
+			, AdminDomain
+			, float32
+		), Descr = "De fractie per cel waarmee deze variant rekent: in een variant met een omzettabel de omgezette fractie van zijn peilvak (Omzet/Fr_perPeilvak, #901), in de andere de levering zelf.
+					Omzet/Sluitend trekt de toetsen op de omzetting in de rekengraaf, zoals NbSVeen/Controle/Sluitend dat voor de bouwstenentabel doet.";
+
+	container Fr_perBouwsteen_Levering :=
 		for_each_nedv(
 			NbSVeen/NbSBouwsteen/MetBrondata/name
 			, 'MakeDefined(Src/Bron_ZonderPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[ZonderPeilvak_rel], Src/Bron_PerPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[PerPeilvak_rel])[float32] * NbSVeen/Controle/Sluitend'
 			, AdminDomain
 			, float32
-		), Descr = "Fractie van het celoppervlak per NbS-bouwsteen. Buiten het veengebied null, binnen het veengebied nul waar de bouwsteen niet voorkomt. De laag zonder peilvak gaat voor waar de twee elkaar overlappen, en Peilvak/Per_AdminDomain volgt diezelfde voorrang.
+		), Descr = "Fractie van het celoppervlak per NbS-bouwsteen zoals de levering hem geeft. Buiten het veengebied null, binnen het veengebied nul waar de bouwsteen niet voorkomt. De laag zonder peilvak gaat
+					voor waar de twee elkaar overlappen, en Peilvak/Per_AdminDomain volgt diezelfde voorrang. De factor NbSVeen/Controle/Sluitend is een en verandert niets aan de uitkomst; hij staat er om de
+					vier sluittoetsen op de overgetypte bouwstenentabel in de rekengraaf te trekken (#772), want zonder hem hangen ze ernaast en vuren ze in een productierun nooit.";
 
-					De factor NbSVeen/Controle/Sluitend is een en verandert dus niets aan de uitkomst, ook niet aan de null buiten het veengebied. Hij staat er om de vier sluittoetsen op de overgetypte bouwstenentabel in de rekengraaf te trekken (#772); zonder hem hangen ze ernaast en vuren ze in een productierun nooit. Lees de toelichting bij Controle voordat je hem weghaalt.";
+	// ---- de omzetting van de levering, #901 ----
+
+	parameter<String> Omzetting_name := /VariantParameters/VariantK/Veen_Omzetting[Variant_rel]
+	, Descr = "Welke omzettabel uit VariantParameters/VeenOmzetting deze variant over de levering legt, of geen (#901).";
+
+	parameter<Bool> HeeftOmzetting := Omzetting_name != 'geen';
+
+	container Omzetting := = '/VariantParameters/VeenOmzetting/' + (HeeftOmzetting ? Omzetting_name : 'Geen')
+	, Descr = "De gekozen omzettabel. Zonder omzetting de tabel Geen, die geen deelgebied noemt, zodat de items hieronder voor elke variant oplossen.";
+
+	container Omzet
+	: Descr = "De omzetting per peilvak (#901): binnen het deelgebied van de tabel wordt de aangeleverde fractie van elke bouwsteen volgens de tabel over de bouwstenen verdeeld, en wat naar geen bouwsteen gaat
+				valt uit de opgave. Op het niveau van het peilvak en niet van de cel, want de levering geeft een fractie per peilvak; Fr_perBouwsteen zet het resultaat op de cellen. Een omzetting
+				verschuift opgave binnen een peilvak en kan een bouwsteen alleen aanwijzen waar de levering er een heeft die erin omgezet wordt."
+	{
+		unit<uint8> Doel := /VariantParameters/VeenOmzetting/Doel;
+
+		attribute<bool> InOmzetgebied (Peilvak) := !Peilvak/IsZonderPeilvak && Peilvak/Deelgebied_Naam == Omzetting/Deelgebied
+		, Descr = "Valt het peilvak in het deelgebied van de tabel? Alleen de peilvakkenlaag, want de omzettabel is op die laag opgesteld; de laag zonder peilvak ligt buiten het Friese veenlandschap.";
+
+		container Fr_Levering :=
+			for_each_nedv(
+				NbSVeen/NbSBouwsteen/MetBrondata/name
+				, 'union_data(Peilvak, Src/Bron_ZonderPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+', Src/Bron_PerPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+')[float32]'
+				, Peilvak
+				, float32
+			), Descr = "De aangeleverde fractie per bouwsteen per gebied, in de volgorde van Peilvak: eerst de laag zonder peilvak, dan die met.";
+
+		parameter<string> Som_Sjabloon := AsList('Fr_Levering/' + NbSVeen/NbSBouwsteen/MetBrondata/name + ' * Omzetting/Fractie/' + NbSVeen/NbSBouwsteen/MetBrondata/name + '[value(@DOEL@, Doel)]', ' + ')
+		, Descr = "De som over de bouwstenen van de levering van hun fractie maal het deel dat naar een doel gaat, met @DOEL@ op de plaats van de kolom in de omzettabel.";
+
+		container Fr_perPeilvak :=
+			for_each_nedv(
+				NbSVeen/NbSBouwsteen/MetBrondata/name
+				, 'InOmzetgebied ? (' + replace(Som_Sjabloon, '@DOEL@', string(/VariantParameters/VeenOmzetting/Doel_rel)) + ') : Fr_Levering/' + NbSVeen/NbSBouwsteen/MetBrondata/name
+				, Peilvak
+				, float32
+			), Descr = "De fractie per bouwsteen per gebied na de omzetting; buiten het deelgebied de levering zelf. Bij de identieke omzetting is de som de fractie zelf maal een plus nullen, dus exact de levering.";
+
+		attribute<float32> Fr_NaarGeen (Peilvak) := ='InOmzetgebied ? (' + replace(Som_Sjabloon, '@DOEL@', '0') + ') : 0f'
+		, Descr = "Het deel van het peilvak dat de omzetting uit de bouwstenen haalt. Valt in trap 1 in het type Rest.";
+
+		attribute<float32> Behoud (Peilvak) := ='add(' + AsItemList('Fr_perPeilvak/' + NbSVeen/NbSBouwsteen/MetBrondata/name) + ') + Fr_NaarGeen - add(' + AsItemList('Fr_Levering/' + NbSVeen/NbSBouwsteen/MetBrondata/name) + ')'
+		, IntegrityCheck = "all(abs(this) < 0.0001f)"
+		, Descr = "De omgezette fracties plus wat naar geen bouwsteen gaat, min de aangeleverde fracties. Hoort per peilvak nul te zijn: een omzetting verdeelt het aandeel van de bouwstenen, ze maakt geen areaal bij.";
+
+		parameter<float32> NaarBestaandWater_VanAnderen := ='add(' + AsItemList('Omzetting/Fractie/' + NbSVeen/NbSBouwsteen/MetBrondata/name + '[value(' + string(/VariantParameters/VeenOmzetting/Doel_rel[rlookup(1u, uint32(BouwsteenType/IsBestaandWater))]) + ', Doel)] * ' + (BouwsteenType/IsBestaandWater ? '0f' : '1f')) + ')'
+		, IntegrityCheck = "this == 0f"
+		, Descr = "Hoeveel de tabel van andere bouwstenen naar 9b omzet, opgeteld over de rijen. Moet nul zijn: 9b is bestaand open water en landt alleen op water dat er al ligt, dus omzetten naar 9b maakt geen water bij maar een opgave die niet landt.";
+
+		parameter<float32> Bebouwd_Vast := ='add(' + AsItemList('abs(Omzetting/Fractie/' + NbSVeen/NbSBouwsteen/MetBrondata/name + '[value(' + string(/VariantParameters/VeenOmzetting/Doel_rel[rlookup('bebouwing', NbSVeen/NbSBouwsteen/MetBrondata/deelstrategie)]) + ', Doel)] - ' + (NbSVeen/NbSBouwsteen/MetBrondata/deelstrategie == 'bebouwing' ? '1f' : '0f') + ')') + ')'
+		, IntegrityCheck = "this < 0.0001f"
+		, Descr = "Hoeveel de tabel afwijkt van een vaste 10a: 10a blijft 10a en niets wordt 10a. Bestaand bebouwd gebied hoort niet bij de nuance van de veenmaatregelen.";
+
+		parameter<uint32> Aantal_InOmzetgebied := sum(uint32(InOmzetgebied))
+		, IntegrityCheck = "!HeeftOmzetting || this > 0"
+		, Descr = "Het aantal peilvakken in het deelgebied van de tabel. Een variant met een omzetting moet er een vinden; zo valt een verschrijving in de deelgebiednaam op in plaats van stil niets om te zetten.";
+
+		parameter<float32> Sluitend := 1f
+		, ExplicitSuppliers = "Behoud;NaarBestaandWater_VanAnderen;Bebouwd_Vast;Aantal_InOmzetgebied"
+		, Descr = "Een factor een in Fr_perBouwsteen, zodat de toetsen hierboven in de rekengraaf zitten; zelfde opzet als NbSVeen/Controle/Sluitend.";
+
+		attribute<bool> IsOmgezet (Peilvak) := ='InOmzetgebied && (' + AsList('Fr_perPeilvak/' + NbSVeen/NbSBouwsteen/MetBrondata/name + ' != Fr_Levering/' + NbSVeen/NbSBouwsteen/MetBrondata/name, ' || ') + ')'
+		, Descr = "Verandert de omzetting iets aan dit peilvak? Waar dat zo is volgt de bouwwijze de gealloceerde bouwsteen en niet de bebouwingstypekaart, zie Bouwwijze_Aangepast.";
+
+		attribute<Ha> Opp_Opgave (Peilvak) := sum(Claim_Weging, Peilvak_rel_Cel) * AdminDomain/NrHaPerCell
+		, Descr = "Het oppervlak waarover de fracties van een peilvak als opgave gelden: het gerasterde peilvak, met de cellen weggelaten die Claim_Weging op nul zet. Fractie maal dit oppervlak is Claim_Bouwsteen.";
+
+		attribute<Ha> Claim_Levering_Omzetgebied (BouwsteenType) := ='union_data(BouwsteenType, ' + AsItemList('sum(Fr_Levering/' + NbSVeen/NbSBouwsteen/MetBrondata/name + ' * Opp_Opgave * float32(InOmzetgebied))') + ')'
+		, Descr = "De opgave per bouwsteen in het deelgebied zoals de levering hem vraagt, dus zonder omzetting: de opgave die NbSGenuanceerder daar heeft.";
+
+		attribute<Ha> Claim_Omgezet_Omzetgebied (BouwsteenType) := ='union_data(BouwsteenType, ' + AsItemList('sum(Fr_perPeilvak/' + NbSVeen/NbSBouwsteen/MetBrondata/name + ' * Opp_Opgave * float32(InOmzetgebied))') + ')'
+		, Descr = "Idem na de omzetting, de opgave van deze variant in het deelgebied. Het verschil met Claim_Levering_Omzetgebied telt over alle bouwstenen op tot min Opp_NaarGeen.";
+
+		parameter<Ha> Opp_NaarGeen := sum(Fr_NaarGeen * Opp_Opgave), Descr = "De opgave die de omzetting uit de bouwstenen haalt; die grond houdt zijn huidige grondgebruik.";
+	}
 
 	// ---- de claimregio: het peilvak ----
 
@@ -177,6 +265,9 @@ Template Veen_T
 		attribute<bool> IsBestaandWater (.) := code == '9b'
 		, IntegrityCheck = "sum(uint32(this)) == 1"
 		, Descr = "Bouwsteen 9b, bestaand open water met extra buffercapaciteit. Zelfde telling als hierboven.";
+
+		attribute<bool> IsAangepast    (.) := Bebouwingstype == 'aangepast', Descr = "Vraagt de bouwsteen dat nieuwbouw bodemdalingbestendig is? Kolom J van de bouwstenentabel; bouwsteen 1 tot en met 4b.";
+		attribute<bool> IsWonenOpWater (.) := Bebouwingstype == 'wonen op water', Descr = "Vraagt de bouwsteen dat nieuwbouw drijvend is? Kolom J van de bouwstenentabel; bouwsteen 9a en 9b.";
 
 		attribute<string> ZeefPad (.) :=
 			  IsBestaandWater ? 'Zeef_Bouwsteen && Basisjaar/IsWater'
@@ -360,6 +451,42 @@ Template Veen_T
 
 	attribute<bool> MoetSlopen_uitBouwsteen (AdminDomain) := MakeDefined(BouwsteenType/MoetSlopen[Bouwsteen_rel], FALSE)
 	, Descr = "Alleen de sloopkant, voor de diagnose.";
+
+	// ---- de bouwwijze-as, #901 ----
+
+	attribute<bool> IsOmgezet_Cel (AdminDomain) := MakeDefined(Omzet/IsOmgezet[Peilvak/Per_AdminDomain], FALSE)
+	, Descr = "Ligt de cel in een peilvak waar de omzettabel iets verandert?";
+
+	container Claim_Bouwsteen_Levering :=
+		for_each_nedv(
+			BouwsteenType/name
+			, 'sum(Fr_perBouwsteen_Levering/' + BouwsteenType/name + '[VeenCel/AdminDomain_rel] * Claim_Weging, Peilvak_rel_Cel) * AdminDomain/NrHaPerCell'
+			, Peilvak
+			, Ha
+		), Descr = "De opgave per peilvak zoals de levering hem vraagt, zonder omzetting; dezelfde som als Claim_Bouwsteen. Alleen gelezen door Alloc_Bouwsteen_Levering.";
+
+	container Alloc_Bouwsteen_Levering := /Templates/VariantData/Natuur/NatuurAlloc_T('Veen bouwstenen zonder omzetting ' + Variant_name, BouwsteenType, Peilvak, Claim_Bouwsteen_Levering, Geschiktheid_Bouwsteen, const(FALSE, AdminDomain))
+	, Descr = "Trap 1 op de levering zonder omzetting: de bouwsteen die de cel zonder omzettabel zou krijgen, dezelfde als in de variant die de levering zelf leest, want de opgave en de geschiktheid zijn
+				dezelfde. Alleen gerekend in een variant met een omzettabel, voor de bouwwijze hieronder.";
+
+	attribute<BouwsteenType> Bouwsteen_Levering_rel (AdminDomain) := Alloc_Bouwsteen_Levering/Type/Src_rel[Alloc_Bouwsteen_Levering/Type_rel];
+
+	attribute<bool> IsAndereBebouwingscategorie (AdminDomain) := MakeDefined(BouwsteenType/Bebouwingstype[Bouwsteen_rel], 'geen') != MakeDefined(BouwsteenType/Bebouwingstype[Bouwsteen_Levering_rel], 'geen')
+	, Descr = "Geeft de omzetting deze cel een bouwsteen met een andere kolom J van de bouwstenentabel dan hij zonder omzetting zou hebben, of haalt de omzetting de bouwsteen weg? Een wissel tussen bouwstenen met
+				dezelfde categorie, zoals 4a en 4b, telt niet, want daar zegt de kaart nog steeds wat de levering bedoelt.";
+
+	attribute<bool> Bouwwijze_Aangepast (AdminDomain) := = HeeftOmzetting
+		? 'IsAndereBebouwingscategorie ? BouwsteenType/IsAangepast[Bouwsteen_rel] : /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/AangepastBouwen'
+		: '/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/AangepastBouwen'
+	, Descr = "Moet nieuwbouw hier bodemdalingbestendig zijn? De categorie aangepast bouwen van de bebouwingstypekaart veen, die per peilvak kolom J van de bouwstenentabel op de levering zonder
+				omzetting projecteert; op een cel waar de omzettabel de categorie van de bouwsteen verandert de nieuwe
+				bouwsteen, want de kaart volgt de omzetting niet (#901). Alleen die cellen, zodat het verschil met de variant zonder omzetting uit de omzetting komt en niet uit een andere bron voor de
+				bouwwijze. Gelezen door VariantData_T/BouwwijzeEis/Bodemdalingbestendig.";
+
+	attribute<bool> Bouwwijze_Drijvend (AdminDomain) := = HeeftOmzetting
+		? 'IsAndereBebouwingscategorie ? BouwsteenType/IsWonenOpWater[Bouwsteen_rel] : /BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/WonenOpWater'
+		: '/BaseData/Omgeving/Bebouwingstype_Veen_NbSGenuanceerd/bebouwingstype_nbsnuanc/WonenOpWater'
+	, Descr = "Moet nieuwbouw hier drijvend zijn? Idem voor de categorie wonen op water. Gelezen door VariantData_T/BouwwijzeEis/Drijvend.";
 
 
 	// ---- trap 2: de samenstelling van de bouwsteen binnen zijn eigen cellen, #684 ----
@@ -679,7 +806,7 @@ Template Veen_T
 			attribute<Ha> Vector := ='union_data(., '+AsItemList('sum(Src/Bron_PerPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[float32] * Controle/opp_pv) + sum(Src/Bron_ZonderPeilvak/gebied/'+NbSVeen/NbSBouwsteen/MetBrondata/name+'[float32] * Controle/opp_zp)')+')'
 			, Descr = "Areaal per bouwsteen rechtstreeks uit de polygonen. Telt de genestelde stukken dubbel, dus dit ligt iets boven de rasterwaarde.";
 
-			attribute<Ha> Raster := ='union_data(., '+AsItemList('sum(Fr_perBouwsteen/'+NbSVeen/NbSBouwsteen/MetBrondata/name+') * AdminDomain/NrHaPerCell')+')'
+			attribute<Ha> Raster := ='union_data(., '+AsItemList('sum(Fr_perBouwsteen_Levering/'+NbSVeen/NbSBouwsteen/MetBrondata/name+') * AdminDomain/NrHaPerCell')+')'
 			, Descr = "Areaal per bouwsteen zoals het model het gerasterd heeft.";
 
 			attribute<float32> Ratio := Raster / Vector

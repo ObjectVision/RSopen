@@ -46,7 +46,7 @@ param(
     # Vervangt de uit git afgeleide herkomstregels door eigen tekst. Nodig zodra de varianten niet
     # allemaal op dezelfde commit zijn doorgerekend.
     [string[]] $Herkomst = @(),
-    # Welke varianten in deze levering horen. Leeg is alle vier uit de tabel hieronder. Wat verwacht
+    # Welke varianten in deze levering horen. Leeg is alle vier uit de tabel hieronder, zonder NbS2. Wat verwacht
     # wordt maar niet in de doelmap staat, komt met naam in de LEESMIJ en op het scherm.
     [string[]] $Verwacht = @(),
     # Aantekeningen die alleen voor deze levering gelden, bijvoorbeeld op welke servers is gerekend.
@@ -70,8 +70,10 @@ $varianten = [ordered]@{
     'WLO_hoog_NbSGenuanceerd' = 'NbSGenuanceerd'
     'WLO_hoog_NbSGenuanceerder' = 'NbSGenuanceerder'
     'WLO_hoog_NbSMax'         = 'NbSMax'
+    'WLO_hoog_NbS2'           = 'NbS2'
 }
-if (-not $Verwacht) { $Verwacht = @($varianten.Values) }
+# NbS2 (#901) is een variant voor een losse vraag en hoort niet bij de vaste levering; noem hem in -Verwacht als hij erbij hoort.
+if (-not $Verwacht) { $Verwacht = @($varianten.Values | Where-Object { $_ -ne 'NbS2' }) }
 
 # Wat elk geleverd bestand is, in een zin, met de eenheid erbij. De sleutel is de bestandsnaam
 # zonder zichtjaar en zonder extensie; Schoon() haalt de modelstaart er al af. Het derde veld is de

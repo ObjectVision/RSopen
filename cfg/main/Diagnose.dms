@@ -20,6 +20,8 @@ container Diagnose
 	parameter<String> Jaar    := =replace_value(expand(., '%env:DiagJaar%'),  'env:DiagJaar',  quote('Y'+string(ModelParameters/Model_FirstZichtjaar)))
 	, Descr = "Het zichtjaar waarover de controlewaarden gaan. Zonder de omgevingsvariabele DiagJaar valt hij terug op het eerste zichtjaar van de allocatie. Die default was hard op Y2030 gezet en klopte niet meer sinds Model_FirstZichtjaar met #658 instelbaar werd.";
 	parameter<String> Variant := replace(Casus, 'WLO_hoog_', '');
+	parameter<String> Variant_Veen := MakeDefined(/VariantParameters/VariantK/HeeftLandschapslevering[rlookup(Variant, /VariantParameters/VariantK/name)], FALSE) ? Variant : 'NbSGenuanceerd'
+	, Descr = "Van welke variant de veenuitdraaien de bouwsteenallocatie lezen: de variant van de casus als die een veenlevering heeft, anders NbSGenuanceerd. Zo meldt een casus met een omzettabel (#901) zijn eigen allocatie en niet die van de levering zonder omzetting.";
 
 	parameter<String> Pad_Z := '/Indicatoren/'+Casus+'/Zichtjaren/'+Jaar+'/';
 	parameter<String> Pad_V := '/VariantData/'+Variant+'/';
@@ -199,7 +201,7 @@ container Diagnose
 	{
 		unit<UInt32> R := /SourceData/RegioIndelingen/Waterbergingsregio;
 
-		container Veen := /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen;
+		container Veen := ='/VariantData/' + /Diagnose/Variant_Veen + '/NatuurLevering/Landschap/Veen';
 
 		attribute<Bool> IsWaterBouwsteen (Veen/BouwsteenType) := Veen/BouwsteenType/deelstrategie == 'waterbuffering'
 		, IntegrityCheck = "sum(uint32(this)) == 2"
@@ -830,7 +832,7 @@ container Diagnose
 
 					Sinds die opgave in #761 op de kandidaatruimte is gebaseerd en de pandentoets in #768 is vervallen, past zij per constructie: de twaalf geleverde fracties tellen per peilgebied op tot ongeveer 0,907 en het oppervlak waarover die fracties gelden is dezelfde afbakening als de zeef. Wat er nog aan tekort overblijft is afrondingsgruis op hele cellen. Blijkt tekort_ha toch op te lopen, dan is er iets veranderd aan de zeef of aan dat oppervlak en niet aan de levering."
 		{
-			container Veen := /VariantData/NbSGenuanceerd/NatuurLevering/Landschap/Veen;
+			container Veen := ='/VariantData/' + /Diagnose/Variant_Veen + '/NatuurLevering/Landschap/Veen';
 			container Bsn  := Veen/Alloc_Bouwsteen;
 
 			unit<uint8> BS := Veen/BouwsteenType;
@@ -941,6 +943,24 @@ container Diagnose
 			parameter<String> perdeelgebied := =IsVanToepassing ? 'Regel_PerDeelgebied' : 'NietVanToepassing'
 			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_perdeelgebied.txt'", StorageType = "str"
 			, Descr = "Hetzelfde per deelgebied. Het deelgebied was tot 3 september 2026 de claimregio van een overlooptrap; die is er op verzoek van Deltares uit, dus deze tabel is nu een optelling van de peilgebieden en geen eigen allocatieniveau meer. Vrije_ruimte_ha zegt hoeveel kandidaatruimte er in het deelgebied onbenut blijft, en dat is het niet aangeleverde deel van de levering.";
+
+			attribute<float32> Gerealiseerd_Omzetgebied (BS) := sum(float32(Veen/Omzet/InOmzetgebied[Veen/Peilvak/Per_AdminDomain]), Veen/Bouwsteen_rel) * HaPerCel
+			, Descr = "Wat de allocatie per bouwsteen in het deelgebied van de omzettabel haalt.";
+
+			parameter<String> Regel_Omzetting := 'bouwsteen;opgave_levering_ha;opgave_omgezet_ha;gerealiseerd_ha|' + AsList(
+				  BS/code + ';'
+				+ string(float32(Veen/Omzet/Claim_Levering_Omzetgebied)) + ';'
+				+ string(float32(Veen/Omzet/Claim_Omgezet_Omzetgebied)) + ';'
+				+ string(Gerealiseerd_Omzetgebied), '|')
+				+ '|geen bouwsteen;;' + string(float32(Veen/Omzet/Opp_NaarGeen)) + ';'
+				+ '|peilvakken_in_deelgebied;' + string(Veen/Omzet/Aantal_InOmzetgebied) + ';peilvakken_omgezet;' + string(sum(uint32(Veen/Omzet/IsOmgezet)));
+
+			parameter<String> GeenOmzetting := 'niet_van_toepassing;deze casus legt geen omzettabel over de veenlevering';
+
+			parameter<String> omzetting := =IsVanToepassing && Veen/HeeftOmzetting ? 'Regel_Omzetting' : 'GeenOmzetting'
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_veenbouwstenen_omzetting.txt'", StorageType = "str"
+			, Descr = "Op aanvraag. Per bouwsteen in het deelgebied van de omzettabel (#901) de opgave zonder omzetting, de opgave met omzetting en wat de allocatie haalt, plus de opgave die naar geen
+						bouwsteen gaat. Opgave_levering_ha is de opgave die NbSGenuanceerder daar heeft; gerealiseerd_ha is die van deze casus.";
 		}
 	}
 	container Veenreserve
