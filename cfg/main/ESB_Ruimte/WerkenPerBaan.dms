@@ -1,4 +1,133 @@
 container WerkenPerBaan
-: Descr = "De pandvoetafdruk per baan per sector, landelijk per jaar: de voetafdruk van de BAG-functies die bij een sector horen, gedeeld door de LISA-banen van die sector."
+: Descr = "De pandvoetafdruk per baan per sector, landelijk per jaar: de voetafdruk van de BAG-functies die bij een sector horen (Classifications/Vastgoed/vbo_gebruiksdoel_plus/Jobs6_rel), gedeeld door de LISA-banen van die sector, met de ontleding van de groei van de voetafdruk
+			in meer banen en meer m² per baan. De voetafdruk van een pand gaat naar de sectoren naar het aandeel van elk gebruiksdoel in het vbo-oppervlak, zoals in SourceData/Vastgoed/BAG/PerJaar_T/pand/Oppervlaktes/Footprint_perGebruiksdoel."
 {
+	unit<UInt8>  Jobs6        := /Classifications/Actor/Jobs6;
+	unit<UInt8>  TXLJobs7     := /Classifications/Actor/TXLJobs7;
+	unit<UInt8>  Gebruiksdoel := /Classifications/Vastgoed/vbo_gebruiksdoel_plus;
+	unit<UInt32> BAG_jaren    := /SourceData/Vastgoed/BAG/BAG_jaren;
+	unit<UInt32> SBI2         := range(uint32, 0, 100), Descr = "De tweecijferige afdelingen van de SBI 2008, als getal.";
+	unit<UInt32> SBI2xTXL     := combine(SBI2, TXLJobs7);
+
+	parameter<UInt32> EersteLISAJaar   := 1996, Descr = "Het eerste jaar in de LISA-levering van ModelParameters/LISA_FileYear; de levering heeft een bestand per jaar.";
+	parameter<UInt32> Ontleding_Begin  := 2012, Descr = "Het beginjaar van de ontleding van de groei: het eerste jaar waarin zowel de BAG als LISA er is.";
+	parameter<UInt32> Ontleding_Eind   := /ModelParameters/LISA_FileYear, Descr = "Het eindjaar van de ontleding van de groei: het laatste LISA-jaar.";
+
+	unit<UInt32> LISA_jaren := range(uint32, EersteLISAJaar, /ModelParameters/LISA_FileYear + 1)
+	, Descr = "De jaren waarvoor er een LISA-bestand is."
+	{
+		attribute<UInt32> Jaar := uint32(id(.));
+		attribute<String> name := 'Y' + string(Jaar);
+	}
+
+	container Voetafdruk := for_each_ne(BAG_jaren/name, 'Voetafdruk_T('+quote(BAG_jaren/name)+')'), Descr = "De landelijke voetafdruk per sector op 1 januari van elk BAG-jaar.";
+	container Banen      := for_each_ne(LISA_jaren/name, 'Banen_T('+quote(string(LISA_jaren/Jaar))+')'), Descr = "De landelijke LISA-banen per sector in elk LISA-jaar.";
+
+	Template Voetafdruk_T
+	: Descr = "De landelijke pandvoetafdruk per gebruiksdoel en per sector op 1 januari van een BAG-jaar, in m². Panden zonder verblijfsobject tellen niet mee, behalve logistieke panden, die hun hele voetafdruk aan Logistiek geven."
+	{
+		parameter<String> JaarNaam;
+		///
+		unit<UInt32> pand := ='/SourceData/Vastgoed/BAG/PerJaar/'+JaarNaam+'/pand';
+
+		attribute<Float64> PerGebruiksdoel (Gebruiksdoel) := ='union_data(Gebruiksdoel, '+AsItemList('sum(float64(pand/Oppervlaktes/Footprint_perGebruiksdoel/'+Gebruiksdoel/name+'))')+')', Descr = "De voetafdruk per gebruiksdoel in m².";
+		attribute<Float64> PerJobs6        (Jobs6)        := sum(PerGebruiksdoel, Gebruiksdoel/Jobs6_rel), Descr = "De voetafdruk per sector in m²; woon en overige_gebruiks horen bij geen sector.";
+		parameter<Float64> Totaal                         := sum(float64(pand/Footprint)), Descr = "De voetafdruk van alle panden in de voorraad in m², ook woningen en panden zonder verblijfsobject.";
+	}
+
+	Template Banen_T
+	: Descr = "De landelijke LISA-banen per sector in een jaar, uit het bestand van dat jaar in de levering van ModelParameters/LISA_FileYear. De banen zijn inclusief eenpersoonsbedrijven."
+	{
+		parameter<String> JaarStr;
+		///
+		unit<UInt32> Vestiging
+		:	StorageName     = "='%PrivDataDir%/LISA/LISA'+string(/ModelParameters/LISA_FileYear)+'_'+JaarStr+'_bas.csv'"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "True"
+		{
+			attribute<String>   SBI08;
+			attribute<TXLJobs7> TXLJobs7_rel := rjoin(lowercase(SBI08), lowercase(/Classifications/Actor/SBI08/SBI2008), /Classifications/Actor/SBI08/TXLJobs7_rel);
+		}
+
+		attribute<SBI2xTXL> SBI2xTXL_rel (Vestiging) := combine_data(SBI2xTXL, value(uint32(left(Vestiging/SBI08, 2)), SBI2), Vestiging/TXLJobs7_rel);
+
+		attribute<Float64> PerTXLJobs7 (TXLJobs7) := sum(float64(Vestiging/banen), Vestiging/TXLJobs7_rel), Descr = "De banen per TXL-sector, met Landbouw.";
+		attribute<Float64> PerSBI2xTXL (SBI2xTXL) := sum(float64(Vestiging/banen), SBI2xTXL_rel), Descr = "De banen per tweecijferige SBI-afdeling en TXL-sector; WaardePerM2 verdeelt er de toegevoegde waarde van een bedrijfstak mee over de sectoren.";
+		attribute<Float64> PerJobs6    (Jobs6)    := PerTXLJobs7[rlookup(Jobs6/name, TXLJobs7/name)], Descr = "De banen per sector, zonder Landbouw.";
+		parameter<Float64> Totaal                 := sum(float64(Vestiging/banen)), Descr = "Alle banen in het bestand.";
+		parameter<Float64> ZonderSector           := sum(IsDefined(Vestiging/TXLJobs7_rel) ? 0d : float64(Vestiging/banen)), Descr = "De banen bij vestigingen waarvan de SBI-code niet in de vertaaltabel staat; ze tellen bij geen sector mee.";
+	}
+
+	unit<UInt32> Reeks := range(uint32, EersteLISAJaar, max(BAG_jaren/Jaar) + 1)
+	, Descr = "De jaren van de reeks, van het eerste LISA-jaar tot het laatste BAG-jaar. Een jaar zonder BAG of zonder LISA heeft daar een lege waarde."
+	{
+		attribute<UInt32> Jaar           := uint32(id(.));
+		attribute<String> name           := 'Y' + string(Jaar);
+		attribute<Bool>   HeeftBAG       := IsDefined(rlookup(Jaar, uint32(BAG_jaren/Jaar)));
+		attribute<Bool>   HeeftLISA      := IsDefined(rlookup(Jaar, LISA_jaren/Jaar));
+		attribute<String> Voetafdruk_ref := HeeftBAG  ? 'Voetafdruk/'+name+'/PerJobs6[@J@]' : '(0d/0d)';
+		attribute<String> Banen_ref      := HeeftLISA ? 'Banen/'+name+'/PerJobs6[@J@]'      : '(0d/0d)';
+	}
+
+	parameter<String> Voetafdruk_lijst := AsItemList(Reeks/Voetafdruk_ref);
+	parameter<String> Banen_lijst      := AsItemList(Reeks/Banen_ref);
+
+	container Voetafdruk_Reeks := for_each_nedv(Jobs6/name, 'union_data(Reeks, '+replace(Voetafdruk_lijst, '@J@', string(id(Jobs6))+'[Jobs6]')+')', Reeks, Float64), Descr = "De voetafdruk per sector per jaar in m².";
+	container Banen_Reeks      := for_each_nedv(Jobs6/name, 'union_data(Reeks, '+replace(Banen_lijst, '@J@', string(id(Jobs6))+'[Jobs6]')+')', Reeks, Float64), Descr = "De banen per sector per jaar.";
+	container M2_per_baan      := for_each_nedv(Jobs6/name, 'Voetafdruk_Reeks/'+Jobs6/name+' / Banen_Reeks/'+Jobs6/name, Reeks, Float64), Descr = "De voetafdruk per baan per sector per jaar in m²: de bijgewerkte figuur 7 van Ruimte voor werken (2022).";
+
+	container Ontleding
+	: Descr = "De groei van de voetafdruk per sector tussen Ontleding_Begin en Ontleding_Eind, gesplitst in het deel door meer banen en het deel door meer m² per baan. Logaritmische ontleding: de groei van de voetafdruk is de som van ln(banen) en ln(m² per baan), dus de twee delen tellen exact op tot de groei."
+	{
+		parameter<Reeks>   Begin := rlookup(Ontleding_Begin, Reeks/Jaar);
+		parameter<Reeks>   Eind  := rlookup(Ontleding_Eind,  Reeks/Jaar);
+
+		attribute<Float64> Voetafdruk_begin (Jobs6) := ='union_data(Jobs6, '+AsItemList('Voetafdruk_Reeks/'+Jobs6/name+'[Begin]')+')';
+		attribute<Float64> Voetafdruk_eind  (Jobs6) := ='union_data(Jobs6, '+AsItemList('Voetafdruk_Reeks/'+Jobs6/name+'[Eind]')+')';
+		attribute<Float64> Banen_begin      (Jobs6) := ='union_data(Jobs6, '+AsItemList('Banen_Reeks/'+Jobs6/name+'[Begin]')+')';
+		attribute<Float64> Banen_eind       (Jobs6) := ='union_data(Jobs6, '+AsItemList('Banen_Reeks/'+Jobs6/name+'[Eind]')+')';
+
+		attribute<Float64> Groei_m2         (Jobs6) := Voetafdruk_eind - Voetafdruk_begin, Descr = "De groei van de voetafdruk in m².";
+		attribute<Float64> Door_banen_m2    (Jobs6) := Groei_m2 * log(Banen_eind / Banen_begin) / log(Voetafdruk_eind / Voetafdruk_begin), Descr = "Het deel van de groei dat komt door meer banen, in m².";
+		attribute<Float64> Door_m2baan_m2   (Jobs6) := Groei_m2 - Door_banen_m2, Descr = "Het deel van de groei dat komt door meer m² per baan, in m².";
+		attribute<Float64> M2baan_begin     (Jobs6) := Voetafdruk_begin / Banen_begin;
+		attribute<Float64> M2baan_eind      (Jobs6) := Voetafdruk_eind / Banen_eind;
+	}
+
+	unit<UInt32> Rij := combine(Reeks, Jobs6)
+	, Descr = "De reeks in lange vorm, een rij per jaar en sector, voor de csv."
+	{
+		attribute<UInt32>  Jaar          := Reeks/Jaar[first_rel];
+		attribute<String>  Sector        := Jobs6/name[second_rel];
+		attribute<Float64> Voetafdruk_m2 := ='switch('+AsItemList('case(second_rel == '+string(id(Jobs6))+'[Jobs6], Voetafdruk_Reeks/'+Jobs6/name+'[first_rel])')+', (0d/0d))';
+		attribute<Float64> Banen         := ='switch('+AsItemList('case(second_rel == '+string(id(Jobs6))+'[Jobs6], Banen_Reeks/'+Jobs6/name+'[first_rel])')+', (0d/0d))';
+		attribute<Float64> M2_per_baan   := Voetafdruk_m2 / Banen;
+	}
+
+	container Schrijf_Reeks
+	: StorageName = "=UitvoerDir+'/WerkenPerBaan_reeks.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De reeks als csv: jaar, sector, voetafdruk in m², banen en m² per baan."
+	{
+		attribute<UInt32>  Jaar          (Rij) := Rij/Jaar;
+		attribute<String>  Sector        (Rij) := Rij/Sector;
+		attribute<Float64> Voetafdruk_m2 (Rij) := Rij/Voetafdruk_m2;
+		attribute<Float64> Banen         (Rij) := Rij/Banen;
+		attribute<Float64> M2_per_baan   (Rij) := Rij/M2_per_baan;
+	}
+
+	container Schrijf_Ontleding
+	: StorageName = "=UitvoerDir+'/WerkenPerBaan_ontleding.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De ontleding van de groei van de voetafdruk per sector als csv."
+	{
+		attribute<String>  Sector           (Jobs6) := Jobs6/name;
+		attribute<Float64> Voetafdruk_begin (Jobs6) := Ontleding/Voetafdruk_begin;
+		attribute<Float64> Voetafdruk_eind  (Jobs6) := Ontleding/Voetafdruk_eind;
+		attribute<Float64> Banen_begin      (Jobs6) := Ontleding/Banen_begin;
+		attribute<Float64> Banen_eind       (Jobs6) := Ontleding/Banen_eind;
+		attribute<Float64> Groei_m2         (Jobs6) := Ontleding/Groei_m2;
+		attribute<Float64> Door_banen_m2    (Jobs6) := Ontleding/Door_banen_m2;
+		attribute<Float64> Door_m2baan_m2   (Jobs6) := Ontleding/Door_m2baan_m2;
+		attribute<Float64> M2baan_begin     (Jobs6) := Ontleding/M2baan_begin;
+		attribute<Float64> M2baan_eind      (Jobs6) := Ontleding/M2baan_eind;
+	}
 }

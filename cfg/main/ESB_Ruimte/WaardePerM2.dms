@@ -1,0 +1,131 @@
+container WaardePerM2
+: Descr = "De bruto toegevoegde waarde per m² pandvoetafdruk en per baan per sector, landelijk per jaar. De toegevoegde waarde per bedrijfstak komt uit CBS 85867NED; een tak met banen in meer dan een sector verdeelt zijn waarde over die sectoren naar hun aandeel
+			in de LISA-banen van die tak in dat jaar. De voetafdruk en de banen komen uit WerkenPerBaan."
+, Source = "CBS StatLine 85867NED, Productie- en inkomenscomponenten bbp; bedrijfstak; nationale rekeningen, gewijzigd op 2026-07-01, opgehaald met Data/CBS_85867NED/ophalen.py"
+{
+	unit<UInt8>  Jobs6    := WerkenPerBaan/Jobs6;
+	unit<UInt8>  TXLJobs7 := WerkenPerBaan/TXLJobs7;
+	unit<UInt32> SBI2     := WerkenPerBaan/SBI2;
+	unit<UInt32> SBI2xTXL := WerkenPerBaan/SBI2xTXL;
+
+	parameter<UInt32> EersteJaar  := WerkenPerBaan/Ontleding_Begin, Descr = "Het eerste jaar: het eerste jaar met BAG en LISA.";
+	parameter<UInt32> LaatsteJaar := WerkenPerBaan/Ontleding_Eind, Descr = "Het laatste jaar: het laatste LISA-jaar.";
+
+	unit<UInt32> Jaren := range(uint32, EersteJaar, LaatsteJaar + 1)
+	{
+		attribute<UInt32> Jaar := uint32(id(.));
+		attribute<String> name := 'Y' + string(Jaar);
+	}
+
+	unit<UInt32> CBS_bron
+	:	StorageName     = "%ProjDir%/Data/CBS_85867NED/Toegevoegde_waarde_bedrijfstak.csv"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "True"
+	,	Descr           = "De bruto toegevoegde waarde in basisprijzen per bedrijfstak en jaar in miljoen euro, werkelijke prijzen, in een indeling zonder overlap; zonder de toegerekende huurwaarde van eigen woningen."
+	{
+		attribute<String> Code;
+		attribute<String> Titel;
+		attribute<String> Jaar;
+		attribute<String> BTW_mln;
+	}
+
+	unit<UInt32> SBI2_bron
+	:	StorageName     = "%ProjDir%/Data/CBS_85867NED/SBI2_naar_bedrijfstak.csv"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "True"
+	,	Descr           = "De bedrijfstak van elke tweecijferige SBI-afdeling."
+	{
+		attribute<String> SBI2;
+		attribute<String> Code;
+	}
+
+	unit<UInt32> Tak := unique(CBS_bron/Code)
+	, Descr = "De bedrijfstakken van CBS_bron."
+	{
+		attribute<String> Code  := Values;
+		attribute<String> Titel := rjoin(Code, CBS_bron/Code, CBS_bron/Titel);
+	}
+
+	attribute<Tak>   Tak_rel (SBI2) := rjoin(uint32(id(SBI2)), uint32(SBI2_bron/SBI2), rlookup(SBI2_bron/Code, Tak/Code)), Descr = "De bedrijfstak van een SBI-afdeling; leeg voor een nummer dat geen afdeling is.";
+	unit<UInt32> TakxTXL := combine(Tak, TXLJobs7);
+
+	container PerJaar := for_each_ne(Jaren/name, 'Jaar_T('+quote(Jaren/name)+')');
+
+	Template Jaar_T
+	: Descr = "De toegevoegde waarde per sector in een jaar, en die per m² voetafdruk en per baan."
+	{
+		parameter<String> JaarNaam;
+		///
+		parameter<String>  JaarStr  := right(JaarNaam, 4);
+		container          Banen    := ='WerkenPerBaan/Banen/'+JaarNaam;
+
+		attribute<TakxTXL> TakxTXL_rel   (SBI2xTXL) := combine_data(TakxTXL, Tak_rel[SBI2xTXL/first_rel], SBI2xTXL/second_rel);
+		attribute<Float64> Banen_TakxTXL (TakxTXL)  := sum(Banen/PerSBI2xTXL, TakxTXL_rel), Descr = "De LISA-banen per bedrijfstak en sector.";
+		attribute<Float64> Banen_Tak     (Tak)      := sum(Banen_TakxTXL, TakxTXL/first_rel);
+		attribute<Float64> BTW_Tak       (Tak)      := rjoin(Tak/Code + '_' + JaarStr, CBS_bron/Code + '_' + CBS_bron/Jaar, float64(CBS_bron/BTW_mln)) * 1000000d, Descr = "De toegevoegde waarde per bedrijfstak in euro.";
+		attribute<Float64> BTW_TakxTXL   (TakxTXL)  := BTW_Tak[TakxTXL/first_rel] * Banen_TakxTXL / Banen_Tak[TakxTXL/first_rel], Descr = "De toegevoegde waarde van een tak verdeeld over de sectoren naar hun aandeel in de banen van de tak.";
+		attribute<Float64> BTW_TXL       (TXLJobs7) := sum(BTW_TakxTXL, TakxTXL/second_rel);
+		attribute<Float64> BTW           (Jobs6)    := BTW_TXL[rlookup(Jobs6/name, TXLJobs7/name)], Descr = "De toegevoegde waarde per sector in euro.";
+
+		parameter<Float64> BTW_totaal        := sum(BTW_Tak), Descr = "De toegevoegde waarde van alle takken in euro.";
+		parameter<Float64> BTW_zonder_banen  := sum(Banen_Tak > 0d ? 0d : BTW_Tak), Descr = "De toegevoegde waarde van takken zonder LISA-banen in euro; die gaat naar geen sector.";
+		parameter<Float64> BTW_buiten_sector := BTW_totaal - sum(BTW), Descr = "De toegevoegde waarde die niet bij een van de zes sectoren komt in euro: Landbouw, takken zonder banen en banen zonder sector.";
+
+		attribute<Float64> Voetafdruk    (Jobs6) := ='WerkenPerBaan/Voetafdruk/'+JaarNaam+'/PerJobs6', Descr = "De voetafdruk per sector op 1 januari in m².";
+		attribute<Float64> Banen_Jobs6   (Jobs6) := Banen/PerJobs6;
+		attribute<Float64> Euro_per_m2   (Jobs6) := BTW / Voetafdruk, Descr = "De toegevoegde waarde per m² voetafdruk in euro.";
+		attribute<Float64> Euro_per_baan (Jobs6) := BTW / Banen_Jobs6, Descr = "De toegevoegde waarde per LISA-baan in euro.";
+	}
+
+	unit<UInt32> Rij := combine(Jaren, Jobs6)
+	, Descr = "De reeks in lange vorm, een rij per jaar en sector, voor de csv."
+	{
+		attribute<UInt32>  Jaar          := Jaren/Jaar[first_rel];
+		attribute<String>  Sector        := Jobs6/name[second_rel];
+		attribute<Float64> BTW_euro      := ='switch('+AsItemList('case(first_rel == '+string(id(Jaren))+'[Jaren], PerJaar/'+Jaren/name+'/BTW[second_rel])')+', (0d/0d))';
+		attribute<Float64> Voetafdruk_m2 := ='switch('+AsItemList('case(first_rel == '+string(id(Jaren))+'[Jaren], PerJaar/'+Jaren/name+'/Voetafdruk[second_rel])')+', (0d/0d))';
+		attribute<Float64> Banen         := ='switch('+AsItemList('case(first_rel == '+string(id(Jaren))+'[Jaren], PerJaar/'+Jaren/name+'/Banen_Jobs6[second_rel])')+', (0d/0d))';
+		attribute<Float64> Euro_per_m2   := BTW_euro / Voetafdruk_m2;
+		attribute<Float64> Euro_per_baan := BTW_euro / Banen;
+	}
+
+	container Schrijf_Reeks
+	: StorageName = "=UitvoerDir+'/WaardePerM2_reeks.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De reeks als csv: jaar, sector, toegevoegde waarde, voetafdruk, banen, euro per m² en euro per baan."
+	{
+		attribute<UInt32>  Jaar          (Rij) := Rij/Jaar;
+		attribute<String>  Sector        (Rij) := Rij/Sector;
+		attribute<Float64> BTW_euro      (Rij) := Rij/BTW_euro;
+		attribute<Float64> Voetafdruk_m2 (Rij) := Rij/Voetafdruk_m2;
+		attribute<Float64> Banen         (Rij) := Rij/Banen;
+		attribute<Float64> Euro_per_m2   (Rij) := Rij/Euro_per_m2;
+		attribute<Float64> Euro_per_baan (Rij) := Rij/Euro_per_baan;
+	}
+
+	attribute<Float64> Banen_TakxTXL_Laatste (TakxTXL) := ='PerJaar/Y'+string(LaatsteJaar)+'/Banen_TakxTXL', Descr = "De banen per bedrijfstak en sector in het laatste jaar.";
+
+	container Schrijf_Takken
+	: StorageName = "=UitvoerDir+'/WaardePerM2_takken_'+string(LaatsteJaar)+'.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "Per bedrijfstak in het laatste jaar de toegevoegde waarde en de banen per sector, om de verdeling over de sectoren na te kijken."
+	{
+		attribute<String>  Code      (Tak) := Tak/Code;
+		attribute<String>  Titel     (Tak) := Tak/Titel;
+		attribute<Float64> BTW_euro  (Tak) := ='PerJaar/Y'+string(LaatsteJaar)+'/BTW_Tak';
+		attribute<Float64> Banen     (Tak) := ='PerJaar/Y'+string(LaatsteJaar)+'/Banen_Tak';
+		attribute<Float64> Banen_Landbouw               (Tak) := sum(Banen_TakxTXL_Laatste * float64(TakxTXL/second_rel == TXLJobs7/V/Landbouw), TakxTXL/first_rel);
+		attribute<Float64> Banen_Nijverheid             (Tak) := sum(Banen_TakxTXL_Laatste * float64(TakxTXL/second_rel == TXLJobs7/V/Nijverheid), TakxTXL/first_rel);
+		attribute<Float64> Banen_Logistiek              (Tak) := sum(Banen_TakxTXL_Laatste * float64(TakxTXL/second_rel == TXLJobs7/V/Logistiek), TakxTXL/first_rel);
+		attribute<Float64> Banen_Detailhandel           (Tak) := sum(Banen_TakxTXL_Laatste * float64(TakxTXL/second_rel == TXLJobs7/V/Detailhandel), TakxTXL/first_rel);
+		attribute<Float64> Banen_Ov_consumentendiensten (Tak) := sum(Banen_TakxTXL_Laatste * float64(TakxTXL/second_rel == TXLJobs7/V/Ov_consumentendiensten), TakxTXL/first_rel);
+		attribute<Float64> Banen_Zak_dienstverlening    (Tak) := sum(Banen_TakxTXL_Laatste * float64(TakxTXL/second_rel == TXLJobs7/V/Zak_dienstverlening), TakxTXL/first_rel);
+		attribute<Float64> Banen_Overheid_kw_diensten   (Tak) := sum(Banen_TakxTXL_Laatste * float64(TakxTXL/second_rel == TXLJobs7/V/Overheid_kw_diensten), TakxTXL/first_rel);
+	}
+
+	container Controle
+	: Descr = "Controlewaarden van het laatste jaar, in euro."
+	{
+		parameter<Float64> BTW_totaal        := ='PerJaar/Y'+string(LaatsteJaar)+'/BTW_totaal';
+		parameter<Float64> BTW_zonder_banen  := ='PerJaar/Y'+string(LaatsteJaar)+'/BTW_zonder_banen';
+		parameter<Float64> BTW_buiten_sector := ='PerJaar/Y'+string(LaatsteJaar)+'/BTW_buiten_sector';
+	}
+}
