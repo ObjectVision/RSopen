@@ -239,7 +239,7 @@ Let bij een nieuw harnas op de naamketen. Een kale naam zoekt vanuit de containe
 
 ## Trap 4: allocatie draaien
 
-Voor het testen van het allocatiemechanisme hoeft de hele sectorlijst niet mee. Beperk `ModelParameters/SectorAllocRegio` in `cfg/main/ModelParameters.dms` tot de regels die je nodig hebt: commentarieer de rest in `Elements/Text` uit en zet `unit<UInt8> SectorAllocRegio := range(uint8, 0b, <aantal>b)` op het overgebleven aantal. Let op de komma's: de eerste actieve regel heeft geen voorloopkomma, de rest wel. Terugzetten niet vergeten, en kondig zo'n tijdelijke inkorting aan bij de buursessies, want hij is niet committeerbaar.
+Voor het testen van het allocatiemechanisme hoeft de hele sectorlijst niet mee. Beperk `ModelParameters/SectorAllocRegioTabel` in `cfg/main/ModelParameters.dms` tot de regels die je nodig hebt: commentarieer de rest in `Elements/Text` uit en zet `unit<UInt8> SectorAllocRegioTabel := range(uint8, 0b, <aantal>b)` op het overgebleven aantal; `ModelParameters/SectorAllocRegio` neemt dat aantal over. Let op de komma's: de eerste actieve regel heeft geen voorloopkomma, de rest wel. Terugzetten niet vergeten, en kondig zo'n tijdelijke inkorting aan bij de buursessies, want hij is niet committeerbaar.
 
 De uitkomst voor de overgebleven sector is identiek aan die in de volledige run, mits die sector niet van verdringing door de weggelaten sectoren afhangt.
 

@@ -1,0 +1,116 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Deze file leidt uit de tabel ModelParameters/SectorAllocRegioTabel af welke sectoren op welke regio's in welke volgorde alloceren.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+unit<UInt8> SectorAllocRegio := range(uint8, 0b, uint8(#/ModelParameters/SectorAllocRegioTabel))
+, Descr = "Volgorde waarin de sectoren gealloceerd worden, incluisef het schaalniveau waarop dit (achtereenvolgens) gebeurt (de AllocRegio's)."
+, using = "/Classifications;/Classifications/actor;/Classifications/Modellering"
+{
+	unit<UInt32> Elements := /ModelParameters/SectorAllocRegioTabel/Elements
+	, Descr = "De cellen van de tabel in ModelParameters.dms; Text staat hier als eigen subitem, want via een alias-unit vindt GeoDMS de subitems van de onderliggende unit niet."
+	{
+		attribute<String> Text := /ModelParameters/SectorAllocRegioTabel/Elements/Text;
+	}
+	
+	attribute<String>       Default_Sectorname         := Elements/Text[value(uint32(id(.))* nrAttr + 0, Elements)];
+	attribute<Sector>       Default_Sector             := ='union_data(.,'+asList('Sector/V/'+Default_Sectorname, ',')+')', Descr = "relatie naar Sector";
+	attribute<String>       Default_Regioname          := Elements/Text[value(uint32(id(.))* nrAttr + 1, Elements)];
+	attribute<AllocRegiosK> Default_Regio              := ='union_data(.,'+asList('AllocRegiosK/V/'+Default_Regioname, ',')+')', Descr = "relatie naar AllocRegio";
+	
+	parameter<String>       Recreatie_AllocRegio_name  := MakeDefined(rjoin('Verblijfsrecreatie', Default_Sectorname, Default_Regioname), 'Provincie');
+	// Kan een sector verdrongen worden door daarop volgende sectoren? In dat geval moet deze sector in een volgende sequence opnieuw worden doorlopen. In dat geval moet deze sector TRUE krijgen.
+	// Verdringing wordt vervolgens zo lokaal mogelijk opgelost, en dus krijgt de kleinste regio per sector een TRUE.
+	attribute<Bool>         UseInLaterSequences        := Elements/Text[value(uint32(id(.))* nrAttr + 2, Elements)][bool];
+	attribute<UInt8>        AantalIters                := uint8(replace(Elements/Text[value(uint32(id(.))* nrAttr + 3, Elements)], 'Default_NrOfIters', string(ModelParameters/Advanced/Default_NrOfIters), 'NrOfIters_Wind', string(ModelParameters/Wind/NrOfIters_Wind))), Descr = "Hier wordt het aantal iteraties uit de ModelParameters opgehaald en in deze lijst toegevoegd.";
+	attribute<UInt8>        AantalItersInLaterSeq      := uint8(replace(Elements/Text[value(uint32(id(.))* nrAttr + 4, Elements)], 'Default_NrOfIters', string(ModelParameters/Advanced/Default_NrOfIters), 'NrOfIters_Wind', string(ModelParameters/Wind/NrOfIters_Wind))), Descr = "Er kan eventueel voor worden gekozen in latere sequenties minder iteraties te gebruiken. Dat kan hier insteld worden.";
+	attribute<String>       RolNaXZichtjaar            := Elements/Text[value(uint32(id(.))* nrAttr + 5, Elements)], IntegrityCheck = "all(this == 'Volledig' || this == 'Beperkt' || this == 'Niet')", Descr = "Wat deze regel doet vanaf Advanced/Skeleton/VanafZichtjaar: Volledig is onveranderd meedoen met AantalIters en AantalItersInLaterSeq, Beperkt is meedoen met de aantallen uit Skeleton, Niet is overslaan. De kolom noemt de rol en niet het aantal, zodat de eerste en de vervolgsequentie een verschillend aantal iteraties kunnen krijgen zonder de tabel aan te raken. De IntegrityCheck vangt een typefout en een nrAttr die niet meer bij het aantal kolommen past.";
+	attribute<Bool>         DoetMeeNaXZichtjaar        := RolNaXZichtjaar != 'Niet', Descr = "Doet deze regel vanaf Advanced/Skeleton/VanafZichtjaar nog mee? Zo nee, dan slaat SectorAllocRegio_T hem over langs StateNaAllocatie_NoAlloc en geeft hij de ingangsstand door. Er wordt nooit een aantal van nul doorgegeven; dat zou een lege Iter-unit geven.";
+	attribute<Bool>         IsBeperktNaXZichtjaar      := RolNaXZichtjaar == 'Beperkt', Descr = "Draait deze regel vanaf Advanced/Skeleton/VanafZichtjaar op de aantallen uit Skeleton in plaats van op de eigen kolommen? Sequence_T kiest daarop, want alleen daar is bekend of het de eerste of een vervolgsequentie is.";
+	attribute<String>       SortOrder                  := string(rlookup(Default_Sectorname, Default_Sectorname)), Descr = "foolproof oplossing om een sortorder af te dwingen, die gebruikt wordt bij de sortering van Uq_Sectors";
+	
+	attribute<AllocRegiosK> AllocRegio_rel             := Default_Regio;
+	attribute<Sector>       Sector_rel                 := Default_Sector;
+	
+	attribute<String>       name                       := AllocRegio_name +'_'+ Sector_name;
+	attribute<String>       SectorAllocRegio_name      := Sector_name +'_'+ AllocRegio_name;
+	attribute<String>       Sector_name                := Sector/name[Sector_rel];
+	attribute<String>       AllocRegio_name            := AllocRegiosK/name[AllocRegio_rel];
+	attribute<String>       AllocRegio_path            := AllocRegiosK/path[AllocRegio_rel];
+	
+	attribute<Bool>         IsFirstSectorAllocRegio    := id(.) == 0b;
+	attribute<String>       PrevName                   := IsFirstSectorAllocRegio ? '' : name[id(.) - min_elem( id(.), 1b)];
+	attribute<String>       PrevState                  := IsFirstSectorAllocRegio ? 'StateVoorAllocatie' : PrevName+'/StateNaAllocatie';
+	attribute<String>       Subsector_ref              := Sector/Subsector_ref[Sector_rel];
+	
+	unit<UInt8>             WonenAllocRegio            := select_with_org_rel(Sector_rel == Sector/V/Wonen);
+	parameter<String>       WonenEersteAllocRegio_name := AllocRegio_name[first(WonenAllocRegio/org_rel)], Descr = "De fijnste indeling waarop wonen alloceert, de eerste woonregel in de tabel; de diagnose van het woningtype toont het gebouwde aandeel op deze indeling (#847).";
+	parameter<String>       WonenEersteAllocRegio_path := AllocRegio_path[first(WonenAllocRegio/org_rel)], Descr = "Het pad van die indeling onder SourceData.";
+	unit<UInt8>             WerkenAllocRegio           := select_with_org_rel(Sector_rel == Sector/V/Werken);
+	parameter<String>       WerkenEersteAllocRegio_name := AllocRegio_name[first(WerkenAllocRegio/org_rel)], Descr = "De fijnste indeling waarop werken alloceert, de eerste werkregel in de tabel.";
+	parameter<String>       WerkenEersteAllocRegio_path := AllocRegio_path[first(WerkenAllocRegio/org_rel)], Descr = "Het pad van die indeling onder SourceData.";
+	
+	unit<UInt8> Uq_AllocRegios := unique(AllocRegio_name)
+	, Descr = "Unieke lijst van AllocRegio's die in deze variant gebruikt worden. Nodig om bijvoorbeeld voor alle gebruikte allocregio's iets uit te rekenen."
+	{
+		attribute<String> AllocRegio_name := values;
+		attribute<String> AllocRegio_path := rjoin(lowercase(AllocRegio_name), lowercase(../AllocRegio_name), ../AllocRegio_path);
+	}
+	unit<UInt8> Uq_Sectors := unique(SortOrder + Default_Sectorname)
+	, Descr = "SortOrder wordt hier voorgezet om ervoor te zorgen dat dit niet alfabetisch wordt gesorteerd.
+				Dit wordt gebruikt om in if-statements te kijken of bepaalde sectoren wel of niet gealloceerd worden."
+	{
+		attribute<String> Sectorname                  := substr(values, 1, 99);
+		attribute<Bool>   IsWonen                     := lowercase(Sectorname) == lowercase('Wonen');
+		attribute<Bool>   IsWerken                    := lowercase(Sectorname) == lowercase('Werken');
+		attribute<Bool>   IsVerblijfsrecreatie        := lowercase(Sectorname) == lowercase('Verblijfsrecreatie');
+		attribute<Bool>   IsZon                       := lowercase(Sectorname) == lowercase('Zon');
+		attribute<Bool>   IsWind                      := lowercase(Sectorname) == lowercase('Wind');
+		attribute<Bool>   IsLandbouw                  := lowercase(Sectorname) == lowercase('Landbouw');
+		attribute<Bool>   IsWaterberging              := lowercase(Sectorname) == lowercase('Waterberging');
+		parameter<String> Namen                       := lowercase(AsList(Sectorname, ',')), Descr = "De actieve sectoren in de volgorde van de tabel, als tekst; Preflight/Profiel/Regel toetst hiermee of de sectortabel bij het productieprofiel past.";
+		parameter<Bool>   HasWonenSector              := any(IsWonen);
+		parameter<Bool>   HasWerkenSector             := any(IsWerken);
+		parameter<Bool>   HasVerblijfsrecreatieSector := any(IsVerblijfsrecreatie);
+		parameter<Bool>   HasZonSector                := any(IsZon);
+		parameter<Bool>   HasWindSector               := any(IsWind);
+		parameter<Bool>   HasLandbouwSector           := any(IsLandbouw);
+		parameter<Bool>   HasWaterbergingSector       := any(IsWaterberging), Descr = "Nodig sinds waterberging een eigen case in de landgebruikskaart heeft (#766); zonder de sector is de bijbehorende LU_ModelType-waarde er niet en moet die case wegvallen.";
+		
+		unit<UInt8>       wo_Landbouw                 := select_with_attr_by_cond(., NOT(IsLandbouw));
+	}
+	
+	unit<UInt8> SectorAllocRegio_LaterSeq := select_with_org_rel(SectorAllocRegio/UseInLaterSequences)
+	{
+		attribute<String>       name                     := ../name[org_rel];
+		attribute<Sector>       Sector_rel               := ../Sector_rel[org_rel];
+		attribute<UInt8>        AantalIters              := ../AantalIters[org_rel];
+		attribute<UInt8>        AantalItersInLaterSeq    := ../AantalItersInLaterSeq[org_rel];
+		attribute<Bool>         IsBeperktNaXZichtjaar    := ../IsBeperktNaXZichtjaar[org_rel], Descr = "Moet mee, want Sequence_T leest deze kolom op de unit die het krijgt doorgegeven, en dat is voor de vervolgsequenties deze deelverzameling.";
+		attribute<Bool>         DoetMeeNaXZichtjaar      := ../DoetMeeNaXZichtjaar[org_rel];
+		attribute<AllocRegiosK> AllocRegio_rel           := ../AllocRegio_rel[org_rel];
+		attribute<String>       Sector_name              := ../Sector_name[org_rel];
+		attribute<String>       AllocRegio_name          := ../AllocRegio_name[org_rel];
+		attribute<String>       AllocRegio_path          := ../AllocRegio_path[org_rel];
+		attribute<String>       Subsector_ref            := ../Subsector_ref[org_rel];
+	
+		attribute<Bool>         IsFirstSectorAllocRegio  := id(.) == 0b;
+		attribute<String>       PrevName                 := IsFirstSectorAllocRegio ? '' : name[id(.) - min_elem( id(.), 1b)];
+		attribute<String>       PrevState                := IsFirstSectorAllocRegio ? 'StateVoorAllocatie' : PrevName+'/StateNaAllocatie';
+		
+		attribute<String>       LastInSector    (Sector) := last(name, Sector_rel);
+		attribute<String>       Sector_PrevName (Sector) := Sector/name[id(Sector)- 1[Sector]];
+		
+		container               V                        := for_each_nedv(name, string(id(.))+'[..]', void, .);
+	}
+	
+	parameter<UInt32>       nrAttr                     := /ModelParameters/SectorAllocRegioTabel/nrAttr, Descr = "Aantal kolommen per rij van de tabel, uit ModelParameters/SectorAllocRegioTabel.";
+}
