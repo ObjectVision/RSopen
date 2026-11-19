@@ -42,8 +42,7 @@ KNOWN_DESCRIPTIONS = {
         "Wordt aangeroepen vanuit RunAll.cmd na de allocatierun."
     ),
     "RunZichtjaren.cmd": (
-        "Roept de allocatie per zichtjaar aan voor een gegeven scenario/variant combinatie. "
-        "Afhankelijk van de AlleenEindjaar-vlag worden tussenjaren (2030, 2040) overgeslagen."
+        "Roept de allocatie per zichtjaar aan voor een gegeven scenario/variant combinatie."
     ),
     "run_profile.bat": (
         "Installeert de benodigde Python-packages (psutil, bokeh) en start "

@@ -12,7 +12,7 @@ REM
 REM Roept de allocatie aan voor een gegeven scenario/variant combinatie.
 REM
 REM DE BATCH BEPAALT, DE CONFIGURATIE VOLGT. Instellingen die het draaien sturen worden hier gezet en via
-REM omgevingsvariabelen aan de configuratie opgelegd (zie AlleenEindjaar en StandAllocatieOntkoppeld in
+REM omgevingsvariabelen aan de configuratie opgelegd (zie StandAllocatieOntkoppeld in
 REM ModelParameters.dms). Dit script leest dus nooit een instelling uit de configuratie terug om te bepalen wat
 REM het zelf moet doen; het weet dat al, want het heeft het zelf gezet.
 REM

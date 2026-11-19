@@ -84,7 +84,6 @@
       OntkoppelStedelijkeKlasses   FALSE voor een volle reeks. TRUE laat alleen de landbouw
                                    alloceren en neemt wonen en werken uit bestaande standtifs.
       ExotenActief                 (ModelParameters\Landbouw.dms) Of de exotische gewassen meedoen.
-      AlleenEindjaar               Alleen voor debuggen; in een productierun FALSE.
       SectorAllocRegio             De tabel met sectoren die alloceren. Een sector aan- of
                                    uitzetten verandert het SS-nummer in alle bestandsnamen, en
                                    daarmee zijn bestaande standen onbruikbaar.
@@ -435,12 +434,11 @@ function Show-Schakelaars {
     # log van de aanroep.
     $mpDir = Join-Path (Split-Path $Cfg -Parent) 'main'
     $bron = @{
-        'AlleenEindjaar'       = 'ModelParameters.dms'
         'Model_FirstZichtjaar' = 'ModelParameters.dms'
         'Model_FinalYear'      = 'ModelParameters.dms'
         'ExotenActief'         = 'ModelParameters\Landbouw.dms'
     }
-    foreach ($naam in @('Model_FirstZichtjaar','Model_FinalYear','AlleenEindjaar','ExotenActief')) {
+    foreach ($naam in @('Model_FirstZichtjaar','Model_FinalYear','ExotenActief')) {
         $tekst = Get-Content (Join-Path $mpDir $bron[$naam]) -Raw
         $m = [regex]::Match($tekst, "$naam\s*:=\s*=?\s*([^,;\r\n]+)")
         $w = if ($m.Success) { $m.Groups[1].Value.Trim() } else { '(niet gevonden)' }
