@@ -3,7 +3,7 @@ gesprek met de VU over het artikel. Alleen presentatie: elk getal komt uit de cs
 (ESB_Ruimte/*) of uit de figuren van figuren.py; geen getal staat hier met de hand.
 
 Gebruik: python dossier.py <map A en B> <map G> <map 13> <map D> <map E> <uitvoer.docx>
-Een map van een analyse die er nog niet is, geeft in het document de melding dat die volgt.
+Deel 8 (F) is een voorstel voor vervolganalyses, zonder getallen.
 """
 import sys
 from pathlib import Path
@@ -213,19 +213,20 @@ def deel_g(d, map_):
         "niet mee, want zo'n vergunning wordt vaak nooit gebouwd; zo neemt het model de pijplijn ook. Bouwterrein "
         "komt uit het Bestand Bodemgebruik van het CBS. Een cel van 25 m bouwterrein telt als nabij als het "
         "zwaartepunt van een pand uit de pijplijn binnen 100 m ligt; de rest is bouwterrein zonder zichtbaar "
-        "bouwproject in de BAG.")
+        "bouwproject in de BAG. Met 250 m in plaats van 100 m groeit het deel met een bouwproject; de tabel geeft "
+        "beide.")
     d.figuur(map_ / "Bouwterrein_figuur.png", "Woningen en voetafdruk in de pijplijn, en BBG-bouwterrein", breedte=12)
     rijen = []
     for j in pijp.index:
         r = [str(j), nl(pijp.loc[j, "woningen_recent"]), nl(pijp.loc[j, "footprint_recent"] / 1e4)]
         if j in bbg.index:
             b = bbg.loc[j]
-            r += [nl(b.ha_raster), pct(b.ha_nabij_recent / b.ha_raster)]
+            r += [nl(b.ha_raster), pct(b.ha_nabij_recent / b.ha_raster), pct(b.ha_nabij_recent_ruim / b.ha_raster)]
         else:
-            r += ["", ""]
+            r += ["", "", ""]
         rijen.append(r)
     d.tabel(["1 januari", "woningen in de pijplijn", "voetafdruk pijplijn (ha)", "BBG-bouwterrein (ha)",
-             "deel binnen 100 m van de pijplijn"], rijen, "De pijplijn en het bouwterrein",
+             "deel binnen 100 m van de pijplijn", "binnen 250 m"], rijen, "De pijplijn en het bouwterrein",
             "Pijplijn: vergunning hooguit vijf jaar oud. BBG-jaar X naast de BAG van 1 januari X; tussen BBG 2017 "
             "en NBBG 2020 zit een methodebreuk. Bron: BAG (Kadaster), BBG en NBBG (CBS); ESB_Ruimte/Bouwterrein.")
     d.figuur(map_ / "Bouwterrein_kaart.png", "Bouwterrein binnen 100 m van de pijplijn (blauw) en zonder (oranje)",
@@ -404,9 +405,25 @@ def deel_e(d, map_, cbs_pad, map_ab):
     ])
 
 
-def volgt(d, kop, tekst):
-    d.kop(kop)
-    d.alinea(tekst)
+def voorstel_f(d):
+    d.kop("8. Voorstel voor vervolganalyses (F)")
+    d.alinea(
+        "Deze analyses zijn nog niet gedaan. Ze staan hier als voorstel, met wat ervoor nodig is; welke we doen, "
+        "hangt af van wat het artikel nodig heeft.")
+    d.opsomming([
+        "Vraag en aanbod tot 2040. De ruimtevraag voor werken per sector uit de laatste landelijke run van RSopen, "
+        "naast het aanbod in de plannen: de uitgeefbare grond op IBIS-terreinen en de provinciale werklocaties uit "
+        "de plancapaciteit van PBL. Zo zie je of de sectoren met veel m² per baan (nijverheid, logistiek) in de "
+        "plannen ruimte vinden, en waar het krap wordt. Eerst nakijken welke run bruikbaar is; een nieuwe run is "
+        "niet nodig.",
+        "Wonen op werklocaties. De woningen in de BAG-pijplijn (deel 7) en de transformaties (deel 6) die op een "
+        "IBIS-terrein liggen. Dat meet de botsing tussen werken en wonen rechtstreeks, in plaats van via de "
+        "sectoren.",
+        "Transformatie naar plek. Deel 6 naar de UAI en de reistijd tot een OV-knooppunt, zoals deel 5 dat voor de "
+        "sectoren doet: verdwijnen de werkplekken vooral op de plekken die de zakelijke dienstverlening zoekt?",
+        "Banen na 2023. De reeks van deel 1 doortrekken tot 2025 met de open LISA-data of de werknemersbanen van "
+        "het CBS (83582NED), als stippellijn.",
+    ])
 
 
 def kern(d, map_ab, map_g, map_d, map_e, cbs_e):
@@ -422,6 +439,7 @@ def kern(d, map_ab, map_g, map_d, map_e, cbs_e):
     pijp = lees(map_g / "Bouwterrein_pijplijn_totaal.csv").set_index("jaar")
     bbg = lees(map_g / "Bouwterrein_overlay_BBG.csv").set_index("jaar")
     nabij = bbg.ha_nabij_recent / bbg.ha_raster
+    nabij_ruim = bbg.ha_nabij_recent_ruim / bbg.ha_raster
     ibis = lees(map_d / "IbisTerreinen_sectoren.csv").set_index("sector")
     e = lees(map_e / "WerkNaarWonen_totaal.csv").set_index("jaar")
     e_sec = lees(map_e / "WerkNaarWonen_sector.csv").groupby("sector").woningen.sum()
@@ -454,7 +472,8 @@ def kern(d, map_ab, map_g, map_d, map_e, cbs_e):
         f"voetafdruk en {pct(ibis.voet_uai_hoogst.Zak_dienstverlening)} van die van de zakelijke dienstverlening.",
         f"Op 1 januari {int(pijp.index.max())} zitten {nl(pijp.woningen_recent.iloc[-1])} woningen in de pijplijn van "
         f"de BAG. Van het bouwterrein van het CBS ligt {pct(nabij.min())} tot {pct(nabij.max())} binnen 100 m van een "
-        "pand uit de pijplijn; de rest heeft geen zichtbaar bouwproject.",
+        f"pand uit de pijplijn en {pct(nabij_ruim.min())} tot {pct(nabij_ruim.max())} binnen 250 m; de rest heeft "
+        "geen zichtbaar bouwproject.",
         f"Uit werkpanden kwamen van {int(e.index.min())} tot en met {int(e.index.max())} gemiddeld "
         f"{nl(e.woningen.mean())} woningen per jaar (deel 6), in lijn met de transformatie volgens het CBS "
         f"({nl(e_cbs.transformatie[[j for j in e.index if j in e_cbs.index]].mean())} per jaar). "
@@ -484,6 +503,7 @@ def main(map_ab, map_g, map_13, map_d, map_e, uit):
     deel_d(d, Path(map_d))
     deel_e(d, Path(map_e), cbs_e, map_ab)
     deel_g(d, map_g)
+    voorstel_f(d)
     bijlage_c(d, tab_c)
     d.doc.save(uit)
     print("dossier:", uit)
