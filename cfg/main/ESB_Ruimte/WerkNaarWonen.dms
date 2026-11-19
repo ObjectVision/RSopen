@@ -1,4 +1,296 @@
-container WerkNaarWonen
-: Descr = "Werkpanden die woningen werden, per jaar: aantal, voetafdruk en vbo-oppervlak, naar de sector van de vorige functie."
+container WerkNaarWonen : using = "Units"
+, Descr = "Werkpanden die woningen werden, per mutatiejaar: woningen, panden, voetafdruk en vbo-oppervlak, naar de sector van de vorige functie, en dezelfde telling de andere kant op, van wonen naar werken.
+			Een woning telt als hij in het jaar in de woningvoorraad kwam en ofwel zelf een werkfunctie had, ofwel in een bestaand pand kwam dat volgens de transformatiemethode van het CBS van werken naar wonen ging. Logies en de overige gebruiksfunctie tellen niet als werkfunctie. De reeksen gaan als csv naar UitvoerDir."
+, Source = "CBS, Goedhuys en Van der Wal (2020), Transformaties in de woningvoorraad 2018-2019: de stappen 1 tot en met 5, 8 en 9 en de uitsluiting van logies, zoals de analyse Redevelopment van het EconLogic-paper ze per 1 januari toepast (PrepBAG.dms, Per1jan_T)"
 {
+	parameter<Int32>   MinOppervlakte                       := 15i, Descr = "Een woning met een kleiner vbo-oppervlak in m² telt in de pandroute niet als transformatie (stap 4 van de CBS-methode).";
+	parameter<Int32>   MinLeeftijdPand                      := 2i, Descr = "Een pand met een bouwjaar na het eind van het mutatiejaar min dit aantal jaren telt als late nieuwbouw en niet als transformatie (stap 5).";
+	parameter<Float32> AandeelWoonGrens                     := 0.8f, Descr = "Het aandeel woonoppervlak in een pand waarboven een afname van het woonoppervlak op woningsplitsing wijst, en waaronder bij gelijk werkoppervlak op een administratieve wijziging (stappen 8 en 9); zulke woningen tellen niet.";
+
+	unit<UInt8>        Jobs6                                := /Classifications/Actor/Jobs6;
+	unit<UInt8>        Gebruiksdoel                         := /Classifications/Vastgoed/vbo_gebruiksdoel_plus;
+	unit<UInt32>       BAG_jaren                            := /SourceData/Vastgoed/BAG/BAG_jaren, Descr = "De peildata: 1 januari van 2012 tot en met BAG_RecentYear.";
+	unit<UInt32>       PandSrc                              := /SourceData/Vastgoed/BAG/VolledigeBAG/panden/src, Descr = "Alle voorkomens van panden, zonder de selectie op het pandvlak van VolledigeBAG/panden/pand, zodat het vlak alleen voor de getransformeerde panden wordt gelezen.";
+	unit<UInt32>       Gemeente                             := /SourceData/RegioIndelingen/CBS/Gekozen/Gemeente, Descr = "De gemeenten in de jaargang van ModelParameters/RegioIndelingen_CBSjaar; een pand ligt in de gemeente van die jaargang, ook in een jaar voor een herindeling.";
+
+	unit<UInt32> Mutatiejaar := range(uint32, min(BAG_jaren/Jaar), max(BAG_jaren/Jaar))
+	, Descr = "De jaren waarin een functie wisselt: van 1 januari van dat jaar tot 1 januari van het jaar erna, dus van het eerste BAG-jaar tot het jaar voor BAG_RecentYear. Het CBS telt een mutatie in hetzelfde jaar."
+	{
+		attribute<UInt32> Jaar := id(.);
+		attribute<String> name := 'Y' + string(Jaar);
+	}
+
+	unit<UInt8> Onbekend : NrOfRows = 1
+	{
+		attribute<String> name : ['onbekend'];
+	}
+
+	unit<UInt8> Sector := union_unit_uint8(Jobs6, Onbekend)
+	, Descr = "De zes werksectoren en onbekend, voor een woning of pand waarvan de vorige werkfunctie niet uit de BAG volgt."
+	{
+		attribute<String> name := union_data(., Jobs6/name, Onbekend/name);
+		container         V    := for_each_nedv(name, string(id(.))+'[..]', void, .);
+	}
+
+	attribute<Sector>  SectorVanGebruiksdoel (Gebruiksdoel) := IsDefined(Gebruiksdoel/Jobs6_rel) ? value(uint8(Gebruiksdoel/Jobs6_rel), Sector) : Sector/V/onbekend, Descr = "De sector van een gebruiksdoel volgens Gebruiksdoel/Jobs6_rel, dus een combinatie van werkfuncties bij nijverheid.";
+
+	unit<UInt32> G4 : NrOfRows = 4
+	, Descr = "De vier grote gemeenten met hun CBS-gemeentecode, voor de uitsplitsing van de G4 tegen de rest van het land."
+	{
+		attribute<String> name   : ['Amsterdam', 'Rotterdam', 's_Gravenhage', 'Utrecht'];
+		attribute<UInt32> gem_nr : [363, 599, 518, 344], IntegrityCheck = "all(IsDefined(rlookup(this, Gemeente/gem_nr)))";
+	}
+
+	container Bron
+	: Descr = "De volledige BAG uit SourceData/Vastgoed/BAG/VolledigeBAG, met per voorkomen van een verblijfsobject zijn pand, functie en oppervlak. Niet via SourceData/Vastgoed/BAG/PerJaar_T, dat de woonpandtypering en de toedelingsmatrices meeneemt."
+	{
+		unit<UInt32>            VBO                        := /SourceData/Vastgoed/BAG/VolledigeBAG/VBOs/src, Descr = "Alle voorkomens van verblijfsobjecten.";
+		unit<UInt32>            Relatie                    := /SourceData/Vastgoed/BAG/VolledigeBAG/VBOs/Import/gerelateerdPand, Descr = "De relaties tussen een voorkomen van een verblijfsobject (voorkomen) en een pand (pand_bag_nr).";
+
+		attribute<UInt16>       FunctieCode (Gebruiksdoel) := union_data(Gebruiksdoel, /Classifications/Vastgoed/vbo_gebruiksdoel/functie_code, const(null_w, /Classifications/Vastgoed/vbo_plus)), Descr = "De bit van elke BAG-functie in VBO/functie_code; Logistiek en utiliteit_combi hebben er geen.";
+		attribute<Relatie>      Relatie_rel          (VBO) := rlookup(VBO/rij, Relatie/voorkomen), Descr = "De eerste relatie van het voorkomen. Een verblijfsobject in meer panden telt bij het eerste, en niet zoals bij het CBS bij het pand met het jongste bouwjaar.";
+		attribute<uint64>       pand_bag_nr          (VBO) := Relatie/pand_bag_nr[Relatie_rel];
+		attribute<Bool>         IsWoon               (VBO) := bitand(VBO/functie_code, FunctieCode[Gebruiksdoel/V/woon]) > 0w, Descr = "Het voorkomen heeft een woonfunctie, alleen of naast een andere functie.";
+		attribute<Gebruiksdoel> Klasse               (VBO) :=
+			switch(
+				 case(VBO/functie_code == 0w, (0b/0b)[Gebruiksdoel])
+				,case(IsWoon, Gebruiksdoel/V/woon)
+				,case(IsDefined(rlookup(VBO/functie_code, FunctieCode)), rlookup(VBO/functie_code, FunctieCode))
+				,Gebruiksdoel/V/utiliteit_combi
+			), Descr = "De functie van het voorkomen: woon bij een woonfunctie, anders de enige functie die het heeft, en utiliteit_combi bij meer werkfuncties.";
+		attribute<Int32>        Oppervlakte          (VBO) := MakeDefined(VBO/oppervlakte_trunc_Null, 0i), Descr = "Het vbo-oppervlak in m², zonder de opvulwaarden van de BAG en op nul waar het ontbreekt.";
+	}
+
+	container          Peildatum                            := for_each_ne(BAG_jaren/name, 'Peildatum_T('+quote(string(BAG_jaren/Jaar))+')'), Descr = "De verblijfsobjecten en panden op 1 januari van elk BAG-jaar.";
+	container          NaarWonen                            := for_each_ne(Mutatiejaar/name, 'Transitie_T('+quote(string(Mutatiejaar/Jaar + 1))+', '+quote(string(Mutatiejaar/Jaar))+', '+quote(string(Mutatiejaar/Jaar))+')'), Descr = "Van werken naar wonen: de werkstand is 1 januari van het mutatiejaar, de woonstand 1 januari erna.";
+	container          NaarWerken                           := for_each_ne(Mutatiejaar/name, 'Transitie_T('+quote(string(Mutatiejaar/Jaar))+', '+quote(string(Mutatiejaar/Jaar + 1))+', '+quote(string(Mutatiejaar/Jaar))+')'), Descr = "Van wonen naar werken: de woonstand is 1 januari van het mutatiejaar, de werkstand 1 januari erna.";
+
+	container          Reeks_NaarWonen                      := Reeks_T('NaarWonen', 'WerkNaarWonen'), Descr = "De csv's van werken naar wonen.";
+	container          Reeks_NaarWerken                     := Reeks_T('NaarWerken', 'WonenNaarWerken'), Descr = "De csv's van wonen naar werken.";
+
+	Template Peildatum_T
+	: Descr = "De verblijfsobjecten en de panden op 1 januari van een jaar, met per pand in de voorraad het aantal en het oppervlak van de woningen en van de verblijfsobjecten met een andere functie dan de overige gebruiksfunctie."
+	{
+		parameter<String> JaarStr;
+		///
+		parameter<UInt32> Jaar  := uint32(JaarStr);
+		parameter<Int32>  Datum := int32(Jaar * 10000 + 101), Descr = "De peildatum 1 januari als BAG-datum, jjjjmmdd.";
+
+		unit<UInt32> Verblijfsobject := select_with_org_rel(Bron/VBO/Begindatum < Datum && Bron/VBO/Einddatum >= Datum)
+		, Descr = "De voorkomens van verblijfsobjecten die op de peildatum gelden, met elke status, zodat een object dat er al is maar nog niet in gebruik, als bestaand en niet in de voorraad telt."
+		{
+			attribute<uint64>       vbo_bag_nr  := Bron/VBO/vbo_bag_nr[org_rel];
+			attribute<uint64>       pand_bag_nr := Bron/pand_bag_nr[org_rel];
+			attribute<Bool>         IsVoorraad  := Bron/VBO/IsVoorraad[org_rel];
+			attribute<Bool>         IsWoon      := Bron/IsWoon[org_rel];
+			attribute<Gebruiksdoel> Klasse      := Bron/Klasse[org_rel];
+			attribute<Int32>        Oppervlakte := Bron/Oppervlakte[org_rel];
+			attribute<Bool>         IsEerste    := id(.) == rlookup(vbo_bag_nr, vbo_bag_nr), Descr = "Een voorkomen per verblijfsobject, voor het geval dat twee voorkomens van hetzelfde object op de peildatum gelden.";
+			attribute<Bool>         TeltMee     := IsVoorraad && !(Klasse == Gebruiksdoel/V/overige_gebruiks), Descr = "In de voorraad en niet de overige gebruiksfunctie: de verblijfsobjecten die de CBS-methode per pand telt.";
+			attribute<Pand>         Pand_rel    := rlookup(pand_bag_nr, Pand/pand_bag_nr);
+		}
+
+		unit<UInt32> Pand := select_with_org_rel(PandSrc/IsVoorraad && PandSrc/Begindatum < Datum && PandSrc/Einddatum >= Datum)
+		, Descr = "De voorkomens van panden die op de peildatum in de voorraad zijn (pand_status/IsVoorraad)."
+		{
+			attribute<uint64>  pand_bag_nr := PandSrc/pand_bag_nr[org_rel];
+			attribute<yr>      Bouwjaar    := PandSrc/Bouwjaar_trunc[org_rel];
+			attribute<UInt32>  n_W         := sum_uint32(Verblijfsobject/TeltMee && Verblijfsobject/IsWoon, Verblijfsobject/Pand_rel), Descr = "Het aantal woningen in de voorraad.";
+			attribute<UInt32>  n_NW        := sum_uint32(Verblijfsobject/TeltMee && !Verblijfsobject/IsWoon, Verblijfsobject/Pand_rel), Descr = "Het aantal verblijfsobjecten in de voorraad met een werkfunctie of logies.";
+			attribute<Float64> Opp_W       := sum(Verblijfsobject/TeltMee && Verblijfsobject/IsWoon ? float64(Verblijfsobject/Oppervlakte) : 0d, Verblijfsobject/Pand_rel);
+			attribute<Float64> Opp_NW      := sum(Verblijfsobject/TeltMee && !Verblijfsobject/IsWoon ? float64(Verblijfsobject/Oppervlakte) : 0d, Verblijfsobject/Pand_rel);
+		}
+	}
+
+	Template Transitie_T
+	: Descr = "Een mutatiejaar in een richting. De woonstand is de peildatum waarop de woning in de voorraad is, de werkstand die waarop hij dat niet is: heen is de werkstand 1 januari van het mutatiejaar en de woonstand 1 januari erna, terug andersom, zodat dezelfde regels beide richtingen tellen.
+			Een woning telt als hij zelf in de werkstand een werkfunctie had (direct), of als zijn pand de pandroute van het CBS volgt. De sector is die van de eigen werkfunctie, en anders die van de werkfunctie met het grootste oppervlak in het pand in de werkstand."
+	{
+		parameter<String> WoonJaarStr;
+		parameter<String> WerkJaarStr;
+		parameter<String> MutatieJaarStr;
+		///
+		parameter<UInt32>  LaatsteJaar           := uint32(MutatieJaarStr) + 1, Descr = "Het jaar van de latere peildatum, waartegen stap 5 het bouwjaar toetst.";
+
+		unit<UInt32>       VboWoon               := ='/ESB_Ruimte/WerkNaarWonen/Peildatum/Y'+WoonJaarStr+'/Verblijfsobject';
+		unit<UInt32>       VboWerk               := ='/ESB_Ruimte/WerkNaarWonen/Peildatum/Y'+WerkJaarStr+'/Verblijfsobject';
+		unit<UInt32>       PandWoon              := ='/ESB_Ruimte/WerkNaarWonen/Peildatum/Y'+WoonJaarStr+'/Pand';
+		unit<UInt32>       PandWerk              := ='/ESB_Ruimte/WerkNaarWonen/Peildatum/Y'+WerkJaarStr+'/Pand';
+
+		attribute<VboWerk> VboWerk_rel (VboWoon) := rlookup(VboWoon/vbo_bag_nr, VboWerk/vbo_bag_nr), Descr = "Hetzelfde verblijfsobject in de werkstand, leeg als het er toen niet was.";
+
+		unit<UInt32> Woning := select_with_org_rel(VboWoon/IsEerste && VboWoon/IsVoorraad && VboWoon/IsWoon && !(VboWerk/IsVoorraad[VboWerk_rel] && VboWerk/IsWoon[VboWerk_rel]))
+		, Descr = "De woningen in de woonstand die in de werkstand geen woning in de voorraad waren: heen alle toevoegingen aan de woningvoorraad, ook nieuwbouw, terug alle onttrekkingen, ook sloop."
+		{
+			attribute<VboWerk>      Werk_rel        := ../VboWerk_rel[org_rel];
+			attribute<uint64>       pand_bag_nr     := VboWoon/pand_bag_nr[org_rel];
+			attribute<PandWoon>     PandWoon_rel    := VboWoon/Pand_rel[org_rel];
+			attribute<PandWerk>     PandWerk_rel    := rlookup(pand_bag_nr, PandWerk/pand_bag_nr);
+			attribute<Int32>        Oppervlakte     := VboWoon/Oppervlakte[org_rel];
+			attribute<Bool>         WasVoorraad     := VboWerk/IsVoorraad[Werk_rel];
+			attribute<Gebruiksdoel> KlasseWerk      := VboWerk/Klasse[Werk_rel];
+			attribute<Bool>         IsDirect        := WasVoorraad && IsDefined(KlasseWerk) && KlasseWerk != Gebruiksdoel/V/overige_gebruiks && KlasseWerk != Gebruiksdoel/V/logies, Descr = "Het verblijfsobject zelf had in de werkstand een werkfunctie en was in de voorraad: een functiewijziging zonder logies en de overige gebruiksfunctie.";
+			attribute<Bool>         IsOverigeDirect := WasVoorraad && KlasseWerk == Gebruiksdoel/V/overige_gebruiks, Descr = "Een functiewijziging van of naar de overige gebruiksfunctie, zoals een schuur; telt niet mee.";
+			attribute<Bool>         IsLogiesDirect  := WasVoorraad && KlasseWerk == Gebruiksdoel/V/logies, Descr = "Een functiewijziging van of naar logies, volgens het CBS meestal administratief; telt niet mee.";
+
+			attribute<UInt32>       n_W_woon        := PandWoon/n_W[PandWoon_rel];
+			attribute<UInt32>       n_W_werk        := PandWerk/n_W[PandWerk_rel];
+			attribute<UInt32>       n_NW_woon       := PandWoon/n_NW[PandWoon_rel];
+			attribute<UInt32>       n_NW_werk       := PandWerk/n_NW[PandWerk_rel];
+			attribute<Float64>      Opp_W_woon      := PandWoon/Opp_W[PandWoon_rel];
+			attribute<Float64>      Opp_W_werk      := PandWerk/Opp_W[PandWerk_rel];
+			attribute<Float64>      Opp_NW_woon     := PandWoon/Opp_NW[PandWoon_rel];
+			attribute<Float64>      Opp_NW_werk     := PandWerk/Opp_NW[PandWerk_rel];
+			attribute<Float32>      AandeelW_woon   := float32(Opp_W_woon / (Opp_W_woon + Opp_NW_woon));
+			attribute<Float32>      AandeelW_werk   := float32(Opp_W_werk / (Opp_W_werk + Opp_NW_werk));
+			attribute<Bool>         WoonOppAf       := Opp_W_woon < Opp_W_werk, Descr = "Het woonoppervlak van het pand is in de woonstand kleiner dan in de werkstand.";
+
+			attribute<Bool>         Stap1           := IsDefined(PandWoon_rel) && IsDefined(PandWerk_rel) && n_W_werk + n_NW_werk > 0 && n_W_woon + n_NW_woon > 0, Descr = "Het pand is in beide standen in de voorraad, met minstens een verblijfsobject in de voorraad.";
+			attribute<Bool>         Stap2           := n_NW_werk > 0 && n_W_woon > n_W_werk && (n_NW_woon < n_NW_werk || Opp_NW_woon < Opp_NW_werk), Descr = "Het pand had in de werkstand een werkfunctie, heeft in de woonstand meer woningen, en minder werkfuncties of minder werkoppervlak.";
+			attribute<Bool>         Stap3           := !IsOverigeDirect && !IsLogiesDirect, Descr = "De woning was in de werkstand een werkfunctie of niet in de voorraad, en geen logies (de extra regel van het CBS).";
+			attribute<Bool>         Stap4           := Oppervlakte >= MinOppervlakte;
+			attribute<Bool>         Stap5           := !(int32(PandWoon/Bouwjaar[PandWoon_rel]) > int32(LaatsteJaar) - MinLeeftijdPand), Descr = "Het pand is niet jonger dan MinLeeftijdPand; een onbekend bouwjaar telt als oud genoeg.";
+			attribute<Bool>         Stap8           := !(AandeelW_werk > AandeelWoonGrens && AandeelW_woon > AandeelWoonGrens && WoonOppAf), Descr = "Geen woningsplitsing in een pand dat vooral uit woningen bestaat.";
+			attribute<Bool>         Stap9           := !(AandeelW_werk < AandeelWoonGrens && AandeelW_woon < AandeelWoonGrens && Opp_NW_woon == Opp_NW_werk && WoonOppAf), Descr = "Geen splitsing van woningen in een werkpand waarvan het werkoppervlak gelijk bleef.";
+			attribute<Bool>         IsPandroute     := Stap1 && Stap2 && Stap3 && Stap4 && Stap5 && Stap8 && Stap9;
+			attribute<Bool>         IsTransformatie := IsDirect || IsPandroute;
+		}
+
+		unit<UInt32> Transformatie := select_with_org_rel(Woning/IsTransformatie)
+		, Descr = "De woningen die van werken naar wonen gingen, of terug."
+		{
+			attribute<uint64>            pand_bag_nr           := Woning/pand_bag_nr[org_rel];
+			attribute<TransformatiePand> TransformatiePand_rel := rlookup(pand_bag_nr, TransformatiePand/Values);
+			attribute<Bool>              IsDirect              := Woning/IsDirect[org_rel];
+			attribute<Float64>           Oppervlakte           := float64(Woning/Oppervlakte[org_rel]);
+			attribute<Gebruiksdoel>      Klasse                := IsDirect ? (TransformatiePand/IsLogistiek[TransformatiePand_rel] ? Gebruiksdoel/V/Logistiek : Woning/KlasseWerk[org_rel]) : TransformatiePand/Klasse[TransformatiePand_rel], Descr = "De werkfunctie van de woning zelf in de werkstand, en via de pandroute die van het pand; in een logistiek pand Logistiek.";
+			attribute<Sector>            Sector_rel            := IsDefined(Klasse) ? SectorVanGebruiksdoel[Klasse] : Sector/V/onbekend;
+			attribute<Bool>              IsVolledigWerkpand    := TransformatiePand/IsVolledigWerkpand[TransformatiePand_rel];
+			attribute<Bool>              IsG4                  := TransformatiePand/IsG4[TransformatiePand_rel];
+		}
+
+		unit<UInt32> TransformatiePand := unique(Transformatie/pand_bag_nr)
+		, Descr = "De panden van de getransformeerde woningen, met het vlak uit de BAG-store, de voetafdruk, de gemeente en de werkfunctie met het grootste oppervlak in de werkstand."
+		{
+			attribute<PandWoon>             PandWoon_rel       := rlookup(Values, PandWoon/pand_bag_nr);
+			attribute<PandWerk>             PandWerk_rel       := rlookup(Values, PandWerk/pand_bag_nr);
+			attribute<PandSrc>              src_rel            := MakeDefined(PandWoon/org_rel[PandWoon_rel], PandWerk/org_rel[PandWerk_rel]);
+			attribute</Geography/rdc_meter> geometry    (poly) := /SourceData/Vastgoed/BAG/VolledigeBAG/panden/Import/geometry_mm[src_rel][/Geography/rdc_meter], Descr = "Het pandvlak uit de store, alleen voor deze panden omgezet naar meters.";
+			attribute<m2PandFootprint>      Footprint          := abs(area(geometry, meter2_f64))[m2PandFootprint], Descr = "De voetafdruk; de absolute waarde vangt vlakken met een omgekeerde draairichting.";
+			attribute<Gemeente>             Gemeente_rel       := point_in_polygon(centroid_or_mid(geometry), Gemeente/geometry_org);
+			attribute<Bool>                 IsG4               := IsDefined(rlookup(Gemeente/gem_nr[Gemeente_rel], G4/gem_nr));
+			attribute<Bool>                 IsLogistiek        := PandSrc/IsLogistiekFunctie[src_rel];
+			attribute<Bool>                 IsVolledigWerkpand := MakeDefined(PandWerk/n_W[PandWerk_rel], 0) == 0, Descr = "Het pand had in de werkstand geen woning in de voorraad.";
+			attribute<Float64>              WerkOppVerschil    := max_elem(MakeDefined(PandWerk/Opp_NW[PandWerk_rel], 0d) - MakeDefined(PandWoon/Opp_NW[PandWoon_rel], 0d), 0d), Descr = "Het vbo-oppervlak met een werkfunctie of logies dat heen verdwijnt of terug erbij komt, in m².";
+			attribute<Float64>              OppWerk            := sum(WerkVbo/Oppervlakte, WerkVbo/TransformatiePand_rel);
+			attribute<Gebruiksdoel>         Grootste           := ='ArgMax('+AsItemList('OppPerKlasse/'+Gebruiksdoel/name)+')[Gebruiksdoel]';
+			attribute<Gebruiksdoel>         KlasseWerk         := OppWerk > 0d ? Grootste : first(WerkVbo/Klasse, WerkVbo/TransformatiePand_rel), Descr = "De werkfunctie met het grootste oppervlak in de werkstand, of de eerste als geen ervan een oppervlak heeft.";
+			attribute<Gebruiksdoel>         Klasse             := IsLogistiek && IsDefined(KlasseWerk) ? Gebruiksdoel/V/Logistiek : KlasseWerk;
+			attribute<Sector>               Sector_rel         := IsDefined(Klasse) ? SectorVanGebruiksdoel[Klasse] : Sector/V/onbekend;
+		}
+
+		unit<UInt32> WerkVbo := select_with_org_rel(VboWerk/TeltMee && !VboWerk/IsWoon && IsDefined(rlookup(VboWerk/pand_bag_nr, TransformatiePand/Values)))
+		, Descr = "De verblijfsobjecten met een werkfunctie of logies in de voorraad van de werkstand, in de getransformeerde panden."
+		{
+			attribute<TransformatiePand> TransformatiePand_rel := rlookup(VboWerk/pand_bag_nr[org_rel], TransformatiePand/Values);
+			attribute<Gebruiksdoel>      Klasse                := VboWerk/Klasse[org_rel];
+			attribute<Float64>           Oppervlakte           := float64(VboWerk/Oppervlakte[org_rel]);
+		}
+
+		container          OppPerKlasse          := for_each_nedv(Gebruiksdoel/name, 'sum(WerkVbo/Klasse == Gebruiksdoel/V/'+Gebruiksdoel/name+' ? WerkVbo/Oppervlakte : 0d, WerkVbo/TransformatiePand_rel)', TransformatiePand, Float64), Descr = "Het vbo-oppervlak per functie per pand in de werkstand.";
+
+		container PerSector
+		: Descr = "Per sector: de woningen naar hun eigen sector, de panden, de voetafdruk en het werkoppervlak naar de sector van het pand."
+		{
+			attribute<UInt32>          Woningen        (Sector) := pcount(Transformatie/Sector_rel);
+			attribute<UInt32>          Woningen_direct (Sector) := sum_uint32(Transformatie/IsDirect, Transformatie/Sector_rel);
+			attribute<UInt32>          Woningen_G4     (Sector) := sum_uint32(Transformatie/IsG4, Transformatie/Sector_rel);
+			attribute<Float64>         Woonopp         (Sector) := sum(Transformatie/Oppervlakte, Transformatie/Sector_rel);
+			attribute<UInt32>          Panden          (Sector) := pcount(TransformatiePand/Sector_rel);
+			attribute<m2PandFootprint> Voetafdruk      (Sector) := sum(TransformatiePand/Footprint, TransformatiePand/Sector_rel);
+			attribute<Float64>         WerkOppVerschil (Sector) := sum(TransformatiePand/WerkOppVerschil, TransformatiePand/Sector_rel);
+		}
+
+		container PerGebruiksdoel
+		: Descr = "Per gebruiksdoel de woningen naar hun eigen functie en de panden naar die van het pand, om te zien wat er achter een sector zit."
+		{
+			attribute<UInt32> Woningen (Gebruiksdoel) := pcount(Transformatie/Klasse);
+			attribute<UInt32> Panden   (Gebruiksdoel) := pcount(TransformatiePand/Klasse);
+		}
+
+		container Totaal
+		: Descr = "Het hele land; Woningen_alle zijn alle toevoegingen (heen) of onttrekkingen (terug), als noemer."
+		{
+			parameter<UInt32>          Woningen_alle              := #Woning;
+			parameter<UInt32>          Woningen                   := #Transformatie, IntegrityCheck = "this == sum(PerSector/Woningen)";
+			parameter<UInt32>          Woningen_direct            := sum_uint32(Transformatie/IsDirect);
+			parameter<UInt32>          Overige_direct             := sum_uint32(Woning/IsOverigeDirect);
+			parameter<UInt32>          Logies_direct              := sum_uint32(Woning/IsLogiesDirect);
+			parameter<UInt32>          Panden                     := #TransformatiePand, IntegrityCheck = "this == sum(PerSector/Panden)";
+			parameter<m2PandFootprint> Voetafdruk                 := sum(TransformatiePand/Footprint);
+			parameter<Float64>         Woonopp                    := sum(Transformatie/Oppervlakte);
+			parameter<Float64>         WerkOppVerschil            := sum(TransformatiePand/WerkOppVerschil);
+			parameter<UInt32>          Panden_volledig_werkpand   := sum_uint32(TransformatiePand/IsVolledigWerkpand);
+			parameter<UInt32>          Woningen_volledig_werkpand := sum_uint32(Transformatie/IsVolledigWerkpand);
+			parameter<UInt32>          Panden_G4                  := sum_uint32(TransformatiePand/IsG4);
+			parameter<UInt32>          Woningen_G4                := sum_uint32(Transformatie/IsG4);
+		}
+	}
+
+	Template Reeks_T
+	: Descr = "De reeks van een richting als drie csv's in UitvoerDir: per mutatiejaar en sector, per mutatiejaar en gebruiksdoel, en per mutatiejaar het totaal. Terug zijn de woningen die de voorraad verlieten en is WerkOppVerschil het werkoppervlak dat erbij kwam."
+	{
+		parameter<String> Richting;
+		parameter<String> Bestand;
+		///
+		parameter<String> Pad             := '/ESB_Ruimte/WerkNaarWonen/' + Richting + '/';
+
+		unit<UInt32>      RijSector       := combine(Mutatiejaar, Sector), Descr = "Een rij per mutatiejaar en sector; combine laat het jaar het langzaamst lopen, in dezelfde volgorde als union_data de jaren stapelt.";
+		unit<UInt32>      RijGebruiksdoel := combine(Mutatiejaar, Gebruiksdoel);
+
+		container Schrijf_Sector
+		: StorageName = "=UitvoerDir+'/'+Bestand+'_sector.csv'", StorageType = "gdalwrite.vect"
+		, Descr = "Per mutatiejaar en sector de woningen, waarvan direct en in de G4, hun woonoppervlak, de panden, hun voetafdruk en het werkoppervlak dat verdween, in m²."
+		{
+			attribute<UInt32>          Jaar               (RijSector) := Mutatiejaar/Jaar[RijSector/first_rel];
+			attribute<String>          Sector             (RijSector) := /ESB_Ruimte/WerkNaarWonen/Sector/name[RijSector/second_rel];
+			attribute<UInt32>          Woningen           (RijSector) := ='union_data(RijSector, '+AsItemList(Pad+Mutatiejaar/name+'/PerSector/Woningen')+')';
+			attribute<UInt32>          Woningen_direct    (RijSector) := ='union_data(RijSector, '+AsItemList(Pad+Mutatiejaar/name+'/PerSector/Woningen_direct')+')';
+			attribute<UInt32>          Woningen_G4        (RijSector) := ='union_data(RijSector, '+AsItemList(Pad+Mutatiejaar/name+'/PerSector/Woningen_G4')+')';
+			attribute<Float64>         Woonopp_m2         (RijSector) := ='union_data(RijSector, '+AsItemList(Pad+Mutatiejaar/name+'/PerSector/Woonopp')+')';
+			attribute<UInt32>          Panden             (RijSector) := ='union_data(RijSector, '+AsItemList(Pad+Mutatiejaar/name+'/PerSector/Panden')+')';
+			attribute<m2PandFootprint> Voetafdruk_m2      (RijSector) := ='union_data(RijSector, '+AsItemList(Pad+Mutatiejaar/name+'/PerSector/Voetafdruk')+')';
+			attribute<Float64>         WerkOppVerschil_m2 (RijSector) := ='union_data(RijSector, '+AsItemList(Pad+Mutatiejaar/name+'/PerSector/WerkOppVerschil')+')';
+		}
+
+		container Schrijf_Gebruiksdoel
+		: StorageName = "=UitvoerDir+'/'+Bestand+'_gebruiksdoel.csv'", StorageType = "gdalwrite.vect"
+		, Descr = "Per mutatiejaar en gebruiksdoel de woningen en de panden."
+		{
+			attribute<UInt32> Jaar         (RijGebruiksdoel) := Mutatiejaar/Jaar[RijGebruiksdoel/first_rel];
+			attribute<String> Gebruiksdoel (RijGebruiksdoel) := /ESB_Ruimte/WerkNaarWonen/Gebruiksdoel/name[RijGebruiksdoel/second_rel];
+			attribute<UInt32> Woningen     (RijGebruiksdoel) := ='union_data(RijGebruiksdoel, '+AsItemList(Pad+Mutatiejaar/name+'/PerGebruiksdoel/Woningen')+')';
+			attribute<UInt32> Panden       (RijGebruiksdoel) := ='union_data(RijGebruiksdoel, '+AsItemList(Pad+Mutatiejaar/name+'/PerGebruiksdoel/Panden')+')';
+		}
+
+		container Schrijf_Totaal
+		: StorageName = "=UitvoerDir+'/'+Bestand+'_totaal.csv'", StorageType = "gdalwrite.vect"
+		, Descr = "Per mutatiejaar het totaal van het land, met de noemer Woningen_alle en de functiewijzigingen van en naar logies en de overige gebruiksfunctie die niet meetellen."
+		{
+			attribute<UInt32>          Jaar                       (Mutatiejaar) := Mutatiejaar/Jaar;
+			attribute<UInt32>          Woningen_alle              (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Woningen_alle')+')';
+			attribute<UInt32>          Woningen                   (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Woningen')+')';
+			attribute<UInt32>          Woningen_direct            (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Woningen_direct')+')';
+			attribute<UInt32>          Overige_direct             (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Overige_direct')+')';
+			attribute<UInt32>          Logies_direct              (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Logies_direct')+')';
+			attribute<UInt32>          Panden                     (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Panden')+')';
+			attribute<m2PandFootprint> Voetafdruk_m2              (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Voetafdruk')+')';
+			attribute<Float64>         Woonopp_m2                 (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Woonopp')+')';
+			attribute<Float64>         WerkOppVerschil_m2         (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/WerkOppVerschil')+')';
+			attribute<UInt32>          Panden_volledig_werkpand   (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Panden_volledig_werkpand')+')';
+			attribute<UInt32>          Woningen_volledig_werkpand (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Woningen_volledig_werkpand')+')';
+			attribute<UInt32>          Panden_G4                  (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Panden_G4')+')';
+			attribute<UInt32>          Woningen_G4                (Mutatiejaar) := ='union_data(Mutatiejaar, '+AsItemList(Pad+Mutatiejaar/name+'/Totaal/Woningen_G4')+')';
+		}
+	}
 }
