@@ -593,7 +593,7 @@ Template Zichtjaar_T
 		, Descr = "De cellen die in de startstand een label voor BAG-nieuwbouw hebben (StartState_metBAGnieuwbouw). De vormtoetsen in Iter_Allocatie tellen ze in elk zichtjaar mee, voor de beukmaat en de clusteromvang, zodat een open cel in een wijk van de laatste jaren als inbreiding gebouwd kan worden (#899).";
 
 		container TredeDynamischeUrbanContour
-		: Descr = "De trede-ladders van dit zichtjaar, opgebouwd op een bestaand bebouwd gebied dat meegroeit met wat het model in eerdere zichtjaren heeft gebouwd (#749), voor zover dat aan een woonkern vastzit (#862). Hier en niet in VariantData, want de
+		: Descr = "De trede-ladders van dit zichtjaar, opgebouwd op een bestaand bebouwd gebied dat meegroeit met wat het model in eerdere zichtjaren heeft gebouwd (#749), voor zover dat aan een woonkern vastzit (#862), en met de wijklocaties van dit zichtjaar (#899). Hier en niet in VariantData, want de
 					UrbanContour van 2060 hangt af van wat er in 2050 is gealloceerd en VariantData is op het basisjaar geankerd; dit is de enige plek waar de vorige zichtjaarstand beschikbaar is, via
 					StateVoorAllocatie0. De ladder zelf, de unit met zijn treden, blijft gedeeld in VariantParameters/Tredes; hier gebeurt per zichtjaar alleen de toewijzing van cellen aan klassen, per as
 					opgebouwd (#775)."
@@ -612,24 +612,112 @@ Template Zichtjaar_T
 			}
 			attribute<Bool> IsAangeslotenNieuwbouw       (AdminDomain) := IsModelNieuwbouw_AdminDomain && Cluster/HeeftWoonkern[Cluster/Districts]
 			, Descr = "De nieuwbouw die in een cluster met een BRT-woonkern ligt (#862). Een cluster dat over de zichtjaren vanaf een kern doorgroeit blijft meetellen; een los cluster in het buitengebied, zoals BAG-nieuwbouw op een erf of een opnieuw bebouwd vrijgekomen perceel, telt niet mee en wordt zo geen nieuwe kern.";
-			attribute<Bool> Aangroei                     (AdminDomain) := potential(float32(IsAangeslotenNieuwbouw), /Geography/Distmatrices_25m/pot100m/Flat2) > 0f, Descr = "De schijf van 100 meter rond de nieuwbouw die aan een kern vastzit. Honderd meter is een AllocDomain-cel, dus dit is precies 'direct aangrenzend op de resolutie waarop gealloceerd wordt'. Ruimer werkt niet: een schijf van 500 meter rond het bestaande bebouwde gebied voegt al 862.700 hectare toe, bijna tweemaal dat gebied zelf, en dan betekent binnenstedelijk niets meer.";
-			attribute<Bool> AangroeiWonen                (AdminDomain) := potential(float32(IsAangeslotenNieuwbouw && IsModelNieuwbouwWonen_AdminDomain), /Geography/Distmatrices_25m/pot100m/Flat2) > 0f, Descr = "Dezelfde schijf rond alleen de woningbouw daarvan: de aansluitende schijf groeit mee met wonen en niet met werken (#862), zodat een werklocatie aan de rand van een kern de woonuitbreiding niet naar zich toe trekt.";
+			parameter<String> SluitMatrix                         := '/Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(/ModelParameters/Wonen/Uitbreiding/SluitStraal / 1[meter]))+'m/Flat2', Descr = "De schijf van ModelParameters/Wonen/Uitbreiding/SluitStraal waarmee Aangroei en AangroeiWonen hun gaten dichten.";
+			attribute<Bool> Aangroei                     (AdminDomain) := = 'IsAangeslotenNieuwbouw || !(potential(float32(!(potential(float32(IsAangeslotenNieuwbouw), '+SluitMatrix+') > 0f)), '+SluitMatrix+') > 0f)'
+			, Descr = "De nieuwbouw die aan een kern vastzit, met de gaten erin dicht (#899): verbreed met ModelParameters/Wonen/Uitbreiding/SluitStraal en weer versmald met dezelfde straal. Een gat tot tweemaal de straal gaat zo bij het bebouwd gebied, en er komt geen strook buiten de nieuwbouw bij, want die zou in de bovenste trede boven de wijklocaties komen.";
+			attribute<Bool> AangroeiWonen                (AdminDomain) := = '(IsAangeslotenNieuwbouw && IsModelNieuwbouwWonen_AdminDomain) || !(potential(float32(!(potential(float32(IsAangeslotenNieuwbouw && IsModelNieuwbouwWonen_AdminDomain), '+SluitMatrix+') > 0f)), '+SluitMatrix+') > 0f)'
+			, Descr = "Hetzelfde voor alleen de woningbouw daarvan: de aansluitende schijf groeit mee met wonen en niet met werken (#862), zodat een werklocatie aan de rand van een kern de woonuitbreiding niet naar zich toe trekt.";
 
 			attribute<Bool> UrbanContour_AdminDomain     (AdminDomain) := /BaseData/Omgeving/UrbanContour || Aangroei;
 			attribute<Bool> BinnenUrbanContour           (AdminDomain) := UrbanContour_AdminDomain;
 			attribute<Bool> BuitenUrbanContour           (AdminDomain) := !BinnenUrbanContour;
 			attribute<Bool> AansluitendAanUrbanContour   (AdminDomain) := = '!BinnenUrbanContour && potential(float32(/BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain || AangroeiWonen), /Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(/ModelParameters/Wonen/Uitbreiding/AansluitStraal / 1[meter]))+'m/Flat2) > 0f'
 			, Descr = "De aansluitende schijf van dit zichtjaar (#862), rond de BRT-woonkernen aangegroeid met de woningbouw van eerdere zichtjaren die aan een kern vastzit.";
+
+			container Wijklocaties
+			: Descr = "Per kern en per vierkant van ModelParameters/Wonen/Uitbreiding/Vierkant hooguit een wijklocatie in de aansluitende schijf (#899): de vrije grond rond de vrije cel met het hoogste gemiddelde saldo
+						binnen VensterStraal, met een straal naar de grootte van de kern (Kernklasse). Ze vormen een trede tussen het bebouwd gebied en de rest van de schijf (VariantParameters/Tredes/impl/UrbanContourAansluitendK),
+						en binnen die trede rangschikt IterSubsector_T_Wonen op het gemiddelde saldo van de locatie (Rang), zodat de allocatie een locatie als geheel vult en niet cel voor cel een band langs de rand van de kern.
+						Een vrije cel hoort bij het dichtstbijzijnde middelpunt, mits dat bij dezelfde kern hoort en binnen de straal van die kern ligt. Het aantal locaties per kern is niet begrensd."
+			{
+				unit<UInt8>        Kernklasse                          := /ModelParameters/Wonen/Uitbreiding/Kernklasse;
+				parameter<String>  Woningtype                          := /ModelParameters/Wonen/Uitbreiding/SaldoWoningtype;
+				unit<UInt8>        OP_saldo                            := = 'OP/perWP2xVSSH/'+Woningtype+'/OP_sub', Descr = "De pakketten van het woningtype waarvan het saldo de locaties kiest.";
+				attribute<String>  Saldo_perOP_expr         (OP_saldo) :=
+					'ThisVariantData/Zeef/'+name+'/Wonen/'+Woningtype+'/Zeef_perOP/'+OP_saldo/name+'/Beschikbaar_voorOP'
+					+ '? ThisVariantData/Suitability/'+name+'/Wonen/'+Woningtype+'/perOP/'+OP_saldo/name+'/Totaal'
+					+ ' + MakeDefined(ThisVariantData/Suitability/'+name+'/Wonen/'+Woningtype+'/perOP/'+OP_saldo/name+'/Opbrengsten * GroenNabijheid/Prijsopslag_perWP4/'+OP/WP4_name[OP_saldo/org_rel]+', 0f)'
+					+ ': (0f/0f)'
+				, Descr = "Het saldo per pakket zoals IterSubsector_T_Wonen/GeschiktheidExpr het in dit zichtjaar ziet: met de correctie voor natuur en water, en leeg waar het pakket niet beschikbaar is.";
+				attribute<Float32>  Saldo        (CompactedAdminDomain) := = 'max_elem('+AsItemList(Saldo_perOP_expr)+')', Descr = "Het saldo van het beste beschikbare pakket van dat woningtype.";
+				attribute<Woning>   Woningen     (CompactedAdminDomain) := = 'add('+AsItemList('StateVoorAllocatie0/Wonen/'+/Classifications/Vastgoed/WP2xVSSH/name)+')', Descr = "De woningen in de cel aan het begin van het zichtjaar.";
+				attribute<Bool>     IsVrij       (CompactedAdminDomain) := IsDefined(Saldo) && MakeDefined(Woningen, 0[Woning]) <= 0[Woning] && !/Classifications/Actor/Sector/xSubsector/LegtCelVast[StateVoorAllocatie0/SubSector_rel]
+				, Descr = "Vrije grond: een beschikbaar pakket van dat woningtype, geen woningen en geen label dat de cel vastlegt. Een cel zonder label telt als vrij, want de opzoeking op een leeg label geeft FALSE.";
+				attribute<Woning>   Woningen_AdminDomain  (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, MakeDefined(Woningen, 0[Woning]), 0[Woning]);
+				attribute<Float32>  Saldo_AdminDomain     (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, MakeDefined(Saldo, 0f), 0f);
+				attribute<Bool>     IsVrij_AdminDomain    (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, IsVrij, FALSE);
+
+				attribute<Bool>     Kerngebied            (AdminDomain) := BinnenUrbanContour || AansluitendAanUrbanContour, Descr = "Het bebouwd gebied van dit zichtjaar met zijn aansluitende schijf.";
+				unit<UInt32>        Kern                                := district_8(Kerngebied), Descr = "De samenhangende stukken van Kerngebied; een kern is zo'n stuk met een BRT-woonkern erin."
+				{
+					attribute<Bool>       HeeftWoonkern  := sum(uint32(/BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain), Districts) > 0;
+					attribute<Woning>     Woningen       := sum(Woningen_AdminDomain, Districts), Descr = "De grootte van de kern: de woningen erin aan het begin van het zichtjaar.";
+					attribute<Kernklasse> Kernklasse_rel := Classify(Woningen, Kernklasse/Ondergrens);
+					attribute<meter>      Straal         := Kernklasse/Straal[Kernklasse_rel], Descr = "De straal van de wijklocaties van deze kern.";
+				}
+				attribute<Bool>     IsKandidaat           (AdminDomain) := IsVrij_AdminDomain && AansluitendAanUrbanContour && Kern/HeeftWoonkern[Kern/Districts], Descr = "De vrije grond in de aansluitende schijf van een kern.";
+				parameter<String>   Venster                             := '/Geography/Distmatrices_'+/Geography/AdminDomain_ref_short+'/pot'+string(uint32(/ModelParameters/Wonen/Uitbreiding/VensterStraal / 1[meter]))+'m/Flat2';
+				attribute<Float32>  Venster_n             (AdminDomain) := = 'potential(float32(IsKandidaat), '+Venster+')', Descr = "Het aantal cellen vrije grond binnen VensterStraal.";
+				attribute<Float32>  Venster_saldo         (AdminDomain) := = 'potential(IsKandidaat ? Saldo_AdminDomain : 0f, '+Venster+')', Descr = "De som van hun saldo, op hetzelfde masker als de noemer.";
+				parameter<Float64>  Vierkant_m                          := float64(/ModelParameters/Wonen/Uitbreiding/Vierkant / 1[meter]);
+				parameter<UInt32>   Vak_kolommen                        := uint32((/Geography/x_max - /Geography/x_min) / Vierkant_m) + 1;
+				parameter<UInt32>   Vak_rijen                           := uint32((/Geography/y_max - /Geography/y_min) / Vierkant_m) + 1;
+
+				unit<UInt64> Kandidaat := select_with_org_rel(IsKandidaat), Descr = "De cellen vrije grond in de schijf, als lijst."
+				{
+					attribute<rdc_meter>  geometry    := AdminDomain/point[org_rel];
+					attribute<Kern>       Kern_rel    := Kern/Districts[org_rel];
+					attribute<meter>      Straal      := Kern/Straal[Kern_rel];
+					attribute<Float32>    Saldo       := Saldo_AdminDomain[org_rel];
+					attribute<Float32>    Score       := Venster_saldo[org_rel] / Venster_n[org_rel], Descr = "Het gemiddelde saldo van de vrije grond binnen VensterStraal; de cel zelf telt mee, dus de noemer is ten minste een.";
+					attribute<Float32>    Nodig       := /ModelParameters/Wonen/Uitbreiding/MinimumVrijAandeel * pi()[float32] * sqr(float32(min_elem(Straal, /ModelParameters/Wonen/Uitbreiding/VensterStraal) / 1[meter]) / float32(AdminDomain/gridsize))
+					, Descr = "Hoeveel cellen vrije grond er binnen VensterStraal moeten liggen om middelpunt te kunnen zijn: MinimumVrijAandeel van de locatie, of van het venster als de locatie groter is.";
+					attribute<Bool>       GenoegVrij  := Venster_n[org_rel] >= Nodig;
+					attribute<UInt64>     KernVak_key := uint64(Kern_rel) * uint64(Vak_kolommen * Vak_rijen) + uint64(uint32((PointRow(geometry) - /Geography/y_min) / Vierkant_m) * Vak_kolommen + uint32((PointCol(geometry) - /Geography/x_min) / Vierkant_m))
+					, Descr = "De kern en het vierkant waarin de cel ligt, als een getal.";
+					attribute<UInt32>     EigenRang   := invert(index(Saldo))[uint32], Descr = "De rang van het eigen saldo onder de vrije grond, voor de volgorde binnen een locatie.";
+					attribute<Middelpunt> Naaste      := connect(Middelpunt/geometry, geometry), Descr = "Het dichtstbijzijnde middelpunt.";
+					attribute<meter>      Afstand     := value(dist(Middelpunt/geometry[Naaste], geometry), meter);
+					attribute<Bool>       InLocatie   := Middelpunt/Kern_rel[Naaste] == Kern_rel && Afstand <= Middelpunt/Straal[Naaste], Descr = "Hoort de cel bij de wijklocatie van het dichtstbijzijnde middelpunt: bij dezelfde kern en binnen de straal van die kern?";
+					attribute<Middelpunt> Locatie_rel := InLocatie ? Naaste : null_u[Middelpunt];
+					attribute<UInt64>     Sleutel     := InLocatie ? uint64(Middelpunt/Rang[Locatie_rel]) * uint64(#Kandidaat) + uint64(EigenRang) : 0u64;
+					attribute<UInt32>     Rang        := invert(index(Sleutel))[uint32], Descr = "De volgorde in de trede van de wijklocaties: eerst op het gemiddelde saldo van de locatie, binnen een locatie op het eigen saldo.";
+				}
+				unit<UInt64> Zaadkandidaat := select_with_org_rel(Kandidaat/GenoegVrij), Descr = "De vrije grond met genoeg vrije grond eromheen om middelpunt te kunnen zijn."
+				{
+					attribute<Float32>    Score       := Kandidaat/Score[org_rel];
+					attribute<KernVak>    KernVak_rel := rlookup(Kandidaat/KernVak_key[org_rel], KernVak/Values);
+				}
+				unit<UInt64> KernVak := unique(Kandidaat/KernVak_key[Zaadkandidaat/org_rel]), Descr = "De combinaties van kern en vierkant met ten minste een zaadkandidaat."
+				{
+					attribute<UInt64>     Beste       := uint64(max_index(Zaadkandidaat/Score, Zaadkandidaat/KernVak_rel)), Descr = "De zaadkandidaat met het hoogste gemiddelde saldo.";
+				}
+				unit<UInt64> Middelpunt := select_with_org_rel(id(Zaadkandidaat) == KernVak/Beste[Zaadkandidaat/KernVak_rel]), Descr = "Per kern en per vierkant de vrije cel met het hoogste gemiddelde saldo binnen VensterStraal, mits er genoeg vrije grond omheen ligt: het middelpunt van een wijklocatie."
+				{
+					attribute<Kandidaat>  Kandidaat_rel := Zaadkandidaat/org_rel[org_rel];
+					attribute<rdc_meter>  geometry      := Kandidaat/geometry[Kandidaat_rel];
+					attribute<Kern>       Kern_rel      := Kandidaat/Kern_rel[Kandidaat_rel];
+					attribute<meter>      Straal        := Kandidaat/Straal[Kandidaat_rel];
+					attribute<Float32>    Gemiddelde    := mean(Kandidaat/Saldo, Kandidaat/Locatie_rel), Descr = "Het gemiddelde saldo van de vrije grond van de locatie.";
+					attribute<UInt32>     Rang          := invert(index(Gemiddelde))[uint32];
+				}
+
+				attribute<Bool>     IsLocatie             (AdminDomain) := recollect_by_cond(IsKandidaat, Kandidaat/InLocatie, FALSE), Descr = "De vrije grond in een wijklocatie.";
+				attribute<UInt32>   Rang         (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, recollect_by_cond(IsKandidaat, Kandidaat/Rang, 0u))
+				, Descr = "De rang waarmee een cel in de trede van de wijklocaties de zaaglijn in gaat (IterSubsector_T_Wonen, Geschiktheid_Ordered); buiten een locatie nul en niet gebruikt.";
+			}
+			attribute<Bool> Wijklocatie                  (AdminDomain) := Wijklocaties/IsLocatie, Descr = "De wijklocaties van dit zichtjaar, de tweede trede van UrbanContourAansluitendK (#899).";
 			attribute<Bool> AanDeBeurt                   (AdminDomain) := = 'ThisVariantData/Herontwikkelingskans/PerZichtjaar/' + name + '/IsVrij_AdminDomain'
 			, Descr = "De cellen met woningen van de percelen die de herontwikkelingskans van wonen uiterlijk in dit zichtjaar vrij laat (#869): de bovenste as van de woonladders (VariantParameters/Tredes/impl/HerontwikkelingK), zodat de allocatie een vrijgekomen perceel bebouwt voordat hij elders uitbreidt.";
 			attribute<Bool> NietAanDeBeurt               (AdminDomain) := !AanDeBeurt;
 
 			container src := ThisVariantData/Trede/src
-			, Descr = "De trede-bron van dit zichtjaar: alles geerfd van VariantData, met alleen de drie UrbanContour-vlaggen (binnen, aansluitend, buiten; #862) en de twee herontwikkelingsvlaggen (#869) vervangen. Meer hoeft er niet overschreven te worden, want geen enkel ander item in die bron leest die vlaggen."
+			, Descr = "De trede-bron van dit zichtjaar: alles geerfd van VariantData, met alleen de drie UrbanContour-vlaggen (binnen, aansluitend, buiten; #862), de wijklocaties (#899) en de twee herontwikkelingsvlaggen (#869) vervangen. Meer hoeft er niet overschreven te worden, want geen enkel ander item in die bron leest die vlaggen."
 			{
 				attribute<Bool> BinnenUrbanContour         (AdminDomain) := ../BinnenUrbanContour;
 				attribute<Bool> BuitenUrbanContour         (AdminDomain) := ../BuitenUrbanContour;
 				attribute<Bool> AansluitendAanUrbanContour (AdminDomain) := ../AansluitendAanUrbanContour;
+				attribute<Bool> Wijklocatie                (AdminDomain) := ../Wijklocatie;
 				attribute<Bool> AanDeBeurt                 (AdminDomain) := ../AanDeBeurt;
 				attribute<Bool> NietAanDeBeurt             (AdminDomain) := ../NietAanDeBeurt;
 			}
@@ -640,6 +728,7 @@ Template Zichtjaar_T
 				attribute<Bool> BinnenUrbanContour         (AdminDomain) := ../BinnenUrbanContour;
 				attribute<Bool> BuitenUrbanContour         (AdminDomain) := ../BuitenUrbanContour;
 				attribute<Bool> AansluitendAanUrbanContour (AdminDomain) := ../AansluitendAanUrbanContour;
+				attribute<Bool> Wijklocatie                (AdminDomain) := ../Wijklocatie;
 				attribute<Bool> AanDeBeurt                 (AdminDomain) := ../AanDeBeurt;
 				attribute<Bool> NietAanDeBeurt             (AdminDomain) := ../NietAanDeBeurt;
 			}
