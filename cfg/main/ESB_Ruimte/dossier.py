@@ -318,12 +318,98 @@ def deel_d(d, map_):
             "terreinen. Bron: BAG, IBIS 2023; ESB_Ruimte/IbisTerreinen.")
 
 
+def lees_cbs_e(pad):
+    """De landelijke CBS-reeks van transformatie; 2020 tot en met 2022 staan in 84903NED en 86054NED, neem de nieuwste."""
+    cbs = lees(pad)
+    return cbs.sort_values(["jaar", "tabel"]).drop_duplicates("jaar", keep="last").set_index("jaar")
+
+
+def deel_e(d, map_, cbs_pad, map_ab):
+    heen = lees(map_ / "WerkNaarWonen_totaal.csv").set_index("jaar")
+    terug = lees(map_ / "WonenNaarWerken_totaal.csv").set_index("jaar")
+    sec = lees(map_ / "WerkNaarWonen_sector.csv")
+    doel = lees(map_ / "WerkNaarWonen_gebruiksdoel.csv")
+    cbs = lees_cbs_e(cbs_pad)
+    begin, eind = int(heen.index.min()), int(heen.index.max())
+    beide = [j for j in heen.index if j in cbs.index]
+    zonder13 = [j for j in beide if j != 2013]
+    ratio = heen.woningen[zonder13] / cbs.transformatie[zonder13]
+    zorg13 = doel[(doel.jaar == 2013) & (doel.gebruiksdoel == "Gezondheidszorg")].woningen.iloc[0]
+    zorg_rest = doel[(doel.jaar != 2013) & (doel.gebruiksdoel == "Gezondheidszorg")].woningen.mean()
+    werk = lees(map_ab / "WerkenPerBaan_reeks.csv")
+    ontl = lees(map_ab / "WerkenPerBaan_ontleding.csv").set_index("sector").loc[list(SECTOREN)]
+    eind_a = int(werk[werk.m2_per_baan.notna()].jaar.max())
+    groei_jaar = ontl.groei_m2.sum() / (eind_a - 2012)
+    voet_jaar = heen.voetafdruk_m2[[j for j in heen.index if 2012 <= j < eind_a]].mean()
+
+    d.kop("6. Werk dat wonen werd (E)")
+    d.alinea(
+        "Welke werkpanden werden woningen, per jaar, en uit welke sector kwamen ze? De telling volgt de methode van "
+        "het CBS voor transformatie, op de volledige BAG met alle voorkomens. Een woning telt als hij op 1 januari "
+        "na het mutatiejaar in de voorraad is en op 1 januari van het mutatiejaar niet als woning. Dat is een "
+        "transformatie als het verblijfsobject zelf eerst een werkfunctie had, of als het pand eerst een werkfunctie "
+        "had en nu meer woningen en minder werkfunctie heeft. Logies, de overige gebruiksfunctie (zoals schuren), "
+        "woningen kleiner dan 15 m², nieuwbouw van de laatste twee jaar en woningsplitsing tellen niet. De sector is "
+        "die van de vorige functie: van het verblijfsobject zelf, of van de grootste werkfunctie in het pand. "
+        "Dezelfde telling de andere kant op geeft de woningen die werk werden.")
+    d.figuur(map_ / "WerkNaarWonen_figuur.png", "Werkpanden die woningen werden, en de omgekeerde richting",
+             "Het mutatiejaar loopt van 1 januari tot 1 januari erna. Bron: BAG (Kadaster), CBS 84903NED en "
+             "86054NED; ESB_Ruimte/WerkNaarWonen.", breedte=12)
+    rijen = []
+    for j in heen.index:
+        h = heen.loc[j]
+        c = nl(cbs.transformatie[j]) if j in cbs.index else ""
+        rijen.append([str(j), nl(h.woningen), nl(h.woningen_direct), nl(h.panden), nl(h.voetafdruk_m2 / 1e4),
+                      nl(h.werkoppverschil_m2 / 1e4), c, nl(terug.woningen[j])])
+    d.tabel(["Mutatiejaar", "woningen uit werk", "waarvan functiewijziging vbo", "panden", "voetafdruk panden (ha)",
+             "werkoppervlak weg (ha)", "CBS transformatie", "woningen naar werk"], rijen,
+            "Woningen uit werkpanden per jaar, naast het CBS",
+            "Voetafdruk: de hele voetafdruk van de panden waarin een woning uit werk kwam, ook als er werk in "
+            "bleef. Werkoppervlak: het vbo-oppervlak met een werkfunctie of logies dat in die panden verdween. "
+            "Bron: BAG; CBS 84903NED (tot 2022) en 86054NED; ESB_Ruimte/WerkNaarWonen.")
+
+    som = sec[(sec.sector != "onbekend")].groupby("sector")[["woningen", "woningen_g4", "panden", "voetafdruk_m2",
+                                                               "werkoppverschil_m2"]].sum()
+    rijen = [[lab, nl(som.woningen[s]), pct(som.woningen[s] / som.woningen.sum()), pct(som.woningen_g4[s] / som.woningen[s]),
+              nl(som.panden[s]), nl(som.voetafdruk_m2[s] / 1e4), nl(som.werkoppverschil_m2[s] / 1e4)]
+             for s, lab in SECTOREN.items()]
+    rijen.append(["Zes sectoren samen", nl(som.woningen.sum()), pct(1), pct(som.woningen_g4.sum() / som.woningen.sum()),
+                  nl(som.panden.sum()), nl(som.voetafdruk_m2.sum() / 1e4), nl(som.werkoppverschil_m2.sum() / 1e4)])
+    d.tabel(["Sector van de vorige functie", "woningen", "deel", "waarvan in de G4", "panden",
+             "voetafdruk (ha)", "werkoppervlak weg (ha)"], rijen,
+            f"Woningen uit werk naar sector, mutatiejaren {begin}–{eind} samen",
+            "Woningen naar de functie van het verblijfsobject zelf of van het pand; panden, voetafdruk en "
+            "werkoppervlak naar de grootste werkfunctie van het pand. Bron: BAG; ESB_Ruimte/WerkNaarWonen.")
+
+    d.opsomming([
+        f"De reeks volgt het CBS goed: buiten 2013 ligt hij tussen {pct(ratio.min())} en {pct(ratio.max())} van de "
+        f"transformatie volgens het CBS. Over {begin}–{eind} kwamen er {nl(heen.woningen.sum())} woningen uit werk, "
+        f"gemiddeld {nl(heen.woningen.mean())} per jaar; de omgekeerde richting is veel kleiner, "
+        f"{nl(terug.woningen.sum())} woningen.",
+        f"2013 is te hoog: {nl(zorg13)} woningen komen uit de gezondheidszorg, tegen gemiddeld {nl(zorg_rest)} in de "
+        "andere jaren. Dat is waarschijnlijk de administratieve correctie van zorgvastgoed in de BAG, die het CBS "
+        "apart houdt en die deze telling niet herkent. Ook het CBS heeft in 2013 een hoge transformatie; of daar "
+        "hetzelfde zorgvastgoed in zit, is niet nagegaan.",
+        f"De zakelijke dienstverlening (kantoren) levert {pct(som.woningen.Zak_dienstverlening / som.woningen.sum())} "
+        f"van de woningen, maar {pct(som.voetafdruk_m2.Zak_dienstverlening / som.voetafdruk_m2.sum())} van de "
+        "voetafdruk: een kantoor levert veel woningen per pand. De nijverheid en de detailhandel leveren samen "
+        f"{pct((som.voetafdruk_m2.Nijverheid + som.voetafdruk_m2.Detailhandel) / som.voetafdruk_m2.sum())} van de "
+        "voetafdruk. Logistiek wordt vrijwel nooit wonen.",
+        f"Sinds 2019 daalt de transformatie, bij het CBS en hier, tot {nl(heen.woningen[eind])} woningen in {eind}.",
+        f"In oppervlak is het klein. De panden waarin een woning uit werk kwam, hebben van 2012 tot {eind_a} samen "
+        f"gemiddeld {nl(voet_jaar / 1e4)} ha voetafdruk per jaar; de voetafdruk van de zes werksectoren groeide in "
+        f"die jaren netto met gemiddeld {nl(groei_jaar / 1e4)} ha per jaar (deel 1). De eerste is een bovengrens, "
+        "want in een deel van die panden bleef werk. Transformatie haalt dus vooral kantoren, winkels en "
+        "werkplaatsen in bestaande panden weg, niet op de schaal waarop de werkvoetafdruk groeit.",
+    ])
+
+
 def volgt(d, kop, tekst):
     d.kop(kop)
     d.alinea(tekst)
 
 
-def kern(d, map_ab, map_g, map_d):
+def kern(d, map_ab, map_g, map_d, map_e, cbs_e):
     """Wat opvalt, met elk getal uit de csv's."""
     werk = lees(map_ab / "WerkenPerBaan_reeks.csv")
     eind = int(werk[werk.m2_per_baan.notna()].jaar.max())
@@ -337,6 +423,9 @@ def kern(d, map_ab, map_g, map_d):
     bbg = lees(map_g / "Bouwterrein_overlay_BBG.csv").set_index("jaar")
     nabij = bbg.ha_nabij_recent / bbg.ha_raster
     ibis = lees(map_d / "IbisTerreinen_sectoren.csv").set_index("sector")
+    e = lees(map_e / "WerkNaarWonen_totaal.csv").set_index("jaar")
+    e_sec = lees(map_e / "WerkNaarWonen_sector.csv").groupby("sector").woningen.sum()
+    e_cbs = lees_cbs_e(cbs_e)
     nl_log = ontl.loc[["Nijverheid", "Logistiek"]].groei_m2.sum()
     plus = [SECTOREN[s].lower() for s in ontl.index if ontl.loc[s, "door_m2baan_m2"] > 0]
     meer = ", ".join(plus[:-1]) + " en " + plus[-1]
@@ -366,12 +455,18 @@ def kern(d, map_ab, map_g, map_d):
         f"Op 1 januari {int(pijp.index.max())} zitten {nl(pijp.woningen_recent.iloc[-1])} woningen in de pijplijn van "
         f"de BAG. Van het bouwterrein van het CBS ligt {pct(nabij.min())} tot {pct(nabij.max())} binnen 100 m van een "
         "pand uit de pijplijn; de rest heeft geen zichtbaar bouwproject.",
+        f"Uit werkpanden kwamen van {int(e.index.min())} tot en met {int(e.index.max())} gemiddeld "
+        f"{nl(e.woningen.mean())} woningen per jaar (deel 6), in lijn met de transformatie volgens het CBS "
+        f"({nl(e_cbs.transformatie[[j for j in e.index if j in e_cbs.index]].mean())} per jaar). "
+        f"{pct(e_sec.Zak_dienstverlening / e_sec[list(SECTOREN)].sum())} komt uit kantoren van de zakelijke "
+        "dienstverlening, vrijwel niets uit de logistiek.",
     ])
 
 
 def main(map_ab, map_g, map_13, map_d, map_e, uit):
     map_ab, map_g = Path(map_ab), Path(map_g)
     cbs = Path(__file__).resolve().parents[3] / "data" / "CBS_85867NED" / "Toegevoegde_waarde_bedrijfstak.csv"
+    cbs_e = Path(__file__).resolve().parents[3] / "data" / "CBS_transformatie" / "cbs_transformatie_NL.csv"
     d = Dossier()
     d.doc.add_heading("Ruimte voor werken: cijfers voor het ESB-artikel", 0)
     d.alinea("Intern werkdocument van Object Vision voor het overleg met de VU, 20 november 2026. Niet verspreiden: "
@@ -381,13 +476,13 @@ def main(map_ab, map_g, map_13, map_d, map_e, uit):
         "ESB-redactie: zitten laagproductieve sectoren hoogproductieve ruimtelijk in de weg? Alles is landelijk en "
         "gerekend in GeoDMS op de tak esb-ruimte van RSopen (cfg/main/ESB_Ruimte), zodat het na te rekenen is. "
         "Per deel staat de bron onder de tabel.")
-    kern(d, map_ab, map_g, Path(map_d))
+    kern(d, map_ab, map_g, Path(map_d), Path(map_e), cbs_e)
     deel_a(d, map_ab)
     deel_b(d, map_ab, cbs)
     tab_c = deel_c(d, map_ab)
     deel_13(d, Path(map_13))
     deel_d(d, Path(map_d))
-    volgt(d, "6. Werk dat wonen werd (E)", "Volgt.")
+    deel_e(d, Path(map_e), cbs_e, map_ab)
     deel_g(d, map_g)
     bijlage_c(d, tab_c)
     d.doc.save(uit)
