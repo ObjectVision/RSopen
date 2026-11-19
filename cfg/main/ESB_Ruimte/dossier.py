@@ -233,6 +233,45 @@ def deel_g(d, map_):
              "telt, zoals de Afsluitdijk in 2022.")
 
 
+def deel_13(d, map_):
+    v = lees(map_ / "VergelijkingFig7.csv")
+    jaar = int(v.jaar.max())
+    j = v[v.jaar == jaar].set_index("sector")
+    sbi = lees(map_ / "VergelijkingFig7_sbi.csv")
+    naar_cons = sbi[(sbi.sector_nieuw == "Ov_consumentendiensten") & (sbi.van_zak_dienstverlening > 0)]
+
+    d.kop("4. Vergelijking met figuur 7 van Ruimte voor werken (2022)")
+    d.alinea(
+        f"Figuur 7 liep tot {jaar}. Het verschil met de nieuwe reeks is het grootst bij de overige "
+        f"consumentendiensten en de zakelijke dienstverlening. Het verschil is in "
+        "stappen verklaard: eerst de banen (een nieuwe LISA-levering, dan een nieuwe vertaling van SBI-codes naar "
+        "sectoren), dan de voetafdruk (de nieuwe BAG met de koppeling van verblijfsobject aan pand, dan de "
+        "uitsplitsing van panden met meer functies, dan logies). De stappen tellen precies op tot het verschil; een "
+        "andere volgorde verschuift de stappen iets.")
+    d.figuur(map_ / "VergelijkingFig7.png", f"Van figuur 7 naar de nieuwe reeks, {jaar}", breedte=11)
+    rijen = []
+    for s, lab in SECTOREN.items():
+        r = j.loc[s]
+        rijen.append([lab, nl(r.fig7, 1), nl(r.door_levering, 1), nl(r.door_sbitabel, 1), nl(r.door_bag, 1),
+                      nl(r.door_combi, 1), nl(r.door_logies, 1), nl(r.nieuw, 1)])
+    d.tabel(["Sector", "figuur 7", "LISA-levering", "SBI-vertaling", "BAG en koppeling", "uitsplitsing", "logies",
+             "nieuwe reeks"], rijen, f"Van figuur 7 naar de nieuwe reeks, m² voetafdruk per baan in {jaar}",
+            "Bron: Ruimte voor werken (2022) en de nieuwe berekening; ESB_Ruimte/VergelijkingFig7.")
+    d.opsomming([
+        "Uitsplitsing: een pand met verblijfsobjecten voor meer werkfuncties ging in figuur 7 helemaal naar "
+        "nijverheid; nu wordt het over de functies verdeeld naar hun vloeroppervlak. Dat haalt bij nijverheid "
+        f"{nl(-j.door_combi.Nijverheid, 1)} m² per baan weg en legt het vooral bij de diensten neer.",
+        f"Logies (hotels en andere verblijfsaccommodatie) telt nu bij de overige consumentendiensten: "
+        f"{nl(j.door_logies.Ov_consumentendiensten, 1)} m² per baan.",
+        f"De nieuwe SBI-vertaling zet {nl(naar_cons.verschoven.sum() / 1000)} duizend banen in de afdelingen "
+        f"{', '.join(str(a) for a in naar_cons.afdeling[:-1])} en {naar_cons.afdeling.iloc[-1]} van zakelijke naar consumentendiensten, en afdeling 45 "
+        "(handel in en reparatie van auto's) van nijverheid naar logistiek. Bij nijverheid heffen de SBI-stap en de "
+        "uitsplitsing elkaar grotendeels op.",
+        "Voor het artikel betekent het dat de reeks met deze definitie afwijkt van figuur 7, en dat de tekst moet "
+        "zeggen waarom. Welke LISA-levering figuur 7 gebruikte, weten we niet precies.",
+    ])
+
+
 def deel_d(d, map_):
     s = lees(map_ / "IbisTerreinen_sectoren.csv").set_index("sector")
     k = lees(map_ / "IbisTerreinen_terreinklassen.csv").set_index("klasse")
@@ -346,7 +385,7 @@ def main(map_ab, map_g, map_13, map_d, map_e, uit):
     deel_a(d, map_ab)
     deel_b(d, map_ab, cbs)
     tab_c = deel_c(d, map_ab)
-    volgt(d, "4. Vergelijking met figuur 7 van Ruimte voor werken (2022)", "Volgt.")
+    deel_13(d, Path(map_13))
     deel_d(d, Path(map_d))
     volgt(d, "6. Werk dat wonen werd (E)", "Volgt.")
     deel_g(d, map_g)

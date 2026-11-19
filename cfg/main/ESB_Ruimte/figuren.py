@@ -36,6 +36,7 @@ plt.rcParams.update({
 
 def nl(x, dec=0):
     """Een getal met punt voor duizendtallen, komma voor decimalen en een echt minteken."""
+    x = 0.0 if round(x, dec) == 0 else x
     return f"{x:,.{dec}f}".replace(",", "_").replace(".", ",").replace("_", ".").replace("-", "\u2212")
 
 
