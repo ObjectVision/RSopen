@@ -1,4 +1,231 @@
 container VergelijkingFig7
-: Descr = "Vergelijking van WerkenPerBaan met figuur 7 van Ruimte voor werken (2022) over de jaren die beide hebben, met de varianten die het verschil verklaren."
+: Descr = "Vergelijking van WerkenPerBaan met figuur 7 van Ruimte voor werken (2022) over de jaren die beide hebben, met de varianten die het verschil verklaren. De varianten gaan stap voor stap van de oude
+			naar de nieuwe definitie: eerst de banen (de LISA-levering, dan de vertaaltabel van SBI naar sector), dan de voetafdruk (de BAG-levering met de koppeling van vbo aan pand en de logistieke panden,
+			dan de uitsplitsing van utiliteit_combi, dan logies bij de consumentendiensten). Het verschil tussen twee opvolgende stappen is wat die oorzaak verklaart; samen tellen ze op tot het verschil."
 {
+	unit<UInt8>  Jobs6        := /Classifications/Actor/Jobs6;
+	unit<UInt8>  TXLJobs7     := /Classifications/Actor/TXLJobs7;
+	unit<UInt8>  TXLJobs9     := /Classifications/Actor/TXLJobs9;
+	unit<UInt8>  Gebruiksdoel := /Classifications/Vastgoed/vbo_gebruiksdoel_plus;
+
+	parameter<UInt32>  EersteJaar  := 2012, Descr = "Het eerste jaar van figuur 7 waarin zowel de BAG als LISA er is.";
+	parameter<UInt32>  LaatsteJaar := 2019, Descr = "Het laatste jaar van figuur 7.";
+	parameter<Float64> Tolerantie  := 0.000000001, Descr = "De relatieve afwijking die de controle van de overgenomen voetafdruk en banen tegen figuur 7 toelaat.";
+
+	unit<UInt32> Jaren := range(uint32, EersteJaar, LaatsteJaar + 1), Descr = "De jaren van figuur 7 die met de BAG en LISA te vergelijken zijn."
+	{
+		attribute<UInt32> Jaar := uint32(id(.));
+		attribute<String> name := 'Y' + string(Jaar);
+	}
+
+	attribute<Jobs6> Jobs6_rel_fig7 (Gebruiksdoel) := lowercase(Gebruiksdoel/name) == lowercase('logies') ? (0b/0b)[Jobs6] : Gebruiksdoel/Jobs6_rel, Descr = "De sector per gebruiksdoel zoals in figuur 7: als Jobs6_rel, maar logies hoort bij geen sector.";
+
+	unit<UInt32> SBI08_oud
+	:	StorageName     = "%RSo_DataDir%/Vastgoed/SBI2008_2018_TIGRIS_sector.csv"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "True"
+	,	Descr           = "De vertaaltabel van SBI-codes naar TIGRIS-sectoren waarmee figuur 7 is gemaakt. Hij geeft SBI-groep 45 (handel in en reparatie van auto's) aan Nijverheid, waar de huidige tabel /Classifications/Actor/SBI08 hem aan Logistiek geeft."
+	{
+		attribute<String>   SBI2008;
+		attribute<TXLJobs9> TXLJobs9_rel := Tigris_sector[TXLJobs9];
+		attribute<TXLJobs7> TXLJobs7_rel := TXLJobs9/TXLJobs7_rel[TXLJobs9_rel];
+	}
+
+	container PerJaar := for_each_ne(Jaren/name, 'PerJaar_T('+quote(Jaren/name)+')'), Descr = "De voetafdruk per gebruiksdoel en de banen per sector van elk jaar, voor de varianten die de huidige BAG en LISA nodig hebben.";
+
+	Template PerJaar_T
+	: Descr = "De delen van de varianten die uit de huidige BAG en LISA komen voor een jaar: de voetafdruk per gebruiksdoel op 1 januari zonder en met de uitsplitsing van utiliteit_combi, en de banen per
+			sector met de oude vertaaltabel."
+	{
+		parameter<String> JaarNaam;
+		///
+		unit<UInt32> pand      := ='/SourceData/Vastgoed/BAG/PerJaar/'+JaarNaam+'/pand';
+		unit<UInt32> vbo       := ='/SourceData/Vastgoed/BAG/PerJaar/'+JaarNaam+'/vbo';
+		unit<UInt32> relatie   := ='/SourceData/Vastgoed/BAG/PerJaar/'+JaarNaam+'/vbo/gerelateerdPand';
+		unit<UInt32> Vestiging := ='/ESB_Ruimte/WerkenPerBaan/Banen/'+JaarNaam+'/Vestiging';
+
+		attribute<Float64> Voetafdruk_per_m2vbo (pand)    := pand/IsLogistiekFunctie ? 0d : float64(pand/Footprint / 1[/Units/m2PandFootprint]) / float64(pand/Oppervlaktes/vbo_opp / 1[/Units/m2_pand]), Descr = "De voetafdruk van het pand per m² vbo-oppervlak in het pand; nul bij een logistiek pand, dat zijn hele voetafdruk aan Logistiek geeft.";
+		attribute<Float64> Voetafdruk_relatie   (relatie) := float64(vbo/oppervlakte_trunc / 1[/Units/m2_Vbo])[relatie/vbo_rel] * Voetafdruk_per_m2vbo[relatie/Pand_rel], Descr = "Het deel van de voetafdruk van het pand dat bij het vbo van deze relatie hoort.";
+		parameter<Float64> Voetafdruk_logistiek           := sum(pand/IsLogistiekFunctie ? float64(pand/Footprint / 1[/Units/m2PandFootprint]) : 0d), Descr = "De voetafdruk van de logistieke panden in m².";
+
+		attribute<String>  Kaal_expr    (Gebruiksdoel) := lowercase(Gebruiksdoel/name) == lowercase('Logistiek') ? 'Voetafdruk_logistiek' : 'sum(float64(vbo/Impl/gebruiksdoelen_cbs/'+Gebruiksdoel/name+')[relatie/vbo_rel] * Voetafdruk_relatie)';
+		attribute<String>  Replica_expr (Gebruiksdoel) := lowercase(Gebruiksdoel/name) == lowercase('Logistiek') ? 'Voetafdruk_logistiek' : 'sum(float64(vbo/Impl/aandeel_cbs/'+Gebruiksdoel/name+')[relatie/vbo_rel] * Voetafdruk_relatie)';
+
+		attribute<Float64> Kaal      (Gebruiksdoel) := ='union_data(Gebruiksdoel, '+AsItemList(Kaal_expr)+')', Descr = "De voetafdruk per gebruiksdoel in m² zonder de uitsplitsing, zoals in figuur 7: een vbo met meer dan een utiliteitsfunctie telt helemaal bij utiliteit_combi.";
+		attribute<Float64> Replica   (Gebruiksdoel) := ='union_data(Gebruiksdoel, '+AsItemList(Replica_expr)+')', Descr = "Dezelfde som als Kaal met het aandeel uit vbo/Impl/aandeel_cbs; hoort gelijk te zijn aan Gesplitst en toetst zo de rekenwijze van Kaal.";
+		attribute<Float64> Gesplitst (Gebruiksdoel) := ='/ESB_Ruimte/WerkenPerBaan/Voetafdruk/'+JaarNaam+'/PerGebruiksdoel', Descr = "De voetafdruk per gebruiksdoel in m² van WerkenPerBaan, met de uitsplitsing van utiliteit_combi over de eigen functies van het vbo.";
+
+		attribute<TXLJobs7> TXLJobs7_oud_rel   (Vestiging) := rjoin(lowercase(Vestiging/SBI08), lowercase(SBI08_oud/SBI2008), SBI08_oud/TXLJobs7_rel);
+		attribute<Float64>  Banen_levering_TXL (TXLJobs7)  := sum(float64(Vestiging/banen), TXLJobs7_oud_rel);
+		attribute<Float64>  Banen_levering     (Jobs6)     := Banen_levering_TXL[rlookup(Jobs6/name, TXLJobs7/name)], Descr = "De banen per sector uit de huidige LISA-levering, ingedeeld met de oude vertaaltabel SBI08_oud.";
+		parameter<Float64>  Banen_zonder_sector_oud        := sum(IsDefined(TXLJobs7_oud_rel) ? 0d : float64(Vestiging/banen)), Descr = "De banen bij vestigingen waarvan de SBI-code niet in de oude vertaaltabel staat.";
+	}
+
+	unit<UInt32> JaarxDoel := combine(Jaren, Gebruiksdoel)
+	, Descr = "Een rij per jaar en gebruiksdoel, voor de voetafdruk van figuur 7 en de csv per gebruiksdoel."
+	{
+		attribute<UInt32> Jaar := Jaren/Jaar[first_rel];
+		attribute<String> Doel := Gebruiksdoel/name[second_rel];
+
+		attribute<Float64> Voetafdruk_oud :
+		[
+			18083100, 247212, 7428130, 131926000, 24272400, 7653470, 17921700, 22114800, 7222800, 27971100, 515504000, 54871300, 20431800, // 2012
+			18281700, 262937, 7459060, 133694000, 24487200, 8311080, 18079600, 22485300, 7428080, 28272700, 519568000, 56574500, 22802800, // 2013
+			18613500, 281646, 7454250, 133127000, 24665400, 8883920, 18224400, 22116100, 7478020, 28709700, 522011000, 58616000, 24981700, // 2014
+			19081700, 266755, 7582790, 133662000, 24587000, 9519630, 18222600, 22031400, 7580070, 28987000, 523733000, 59969600, 27395200, // 2015
+			19304500, 284735, 7555250, 133333000, 24446300, 9938280, 18014600, 21835900, 7589580, 29183000, 526110000, 61242100, 29687300, // 2016
+			19530200, 322665, 7554660, 135370000, 24261300, 9489430, 17850400, 21174500, 7584130, 29064600, 529110000, 62655100, 31964000, // 2017
+			19788500, 286948, 7568320, 135908000, 24019600, 9587580, 17732600, 21288300, 7544700, 29118400, 532574000, 64232200, 33906000, // 2018
+			19755900, 283038, 7472320, 136301000, 23660300, 9816250, 17571800, 21396300, 7609490, 28959700, 536682000, 66399400, 36054500 // 2019
+		], IntegrityCheck = "all(IsDefined(this))"
+		, Source = "Ruimte voor werken (2022), werkboek achtergrondrapport_21apr2022.xlsx in de versie voor ECTQG 2023, blad Fig4_BAG_voor2012, rijen 20–32 (in de volgorde van Gebruiksdoel), kolommen S–Z."
+		, Descr = "De voetafdruk per gebruiksdoel in m² waar figuur 7 op rust, een regel per jaar.";
+
+		attribute<Rij>     Rij_fig7_rel := combine_data(Rij, first_rel, Jobs6_rel_fig7[second_rel]), Descr = "De rij van jaar en sector waar dit gebruiksdoel in figuur 7 bij hoort.";
+		attribute<Float64> Kaal         := ='switch('+AsItemList('case(first_rel == '+string(Jaren/Jaar)+'[Jaren], PerJaar/'+Jaren/name+'/Kaal[second_rel])')+', (0d/0d))';
+		attribute<Float64> Gesplitst    := ='switch('+AsItemList('case(first_rel == '+string(Jaren/Jaar)+'[Jaren], PerJaar/'+Jaren/name+'/Gesplitst[second_rel])')+', (0d/0d))';
+		attribute<Float64> Replica      := ='switch('+AsItemList('case(first_rel == '+string(Jaren/Jaar)+'[Jaren], PerJaar/'+Jaren/name+'/Replica[second_rel])')+', (0d/0d))';
+	}
+
+	attribute<Float64> ZonderSector_oud   (Jaren) := ='union_data(Jaren, '+AsItemList('PerJaar/'+Jaren/name+'/Banen_zonder_sector_oud')+')';
+	attribute<Float64> ZonderSector_nieuw (Jaren) := ='union_data(Jaren, '+AsItemList('/ESB_Ruimte/WerkenPerBaan/Banen/'+Jaren/name+'/ZonderSector')+')';
+
+	unit<UInt32> Rij := combine(Jaren, Jobs6)
+	, Descr = "Een rij per jaar en sector: het domein van de vergelijking en van de csv."
+	{
+		attribute<UInt32> Jaar   := Jaren/Jaar[first_rel];
+		attribute<String> Sector := Jobs6/name[second_rel];
+
+		attribute<Float64> Fig7 :
+		[
+			99.79433005964428, 59.56056265868058, 36.795557870808864, 27.734924705727625, 14.067180808861156, 11.39303111012993, // 2012
+			105.77209803415326, 62.06270500345558, 37.54704552758721, 28.156957489310997, 14.206291513482434, 11.550979869858061, // 2013
+			108.98155755784458, 63.745123904747715, 38.29987339965288, 28.382313268529558, 14.294473550002317, 11.794489273997492, // 2014
+			111.29690863419471, 64.82295982506224, 38.250760409862565, 28.396150052933045, 14.063874598309841, 11.926289518308115, // 2015
+			111.42641543480623, 64.78136510092388, 38.361685374500645, 27.71891165409078, 13.620178520986885, 11.853365713033456, // 2016
+			111.80794055939383, 65.2103682810947, 37.91221046947089, 27.159904319448035, 13.285796897007186, 11.720306349341568, // 2017
+			110.10010633055835, 65.03881133821656, 37.54746882370159, 26.688225650699543, 12.868260993251283, 11.45250752039043, // 2018
+			108.63369207254621, 64.6503494460856, 37.24131102089315, 25.634113258731777, 12.295996108569257, 11.099863526041808 // 2019
+		], IntegrityCheck = "all(IsDefined(this))"
+		, Source = "Ruimte voor werken (2022), werkboek achtergrondrapport_21apr2022.xlsx in de versie voor ECTQG 2023, blad 'Fig7_Ruimtebeslag LISA-BAG ', rijen 4–9 (in de volgorde van Jobs6), kolommen T–AA."
+		, Descr = "De m² voetafdruk per baan van figuur 7, een regel per jaar; alleen voor de controle van Oud.";
+
+		attribute<Float64> Banen_oud :
+		[
+			1526718, 921269, 760176, 912420, 1725463, 2246728, // 2012
+			1479566, 911570, 752994, 913088, 1723687, 2233715, // 2013
+			1450784, 919537, 749603, 919288, 1725520, 2201053, // 2014
+			1447095, 925129, 757815, 938922, 1748238, 2186107, // 2015
+			1463031, 945366, 760733, 970243, 1794859, 2181202, // 2016
+			1496620, 960815, 766629, 998322, 1826108, 2195141, // 2017
+			1542360, 987598, 775509, 1024167, 1866577, 2234259, // 2018
+			1586575, 1027054, 777623, 1067538, 1924228, 2281754 // 2019
+		], IntegrityCheck = "all(IsDefined(this))"
+		, Source = "Ruimte voor werken (2022), werkboek achtergrondrapport_21apr2022.xlsx in de versie voor ECTQG 2023, blad Fig6_LISA, rijen 19–26, kolommen C–H."
+		, Descr = "De LISA-banen per sector waar figuur 7 op rust, uit een eerdere LISA-levering en met eenpersoonsbedrijven, een regel per jaar.";
+
+		attribute<Float64> Banen_levering       := ='switch('+AsItemList('case(first_rel == '+string(Jaren/Jaar)+'[Jaren], PerJaar/'+Jaren/name+'/Banen_levering[second_rel])')+', (0d/0d))';
+		attribute<Float64> Banen_nieuw          := ='switch('+AsItemList('case(first_rel == '+string(Jaren/Jaar)+'[Jaren], /ESB_Ruimte/WerkenPerBaan/Banen/'+Jaren/name+'/PerJobs6[second_rel])')+', (0d/0d))';
+		attribute<Float64> Voetafdruk_oud       := sum(JaarxDoel/Voetafdruk_oud, JaarxDoel/Rij_fig7_rel);
+		attribute<Float64> Voetafdruk_kaal      := sum(JaarxDoel/Kaal, JaarxDoel/Rij_fig7_rel), Descr = "De voetafdruk per sector in m² uit de huidige BAG zonder de uitsplitsing van utiliteit_combi, ingedeeld zoals in figuur 7.";
+		attribute<Float64> Voetafdruk_gesplitst := sum(JaarxDoel/Gesplitst, JaarxDoel/Rij_fig7_rel), Descr = "De voetafdruk per sector in m² uit de huidige BAG met de uitsplitsing, ingedeeld zoals in figuur 7.";
+		attribute<Float64> Voetafdruk_nieuw     := ='switch('+AsItemList('case(first_rel == '+string(Jaren/Jaar)+'[Jaren], /ESB_Ruimte/WerkenPerBaan/Voetafdruk/'+Jaren/name+'/PerJobs6[second_rel])')+', (0d/0d))';
+
+		attribute<Float64> Oud                  := Voetafdruk_oud / Banen_oud, IntegrityCheck = "all(abs(this - Fig7) <= Tolerantie * Fig7)", Descr = "Figuur 7, opnieuw berekend uit de overgenomen voetafdruk en banen.";
+		attribute<Float64> V1_levering          := Voetafdruk_oud / Banen_levering, Descr = "Stap 1: de banen uit de huidige LISA-levering, ingedeeld met de oude vertaaltabel.";
+		attribute<Float64> V2_SBItabel          := Voetafdruk_oud / Banen_nieuw, Descr = "Stap 2: de banen ingedeeld met de huidige vertaaltabel, dus de banen van WerkenPerBaan.";
+		attribute<Float64> V3_BAG               := Voetafdruk_kaal / Banen_nieuw, Descr = "Stap 3: de voetafdruk uit de huidige BAG, met de huidige koppeling van vbo aan pand en de huidige logistieke panden, zonder uitsplitsing en zonder logies.";
+		attribute<Float64> V4_combi             := Voetafdruk_gesplitst / Banen_nieuw, Descr = "Stap 4: met de uitsplitsing van utiliteit_combi over de eigen functies van het vbo.";
+		attribute<Float64> Nieuw                := Voetafdruk_nieuw / Banen_nieuw, Descr = "Stap 5: met logies bij de consumentendiensten; dit is WerkenPerBaan/M2_per_baan.";
+
+		attribute<Float64> Door_levering        := V1_levering - Oud;
+		attribute<Float64> Door_SBItabel        := V2_SBItabel - V1_levering;
+		attribute<Float64> Door_BAG             := V3_BAG - V2_SBItabel;
+		attribute<Float64> Door_combi           := V4_combi - V3_BAG;
+		attribute<Float64> Door_logies          := Nieuw - V4_combi;
+		attribute<Float64> Verschil             := Nieuw - Oud;
+		attribute<Float64> Door_banen_omgekeerd := Voetafdruk_nieuw / Banen_nieuw - Voetafdruk_nieuw / Banen_oud, Descr = "Het deel door de banen als de voetafdruk eerst naar de nieuwe stand gaat; het verschil met Door_levering plus Door_SBItabel is de wisselwerking tussen banen en voetafdruk.";
+	}
+
+	container Verschuiving
+	: Descr = "Stap 2 uitgesplitst voor LaatsteJaar: per tweecijferige SBI-afdeling en huidige sector de banen, en in welke sector ze met de oude vertaaltabel vielen."
+	{
+		unit<UInt32> SBI2xTXL  := /ESB_Ruimte/WerkenPerBaan/SBI2xTXL;
+		unit<UInt32> Vestiging := ='/ESB_Ruimte/WerkenPerBaan/Banen/Y'+string(LaatsteJaar)+'/Vestiging';
+
+		attribute<TXLJobs7> Oud_rel   (Vestiging) := ='PerJaar/Y'+string(LaatsteJaar)+'/TXLJobs7_oud_rel';
+		attribute<SBI2xTXL> Nieuw_rel (Vestiging) := ='/ESB_Ruimte/WerkenPerBaan/Banen/Y'+string(LaatsteJaar)+'/SBI2xTXL_rel';
+
+		container Van := for_each_nedv(TXLJobs7/name, 'sum(Oud_rel == '+string(id(TXLJobs7))+'[TXLJobs7] ? float64(Vestiging/banen) : 0d, Nieuw_rel)', SBI2xTXL, Float64), Descr = "Per afdeling en huidige sector de banen die met de oude tabel in elk van de sectoren vielen.";
+
+		attribute<Float64> Banen      (SBI2xTXL) := sum(float64(Vestiging/banen), Nieuw_rel);
+		attribute<Float64> Van_zelfde (SBI2xTXL) := ='switch('+AsItemList('case(SBI2xTXL/second_rel == '+string(id(TXLJobs7))+'[TXLJobs7], Van/'+TXLJobs7/name+')')+', 0d)';
+		attribute<Float64> Verschoven (SBI2xTXL) := Banen - Van_zelfde, Descr = "De banen die met de oude tabel in een andere sector of in geen sector vielen.";
+
+		unit<UInt32> Rij := select_with_org_rel(Verschoven > 0d), Descr = "De combinaties van afdeling en huidige sector met verschoven banen."
+		{
+			attribute<UInt32> Afdeling     := uint32(SBI2xTXL/first_rel[org_rel]);
+			attribute<String> Sector_nieuw := TXLJobs7/name[SBI2xTXL/second_rel[org_rel]];
+		}
+	}
+
+	container Schrijf_Vergelijking
+	: StorageName = "=UitvoerDir+'/VergelijkingFig7.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De vergelijking als csv: per jaar en sector de varianten, de verschillen per stap, de banen en de voetafdruk."
+	{
+		attribute<UInt32>  Jaar                      (Rij) := Rij/Jaar;
+		attribute<String>  Sector                    (Rij) := Rij/Sector;
+		attribute<Float64> Fig7                      (Rij) := Rij/Fig7;
+		attribute<Float64> Oud                       (Rij) := Rij/Oud;
+		attribute<Float64> V1_levering               (Rij) := Rij/V1_levering;
+		attribute<Float64> V2_SBItabel               (Rij) := Rij/V2_SBItabel;
+		attribute<Float64> V3_BAG                    (Rij) := Rij/V3_BAG;
+		attribute<Float64> V4_combi                  (Rij) := Rij/V4_combi;
+		attribute<Float64> Nieuw                     (Rij) := Rij/Nieuw;
+		attribute<Float64> Door_levering             (Rij) := Rij/Door_levering;
+		attribute<Float64> Door_SBItabel             (Rij) := Rij/Door_SBItabel;
+		attribute<Float64> Door_BAG                  (Rij) := Rij/Door_BAG;
+		attribute<Float64> Door_combi                (Rij) := Rij/Door_combi;
+		attribute<Float64> Door_logies               (Rij) := Rij/Door_logies;
+		attribute<Float64> Verschil                  (Rij) := Rij/Verschil;
+		attribute<Float64> Door_banen_omgekeerd      (Rij) := Rij/Door_banen_omgekeerd;
+		attribute<Float64> Banen_oud                 (Rij) := Rij/Banen_oud;
+		attribute<Float64> Banen_levering            (Rij) := Rij/Banen_levering;
+		attribute<Float64> Banen_nieuw               (Rij) := Rij/Banen_nieuw;
+		attribute<Float64> Voetafdruk_oud            (Rij) := Rij/Voetafdruk_oud;
+		attribute<Float64> Voetafdruk_kaal           (Rij) := Rij/Voetafdruk_kaal;
+		attribute<Float64> Voetafdruk_gesplitst      (Rij) := Rij/Voetafdruk_gesplitst;
+		attribute<Float64> Voetafdruk_nieuw          (Rij) := Rij/Voetafdruk_nieuw;
+		attribute<Float64> Banen_zonder_sector_oud   (Rij) := ZonderSector_oud[Rij/first_rel];
+		attribute<Float64> Banen_zonder_sector_nieuw (Rij) := ZonderSector_nieuw[Rij/first_rel];
+	}
+
+	container Schrijf_Gebruiksdoel
+	: StorageName = "=UitvoerDir+'/VergelijkingFig7_gebruiksdoel.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De voetafdruk per jaar en gebruiksdoel als csv: figuur 7, de huidige BAG zonder en met de uitsplitsing, en de controle van de rekenwijze."
+	{
+		attribute<UInt32>  Jaar      (JaarxDoel) := JaarxDoel/Jaar;
+		attribute<String>  Doel      (JaarxDoel) := JaarxDoel/Doel;
+		attribute<Float64> Oud       (JaarxDoel) := JaarxDoel/Voetafdruk_oud;
+		attribute<Float64> Kaal      (JaarxDoel) := JaarxDoel/Kaal;
+		attribute<Float64> Gesplitst (JaarxDoel) := JaarxDoel/Gesplitst;
+		attribute<Float64> Replica   (JaarxDoel) := JaarxDoel/Replica;
+	}
+
+	container Schrijf_Verschuiving
+	: StorageName = "=UitvoerDir+'/VergelijkingFig7_sbi.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "Stap 2 uitgesplitst als csv: per afdeling en huidige sector de banen, de verschoven banen en de sector waar ze met de oude tabel in vielen."
+	{
+		attribute<UInt32>  Afdeling                   (Verschuiving/Rij) := Verschuiving/Rij/Afdeling;
+		attribute<String>  Sector_nieuw               (Verschuiving/Rij) := Verschuiving/Rij/Sector_nieuw;
+		attribute<Float64> Banen                      (Verschuiving/Rij) := Verschuiving/Banen[Verschuiving/Rij/org_rel];
+		attribute<Float64> Verschoven                 (Verschuiving/Rij) := Verschuiving/Verschoven[Verschuiving/Rij/org_rel];
+		attribute<Float64> Van_Landbouw               (Verschuiving/Rij) := Verschuiving/Van/Landbouw[Verschuiving/Rij/org_rel];
+		attribute<Float64> Van_Nijverheid             (Verschuiving/Rij) := Verschuiving/Van/Nijverheid[Verschuiving/Rij/org_rel];
+		attribute<Float64> Van_Logistiek              (Verschuiving/Rij) := Verschuiving/Van/Logistiek[Verschuiving/Rij/org_rel];
+		attribute<Float64> Van_Detailhandel           (Verschuiving/Rij) := Verschuiving/Van/Detailhandel[Verschuiving/Rij/org_rel];
+		attribute<Float64> Van_Ov_consumentendiensten (Verschuiving/Rij) := Verschuiving/Van/Ov_consumentendiensten[Verschuiving/Rij/org_rel];
+		attribute<Float64> Van_Zak_dienstverlening    (Verschuiving/Rij) := Verschuiving/Van/Zak_dienstverlening[Verschuiving/Rij/org_rel];
+		attribute<Float64> Van_Overheid_kw_diensten   (Verschuiving/Rij) := Verschuiving/Van/Overheid_kw_diensten[Verschuiving/Rij/org_rel];
+	}
 }
