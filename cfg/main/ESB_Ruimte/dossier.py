@@ -233,12 +233,58 @@ def deel_g(d, map_):
              "telt, zoals de Afsluitdijk in 2022.")
 
 
+def deel_d(d, map_):
+    s = lees(map_ / "IbisTerreinen_sectoren.csv").set_index("sector")
+    k = lees(map_ / "IbisTerreinen_terreinklassen.csv").set_index("klasse")
+    namen = dict(SECTOREN, Alle_zes="Zes sectoren samen")
+
+    d.kop("5. Waar de sectoren nu zitten (D)")
+    d.alinea(
+        "Per sector de banen (LISA 2023) en de pandvoetafdruk (BAG 1 januari 2023) op een IBIS-werklocatie van 2023, "
+        "op de plekken met de hoogste UAI en op de plekken die het dichtst bij een OV-knooppunt liggen. De UAI en de "
+        "reistijd zijn in vijf klassen verdeeld die elk een vijfde van alle banen bevatten; een sector die even vaak "
+        "op zulke plekken zit als de gemiddelde baan, heeft daar dus 20 procent. Een pand of vestiging telt op de "
+        "plek van zijn zwaartepunt of punt.")
+    d.figuur(map_ / "IbisTerreinen_sectoren.png", "Deel van de banen en de voetafdruk op IBIS, bij de hoogste UAI en "
+             "dicht bij een OV-knooppunt", breedte=12)
+    rijen = []
+    for sec, lab in namen.items():
+        r = s.loc[sec]
+        rijen.append([lab, pct(r.banen_ibis) + " / " + pct(r.voet_ibis),
+                      pct(r.banen_uai_hoogst) + " / " + pct(r.voet_uai_hoogst),
+                      pct(r.banen_ov_kortst) + " / " + pct(r.voet_ov_kortst),
+                      nl(r.reistijd_gem_banen, 1) + " / " + nl(r.reistijd_gem_voet, 1)])
+    d.tabel(["Sector", "op IBIS", "hoogste UAI (20%)", "dichtst bij OV (20%)", "reistijd OV (min)"], rijen,
+            "Waar de banen en de voetafdruk van elke sector liggen, 2023",
+            "Per cel eerst het deel van de banen en dan het deel van de voetafdruk. De reistijd is het gemiddelde "
+            "per baan en per m². Bron: LISA, BAG, IBIS 2023, UAI uit de BAG van 2023, reistijdkaart van 2026; "
+            "ESB_Ruimte/IbisTerreinen.")
+    d.alinea(
+        "De voetafdruk van logistiek ligt bijna helemaal op IBIS, maar dat volgt waarschijnlijk deels uit de "
+        "definitie: een pand is in RSopen logistiek als het in een vaste set grote logistieke panden staat (stand "
+        "2021), aangevuld met nieuwbouw die LISA als logistiek herkent; andere logistiek telt bij nijverheid "
+        "(ObjectVision/RSopen#889). De banen zijn hier de schonere maat.")
+    d.alinea("Op de IBIS-terreinen zelf neemt het aandeel van logistiek af naarmate de UAI van het terrein hoger is, "
+             "en het aandeel van de zakelijke dienstverlening neemt toe. Er zijn weinig terreinen met een hoge UAI. "
+             "Naar de reistijd tot een OV-knooppunt is het omgekeerd: verder van een knooppunt zit meer logistiek.")
+    d.figuur(map_ / "IbisTerreinen_terreinen.png", "Logistiek op IBIS-terreinen naar de UAI van het terrein", breedte=12)
+    rijen = [[kl, nl(r.uai_terreinen), nl(r.uai_werk_m2 / 1e6, 1), pct(r.uai_aandeel_logistiek), pct(r.uai_aandeel_zak),
+              nl(r.reistijd_terreinen), nl(r.reistijd_werk_m2 / 1e6, 1), pct(r.reistijd_aandeel_logist),
+              pct(r.reistijd_aandeel_zak)] for kl, r in k.iterrows()]
+    d.tabel(["Klasse", "terreinen", "werkvoetafdruk (km²)", "logistiek", "zak. dienstverl.", "terreinen",
+             "werkvoetafdruk (km²)", "logistiek", "zak. dienstverl."], rijen,
+            "IBIS-terreinen naar de UAI (links) en de reistijd tot een OV-knooppunt (rechts) van het terrein",
+            "K1 is de laagste UAI en de kortste reistijd, K5 de hoogste UAI en de langste reistijd; de klassen zijn "
+            "dezelfde als in de tabel hiervoor. Logistiek en zakelijke dienstverlening als deel van de werkvoetafdruk op die "
+            "terreinen. Bron: BAG, IBIS 2023; ESB_Ruimte/IbisTerreinen.")
+
+
 def volgt(d, kop, tekst):
     d.kop(kop)
     d.alinea(tekst)
 
 
-def kern(d, map_ab, map_g):
+def kern(d, map_ab, map_g, map_d):
     """Wat opvalt, met elk getal uit de csv's."""
     werk = lees(map_ab / "WerkenPerBaan_reeks.csv")
     eind = int(werk[werk.m2_per_baan.notna()].jaar.max())
@@ -251,6 +297,7 @@ def kern(d, map_ab, map_g):
     pijp = lees(map_g / "Bouwterrein_pijplijn_totaal.csv").set_index("jaar")
     bbg = lees(map_g / "Bouwterrein_overlay_BBG.csv").set_index("jaar")
     nabij = bbg.ha_nabij_recent / bbg.ha_raster
+    ibis = lees(map_d / "IbisTerreinen_sectoren.csv").set_index("sector")
     nl_log = ontl.loc[["Nijverheid", "Logistiek"]].groei_m2.sum()
     plus = [SECTOREN[s].lower() for s in ontl.index if ontl.loc[s, "door_m2baan_m2"] > 0]
     meer = ", ".join(plus[:-1]) + " en " + plus[-1]
@@ -273,6 +320,10 @@ def kern(d, map_ab, map_g):
         "De locatiekeuze verschilt per sector (deel 3): logistiek en nijverheid zoeken IBIS-terreinen en de nabijheid "
         "van een op- en afrit, logistiek mijdt plekken met veel voorzieningen; zakelijke dienstverlening en overheid "
         "zoeken voorzieningen en een OV-knooppunt. Dat wijst op weinig overlap in de plekken die ze zoeken.",
+        f"Dat zie je ook waar ze nu zitten (deel 5): van de logistieke banen ligt {pct(ibis.banen_ibis.Logistiek)} op "
+        f"een IBIS-werklocatie, van die in de zakelijke dienstverlening {pct(ibis.banen_ibis.Zak_dienstverlening)}. Op "
+        f"het vijfde deel van de plekken met de hoogste UAI ligt {pct(ibis.voet_uai_hoogst.Logistiek)} van de logistieke "
+        f"voetafdruk en {pct(ibis.voet_uai_hoogst.Zak_dienstverlening)} van die van de zakelijke dienstverlening.",
         f"Op 1 januari {int(pijp.index.max())} zitten {nl(pijp.woningen_recent.iloc[-1])} woningen in de pijplijn van "
         f"de BAG. Van het bouwterrein van het CBS ligt {pct(nabij.min())} tot {pct(nabij.max())} binnen 100 m van een "
         "pand uit de pijplijn; de rest heeft geen zichtbaar bouwproject.",
@@ -291,12 +342,12 @@ def main(map_ab, map_g, map_13, map_d, map_e, uit):
         "ESB-redactie: zitten laagproductieve sectoren hoogproductieve ruimtelijk in de weg? Alles is landelijk en "
         "gerekend in GeoDMS op de tak esb-ruimte van RSopen (cfg/main/ESB_Ruimte), zodat het na te rekenen is. "
         "Per deel staat de bron onder de tabel.")
-    kern(d, map_ab, map_g)
+    kern(d, map_ab, map_g, Path(map_d))
     deel_a(d, map_ab)
     deel_b(d, map_ab, cbs)
     tab_c = deel_c(d, map_ab)
     volgt(d, "4. Vergelijking met figuur 7 van Ruimte voor werken (2022)", "Volgt.")
-    volgt(d, "5. Waar de sectoren nu zitten (D)", "Volgt.")
+    deel_d(d, Path(map_d))
     volgt(d, "6. Werk dat wonen werd (E)", "Volgt.")
     deel_g(d, map_g)
     bijlage_c(d, tab_c)
