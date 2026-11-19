@@ -396,11 +396,15 @@ def deel_e(d, map_, cbs_pad, map_ab):
         "voetafdruk: een kantoor levert veel woningen per pand. De nijverheid en de detailhandel leveren samen "
         f"{pct((som.voetafdruk_m2.Nijverheid + som.voetafdruk_m2.Detailhandel) / som.voetafdruk_m2.sum())} van de "
         "voetafdruk. Logistiek wordt vrijwel nooit wonen.",
+        f"Van de woningen uit nijverheid komen er {nl(doel[doel.gebruiksdoel == 'utiliteit_combi'].woningen.sum())} "
+        "uit een verblijfsobject met meer werkfuncties, dat in de indeling van RSopen bij nijverheid hoort. Het "
+        "aandeel van nijverheid is daardoor een bovengrens.",
         f"Sinds 2019 daalt de transformatie, bij het CBS en hier, tot {nl(heen.woningen[eind])} woningen in {eind}.",
         f"In oppervlak is het klein. De panden waarin een woning uit werk kwam, hebben van 2012 tot {eind_a} samen "
         f"gemiddeld {nl(voet_jaar / 1e4)} ha voetafdruk per jaar; de voetafdruk van de zes werksectoren groeide in "
         f"die jaren netto met gemiddeld {nl(groei_jaar / 1e4)} ha per jaar (deel 1). De eerste is een bovengrens, "
-        "want in een deel van die panden bleef werk. Transformatie haalt dus vooral kantoren, winkels en "
+        f"want in een deel van die panden bleef werk; {pct(heen.woningen_volledig_werkpand.sum() / heen.woningen.sum())} "
+        "van de woningen kwam in een pand dat vooraf geen woning had. Transformatie haalt dus vooral kantoren, winkels en "
         "werkplaatsen in bestaande panden weg, niet op de schaal waarop de werkvoetafdruk groeit.",
     ])
 
