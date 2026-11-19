@@ -64,8 +64,8 @@ function Meld {
     Write-Host ("{0,-5} {1,-22} {2,-40} {3,-10} {4}" -f $Trap, $Casus, $Toets, $Oordeel, $Gemeten) -ForegroundColor $kleur
 }
 
-# Verwachte setgroottes per variant, uit de OP-tabel na #721 en het stedelijke vrijstaande pakket van #847.
-$OPSetGrootte = @{ 'BAU'=28; 'BAU2'=28; 'NbSGenuanceerder'=40; 'NbSGenuanceerd'=40 }
+# Verwachte setgroottes per variant, uit de OP-tabel na #721, het stedelijke vrijstaande pakket van #847 en SuperStedelijkPlus van #899.
+$OPSetGrootte = @{ 'BAU'=30; 'BAU2'=30; 'NbSGenuanceerder'=42; 'NbSGenuanceerd'=42 }
 
 # De normen voor de controlewaarden van de tabellen Checks en ChecksBasisjaar staan sinds #833 in cfg/main/Diagnose.dms,
 # in de kolommen norm_onder en norm_boven, met de afweging bij de rij. Het harnas schrijft per casus en zichtjaar een csv
