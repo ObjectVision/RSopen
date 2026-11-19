@@ -6,6 +6,8 @@ De csv bevat een indeling van alle economische activiteiten in bedrijfstakken di
 overlappen: per tak de fijnste uitsplitsing die voor elk jaar van EERSTE_JAAR tot en met LAATSTE_JAAR
 een waarde heeft. De toegerekende huurwaarde van eigen woningen (68A) valt eruit, want daar hoort
 geen bedrijfspand bij. Elke tak krijgt het bereik van tweecijferige SBI-afdelingen waar hij over gaat.
+De waarde staat erin in werkelijke prijzen (BTW_mln) en in prijsniveau 2021 (BTW_mln_2021). Die laatste
+is een kettingindex en daardoor niet precies optelbaar over takken; vlak bij 2021 is het verschil klein.
 
 Gebruik: python ophalen.py   (schrijft Toegevoegde_waarde_bedrijfstak.csv en SBI2_naar_bedrijfstak.csv,
 de koppeling van elke tweecijferige SBI-afdeling aan zijn tak, naast dit script)
@@ -51,19 +53,21 @@ def bereik(titel):
 
 def main():
     takken = haal("BedrijfstakkenBranchesSBI2008?$format=json&$select=Key,Title")
-    waarden = haal("TypedDataSet?$format=json&$select=BedrijfstakkenBranchesSBI2008,Perioden,BrutoToegevoegdeWaardeBasisprijzen_3")
+    waarden = haal("TypedDataSet?$format=json&$select=BedrijfstakkenBranchesSBI2008,Perioden,BrutoToegevoegdeWaardeBasisprijzen_3,BrutoToegevoegdeWaardeBasisprijzen_6")
     jaren = list(range(EERSTE_JAAR, LAATSTE_JAAR + 1))
-    btw = {}
+    btw, btw2021 = {}, {}
     for r in waarden:
         if r["Perioden"].endswith("JJ00"):
-            btw[(r["BedrijfstakkenBranchesSBI2008"].strip(), int(r["Perioden"][:4]))] = r["BrutoToegevoegdeWaardeBasisprijzen_3"]
+            sleutel = (r["BedrijfstakkenBranchesSBI2008"].strip(), int(r["Perioden"][:4]))
+            btw[sleutel] = r["BrutoToegevoegdeWaardeBasisprijzen_3"]
+            btw2021[sleutel] = r["BrutoToegevoegdeWaardeBasisprijzen_6"]
 
     knopen = []
     for t in takken:
         b = bereik(t["Title"].strip())
         if b is not None:
             knopen.append({"code": t["Key"].strip(), "titel": t["Title"].strip(), "van": b[0], "tot": b[1]})
-    compleet = lambda k: all(btw.get((k["code"], j)) is not None for j in jaren)
+    compleet = lambda k: all(btw.get((k["code"], j)) is not None and btw2021.get((k["code"], j)) is not None for j in jaren)
 
     def kinderen(k):
         """De grootste takken binnen k die elkaar niet overlappen, zonder k zelf."""
@@ -90,11 +94,11 @@ def main():
     assert len(gedekt) == len(set(gedekt)), "takken overlappen"
     with open(UIT, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, delimiter=";")
-        w.writerow(["Code", "Titel", "SBI2_van", "SBI2_tot", "Jaar", "BTW_mln"])
+        w.writerow(["Code", "Titel", "SBI2_van", "SBI2_tot", "Jaar", "BTW_mln", "BTW_mln_2021"])
         for x in indeling:
             for j in jaren:
-                v = btw.get((x["code"], j))
-                w.writerow([x["code"], x["titel"], x["van"], x["tot"], j, "" if v is None else v])
+                v, v2021 = btw.get((x["code"], j)), btw2021.get((x["code"], j))
+                w.writerow([x["code"], x["titel"], x["van"], x["tot"], j, "" if v is None else v, "" if v2021 is None else v2021])
     with open(UIT_SBI2, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, delimiter=";")
         w.writerow(["SBI2", "Code"])

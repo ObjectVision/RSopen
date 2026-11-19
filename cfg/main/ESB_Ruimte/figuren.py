@@ -1,14 +1,19 @@
-"""Tekent de figuren van de ESB-analyses als svg uit de csv's die GeoDMS schrijft (ESB_Ruimte/WerkenPerBaan
-en ESB_Ruimte/WaardePerM2). Alleen presentatie: elk getal komt uit die csv's. Zonder externe packages.
+"""Tekent de figuren van de ESB-analyses A en B als png uit de csv's die GeoDMS schrijft
+(ESB_Ruimte/WerkenPerBaan en ESB_Ruimte/WaardePerM2). Alleen presentatie: elk getal komt uit die csv's.
 
-Gebruik: python figuren.py <map met de csv's>   (schrijft ESB_figuren.svg in dezelfde map)
+Gebruik: python figuren.py <map met de csv's>   (schrijft ESB_A*.png en ESB_B*.png in dezelfde map)
 """
-import csv
-import math
 import sys
 from pathlib import Path
 
-LABEL = {
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pandas as pd
+from matplotlib.ticker import FuncFormatter
+
+SECTOREN = {
     "Nijverheid": "Nijverheid",
     "Logistiek": "Logistiek",
     "Detailhandel": "Detailhandel",
@@ -16,76 +21,123 @@ LABEL = {
     "Zak_dienstverlening": "Zakelijke dienstverlening",
     "Overheid_kw_diensten": "Overheid en kw. diensten",
 }
-KLEUR = dict(zip(LABEL, ["#1f4e79", "#2e86c1", "#c0392b", "#e67e22", "#7d3c98", "#27ae60"]))
-B, H = 640, 400          # breedte en hoogte van een paneel
-L, R, T, O = 60, 20, 40, 40  # marges links, rechts, boven, onder
+# Vaste volgorde per sector, getoetst op kleurenblindheid (dataviz validate_palette, licht).
+KLEUR = dict(zip(SECTOREN, ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]))
+INKT, INKT2, RASTER, ACHTERGROND = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
+
+plt.rcParams.update({
+    "font.family": ["Segoe UI", "Arial", "sans-serif"], "font.size": 11, "axes.edgecolor": INKT2,
+    "axes.labelcolor": INKT2, "xtick.color": INKT2, "ytick.color": INKT2, "axes.spines.top": False,
+    "axes.spines.right": False, "axes.grid": True, "grid.color": RASTER, "grid.linewidth": 0.8,
+    "axes.axisbelow": True, "figure.facecolor": ACHTERGROND, "axes.facecolor": ACHTERGROND,
+    "savefig.facecolor": ACHTERGROND, "legend.frameon": False,
+})
+
+
+def nl(x, dec=0):
+    """Een getal met punt voor duizendtallen, komma voor decimalen en een echt minteken."""
+    return f"{x:,.{dec}f}".replace(",", "_").replace(".", ",").replace("_", ".").replace("-", "\u2212")
+
+
+def as_getal(dec=None):
+    """Een asformatter; zonder dec alleen decimalen waar de streep geen geheel getal is."""
+    return FuncFormatter(lambda v, _: nl(v, dec if dec is not None else (0 if float(v).is_integer() else 1)))
 
 
 def lees(pad):
-    return [{k.lower(): v for k, v in r.items()} for r in csv.DictReader(open(pad, encoding="utf-8"))]
+    df = pd.read_csv(pad)
+    df.columns = [c.lower() for c in df.columns]
+    return df
 
 
-def reeks(rijen, kolom, deler=1.0):
-    uit = {}
-    for r in rijen:
-        if r[kolom] not in ("", None):
-            uit.setdefault(r["sector"], []).append((int(r["jaar"]), float(r[kolom]) / deler))
-    return uit
+def kop(fig, titel, ondertitel):
+    fig.text(0.02, 0.975, titel, fontsize=14, fontweight="bold", color=INKT, va="top")
+    fig.text(0.02, 0.915, ondertitel, fontsize=10.5, color=INKT2, va="top")
 
 
-def paneel(y0, titel, data, log=False, x_bereik=None):
-    xs = [x for v in data.values() for x, _ in v]
-    ys = [y for v in data.values() for _, y in v]
-    x0, x1 = x_bereik or (min(xs), max(xs))
-    if log:
-        lo, hi = 500.0 if min(ys) >= 500 else 10 ** math.floor(math.log10(min(ys))), 10 ** math.ceil(math.log10(max(ys)))
-        f = lambda y: math.log10(y)
-        y_lo, y_hi = f(lo), f(hi)
-        ticks = [10 ** e * m for e in range(int(y_lo), int(y_hi)) for m in (1, 2, 5)] + [hi]
-    else:
-        y_lo, y_hi = 0.0, max(ys) * 1.08
-        stap = 10 ** math.floor(math.log10(y_hi / 5))
-        stap *= 2 if y_hi / stap > 10 else 1
-        f = lambda y: y
-        ticks = [i * stap for i in range(int(y_hi / stap) + 1)]
-    dec = 0 if log else max(0, -math.floor(math.log10(stap)))
-    px = lambda x: L + (x - x0) / (x1 - x0) * (B - L - R)
-    py = lambda y: y0 + T + (1 - (f(y) - y_lo) / (y_hi - y_lo)) * (H - T - O)
-    s = [f'<text x="{L}" y="{y0 + 24}" font-size="17" font-weight="600">{titel}</text>']
-    for t in ticks:
-        if f(t) < y_lo or f(t) > y_hi:
-            continue
-        s.append(f'<line x1="{L}" x2="{B - R}" y1="{py(t):.1f}" y2="{py(t):.1f}" stroke="#ddd"/>')
-        lab = f"{t:,.{dec}f}".replace(",", " ").replace(".", ",").replace(" ", ".")
-        s.append(f'<text x="{L - 6}" y="{py(t) + 4:.1f}" font-size="12" text-anchor="end" fill="#555">{lab}</text>')
-    for x in range(x0, x1 + 1):
-        if x % 4 == 0:
-            s.append(f'<text x="{px(x):.1f}" y="{y0 + H - O + 18}" font-size="12" text-anchor="middle" fill="#555">{x}</text>')
-    for k, v in data.items():
-        v = sorted(v)
-        pts = " ".join(f"{px(x):.1f},{py(y):.1f}" for x, y in v)
-        s.append(f'<polyline points="{pts}" fill="none" stroke="{KLEUR[k]}" stroke-width="2.5"/>')
-    return s
+def legenda(ax, n_kol=2):
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=n_kol, fontsize=10, handlelength=1.6,
+              columnspacing=1.2, borderaxespad=0.3)
+
+
+def lijnen(df, kolom, titel, ondertitel, uit, deler=1.0, dec=0, jaren=None, y0=True):
+    fig, ax = plt.subplots(figsize=(6.4, 5.0), dpi=200)
+    fig.subplots_adjust(left=0.13, right=0.97, top=0.70, bottom=0.09)
+    kop(fig, titel, ondertitel)
+    for s, lab in SECTOREN.items():
+        d = df[(df.sector == s) & df[kolom].notna()]
+        if jaren:
+            d = d[d.jaar.between(*jaren)]
+        ax.plot(d.jaar, d[kolom] / deler, color=KLEUR[s], lw=2, label=lab)
+    if y0:
+        ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_formatter(as_getal(dec))
+    ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True, nbins=7))
+    legenda(ax)
+    fig.savefig(uit)
+    plt.close(fig)
+
+
+def ontleding(df, uit):
+    df = df.set_index("sector").loc[list(SECTOREN)]
+    fig, ax = plt.subplots(figsize=(6.4, 5.0), dpi=200)
+    fig.subplots_adjust(left=0.36, right=0.95, top=0.74, bottom=0.11)
+    kop(fig, "Groei van de voetafdruk 2012–2023 ontleed",
+        "miljoen m², deel door meer banen en deel door\nmeer of minder m² per baan")
+    y = range(len(df))
+    h = 0.38
+    ax.barh([i - h / 2 for i in y], df.door_banen_m2 / 1e6, height=h, color=KLEUR["Nijverheid"], label="door meer banen")
+    ax.barh([i + h / 2 for i in y], df.door_m2baan_m2 / 1e6, height=h, color=KLEUR["Logistiek"], label="door m² per baan")
+    ax.set_yticks(list(y), [SECTOREN[s] for s in df.index])
+    ax.invert_yaxis()
+    ax.axvline(0, color=INKT2, lw=0.8)
+    ax.grid(axis="y", visible=False)
+    ax.xaxis.set_major_formatter(as_getal())
+    legenda(ax)
+    fig.savefig(uit)
+    plt.close(fig)
+
+
+def staven(waarden, titel, ondertitel, uit, dec=0):
+    waarden = waarden.sort_values()
+    fig, ax = plt.subplots(figsize=(6.4, 4.2), dpi=200)
+    fig.subplots_adjust(left=0.36, right=0.88, top=0.80, bottom=0.08)
+    kop(fig, titel, ondertitel)
+    ax.barh([SECTOREN[s] for s in waarden.index], waarden, color=KLEUR["Nijverheid"], height=0.6)
+    for i, v in enumerate(waarden):
+        ax.text(v, i, " " + nl(v, dec), va="center", fontsize=10, color=INKT)
+    ax.grid(axis="y", visible=False)
+    ax.xaxis.set_major_formatter(as_getal())
+    fig.savefig(uit)
+    plt.close(fig)
 
 
 def main(map_):
     map_ = Path(map_)
     werk = lees(map_ / "WerkenPerBaan_reeks.csv")
+    ontl = lees(map_ / "WerkenPerBaan_ontleding.csv")
     waarde = lees(map_ / "WaardePerM2_reeks.csv")
-    hoog = 3 * H + 150
-    s = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{B}" height="{hoog}" viewBox="0 0 {B} {hoog}" font-family="Segoe UI, Arial, sans-serif">',
-         f'<rect width="{B}" height="{hoog}" fill="white"/>']
-    s += paneel(0, "Pandvoetafdruk per baan (m²)", reeks(werk, "m2_per_baan"), x_bereik=(2012, 2023))
-    s += paneel(H, "Banen per sector, LISA (miljoen)", reeks(werk, "banen", 1e6), x_bereik=(1996, 2023))
-    s += paneel(2 * H, "Toegevoegde waarde per m² voetafdruk (euro, lopende prijzen, log)", reeks(waarde, "euro_per_m2"), log=True)
-    for i, (k, lab) in enumerate(LABEL.items()):
-        x, y = L + (i % 2) * 290, 3 * H + 30 + (i // 2) * 26
-        s.append(f'<line x1="{x}" x2="{x + 28}" y1="{y}" y2="{y}" stroke="{KLEUR[k]}" stroke-width="4"/>')
-        s.append(f'<text x="{x + 36}" y="{y + 5}" font-size="14">{lab}</text>')
-    s.append("</svg>")
-    uit = map_ / "ESB_figuren.svg"
-    uit.write_text("\n".join(s), encoding="utf-8")
-    print(uit)
+    laatste_lisa = int(werk[werk.m2_per_baan.notna()].jaar.max())
+
+    lijnen(werk, "m2_per_baan", "Pandvoetafdruk per baan",
+           f"m² per LISA-baan, 2012–{laatste_lisa}", map_ / "ESB_A1_m2_per_baan.png", jaren=(2012, laatste_lisa))
+    lijnen(werk, "banen", "Banen per sector", f"miljoen LISA-banen, 1996–{laatste_lisa}",
+           map_ / "ESB_A2_banen.png", deler=1e6, dec=1)
+    lijnen(werk, "voetafdruk_m2", "Pandvoetafdruk per sector",
+           "km², BAG op 1 januari", map_ / "ESB_A3_voetafdruk.png", deler=1e6)
+    ontleding(ontl, map_ / "ESB_A4_ontleding.png")
+
+    w = waarde[waarde.jaar == waarde.jaar.max()].set_index("sector")
+    jaar = int(waarde.jaar.max())
+    staven(w.euro_per_m2, "Toegevoegde waarde per m² voetafdruk", f"euro per m², {jaar}",
+           map_ / "ESB_B1_euro_per_m2.png")
+    staven(w.euro_per_baan / 1000, "Toegevoegde waarde per baan", f"duizend euro per LISA-baan, {jaar}",
+           map_ / "ESB_B2_euro_per_baan.png")
+    basis = waarde[waarde.jaar == waarde.jaar.min()].set_index("sector").euro2021_per_m2
+    waarde["index_m2"] = 100 * waarde.euro2021_per_m2 / waarde.sector.map(basis)
+    lijnen(waarde, "index_m2", "Toegevoegde waarde per m² in prijzen van 2021",
+           f"prijsniveau 2021, index {int(waarde.jaar.min())} = 100", map_ / "ESB_B3_index_m2.png", y0=False)
+    print("figuren in", map_)
 
 
 if __name__ == "__main__":
