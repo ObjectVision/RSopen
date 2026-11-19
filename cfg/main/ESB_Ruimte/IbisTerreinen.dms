@@ -1,4 +1,284 @@
-container IbisTerreinen
-: Descr = "Per IBIS-werklocatie de banen en de voetafdruk per sector, gekruist met de bereikbaarheid (UAI) en de nabijheid van een OV-knooppunt."
+container IbisTerreinen : using = "Units"
+, Descr = "Waar de zes werksectoren in Jaar zitten: per sector welk deel van de LISA-banen en van de pandvoetafdruk op een IBIS-werklocatie ligt, en hoe banen en voetafdruk verdeeld zijn over klassen van de UAI en van de reistijd naar het dichtstbijzijnde
+			OV-knooppunt, twee termen van de herschatting van werken (#708). Daarnaast per IBIS-terrein de voetafdruk per sector naast de UAI van het terrein. De tabellen gaan als csv naar UitvoerDir; LISA staat daarin alleen opgeteld per sector en klasse."
 {
+	parameter<UInt32>  Jaar         := 2023, Descr = "Het peiljaar: de BAG van 1 januari, de LISA-banen en de IBIS-jaargang van dit jaar, en de BAG waaruit de UAI komt. Het LISA-bestand moet in de levering van ModelParameters/LISA_FileYear zitten.";
+	parameter<UInt8>   NrKlassen    := 5b, Descr = "Het aantal klassen van de UAI en van de reistijd. De grenzen liggen zo dat elke klasse een even groot deel van alle banen van de zes sectoren heeft, bij vijf dus de kwintielen naar banen.";
+
+	unit<UInt8>        Jobs6        := /Classifications/Actor/Jobs6;
+	unit<UInt8>        TXLJobs7     := /Classifications/Actor/TXLJobs7;
+	unit<UInt8>        Gebruiksdoel := /Classifications/Vastgoed/vbo_gebruiksdoel_plus;
+
+	unit<UInt8> Sectoren := range(uint8, 0b, uint8(#Jobs6) + 1b)
+	, Descr = "De zes sectoren van Jobs6 en een rij Alle_zes met hun som."
+	{
+		attribute<Bool>   IsTotaal  := id(.) == uint8(#Jobs6);
+		attribute<Jobs6>  Jobs6_rel := IsTotaal ? (0b/0b)[Jobs6] : value(id(.), Jobs6);
+		attribute<String> name      := IsTotaal ? 'Alle_zes' : Jobs6/name[Jobs6_rel];
+	}
+
+	unit<UInt8> Klassen := range(uint8, 0b, NrKlassen)
+	, Descr = "De klassen van de UAI en van de reistijd, oplopend: K1 heeft de laagste UAI of de kortste reistijd."
+	{
+		attribute<String>  name               := 'K' + string(id(.) + 1b);
+		attribute<Float64> Aandeel_ondergrens := float64(id(.)) / float64(NrKlassen), Descr = "Het deel van alle banen met een waarde onder de ondergrens van de klasse.";
+	}
+
+	parameter<Klassen> Laagste      := value(0b, Klassen);
+	parameter<Klassen> Hoogste      := value(NrKlassen - 1b, Klassen);
+
+	unit<UInt8> IbisGroep : NrOfRows = 4
+	, Descr = "Ligt een pand of vestiging op een IBIS-werklocatie, en zo ja op wat voor een: een zeehaventerrein (IBIS-type A), een bedrijventerrein (B) of een andere werklocatie (de economische zones C tot en met C5 en een onbekend type)."
+	{
+		attribute<String> name   : ['Geen_IBIS', 'Zeehaventerrein', 'Bedrijventerrein', 'Overige_werklocatie'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<Bool>   IsIBIS := id(.) > 0b;
+		container         V      := for_each_nedv(name, string(id(.))+'[..]', void, .);
+	}
+
+	container Omgeving
+	: Descr = "De twee bereikbaarheidstermen van de herschatting van werken (#708) op cellen van 100 m, zoals de covariaten daar ze lezen."
+	{
+		container          UAI                                := /BaseData/Suitabilities/Wonen/UrbanAttractivityIndex/CalculateUAI(/BaseData/Suitabilities/Wonen/UrbanAttractivityIndex/C_5000m_AbsWeight/potentiaal, /BaseData/Suitabilities/Wonen/UrbanAttractivityIndex/C_5000m_AbsWeight/distance_decay, Jaar)
+		, Descr = "De UAI uit de BAG van 1 januari van Jaar, met de potentiaal en het afstandsverval die het model toepast.";
+		attribute<Float32> UAI_cel   (/Geography/AllocDomain) := UAI/Resultaat, Descr = "De UAI voor de logaritme, de waarde waarvan de herschatting ln_uai neemt.";
+		attribute<Float32> Reistijd_cel (/Geography/rdc_100m) := /SourceData/Diversen/Impl/Reistijden/tt_OVknooppunten_min[Float32], Descr = "De reistijd per auto naar het dichtstbijzijnde OV-knooppunt in minuten, op 1 minuut begrensd en zonder waarde 120 minuten, zoals ln_tt_ov hem leest.";
+	}
+
+	container Terreinen
+	: Descr = "De IBIS-werklocaties van Jaar, met per terrein de voetafdruk per sector, het aandeel van logistiek daarin en de UAI en de reistijd van het terrein. Zonder banen, zodat er geen LISA-gegevens per terrein in de uitvoer komen."
+	{
+		unit<UInt32>         Terrein                                  := ='/SourceData/Grondgebruik/IBIS/Y'+string(Jaar), Descr = "De terreinen van de IBIS-jaargang Jaar.";
+
+		attribute<IbisGroep> Groep_per_type (/Classifications/Grondgebruik/IBIS) := switch(case(/Classifications/Grondgebruik/IBIS/code == 'A', IbisGroep/V/Zeehaventerrein), case(/Classifications/Grondgebruik/IBIS/code == 'B', IbisGroep/V/Bedrijventerrein), IbisGroep/V/Overige_werklocatie);
+		attribute<IbisGroep> IbisGroep_rel                  (Terrein) := Groep_per_type[Terrein/Type_rel];
+		attribute<Float64>   Oppervlak_ha                   (Terrein) := float64(area(Terrein/geometry, meter2_f64)) / 10000d, Descr = "De oppervlakte van het terreinvlak in ha.";
+
+		container            Voet                                     := for_each_nedv(Jobs6/name, 'sum(float64(Panden/Voet/'+Jobs6/name+'), Panden/Terrein_rel)', Terrein, Float64), Descr = "De voetafdruk per sector van de panden met hun zwaartepunt op het terrein, in m².";
+		attribute<Float64>   Werk_m2                        (Terrein) := ='add('+AsItemList('Voet/'+Jobs6/name)+')', Descr = "De voetafdruk van de zes sectoren samen in m².";
+		attribute<Float64>   Aandeel_logistiek              (Terrein) := Voet/Logistiek / Werk_m2, Descr = "Het deel van de werkvoetafdruk dat van logistiek is; leeg voor een terrein zonder werkvoetafdruk.";
+
+		attribute<Terrein>   Per_AllocDomain (/Geography/AllocDomain) := poly2grid(Terrein/geometry, /Geography/AllocDomain);
+		attribute<Terrein>   Per_rdc_100m       (/Geography/rdc_100m) := poly2grid(Terrein/geometry, /Geography/rdc_100m);
+		attribute<Float32>   UAI_vlak                       (Terrein) := sum(Omgeving/UAI_cel, Per_AllocDomain) / float32(pcount(Per_AllocDomain));
+		attribute<Float32>   Reistijd_vlak                  (Terrein) := sum(Omgeving/Reistijd_cel, Per_rdc_100m) / float32(pcount(Per_rdc_100m));
+		attribute<Float32>   UAI                            (Terrein) := MakeDefined(UAI_vlak, Omgeving/UAI_cel[centroid_or_mid(Terrein/geometry)[/Geography/AllocDomain]]), Descr = "De gemiddelde UAI van de cellen van 100 m met hun middelpunt op het terrein, en voor een terrein zonder zo'n cel de UAI in zijn zwaartepunt.";
+		attribute<Float32>   Reistijd                       (Terrein) := MakeDefined(Reistijd_vlak, Omgeving/Reistijd_cel[centroid_or_mid(Terrein/geometry)[/Geography/rdc_100m]]), Descr = "De gemiddelde reistijd naar een OV-knooppunt in minuten, op dezelfde manier als de UAI.";
+		attribute<Klassen>   UAI_klasse                     (Terrein) := classify(UAI, Grenzen/UAI), Descr = "De UAI-klasse van het terrein, met dezelfde grenzen als voor banen en panden.";
+		attribute<Klassen>   Reistijd_klasse                (Terrein) := classify(Reistijd, Grenzen/Reistijd);
+	}
+
+	container Panden
+	: Descr = "De panden in de voorraad op 1 januari van Jaar met hun voetafdruk per sector, zoals WerkenPerBaan die landelijk optelt. Het zwaartepunt van het pand bepaalt de cel, het IBIS-terrein en de klassen."
+	{
+		unit<UInt32>         pand                   := ='/SourceData/Vastgoed/BAG/PerJaar/Y'+string(Jaar)+'/pand';
+
+		attribute<String>    VoetExpr       (Jobs6) := '0f + ' + AsList('MakeDefined(pand/Oppervlaktes/Footprint_perGebruiksdoel/'+Gebruiksdoel/name+'[Float32], 0f)', ' + ', Gebruiksdoel/Jobs6_rel), Descr = "De som van de voetafdruk van de gebruiksdoelen die bij de sector horen (Gebruiksdoel/Jobs6_rel).";
+		container            Voet                   := for_each_nedv(Jobs6/name, VoetExpr, pand, Float32), Descr = "De voetafdruk per sector per pand in m², naar het aandeel van elk gebruiksdoel in het vbo-oppervlak.";
+
+		attribute</Geography/rdc_meter> Punt (pand) := centroid_or_mid(pand/geometry);
+		attribute<Terreinen/Terrein> Terrein_rel (pand) := point_in_polygon(Punt, Terreinen/Terrein/geometry);
+		attribute<IbisGroep> IbisGroep_rel   (pand) := IsDefined(Terrein_rel) ? Terreinen/IbisGroep_rel[Terrein_rel] : IbisGroep/V/Geen_IBIS;
+		attribute<Float32>   UAI             (pand) := Omgeving/UAI_cel[Punt[/Geography/AllocDomain]];
+		attribute<Float32>   Reistijd        (pand) := Omgeving/Reistijd_cel[Punt[/Geography/rdc_100m]];
+		attribute<Klassen>   UAI_klasse      (pand) := classify(UAI, Grenzen/UAI);
+		attribute<Klassen>   Reistijd_klasse (pand) := classify(Reistijd, Grenzen/Reistijd);
+	}
+
+	container Vestigingen
+	: Descr = "De LISA-vestigingen van Jaar met hun sector en plek, uit de lezer van WerkenPerBaan. De uitvoer telt ze alleen op per sector en klasse."
+	{
+		unit<UInt32>         Vestiging                   := ='/ESB_Ruimte/WerkenPerBaan/Banen/Y'+string(Jaar)+'/Vestiging';
+
+		attribute<Jobs6>     Jobs6_rel       (Vestiging) := rlookup(TXLJobs7/name, Jobs6/name)[Vestiging/TXLJobs7_rel], Descr = "De sector; leeg voor landbouw en voor een SBI-code die niet in de vertaaltabel staat.";
+		attribute<Float64>   Aantal          (Vestiging) := float64(Vestiging/banen), Descr = "Het aantal banen, inclusief eenpersoonsbedrijven.";
+		attribute</Geography/rdc_meter> Punt (Vestiging) := point_xy(float64(Vestiging/x_alt), float64(Vestiging/y_alt), /Geography/rdc_meter);
+		attribute<Float32>   UAI             (Vestiging) := Omgeving/UAI_cel[Punt[/Geography/AllocDomain]];
+		attribute<Float32>   Reistijd        (Vestiging) := Omgeving/Reistijd_cel[Punt[/Geography/rdc_100m]];
+		attribute<Bool>      HeeftPlek       (Vestiging) := IsDefined(UAI) && IsDefined(Reistijd), Descr = "De vestiging heeft coördinaten binnen het modelraster.";
+		attribute<Terreinen/Terrein> Terrein_rel (Vestiging) := point_in_polygon(Punt, Terreinen/Terrein/geometry);
+		attribute<IbisGroep> IbisGroep_rel   (Vestiging) := HeeftPlek ? (IsDefined(Terrein_rel) ? Terreinen/IbisGroep_rel[Terrein_rel] : IbisGroep/V/Geen_IBIS) : (0b/0b)[IbisGroep];
+		attribute<Klassen>   UAI_klasse      (Vestiging) := classify(UAI, Grenzen/UAI);
+		attribute<Klassen>   Reistijd_klasse (Vestiging) := classify(Reistijd, Grenzen/Reistijd);
+	}
+
+	container Grenzen
+	: Descr = "De ondergrenzen van de klassen, gewogen naar banen: onder de ondergrens van een klasse ligt het deel Klassen/Aandeel_ondergrens van alle banen van de zes sectoren met een plek. De laagste klasse begint op nul, want beide maten zijn niet negatief."
+	{
+		unit<UInt32> Q := select_with_org_rel(IsDefined(Vestigingen/Jobs6_rel) && Vestigingen/HeeftPlek && Vestigingen/Aantal > 0d)
+		, Descr = "De vestigingen die de grenzen bepalen: met een sector, een plek en banen."
+		{
+			attribute<Float32> UAI_w      := Vestigingen/UAI[org_rel];
+			attribute<Float32> Reistijd_w := Vestigingen/Reistijd[org_rel];
+			attribute<Float64> Gewicht    := Vestigingen/Aantal[org_rel];
+		}
+
+		parameter<Float64> Totaal                  := sum(Q/Gewicht);
+		attribute<String>  UAI_term      (Klassen) := id(Klassen) == 0b ? '0f' : 'nth_element_weighted(Q/UAI_w, Totaal * '+string(Klassen/Aandeel_ondergrens)+', Q/Gewicht)';
+		attribute<String>  Reistijd_term (Klassen) := id(Klassen) == 0b ? '0f' : 'nth_element_weighted(Q/Reistijd_w, Totaal * '+string(Klassen/Aandeel_ondergrens)+', Q/Gewicht)';
+		attribute<Float32> UAI           (Klassen) := ='union_data(Klassen, '+AsList(UAI_term, ', ')+')', IntegrityCheck = "all(IsDefined(this))";
+		attribute<Float32> Reistijd      (Klassen) := ='union_data(Klassen, '+AsList(Reistijd_term, ', ')+')', IntegrityCheck = "all(IsDefined(this))";
+	}
+
+	container PerSector
+	: Descr = "Per sector de sommen waaruit de kerntabel de aandelen en gemiddelden afleidt: banen en voetafdruk, met plek, op IBIS, in de hoogste UAI-klasse en de kortste reistijdklasse, en vermenigvuldigd met de UAI en de reistijd."
+	{
+		attribute<Float64> Banen                  (Jobs6) := sum(Vestigingen/Aantal, Vestigingen/Jobs6_rel);
+		attribute<Float64> Banen_met_plek         (Jobs6) := sum(Vestigingen/HeeftPlek ? Vestigingen/Aantal : 0d, Vestigingen/Jobs6_rel);
+		attribute<Float64> Banen_IBIS             (Jobs6) := sum(IbisGroep/IsIBIS[Vestigingen/IbisGroep_rel] ? Vestigingen/Aantal : 0d, Vestigingen/Jobs6_rel);
+		attribute<Float64> Banen_bedrijventerrein (Jobs6) := sum(Vestigingen/IbisGroep_rel == IbisGroep/V/Bedrijventerrein ? Vestigingen/Aantal : 0d, Vestigingen/Jobs6_rel);
+		attribute<Float64> Banen_UAI_hoogst       (Jobs6) := sum(Vestigingen/UAI_klasse == Hoogste ? Vestigingen/Aantal : 0d, Vestigingen/Jobs6_rel);
+		attribute<Float64> Banen_OV_kortst        (Jobs6) := sum(Vestigingen/Reistijd_klasse == Laagste ? Vestigingen/Aantal : 0d, Vestigingen/Jobs6_rel);
+		attribute<Float64> Banen_x_UAI            (Jobs6) := sum(Vestigingen/HeeftPlek ? Vestigingen/Aantal * float64(Vestigingen/UAI) : 0d, Vestigingen/Jobs6_rel);
+		attribute<Float64> Banen_x_Reistijd       (Jobs6) := sum(Vestigingen/HeeftPlek ? Vestigingen/Aantal * float64(Vestigingen/Reistijd) : 0d, Vestigingen/Jobs6_rel);
+
+		attribute<String>  Expr_som               (Jobs6) := 'sum(float64(Panden/Voet/'+Jobs6/name+')@C@)';
+		attribute<Float64> Voet                   (Jobs6) := ='union_data(Jobs6, '+AsList(replace(Expr_som, '@C@', ''), ', ')+')';
+		attribute<Float64> Voet_met_plek          (Jobs6) := ='union_data(Jobs6, '+AsList(replace(Expr_som, '@C@', ' * float64(IsDefined(Panden/UAI) && IsDefined(Panden/Reistijd))'), ', ')+')';
+		attribute<Float64> Voet_IBIS              (Jobs6) := ='union_data(Jobs6, '+AsList(replace(Expr_som, '@C@', ' * float64(IbisGroep/IsIBIS[Panden/IbisGroep_rel])'), ', ')+')';
+		attribute<Float64> Voet_bedrijventerrein  (Jobs6) := ='union_data(Jobs6, '+AsList(replace(Expr_som, '@C@', ' * float64(Panden/IbisGroep_rel == IbisGroep/V/Bedrijventerrein)'), ', ')+')';
+		attribute<Float64> Voet_UAI_hoogst        (Jobs6) := ='union_data(Jobs6, '+AsList(replace(Expr_som, '@C@', ' * float64(Panden/UAI_klasse == Hoogste)'), ', ')+')';
+		attribute<Float64> Voet_OV_kortst         (Jobs6) := ='union_data(Jobs6, '+AsList(replace(Expr_som, '@C@', ' * float64(Panden/Reistijd_klasse == Laagste)'), ', ')+')';
+		attribute<Float64> Voet_x_UAI             (Jobs6) := ='union_data(Jobs6, '+AsList(replace(Expr_som, '@C@', ' * MakeDefined(float64(Panden/UAI), 0d)'), ', ')+')';
+		attribute<Float64> Voet_x_Reistijd        (Jobs6) := ='union_data(Jobs6, '+AsList(replace(Expr_som, '@C@', ' * MakeDefined(float64(Panden/Reistijd), 0d)'), ', ')+')';
+	}
+
+	unit<UInt8> Som : NrOfRows = 16
+	, Descr = "De sommen van PerSector die de kerntabel per sector en voor Alle_zes nodig heeft."
+	{
+		attribute<String> name :
+		[ 'Banen', 'Banen_met_plek', 'Banen_IBIS', 'Banen_bedrijventerrein', 'Banen_UAI_hoogst', 'Banen_OV_kortst', 'Banen_x_UAI', 'Banen_x_Reistijd'
+		, 'Voet', 'Voet_met_plek', 'Voet_IBIS', 'Voet_bedrijventerrein', 'Voet_UAI_hoogst', 'Voet_OV_kortst', 'Voet_x_UAI', 'Voet_x_Reistijd'
+		], IntegrityCheck = "all(IsDefined(this))";
+	}
+
+	container          PerSector7   := for_each_nedv(Som/name, 'Sectoren/IsTotaal ? sum(PerSector/'+Som/name+') : PerSector/'+Som/name+'[Sectoren/Jobs6_rel]', Sectoren, Float64)
+	, Descr = "De sommen van PerSector op de zeven rijen van Sectoren.";
+
+	Template Verdeling_T
+	: Descr = "De banen en de voetafdruk per sector en per klasse van K, met het aandeel van de klasse in de sector. RelNaam is de naam van de klassekolom in Vestigingen en Panden. Banen en panden zonder klasse tellen niet mee."
+	{
+		unit<UInt8>       K;
+		parameter<String> RelNaam;
+		///
+		unit<UInt32>       JxK             := combine(Jobs6, K);
+		attribute<Float64> Banen_JxK (JxK) := ='sum(Vestigingen/Aantal, combine_data(JxK, Vestigingen/Jobs6_rel, Vestigingen/'+RelNaam+'))';
+		container          Voet_K          := for_each_nedv(Jobs6/name, 'sum(float64(Panden/Voet/'+Jobs6/name+'), Panden/'+RelNaam+')', K, Float64);
+		attribute<Float64> Voet_JxK  (JxK) := ='union_data(JxK, '+AsList('Voet_K/'+Jobs6/name[JxK/first_rel]+'['+string(JxK/second_rel)+'[K]]', ', ')+')';
+
+		unit<UInt32> Rij := combine(Sectoren, K)
+		{
+			attribute<String>  Sectornaam    := Sectoren/name[first_rel];
+			attribute<String>  Klassenaam    := K/name[second_rel];
+			attribute<JxK>     JxK_rel       := combine_data(JxK, Sectoren/Jobs6_rel[first_rel], second_rel);
+			attribute<Float64> Banen_som     := Sectoren/IsTotaal[first_rel] ? sum(Banen_JxK, JxK/second_rel)[second_rel] : Banen_JxK[JxK_rel];
+			attribute<Float64> Voet_som      := Sectoren/IsTotaal[first_rel] ? sum(Voet_JxK, JxK/second_rel)[second_rel] : Voet_JxK[JxK_rel];
+			attribute<Float64> Aandeel_banen := Banen_som / sum(Banen_som, first_rel)[first_rel];
+			attribute<Float64> Aandeel_voet  := Voet_som / sum(Voet_som, first_rel)[first_rel];
+		}
+	}
+
+	container Verdeling
+	: Descr = "De verdeling van banen en voetafdruk per sector over de IBIS-groepen, de UAI-klassen en de reistijdklassen."
+	{
+		container Ibis     := Verdeling_T(IbisGroep, 'IbisGroep_rel');
+		container UAI      := Verdeling_T(Klassen, 'UAI_klasse');
+		container Reistijd := Verdeling_T(Klassen, 'Reistijd_klasse');
+
+		unit<UInt32> Lang := union_unit(Ibis/Rij, UAI/Rij, Reistijd/Rij)
+		, Descr = "De drie verdelingen onder elkaar, voor de csv."
+		{
+			attribute<String>  Indeling      := union_data(., const('IBIS', Ibis/Rij), const('UAI', UAI/Rij), const('Reistijd_OV', Reistijd/Rij));
+			attribute<String>  Klassenaam    := union_data(., Ibis/Rij/Klassenaam, UAI/Rij/Klassenaam, Reistijd/Rij/Klassenaam);
+			attribute<String>  Sectornaam    := union_data(., Ibis/Rij/Sectornaam, UAI/Rij/Sectornaam, Reistijd/Rij/Sectornaam);
+			attribute<Float64> Banen_som     := union_data(., Ibis/Rij/Banen_som, UAI/Rij/Banen_som, Reistijd/Rij/Banen_som);
+			attribute<Float64> Voet_som      := union_data(., Ibis/Rij/Voet_som, UAI/Rij/Voet_som, Reistijd/Rij/Voet_som);
+			attribute<Float64> Aandeel_banen := union_data(., Ibis/Rij/Aandeel_banen, UAI/Rij/Aandeel_banen, Reistijd/Rij/Aandeel_banen);
+			attribute<Float64> Aandeel_voet  := union_data(., Ibis/Rij/Aandeel_voet, UAI/Rij/Aandeel_voet, Reistijd/Rij/Aandeel_voet);
+		}
+	}
+
+	container Schrijf_Sectoren
+	: StorageName = "=UitvoerDir+'/IbisTerreinen_sectoren.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De kerntabel per sector en voor de zes samen: banen, voetafdruk, het deel op een IBIS-werklocatie en op een bedrijventerrein, het deel in de hoogste UAI-klasse en de kortste reistijdklasse, en de gemiddelde UAI en reistijd, gewogen naar banen en naar voetafdruk."
+	{
+		attribute<String>  Sector              (Sectoren) := Sectoren/name;
+		attribute<Float64> Banen               (Sectoren) := PerSector7/Banen;
+		attribute<Float64> Voetafdruk_m2       (Sectoren) := PerSector7/Voet;
+		attribute<Float64> M2_per_baan         (Sectoren) := PerSector7/Voet / PerSector7/Banen;
+		attribute<Float64> Banen_zonder_plek   (Sectoren) := PerSector7/Banen - PerSector7/Banen_met_plek;
+		attribute<Float64> Banen_IBIS          (Sectoren) := PerSector7/Banen_IBIS / PerSector7/Banen_met_plek, Descr = "Het deel van de banen met een plek dat op een IBIS-werklocatie ligt; zo ook de andere aandelen van banen.";
+		attribute<Float64> Voet_IBIS           (Sectoren) := PerSector7/Voet_IBIS / PerSector7/Voet;
+		attribute<Float64> Banen_bedrijventerr (Sectoren) := PerSector7/Banen_bedrijventerrein / PerSector7/Banen_met_plek;
+		attribute<Float64> Voet_bedrijventerr  (Sectoren) := PerSector7/Voet_bedrijventerrein / PerSector7/Voet;
+		attribute<Float64> Banen_UAI_hoogst    (Sectoren) := PerSector7/Banen_UAI_hoogst / PerSector7/Banen_met_plek;
+		attribute<Float64> Voet_UAI_hoogst     (Sectoren) := PerSector7/Voet_UAI_hoogst / PerSector7/Voet_met_plek;
+		attribute<Float64> Banen_OV_kortst     (Sectoren) := PerSector7/Banen_OV_kortst / PerSector7/Banen_met_plek;
+		attribute<Float64> Voet_OV_kortst      (Sectoren) := PerSector7/Voet_OV_kortst / PerSector7/Voet_met_plek;
+		attribute<Float64> UAI_gem_banen       (Sectoren) := PerSector7/Banen_x_UAI / PerSector7/Banen_met_plek;
+		attribute<Float64> UAI_gem_voet        (Sectoren) := PerSector7/Voet_x_UAI / PerSector7/Voet_met_plek;
+		attribute<Float64> Reistijd_gem_banen  (Sectoren) := PerSector7/Banen_x_Reistijd / PerSector7/Banen_met_plek;
+		attribute<Float64> Reistijd_gem_voet   (Sectoren) := PerSector7/Voet_x_Reistijd / PerSector7/Voet_met_plek;
+	}
+
+	container Schrijf_Verdeling
+	: StorageName = "=UitvoerDir+'/IbisTerreinen_verdeling.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De verdeling per sector over de IBIS-groepen en de klassen van de UAI en de reistijd: banen, voetafdruk en het aandeel van de klasse in de sector."
+	{
+		attribute<String>  Indeling      (Verdeling/Lang) := Verdeling/Lang/Indeling;
+		attribute<String>  Klasse        (Verdeling/Lang) := Verdeling/Lang/Klassenaam;
+		attribute<String>  Sector        (Verdeling/Lang) := Verdeling/Lang/Sectornaam;
+		attribute<Float64> Banen         (Verdeling/Lang) := Verdeling/Lang/Banen_som;
+		attribute<Float64> Voetafdruk_m2 (Verdeling/Lang) := Verdeling/Lang/Voet_som;
+		attribute<Float64> Aandeel_banen (Verdeling/Lang) := Verdeling/Lang/Aandeel_banen;
+		attribute<Float64> Aandeel_voet  (Verdeling/Lang) := Verdeling/Lang/Aandeel_voet;
+	}
+
+	container Schrijf_Grenzen
+	: StorageName = "=UitvoerDir+'/IbisTerreinen_grenzen.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De ondergrenzen van de klassen van de UAI en van de reistijd in minuten."
+	{
+		attribute<String>  Klasse              (Klassen) := Klassen/name;
+		attribute<Float64> Aandeel_ondergrens  (Klassen) := Klassen/Aandeel_ondergrens;
+		attribute<Float32> UAI_ondergrens      (Klassen) := Grenzen/UAI;
+		attribute<Float32> Reistijd_ondergrens (Klassen) := Grenzen/Reistijd;
+	}
+
+	container Schrijf_Terreinen
+	: StorageName = "=UitvoerDir+'/IbisTerreinen_perterrein.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "Per IBIS-terrein het type, de oppervlakte, de voetafdruk per sector, het aandeel logistiek en de UAI en de reistijd van het terrein; zonder banen."
+	{
+		attribute<UInt32>  Terrein_nr        (Terreinen/Terrein) := id(Terreinen/Terrein);
+		attribute<String>  Type              (Terreinen/Terrein) := /Classifications/Grondgebruik/IBIS/name[Terreinen/Terrein/Type_rel];
+		attribute<String>  Groep             (Terreinen/Terrein) := IbisGroep/name[Terreinen/IbisGroep_rel];
+		attribute<Float64> Oppervlak_ha      (Terreinen/Terrein) := Terreinen/Oppervlak_ha;
+		attribute<Float64> Werk_m2           (Terreinen/Terrein) := Terreinen/Werk_m2;
+		attribute<Float64> Nijverheid_m2     (Terreinen/Terrein) := Terreinen/Voet/Nijverheid;
+		attribute<Float64> Logistiek_m2      (Terreinen/Terrein) := Terreinen/Voet/Logistiek;
+		attribute<Float64> Detailhandel_m2   (Terreinen/Terrein) := Terreinen/Voet/Detailhandel;
+		attribute<Float64> Ov_cons_m2        (Terreinen/Terrein) := Terreinen/Voet/Ov_consumentendiensten;
+		attribute<Float64> Zak_dienst_m2     (Terreinen/Terrein) := Terreinen/Voet/Zak_dienstverlening;
+		attribute<Float64> Overheid_m2       (Terreinen/Terrein) := Terreinen/Voet/Overheid_kw_diensten;
+		attribute<Float64> Aandeel_logistiek (Terreinen/Terrein) := Terreinen/Aandeel_logistiek;
+		attribute<Float32> UAI               (Terreinen/Terrein) := Terreinen/UAI;
+		attribute<Float32> Reistijd_OV       (Terreinen/Terrein) := Terreinen/Reistijd;
+	}
+
+	container Schrijf_TerreinKlassen
+	: StorageName = "=UitvoerDir+'/IbisTerreinen_terreinklassen.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De IBIS-terreinen opgeteld per klasse van hun UAI en van hun reistijd: aantal, oppervlakte, werkvoetafdruk en het deel daarvan van logistiek en van zakelijke dienstverlening."
+	{
+		attribute<String>  Klasse                  (Klassen) := Klassen/name;
+		attribute<UInt32>  UAI_terreinen           (Klassen) := pcount(Terreinen/UAI_klasse);
+		attribute<Float64> UAI_oppervlak_ha        (Klassen) := sum(Terreinen/Oppervlak_ha, Terreinen/UAI_klasse);
+		attribute<Float64> UAI_werk_m2             (Klassen) := sum(Terreinen/Werk_m2, Terreinen/UAI_klasse);
+		attribute<Float64> UAI_aandeel_logistiek   (Klassen) := sum(Terreinen/Voet/Logistiek, Terreinen/UAI_klasse) / UAI_werk_m2;
+		attribute<Float64> UAI_aandeel_zak         (Klassen) := sum(Terreinen/Voet/Zak_dienstverlening, Terreinen/UAI_klasse) / UAI_werk_m2;
+		attribute<UInt32>  Reistijd_terreinen      (Klassen) := pcount(Terreinen/Reistijd_klasse);
+		attribute<Float64> Reistijd_oppervlak_ha   (Klassen) := sum(Terreinen/Oppervlak_ha, Terreinen/Reistijd_klasse);
+		attribute<Float64> Reistijd_werk_m2        (Klassen) := sum(Terreinen/Werk_m2, Terreinen/Reistijd_klasse);
+		attribute<Float64> Reistijd_aandeel_logist (Klassen) := sum(Terreinen/Voet/Logistiek, Terreinen/Reistijd_klasse) / Reistijd_werk_m2;
+		attribute<Float64> Reistijd_aandeel_zak    (Klassen) := sum(Terreinen/Voet/Zak_dienstverlening, Terreinen/Reistijd_klasse) / Reistijd_werk_m2;
+	}
+
+	parameter<String>  Generate     := 'Ready', ExplicitSuppliers = "Schrijf_Sectoren;Schrijf_Verdeling;Schrijf_Grenzen;Schrijf_Terreinen;Schrijf_TerreinKlassen", Descr = "Schrijft de vijf csv's; op aanvraag.";
 }
