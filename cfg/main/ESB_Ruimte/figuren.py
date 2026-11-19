@@ -1,7 +1,8 @@
 """Tekent de figuren van de ESB-analyses A en B als png uit de csv's die GeoDMS schrijft
-(ESB_Ruimte/WerkenPerBaan en ESB_Ruimte/WaardePerM2). Alleen presentatie: elk getal komt uit die csv's.
+(ESB_Ruimte/WerkenPerBaan en ESB_Ruimte/WaardePerM2), en met de mappen van D en G erbij ook de figuren van waar
+de banen zitten en van het bouwterrein, zoals in de Excel van excel.py. Alleen presentatie: elk getal komt uit die csv's.
 
-Gebruik: python figuren.py <map met de csv's>   (schrijft ESB_A*.png en ESB_B*.png in dezelfde map)
+Gebruik: python figuren.py <map A en B> [<map D> <map G>]   (schrijft de png's naast de csv's)
 """
 import sys
 from pathlib import Path
@@ -113,7 +114,68 @@ def staven(waarden, titel, ondertitel, uit, dec=0):
     plt.close(fig)
 
 
-def main(map_):
+def twee_staven(df, kol1, lab1, kol2, lab2, titel, ondertitel, uit, schaal=1.0, procent=False, lijn=None):
+    """Twee staven per sector naast elkaar, in de volgorde van df; lijn is een verticale referentielijn."""
+    fig, ax = plt.subplots(figsize=(6.4, 5.0), dpi=200)
+    fig.subplots_adjust(left=0.36, right=0.95, top=0.74, bottom=0.11)
+    kop(fig, titel, ondertitel)
+    y = range(len(df))
+    h = 0.38
+    ax.barh([i - h / 2 for i in y], df[kol1] * schaal, height=h, color=KLEUR["Nijverheid"], label=lab1)
+    ax.barh([i + h / 2 for i in y], df[kol2] * schaal, height=h, color=KLEUR["Logistiek"], label=lab2)
+    ax.set_yticks(list(y), [SECTOREN.get(s, s) for s in df.index])
+    ax.invert_yaxis()
+    if lijn is not None:
+        ax.axvline(lijn, color=INKT2, lw=1, ls="--")
+    ax.grid(axis="y", visible=False)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: nl(v) + "%") if procent else as_getal())
+    legenda(ax)
+    fig.savefig(uit)
+    plt.close(fig)
+
+
+def waarde_index(waarde, uit):
+    """Toegevoegde waarde per baan en per m² in het laatste jaar, de zes sectoren samen = 100."""
+    jaar = int(waarde.jaar.max())
+    w = waarde[waarde.jaar == jaar].set_index("sector").loc[list(SECTOREN)]
+    w["idx_baan"] = 100 * w.euro_per_baan / (w.btw_euro.sum() / w.banen.sum())
+    w["idx_m2"] = 100 * w.euro_per_m2 / (w.btw_euro.sum() / w.voetafdruk_m2.sum())
+    twee_staven(w, "idx_baan", "per baan", "idx_m2", "per m² voetafdruk", "Toegevoegde waarde per baan en per m²",
+                f"{jaar}, zes sectoren samen = 100", uit, lijn=100)
+    return w
+
+
+def waar_banen(ibis, uit):
+    """Deel van de banen van elke sector op een IBIS-werklocatie en bij de hoogste UAI (IbisTerreinen_sectoren.csv)."""
+    s = ibis.set_index("sector").loc[list(SECTOREN) + ["Alle_zes"]].rename(index={"Alle_zes": "Zes sectoren samen"})
+    twee_staven(s, "banen_ibis", "op een IBIS-werklocatie", "banen_uai_hoogst", "bij de hoogste UAI (K5)",
+                "Waar de banen zitten", "deel van de banen van de sector, 2023", uit, schaal=100, procent=True,
+                lijn=20)
+
+
+def bouwterrein(bbg, uit):
+    """BBG-bouwterrein naar de afstand tot een pand in de pijplijn van de BAG (Bouwterrein_overlay_BBG.csv)."""
+    b = bbg.set_index("jaar")
+    delen = [(b.ha_nabij_recent, "binnen 100 m", KLEUR["Nijverheid"]),
+             (b.ha_nabij_recent_ruim - b.ha_nabij_recent, "100 tot 250 m", "#8fb8ea"),
+             (b.ha_raster - b.ha_nabij_recent_ruim, "verder dan 250 m", "#c9c7c1")]
+    fig, ax = plt.subplots(figsize=(6.4, 5.0), dpi=200)
+    fig.subplots_adjust(left=0.13, right=0.97, top=0.74, bottom=0.09)
+    kop(fig, "Bouwterrein naar de afstand tot een bouwproject",
+        "duizend ha BBG-bouwterrein, naar de afstand tot een pand\ndat vergund of in aanbouw is in de BAG")
+    x = [str(j) for j in b.index]
+    onder = 0
+    for v, lab, kl in delen:
+        ax.bar(x, v / 1000, bottom=onder, color=kl, width=0.6, label=lab)
+        onder = onder + v / 1000
+    ax.grid(axis="x", visible=False)
+    ax.yaxis.set_major_formatter(as_getal())
+    legenda(ax, 3)
+    fig.savefig(uit)
+    plt.close(fig)
+
+
+def main(map_, map_d=None, map_g=None):
     map_ = Path(map_)
     werk = lees(map_ / "WerkenPerBaan_reeks.csv")
     ontl = lees(map_ / "WerkenPerBaan_ontleding.csv")
@@ -138,8 +200,13 @@ def main(map_):
     waarde["index_m2"] = 100 * waarde.euro2021_per_m2 / waarde.sector.map(basis)
     lijnen(waarde, "index_m2", "Toegevoegde waarde per m² in prijzen van 2021",
            f"prijsniveau 2021, index {int(waarde.jaar.min())} = 100", map_ / "ESB_B3_index_m2.png", y0=False)
+    waarde_index(waarde, map_ / "ESB_B4_index_baan_m2.png")
+    if map_d:
+        waar_banen(lees(Path(map_d) / "IbisTerreinen_sectoren.csv"), Path(map_d) / "IbisTerreinen_banen.png")
+    if map_g:
+        bouwterrein(lees(Path(map_g) / "Bouwterrein_overlay_BBG.csv"), Path(map_g) / "Bouwterrein_afstand.png")
     print("figuren in", map_)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(*sys.argv[1:4])
