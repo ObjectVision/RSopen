@@ -1,4 +1,327 @@
-container Bouwterrein
-: Descr = "De BAG-pijplijn per 1 januari: panden die vergund of in aanbouw zijn en nog niet in gebruik, met aantal en voetafdruk, en de overlay met het bouwterrein van de BBG."
+container Bouwterrein : using = "Units"
+, Descr = "De BAG-pijplijn op 1 januari van elk BAG-jaar: panden met de status bouwvergunning verleend of bouw gestart die op die datum nog niet in gebruik zijn, met aantal, voetafdruk en woningen, naar functie en met en zonder de ondergrens van ModelParameters/Advanced/MaxLeeftijdPijplijn.
+			Daarnaast de overlay met het bouwterrein van de BBG in de jaargangen van 2012 tot en met 2022: welk deel ligt binnen Zoekstraal van een pand uit de pijplijn van 1 januari van dat jaar en welk deel niet. De reeksen gaan als csv naar UitvoerDir."
 {
+	parameter<meter> Zoekstraal      := 100[meter], Descr = "Binnen welke afstand van het zwaartepunt van een pand uit de pijplijn een bouwterreincel van 25 meter telt als grond met een vergunning of bouw. Een BBG-bouwterrein is ruimer dan de panden erop; een grotere straal rekent meer grond rond een pand mee.";
+	parameter<UInt8> BouwterreinCode := uint8(/Classifications/Grondgebruik/CBS2010Klasse/EK2010[/Classifications/Grondgebruik/CBS2010Klasse/V/bouwterrein]), IntegrityCheck = "this == uint8(/Classifications/Grondgebruik/CBS2020Klasse/EK2020[/Classifications/Grondgebruik/CBS2020Klasse/V/Bouwterrein]) && this == 34b", Descr = "De BBG-code van bouwterrein uit de klassentabel van de reeks tot 2017. De check eist dezelfde code in de klassen van de NBBG en in het filter van de twee lezers hieronder, dat de code als tekst heeft.";
+
+	container        Kern            := /Geography/Distmatrices/PotRange(/Geography/rdc_25m/gridsize[meter], Zoekstraal), Descr = "De schijf met straal Zoekstraal op het raster van 25 meter; PotRange/Flat2 is een binnen de straal en nul erbuiten.";
+
+	unit<UInt32>     BAG_jaren       := /SourceData/Vastgoed/BAG/BAG_jaren, Descr = "De peildata: 1 januari van 2012 tot en met BAG_RecentYear.";
+
+	unit<UInt8> Functie : NrOfRows = 3
+	, Descr = "De functie van een pand uit de pijplijn. Wonen als het een woonfunctie heeft en het woonoppervlak minstens de helft van het vbo-oppervlak is, anders niet-woon (werken en voorzieningen, ook de overige gebruiksfunctie) zolang er een verblijfsobject is, en anders zonder verblijfsobject."
+	{
+		attribute<String> name  : ['wonen', 'niet_woon', 'geen_vbo'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> Label : ['wonen', 'werken en voorzieningen', 'zonder verblijfsobject'], DialogType = "LabelText", IntegrityCheck = "all(IsDefined(this))";
+
+		container         V     := for_each_nedv(name, string(id(.))+'[..]', void, .);
+	}
+
+	unit<UInt32> BBG_jaren : NrOfRows = 5
+	, Descr = "De jaargangen van de BBG van 2012 tot en met 2022, met de lezer en de kolom waarin de klasse van dat jaar staat. De reeks tot 2017 en de NBBG vanaf 2020 zijn verschillend gemaakt, dus tussen 2017 en 2020 zit een breuk."
+	{
+		attribute<UInt32> Jaar  : [2012, 2015, 2017, 2020, 2022], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> Bron  : ['BBG_1996_2017', 'BBG_1996_2017', 'BBG_1996_2017', 'NBBG_2020_2022', 'NBBG_2020_2022'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> Kolom : ['BG12', 'BG15', 'BG17', 'NBBG20', 'NBBG22'], IntegrityCheck = "all(IsDefined(this))";
+		attribute<String> name  := 'Y' + string(Jaar);
+	}
+
+	unit<UInt32> BBG_1996_2017
+	:	StorageName     = "='%RSo_DataDir%/Grondgebruik/BBG/CBS_MutatiebestandBBG1996_2017_v1.gpkg'"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "True"
+	,	SqlString       = "SELECT * FROM CBS_MutatiebestandBBG1996_2017_v1 WHERE BG12 = 34 OR BG15 = 34 OR BG17 = 34"
+	,	Source          = "CBS, Mutatiebestand BBG 1996-2017 versie 1; hetzelfde bestand als SourceData/Grondgebruik/BBG/BBG_Reeks_1996_2017"
+	,	Descr           = "De vlakken van de BBG-reeks die in 2012, 2015 of 2017 bouwterrein zijn. Een eigen lezer met een filter op de code, zodat alleen deze vlakken in het geheugen komen en niet de hele reeks."
+	{
+		attribute</Geography/rdc_meter> geometry (poly);
+	}
+
+	unit<UInt32> NBBG_2020_2022
+	:	StorageName     = "='%RSo_DataDir%/Grondgebruik/BBG/CBS_Mutatiebestand_NBBG2022_v1_def_z3d.gpkg'"
+	,	StorageType     = "gdal.vect"
+	,	StorageReadOnly = "True"
+	,	SqlString       = "SELECT * FROM CBS_Mutatiebestand_NBBG2022_v1_def_undissolved WHERE NBBG20 = 34 OR NBBG22 = 34"
+	,	Source          = "CBS, Mutatiebestand NBBG 2022 versie 1, de laag zonder dissolve; hetzelfde bestand als SourceData/Grondgebruik/BBG/BBG_2022"
+	,	Descr           = "De vlakken van de NBBG die in 2020 of 2022 bouwterrein zijn, met hetzelfde filter als de lezer van de reeks tot 2017."
+	{
+		attribute</Geography/rdc_meter> geometry (poly);
+	}
+
+	container Bron
+	: Descr = "De volledige BAG uit SourceData/Vastgoed/BAG/VolledigeBAG, met per relatie tussen een verblijfsobject en een pand wat de pijplijn per peildatum nodig heeft. Niet via SourceData/Vastgoed/BAG/PerJaar_T, dat de woonpandtypering en de toedelingsmatrices meeneemt."
+	{
+		unit<UInt32> Pand := /SourceData/Vastgoed/BAG/VolledigeBAG/panden/pand, Descr = "De geldige voorkomens van panden, met begindatum, einddatum, status, vlak en voetafdruk.";
+		unit<UInt32> VBO  := /SourceData/Vastgoed/BAG/VolledigeBAG/VBOs/src, Descr = "Alle voorkomens van verblijfsobjecten. Niet VBOs/vbo, want vbo_rel in de relatietabel wijst in de rijen van src.";
+		unit<UInt32> Relatie := /SourceData/Vastgoed/BAG/VolledigeBAG/VBOs/Import/gerelateerdPand
+		, Descr = "De relaties tussen een voorkomen van een verblijfsobject (vbo_rel) en een pand (pand_bag_nr), met de kenmerken van dat voorkomen."
+		{
+			attribute<Int32>   Begindatum    := VBO/Begindatum[vbo_rel];
+			attribute<Int32>   Einddatum     := VBO/Einddatum[vbo_rel];
+			attribute<Bool>    IsIngetrokken := /Classifications/Vastgoed/vbo_status/IsIngetrokken[VBO/status_rel[vbo_rel]], Descr = "Niet gerealiseerd, ingetrokken of ten onrechte opgevoerd: dit verblijfsobject komt er niet.";
+			attribute<Bool>    IsWoon        := bitand(VBO/functie_code[vbo_rel], /Classifications/Vastgoed/vbo_gebruiksdoel/V/woon -> functie_code) > 0w;
+			attribute<Float32> Oppervlakte   := MakeDefined(float32(VBO/oppervlakte_trunc_Null[vbo_rel]), 0f), Descr = "Het vbo-oppervlak in m², zonder de opvulwaarden van de BAG en op nul waar het ontbreekt; alleen voor de verhouding tussen woon en niet-woon binnen een pand.";
+		}
+	}
+
+	container        PerJaar         := for_each_ne(BAG_jaren/name, 'Peildatum_T('+quote(string(BAG_jaren/jaar))+')'), Descr = "De pijplijn op 1 januari van elk BAG-jaar.";
+
+	Template Peildatum_T
+	: Descr = "De pijplijn op 1 januari van een jaar: de voorkomens die op die datum gelden met de status bouwvergunning verleend of bouw gestart (pand_status/WordtGebouwd), een per pand, zonder panden die op die datum ook een voorkomen in de voorraad hebben.
+			Dezelfde set als BaseData/BAG_nieuwbouw/IsNieuwPand_NaRecentJaarWelActief voor BAG_RecentYear, hier voor elke peildatum, met de ondergrens op de begindatum als aparte vlag IsRecent."
+	{
+		parameter<String> JaarStr;
+		///
+		unit<UInt32>      Pand       := /ESB_Ruimte/Bouwterrein/Bron/Pand;
+		unit<UInt32>      Relatie    := /ESB_Ruimte/Bouwterrein/Bron/Relatie;
+		parameter<UInt32> Jaar       := uint32(JaarStr);
+		parameter<Int32>  Datum      := int32(Jaar * 10000 + 101), Descr = "De peildatum 1 januari als BAG-datum, jjjjmmdd.";
+		parameter<Int32>  Ondergrens := /ModelParameters/Advanced/MaxLeeftijdPijplijn == 0 ? 0i : int32((Jaar - /ModelParameters/Advanced/MaxLeeftijdPijplijn) * 10000 + 101), Descr = "De ondergrens op de begindatum, gerekend vanaf deze peildatum zoals PijplijnOndergrensDatum dat vanaf BAG_RecentYear doet.";
+
+		unit<UInt32> Kandidaat := select_with_org_rel(/Classifications/Vastgoed/pand_status/WordtGebouwd[Pand/status_rel] && Pand/Begindatum < Datum && Pand/Einddatum >= Datum)
+		, Descr = "De voorkomens die op de peildatum gelden met de status bouwvergunning verleend of bouw gestart."
+		{
+			attribute<uint64> pand_bag_nr   := org_rel -> pand_bag_nr;
+			attribute<Bool>   IsEerste      := id(.) == rlookup(pand_bag_nr, pand_bag_nr), Descr = "Een voorkomen per pand, voor het geval dat twee voorkomens van hetzelfde pand op de peildatum gelden.";
+			attribute<Bool>   IsOokVoorraad := IsDefined(rlookup(pand_bag_nr, ../Voorraad/pand_bag_nr)), Descr = "Het pand heeft op de peildatum ook een voorkomen in de voorraad, en is dus al in gebruik.";
+		}
+
+		unit<UInt32> Voorraad := select_with_org_rel(Pand/IsVoorraad && Pand/Begindatum < Datum && Pand/Einddatum >= Datum)
+		, Descr = "De voorkomens die op de peildatum in de voorraad zijn (pand_status/IsVoorraad)."
+		{
+			attribute<uint64> pand_bag_nr := org_rel -> pand_bag_nr;
+		}
+
+		unit<UInt32> Pijplijn := select_with_org_rel(Kandidaat/IsEerste && !Kandidaat/IsOokVoorraad)
+		, Descr = "De panden in de pijplijn op de peildatum, een rij per pand."
+		{
+			attribute<Pand>    pand_rel    := Kandidaat/org_rel[org_rel];
+			attribute<uint64>  pand_bag_nr := Kandidaat/pand_bag_nr[org_rel];
+			attribute<Bool>    IsRecent    := Pand/Begindatum[pand_rel] >= Ondergrens, Descr = "Het voorkomen begon niet eerder dan de ondergrens: de pijplijn zoals het model hem neemt. Zonder deze vlag blijven oude vergunningen die nooit gebouwd worden meetellen.";
+			attribute<m2PandFootprint> Footprint := Pand/Footprint[pand_rel];
+			attribute</Geography/rdc_meter> Punt := centroid_or_mid(Pand/geometry[pand_rel]);
+			attribute</Geography/rdc_25m> Cel_rel := Punt[/Geography/rdc_25m];
+			attribute<UInt32>  NrWoon      := sum_uint32(Rel/IsWoon, Rel/Pijplijn_rel);
+			attribute<UInt32>  NrNietWoon  := sum_uint32(!Rel/IsWoon, Rel/Pijplijn_rel);
+			attribute<Float32> OppWoon     := sum(Rel/IsWoon ? Rel/Oppervlakte : 0f, Rel/Pijplijn_rel);
+			attribute<Float32> OppNietWoon := sum(Rel/IsWoon ? 0f : Rel/Oppervlakte, Rel/Pijplijn_rel);
+			attribute</ESB_Ruimte/Bouwterrein/Functie> Functie_rel :=
+				switch(
+					 case(NrWoon > 0 && OppWoon >= OppNietWoon, /ESB_Ruimte/Bouwterrein/Functie/V/wonen)
+					,case(NrNietWoon > 0, /ESB_Ruimte/Bouwterrein/Functie/V/niet_woon)
+					,/ESB_Ruimte/Bouwterrein/Functie/V/geen_vbo
+				);
+		}
+
+		unit<UInt32> Rel := select_with_org_rel(Relatie/Begindatum < Datum && Relatie/Einddatum >= Datum && !Relatie/IsIngetrokken && IsDefined(rlookup(Relatie/pand_bag_nr, Pijplijn/pand_bag_nr)))
+		, Descr = "De relaties van de verblijfsobjecten die op de peildatum gelden en niet ingetrokken zijn, met een pand uit de pijplijn."
+		{
+			attribute<Pijplijn> Pijplijn_rel := rlookup(Relatie/pand_bag_nr[org_rel], Pijplijn/pand_bag_nr);
+			attribute<uint64>   vbo_bag_nr   := Relatie/vbo_bag_nr[org_rel];
+			attribute<Bool>     IsWoon       := Relatie/IsWoon[org_rel];
+			attribute<Float32>  Oppervlakte  := Relatie/Oppervlakte[org_rel];
+			attribute<Bool>     IsEersteVBO  := id(.) == rlookup(vbo_bag_nr, vbo_bag_nr), Descr = "Een rij per verblijfsobject, zodat een object met meer panden of meer geldige voorkomens een keer meetelt als woning.";
+		}
+
+		container PerFunctie
+		: Descr = "De pijplijn per functie, met (recent) en zonder (alle) de ondergrens op de begindatum. Woningen zijn de verblijfsobjecten met een woonfunctie in de panden van die functie."
+		{
+			attribute<UInt32> Peiljaar (/ESB_Ruimte/Bouwterrein/Functie) := const(Jaar, /ESB_Ruimte/Bouwterrein/Functie);
+			attribute<UInt32> Panden_alle (/ESB_Ruimte/Bouwterrein/Functie) := pcount(Pijplijn/Functie_rel);
+			attribute<UInt32> Panden_recent (/ESB_Ruimte/Bouwterrein/Functie) := sum_uint32(Pijplijn/IsRecent, Pijplijn/Functie_rel);
+			attribute<m2PandFootprint> Footprint_alle (/ESB_Ruimte/Bouwterrein/Functie) := sum(Pijplijn/Footprint, Pijplijn/Functie_rel);
+			attribute<m2PandFootprint> Footprint_recent (/ESB_Ruimte/Bouwterrein/Functie) := sum(Pijplijn/IsRecent ? Pijplijn/Footprint : 0[m2PandFootprint], Pijplijn/Functie_rel);
+			attribute<UInt32> Woningen_alle (/ESB_Ruimte/Bouwterrein/Functie) := sum_uint32(Rel/IsWoon && Rel/IsEersteVBO, Pijplijn/Functie_rel[Rel/Pijplijn_rel]);
+			attribute<UInt32> Woningen_recent (/ESB_Ruimte/Bouwterrein/Functie) := sum_uint32(Rel/IsWoon && Rel/IsEersteVBO && Pijplijn/IsRecent[Rel/Pijplijn_rel], Pijplijn/Functie_rel[Rel/Pijplijn_rel]);
+		}
+
+		container Totaal
+		: Descr = "De pijplijn over alle functies; de checks eisen dat de som over de functies hetzelfde aantal geeft."
+		{
+			parameter<UInt32> Kandidaten_ookvoorraad := sum_uint32(Kandidaat/IsEerste && Kandidaat/IsOokVoorraad), Descr = "Panden met de status bouwvergunning verleend of bouw gestart die op de peildatum ook in de voorraad zijn en daarom buiten de pijplijn blijven.";
+			parameter<UInt32> Panden_alle            := #Pijplijn, IntegrityCheck = "this == sum(PerFunctie/Panden_alle)";
+			parameter<UInt32> Panden_recent          := sum_uint32(Pijplijn/IsRecent);
+			parameter<m2PandFootprint> Footprint_alle := sum(Pijplijn/Footprint);
+			parameter<m2PandFootprint> Footprint_recent := sum(Pijplijn/IsRecent ? Pijplijn/Footprint : 0[m2PandFootprint]);
+			parameter<UInt32> Woningen_alle          := sum_uint32(Rel/IsWoon && Rel/IsEersteVBO), IntegrityCheck = "this == sum(PerFunctie/Woningen_alle)";
+			parameter<UInt32> Woningen_recent        := sum_uint32(Rel/IsWoon && Rel/IsEersteVBO && Pijplijn/IsRecent[Rel/Pijplijn_rel]);
+		}
+	}
+
+	container        Overlay         := for_each_ne(BBG_jaren/name, 'Overlay_T('+quote(string(BBG_jaren/Jaar))+', '+quote(BBG_jaren/Bron)+', '+quote(BBG_jaren/Kolom)+')'), Descr = "Het BBG-bouwterrein per jaargang, gesplitst naar grond binnen Zoekstraal van een pand uit de pijplijn en grond zonder.";
+
+	Template Overlay_T
+	: Descr = "Het bouwterrein van een BBG-jaargang op het raster van 25 meter, gesplitst naar cellen binnen Zoekstraal van een pand uit de pijplijn van 1 januari van dat jaar en cellen zonder; een cel is bouwterrein als haar middelpunt in een bouwterreinvlak ligt.
+			Een vlak van de mutatiebestanden is een snipper van de overlay van alle jaargangen en geen project, en een raster telt de hectares los van hoe groot een aaneengesloten terrein is. Het oppervlak van de vlakken zelf staat ernaast als toets op het rasteren."
+	{
+		parameter<String> JaarStr;
+		parameter<String> BronNaam;
+		parameter<String> Kolom;
+		///
+		parameter<UInt32> Jaar                                 := uint32(JaarStr);
+		parameter<ha>     CelHa                                := /Geography/rdc_25m/NrHaPerCell;
+
+		unit<UInt32>      Pijplijn                             := ='/ESB_Ruimte/Bouwterrein/PerJaar/Y'+JaarStr+'/Pijplijn';
+		unit<UInt32> Vlak     := ='select_with_org_rel(int32(/ESB_Ruimte/Bouwterrein/'+BronNaam+'/'+Kolom+') == int32(/ESB_Ruimte/Bouwterrein/BouwterreinCode))'
+		, Descr = "De vlakken die in deze jaargang bouwterrein zijn."
+		{
+			attribute</Geography/rdc_meter> geometry (poly) := org_rel -> geometry;
+		}
+
+		attribute<Bool>   IsBouwterrein   (/Geography/rdc_25m) := IsDefined(poly2grid(Vlak/geometry, /Geography/rdc_25m));
+		attribute<UInt32> NrAlle          (/Geography/rdc_25m) := pcount(Pijplijn/Cel_rel);
+		attribute<UInt32> NrRecent        (/Geography/rdc_25m) := sum_uint32(Pijplijn/IsRecent, Pijplijn/Cel_rel);
+		attribute<Bool>   IsNabijAlle     (/Geography/rdc_25m) := potential(float32(NrAlle > 0), /ESB_Ruimte/Bouwterrein/Kern/PotRange/Flat2) > 0.5f, Descr = "Er ligt een pand uit de pijplijn binnen Zoekstraal. De drempel van een half vangt de afrondingsruis van potential, die op cellen zonder pand in de buurt niet precies nul hoeft te geven.";
+		attribute<Bool>   IsNabijRecent   (/Geography/rdc_25m) := potential(float32(NrRecent > 0), /ESB_Ruimte/Bouwterrein/Kern/PotRange/Flat2) > 0.5f, Descr = "Idem, alleen met panden die binnen de ondergrens op de begindatum vallen.";
+
+		parameter<ha>     Ha_polygoon                          := sum(area(Vlak/geometry, meter2_f64))[ha], Descr = "Het oppervlak van de bouwterreinvlakken zelf, naast het gerasterde oppervlak als toets op het rasteren.";
+		parameter<ha>     Ha_raster                            := float32(sum_uint32(IsBouwterrein)) * CelHa;
+		parameter<ha>     Ha_nabij_alle                        := float32(sum_uint32(IsBouwterrein && IsNabijAlle)) * CelHa;
+		parameter<ha>     Ha_zonder_alle                       := float32(sum_uint32(IsBouwterrein && !IsNabijAlle)) * CelHa;
+		parameter<ha>     Ha_nabij_recent                      := float32(sum_uint32(IsBouwterrein && IsNabijRecent)) * CelHa;
+		parameter<ha>     Ha_zonder_recent                     := float32(sum_uint32(IsBouwterrein && !IsNabijRecent)) * CelHa;
+		parameter<UInt32> Panden_alle                          := #Pijplijn;
+		parameter<UInt32> Panden_recent                        := sum_uint32(Pijplijn/IsRecent);
+		parameter<UInt32> Panden_op_bt_alle                    := sum_uint32(IsBouwterrein[Pijplijn/Cel_rel]), Descr = "Panden uit de pijplijn met hun zwaartepunt in een bouwterreincel.";
+		parameter<UInt32> Panden_op_bt_recent                  := sum_uint32(Pijplijn/IsRecent && IsBouwterrein[Pijplijn/Cel_rel]);
+		parameter<m2PandFootprint> Footprint_alle := sum(Pijplijn/Footprint);
+		parameter<m2PandFootprint> Footprint_recent := sum(Pijplijn/IsRecent ? Pijplijn/Footprint : 0[m2PandFootprint]);
+		parameter<m2PandFootprint> Footprint_op_bt_alle := sum(IsBouwterrein[Pijplijn/Cel_rel] ? Pijplijn/Footprint : 0[m2PandFootprint]);
+		parameter<m2PandFootprint> Footprint_op_bt_recent := sum(Pijplijn/IsRecent && IsBouwterrein[Pijplijn/Cel_rel] ? Pijplijn/Footprint : 0[m2PandFootprint]);
+
+		attribute<ha>     Ha_nabij_100m  (/Geography/rdc_100m) := float32(sum_uint32(IsBouwterrein && IsNabijRecent, /Geography/rdc_25m/rdc_100m_rel)) * CelHa, Descr = "Bouwterrein binnen Zoekstraal van een recent pand per cel van 100 meter, voor de kaart.";
+		attribute<ha>     Ha_zonder_100m (/Geography/rdc_100m) := float32(sum_uint32(IsBouwterrein && !IsNabijRecent, /Geography/rdc_25m/rdc_100m_rel)) * CelHa;
+
+		unit<UInt64>      Cel100_sel                           := select_with_org_rel(Ha_nabij_100m + Ha_zonder_100m > 0[ha]), Descr = "De cellen van 100 meter met bouwterrein.";
+
+		unit<UInt32> Cel100 := range(uint32, 0, uint32(#Cel100_sel))
+		, Descr = "Dezelfde cellen op een UInt32-domein, zodat de jaargangen onder elkaar kunnen voor de kaart."
+		{
+			attribute</Geography/rdc_100m> org_rel := Cel100_sel/org_rel[value(uint64(id(.)), Cel100_sel)];
+			attribute<UInt32>  Peiljaar  := const(Jaar, .);
+			attribute<Float64> X         := PointCol(/Geography/rdc_100m/point[org_rel]);
+			attribute<Float64> Y         := PointRow(/Geography/rdc_100m/point[org_rel]);
+			attribute<ha>      Ha_nabij  := Ha_nabij_100m[org_rel];
+			attribute<ha>      Ha_zonder := Ha_zonder_100m[org_rel];
+		}
+	}
+
+	unit<UInt32> Rij := combine(BAG_jaren, Functie)
+	, Descr = "De pijplijn in lange vorm, een rij per jaar en functie; combine laat het jaar het langzaamst lopen, in dezelfde volgorde als union_data de jaren stapelt, en de check op Jaar toetst dat."
+	{
+		attribute<UInt32> Jaar            := ='union_data(., '+AsItemList('PerJaar/'+BAG_jaren/name+'/PerFunctie/Peiljaar')+')', IntegrityCheck = "all(this == BAG_jaren/jaar[first_rel])";
+		attribute<String> Functie_naam    := Functie/name[second_rel];
+		attribute<UInt32> Panden_alle     := ='union_data(., '+AsItemList('PerJaar/'+BAG_jaren/name+'/PerFunctie/Panden_alle')+')';
+		attribute<UInt32> Panden_recent   := ='union_data(., '+AsItemList('PerJaar/'+BAG_jaren/name+'/PerFunctie/Panden_recent')+')';
+		attribute<m2PandFootprint> Footprint_alle := ='union_data(., '+AsItemList('PerJaar/'+BAG_jaren/name+'/PerFunctie/Footprint_alle')+')';
+		attribute<m2PandFootprint> Footprint_recent := ='union_data(., '+AsItemList('PerJaar/'+BAG_jaren/name+'/PerFunctie/Footprint_recent')+')';
+		attribute<UInt32> Woningen_alle   := ='union_data(., '+AsItemList('PerJaar/'+BAG_jaren/name+'/PerFunctie/Woningen_alle')+')';
+		attribute<UInt32> Woningen_recent := ='union_data(., '+AsItemList('PerJaar/'+BAG_jaren/name+'/PerFunctie/Woningen_recent')+')';
+	}
+
+	container Reeks
+	: Descr = "De pijplijn over alle functies per peildatum."
+	{
+		attribute<UInt32> Jaar                   (BAG_jaren) := BAG_jaren/jaar;
+		attribute<UInt32> Kandidaten_ookvoorraad (BAG_jaren) := ='union_data(BAG_jaren, '+AsItemList('PerJaar/'+BAG_jaren/name+'/Totaal/Kandidaten_ookvoorraad')+')';
+		attribute<UInt32> Panden_alle            (BAG_jaren) := ='union_data(BAG_jaren, '+AsItemList('PerJaar/'+BAG_jaren/name+'/Totaal/Panden_alle')+')';
+		attribute<UInt32> Panden_recent          (BAG_jaren) := ='union_data(BAG_jaren, '+AsItemList('PerJaar/'+BAG_jaren/name+'/Totaal/Panden_recent')+')';
+		attribute<m2PandFootprint> Footprint_alle (BAG_jaren) := ='union_data(BAG_jaren, '+AsItemList('PerJaar/'+BAG_jaren/name+'/Totaal/Footprint_alle')+')';
+		attribute<m2PandFootprint> Footprint_recent (BAG_jaren) := ='union_data(BAG_jaren, '+AsItemList('PerJaar/'+BAG_jaren/name+'/Totaal/Footprint_recent')+')';
+		attribute<UInt32> Woningen_alle          (BAG_jaren) := ='union_data(BAG_jaren, '+AsItemList('PerJaar/'+BAG_jaren/name+'/Totaal/Woningen_alle')+')';
+		attribute<UInt32> Woningen_recent        (BAG_jaren) := ='union_data(BAG_jaren, '+AsItemList('PerJaar/'+BAG_jaren/name+'/Totaal/Woningen_recent')+')';
+	}
+
+	container OverlayReeks
+	: Descr = "De overlay per BBG-jaargang. Ha_per_ha_footprint is het bouwterrein per hectare voetafdruk in de pijplijn: blijft die verhouding stabiel, dan zegt de pijplijn na 2022 iets over het bouwterrein waar de BBG ophoudt."
+	{
+		attribute<UInt32>          Jaar                   (BBG_jaren) := BBG_jaren/Jaar;
+		attribute<ha>              Ha_polygoon            (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Ha_polygoon')+')';
+		attribute<ha>              Ha_raster              (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Ha_raster')+')';
+		attribute<ha>              Ha_nabij_alle          (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Ha_nabij_alle')+')';
+		attribute<ha>              Ha_zonder_alle         (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Ha_zonder_alle')+')';
+		attribute<ha>              Ha_nabij_recent        (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Ha_nabij_recent')+')';
+		attribute<ha>              Ha_zonder_recent       (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Ha_zonder_recent')+')';
+		attribute<UInt32>          Panden_alle            (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Panden_alle')+')';
+		attribute<UInt32>          Panden_recent          (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Panden_recent')+')';
+		attribute<UInt32>          Panden_op_bt_alle      (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Panden_op_bt_alle')+')';
+		attribute<UInt32>          Panden_op_bt_recent    (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Panden_op_bt_recent')+')';
+		attribute<m2PandFootprint> Footprint_alle         (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Footprint_alle')+')';
+		attribute<m2PandFootprint> Footprint_recent       (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Footprint_recent')+')';
+		attribute<m2PandFootprint> Footprint_op_bt_alle   (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Footprint_op_bt_alle')+')';
+		attribute<m2PandFootprint> Footprint_op_bt_recent (BBG_jaren) := ='union_data(BBG_jaren, '+AsItemList('Overlay/'+BBG_jaren/name+'/Footprint_op_bt_recent')+')';
+		attribute<Float32>         Ha_per_ha_footprint    (BBG_jaren) := float32(Ha_raster) / float32(Footprint_recent[ha]), Descr = "Hectare bouwterrein per hectare voetafdruk van de recente pijplijn.";
+	}
+
+	unit<UInt32> Kaartcel := ='union_unit('+AsItemList('Overlay/'+BBG_jaren/name+'/Cel100')+')'
+	, Descr = "De cellen van 100 meter met bouwterrein, van alle jaargangen onder elkaar, voor de kaart."
+	{
+		attribute<UInt32>  Jaar                 := ='union_data(., '+AsItemList('Overlay/'+BBG_jaren/name+'/Cel100/Peiljaar')+')';
+		attribute<Float64> X                    := ='union_data(., '+AsItemList('Overlay/'+BBG_jaren/name+'/Cel100/X')+')';
+		attribute<Float64> Y                    := ='union_data(., '+AsItemList('Overlay/'+BBG_jaren/name+'/Cel100/Y')+')';
+		attribute<ha>      Ha_nabij             := ='union_data(., '+AsItemList('Overlay/'+BBG_jaren/name+'/Cel100/Ha_nabij')+')';
+		attribute<ha>      Ha_zonder            := ='union_data(., '+AsItemList('Overlay/'+BBG_jaren/name+'/Cel100/Ha_zonder')+')';
+	}
+
+	container Schrijf_Pijplijn
+	: StorageName = "=UitvoerDir+'/Bouwterrein_pijplijn.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De pijplijn per peildatum en functie als csv: aantal panden, voetafdruk in m² en woningen, met en zonder de ondergrens."
+	{
+		attribute<UInt32> Jaar            (Rij) := Rij/Jaar;
+		attribute<String> Functie         (Rij) := Rij/Functie_naam;
+		attribute<UInt32> Panden_alle     (Rij) := Rij/Panden_alle;
+		attribute<UInt32> Panden_recent   (Rij) := Rij/Panden_recent;
+		attribute<m2PandFootprint> Footprint_alle (Rij) := Rij/Footprint_alle;
+		attribute<m2PandFootprint> Footprint_recent (Rij) := Rij/Footprint_recent;
+		attribute<UInt32> Woningen_alle   (Rij) := Rij/Woningen_alle;
+		attribute<UInt32> Woningen_recent (Rij) := Rij/Woningen_recent;
+	}
+
+	container Schrijf_Reeks
+	: StorageName = "=UitvoerDir+'/Bouwterrein_pijplijn_totaal.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De pijplijn over alle functies per peildatum als csv, met de panden die ook in de voorraad zijn."
+	{
+		attribute<UInt32>  Jaar                   (BAG_jaren) := Reeks/Jaar;
+		attribute<UInt32>  Kandidaten_ookvoorraad (BAG_jaren) := Reeks/Kandidaten_ookvoorraad;
+		attribute<UInt32>  Panden_alle            (BAG_jaren) := Reeks/Panden_alle;
+		attribute<UInt32>  Panden_recent          (BAG_jaren) := Reeks/Panden_recent;
+		attribute<m2PandFootprint> Footprint_alle (BAG_jaren) := Reeks/Footprint_alle;
+		attribute<m2PandFootprint> Footprint_recent (BAG_jaren) := Reeks/Footprint_recent;
+		attribute<UInt32>  Woningen_alle          (BAG_jaren) := Reeks/Woningen_alle;
+		attribute<UInt32>  Woningen_recent        (BAG_jaren) := Reeks/Woningen_recent;
+	}
+
+	container Schrijf_Overlay
+	: StorageName = "=UitvoerDir+'/Bouwterrein_overlay_BBG.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "De overlay per BBG-jaargang als csv; oppervlakken in ha, voetafdruk in m²."
+	{
+		attribute<UInt32>  Jaar                   (BBG_jaren) := OverlayReeks/Jaar;
+		attribute<ha>      Ha_polygoon            (BBG_jaren) := OverlayReeks/Ha_polygoon;
+		attribute<ha>      Ha_raster              (BBG_jaren) := OverlayReeks/Ha_raster;
+		attribute<ha>      Ha_nabij_alle          (BBG_jaren) := OverlayReeks/Ha_nabij_alle;
+		attribute<ha>      Ha_zonder_alle         (BBG_jaren) := OverlayReeks/Ha_zonder_alle;
+		attribute<ha>      Ha_nabij_recent        (BBG_jaren) := OverlayReeks/Ha_nabij_recent;
+		attribute<ha>      Ha_zonder_recent       (BBG_jaren) := OverlayReeks/Ha_zonder_recent;
+		attribute<UInt32>  Panden_alle            (BBG_jaren) := OverlayReeks/Panden_alle;
+		attribute<UInt32>  Panden_recent          (BBG_jaren) := OverlayReeks/Panden_recent;
+		attribute<UInt32>  Panden_op_bt_alle      (BBG_jaren) := OverlayReeks/Panden_op_bt_alle;
+		attribute<UInt32>  Panden_op_bt_recent    (BBG_jaren) := OverlayReeks/Panden_op_bt_recent;
+		attribute<m2PandFootprint> Footprint_alle (BBG_jaren) := OverlayReeks/Footprint_alle;
+		attribute<m2PandFootprint> Footprint_recent (BBG_jaren) := OverlayReeks/Footprint_recent;
+		attribute<m2PandFootprint> Footprint_op_bt_alle (BBG_jaren) := OverlayReeks/Footprint_op_bt_alle;
+		attribute<m2PandFootprint> Footprint_op_bt_recent (BBG_jaren) := OverlayReeks/Footprint_op_bt_recent;
+		attribute<Float32> Ha_per_ha_footprint    (BBG_jaren) := OverlayReeks/Ha_per_ha_footprint;
+	}
+
+	container Schrijf_Kaart
+	: StorageName = "=UitvoerDir+'/Bouwterrein_kaart_100m.csv'", StorageType = "gdalwrite.vect"
+	, Descr = "Per jaargang de cellen van 100 meter met bouwterrein, in RD-meters van het middelpunt, met het bouwterrein binnen en buiten Zoekstraal van een recent pand uit de pijplijn, in ha."
+	{
+		attribute<UInt32>  Jaar      (Kaartcel) := Kaartcel/Jaar;
+		attribute<Float64> X         (Kaartcel) := Kaartcel/X;
+		attribute<Float64> Y         (Kaartcel) := Kaartcel/Y;
+		attribute<ha>      Ha_nabij  (Kaartcel) := Kaartcel/Ha_nabij;
+		attribute<ha>      Ha_zonder (Kaartcel) := Kaartcel/Ha_zonder;
+	}
 }
