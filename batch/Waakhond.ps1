@@ -1,10 +1,10 @@
 <#
 ================================================================================================
- Waakhond.ps1: GeoDmsRun starten met een plek in de gedeelde rij en een waakhond op voortgang
+ Waakhond.ps1: GeoDmsRun starten met een plek in de gedeelde rij, een waakhond op voortgang en een geheugenrem
 ================================================================================================
 
- Wordt ingelezen door RunAllocatie.ps1 en RunIndicatoren.ps1 (. .\Waakhond.ps1) en levert de functie
- Invoke-GeoDmsRun. Een GeoDmsRun kan vastlopen zonder te eindigen: op 11 november 2026 draaiden in een
+ Wordt ingelezen door RunAllocatie.ps1, RunIndicatoren.ps1 en ToetsOplevering.ps1 (. .\Waakhond.ps1) en levert de
+ functie Invoke-GeoDmsRun. Een GeoDmsRun kan vastlopen zonder te eindigen: op 11 november 2026 draaiden in een
  allocatie van Noord-Holland (GeoDMS 20.28.0.m, Y2040, Provincie_Werken Iter_13) acht threads ruim twee uur
  op volle kracht, terwijl het log stil stond en het proces in een meting van tien seconden niets las, niets
  schreef en geen paginafout maakte. Een script dat op het einde wacht, ziet dat nooit.
@@ -33,20 +33,36 @@
  ook passen, gaat ertussendoor. Na afloop verdwijnt de claim. Een claim waarvan het proces weg is (de GeoDmsRun
  als die al loopt, anders het script dat wacht) ruimt de rij zelf op, zodat er na een herstart of een gestopt
  proces niets blijft hangen; hij kijkt op PID en starttijd, want Windows geeft een vrijgekomen PID weer uit.
- De rij stopt geen lopende run, dat blijft de rem van elke run, en regelt geen voorrang tussen sessies; die
- spreekt de coordinatie af in C:\LocalData\Coordinatie\rij.md. Hij telt het eigen geheugen en niet het vrije
- fysieke geheugen, dus de rem van een run kan nog steeds ingrijpen. Het budget is afgestemd op OVSRV08; op een
+ De rij regelt geen voorrang tussen sessies; die spreekt de coordinatie af in C:\LocalData\Coordinatie\rij.md.
+ Hij telt het eigen geheugen en niet het vrije fysieke geheugen. Het budget is afgestemd op OVSRV08; op een
  machine met minder geheugen gelden alleen de regels over landelijke en regionale runs echt. Get-RijStand toont
  wat er in de rij staat.
+
+ DE GEHEUGENREM
+ Een claim is een schatting, en een run die erboven groeit, houdt de rij niet tegen. Op 16 november 2026 groeide
+ een meting met een claim van 180 GB tot 587,5 GB eigen geheugen; de machine kwam op 615,6 van 616 GB commit en
+ de run gaf 41 keer "memory allocation failed". Daarom meet Invoke-GeoDmsRun, zolang de GeoDmsRun loopt, elke
+ RijRemMeetSeconden seconden het eigen geheugen van dat proces, zoals de rij het meet, en de commit van de
+ machine. Hij stopt de run op zijn PID:
+   - als het eigen geheugen boven RijRemFactor keer de claim komt;
+   - als de commit van de machine boven RijMaxCommitGB komt en deze run van de lopende runs in de rij het verst
+     boven zijn claim zit (eigen geheugen min claim, in GB). Een run die binnen zijn claim blijft, stopt dus nooit
+     zolang een andere erboven zit; blijven ze allemaal binnen hun claim, dan stopt de run die het dichtst tegen
+     zijn claim aan zit. Is een andere run al door zijn rem gestopt maar nog niet weg, dan wacht de rem die af.
+ Een GeoDMS-proces zonder claim (een GUI, Hestia, een meting uit de shell) kan de rem niet stoppen; het telt
+ alleen mee in de commit. Eens per minuut meten, zoals de waakhond, is te traag: dezelfde dag groeide een andere
+ meting in 3 minuten tot boven 150 GB. De reden komt als [E]-regel onder het log. RunAllocatie.ps1 en
+ RunIndicatoren.ps1 starten een stap die de rem stopte niet opnieuw, want hij groeit dan weer tot dezelfde grens;
+ geef hem een hogere claim.
 ================================================================================================
 #>
 
 # Hoe vaak de waakhond kijkt, in seconden.
 $WaakhondMeetSeconden = 60
 
-# De gedeelde rij: de map met de claims; het budget voor de som van de pieken in GB, onder de 540 GB commit die de
-# coordinatie aanhoudt op een commitlimiet van 616 GB; de GeoDMS-processen die zonder claim meetellen met hun eigen
-# geheugen; en hoe vaak een wachtende claim opnieuw kijkt, in seconden.
+# De gedeelde rij: de map met de claims; het budget voor de som van de pieken in GB, onder RijMaxCommitGB; de
+# GeoDMS-processen die zonder claim meetellen met hun eigen geheugen; en hoe vaak een wachtende claim opnieuw kijkt, in
+# seconden.
 $RijStandaardMap = 'C:\LocalData\Coordinatie\rij'
 $RijBudgetGB     = 480
 $RijProcesNamen  = @('GeoDmsRun', 'GeoDmsGuiQt')
@@ -54,6 +70,12 @@ $RijMeetSeconden = 15
 # Hoe vaak een claim die blijft wachten dat opnieuw in het log zet, in minuten; een verandering in wie er voor gaat
 # meldt hij meteen.
 $RijMeldMinuten  = 15
+# De geheugenrem (zie de kop): boven hoeveel keer zijn claim het eigen geheugen een run stopt; boven welke commit van de
+# machine in GB hij de run stopt die het verst boven zijn claim zit, de grens die de coordinatie aanhoudt op een
+# commitlimiet van 616 GB; en hoe vaak hij meet, in seconden.
+$RijRemFactor       = 1.25
+$RijMaxCommitGB     = 540
+$RijRemMeetSeconden = 5
 
 # Een eigen keten die dit bestand inleest zonder Write-Regel te kennen, krijgt dezelfde vorm als de scripts.
 if (-not (Get-Command Write-Regel -CommandType Function -ErrorAction SilentlyContinue)) {
@@ -169,6 +191,7 @@ function Wait-RijPlek {
         pidStart    = (Get-RijProcesStart $PID)
         geodmsPid   = 0
         geodmsStart = [long]0
+        remGestopt  = ''
     }
     $bestand = Join-Path $Map ('{0}_{1}.json' -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss_fff'), $PID)
     $begin = Get-Date
@@ -228,7 +251,7 @@ function Get-RijStand {
     $slot = Open-RijSlot $Map
     try { $t = Get-RijToestand $Map } finally { $slot.Dispose() }
     foreach ($c in $t.Claims) {
-        [pscustomobject]@{ Status = $c.status; Soort = $c.soort; PiekGB = $c.piekGB; EigenGB = [math]::Round($c.EigenGB, 1)
+        [pscustomobject]@{ Status = $(if ($c.remGestopt) { 'gestopt door de rem' } else { $c.status }); Soort = $c.soort; PiekGB = $c.piekGB; EigenGB = [math]::Round($c.EigenGB, 1)
                            Wat = $c.wat; Werkkopie = $c.werkkopie; Pid = $(if ($c.geodmsPid) { $c.geodmsPid } else { $c.pid }); Sinds = $c.aangevraagd }
     }
     foreach ($l in $t.ZonderClaim) {
@@ -237,10 +260,62 @@ function Get-RijStand {
     }
 }
 
+function Test-RijRem {
+    # Een meting van de geheugenrem (zie de kop): geeft leeg terug als de run door mag, en anders de reden om hem te stoppen.
+    # Plek is wat Wait-RijPlek teruggaf, Proces de lopende GeoDmsRun, en Staat onthoudt wanneer hij voor het laatst meldde
+    # dat de commit te hoog is terwijl een andere run voor gaat.
+    param($Plek, [Diagnostics.Process]$Proces, [hashtable]$Staat)
+
+    $piekGB = [double]$Plek.Claim.piekGB
+    try { $Proces.Refresh(); $eigenGB = $Proces.PrivateMemorySize64 / 1GB } catch { return '' }
+    if ($eigenGB -gt $RijRemFactor * $piekGB) {
+        return ("geheugenrem: {0:N1} GB eigen geheugen, meer dan {1} keer de claim van {2} GB; PID {3} gestopt. Heeft deze stap echt zoveel nodig, geef hem dan een hogere claim (-RijPiekGB)" -f
+            $eigenGB, $RijRemFactor, $piekGB, $Proces.Id)
+    }
+    $os = Get-CimInstance Win32_OperatingSystem -Property TotalVirtualMemorySize, FreeVirtualMemory -ErrorAction SilentlyContinue
+    if (-not $os) { return '' }
+    $commitGB = ($os.TotalVirtualMemorySize - $os.FreeVirtualMemory) / 1MB
+    if ($commitGB -le $RijMaxCommitGB) { return '' }
+
+    # Boven de grens stopt alleen de run die het verst boven zijn claim zit, en een stop die al loopt gaat voor; wie dat is,
+    # staat in de rij. Lukt het lezen niet, dan probeert hij het bij de volgende meting opnieuw.
+    try {
+        $slot = Open-RijSlot $Plek.Map
+        try {
+            $t = Get-RijToestand $Plek.Map
+            $lopend = @($t.Claims | Where-Object { $_.geodmsStart })
+            $bezig  = @($lopend | Where-Object { $_.remGestopt -and $_.Bestand -ne $Plek.Bestand })
+            $verst  = $lopend | Sort-Object { [double]$_.EigenGB - [double]$_.piekGB } -Descending | Select-Object -First 1
+            $deze   = $bezig.Count -eq 0 -and $verst -and $verst.Bestand -eq $Plek.Bestand
+            if ($deze) {
+                $Plek.Claim.remGestopt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+                Write-RijClaim $Plek.Bestand $Plek.Claim
+            }
+        } finally { $slot.Dispose() }
+    } catch { return '' }
+
+    $beschrijf = { param($c) "{0} ({1:N1} GB eigen, claim {2} GB)" -f $c.wat, [double]$c.EigenGB, [double]$c.piekGB }
+    if (-not $deze) {
+        if (-not $Staat.Gemeld -or ((Get-Date) - $Staat.Gemeld).TotalMinutes -ge $RijMeldMinuten) {
+            $waarom = if ($bezig.Count -gt 0) { "de rem stopt al $(& $beschrijf $bezig[0])" } elseif ($verst) { "$(& $beschrijf $verst) zit verder boven zijn claim" } else { 'de rij is niet te lezen' }
+            Write-Regel ("rem       : de machine staat op {0:N1} GB commit, boven {1} GB, maar {2} loopt door: {3}" -f $commitGB, $RijMaxCommitGB, $Plek.Claim.wat, $waarom)
+            $Staat.Gemeld = Get-Date
+        }
+        return ''
+    }
+    $anderen = @($lopend | Where-Object { $_.Bestand -ne $Plek.Bestand } | ForEach-Object { & $beschrijf $_ })
+    $naast = if ($anderen.Count -gt 0) { "verder in de rij: $($anderen -join '; ')" } else { 'er loopt geen andere run in de rij' }
+    $plaats = if ($eigenGB -gt $piekGB) { 'het verst boven zijn claim' } else { 'het dichtst tegen zijn claim aan, en geen run zit erboven' }
+    return ("geheugenrem: de machine staat op {0:N1} GB commit, boven de grens van {1} GB, en deze run zit met {2:N1} GB eigen geheugen tegen een claim van {3} GB {4} ({5}); PID {6} gestopt" -f
+        $commitGB, $RijMaxCommitGB, $eigenGB, $piekGB, $plaats, $naast, $Proces.Id)
+}
+
 function Invoke-GeoDmsRun {
     # Vraagt een plek in de gedeelde rij, start GeoDmsRun met de gegeven argumenten zodra hij past, en wacht tot hij klaar
-    # is of vastloopt. Geeft een object terug met Code (de exitcode), Reden (leeg, of waarom de waakhond het proces stopte)
-    # en Wacht (de seconden in de rij, die de aanroeper van de rekentijd aftrekt). WaakhondMinuten 0 zet de waakhond uit.
+    # is, vastloopt of door de geheugenrem gestopt wordt. Geeft een object terug met Code (de exitcode), Reden (leeg, of
+    # waarom de waakhond of de rem het proces stopte; die staat dan ook als [E]-regel onder het log), Gestopt (leeg,
+    # 'vastgelopen' of 'geheugen') en Wacht (de seconden in de rij, die de aanroeper van de rekentijd aftrekt).
+    # WaakhondMinuten 0 zet de waakhond uit, niet de rem.
     # RijPiekGB (de verwachte piek van het eigen geheugen in GB) en RijSoort (landelijk of regionaal) zijn verplicht. RijWat
     # zegt in de rij wat er draait, standaard het laatste argument; RijMap is alleen voor een toets een andere map dan de
     # gedeelde.
@@ -255,6 +330,7 @@ function Invoke-GeoDmsRun {
     $plek = Wait-RijPlek -PiekGB $RijPiekGB -Soort $RijSoort -Wat $RijWat -Werkkopie $werkkopie -Log $Log -Map $RijMap
 
     $reden = ''
+    $gestopt = ''
     try {
         $psi = [Diagnostics.ProcessStartInfo]::new($Exe)
         $psi.Arguments = ($Argumenten | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
@@ -279,10 +355,23 @@ function Invoke-GeoDmsRun {
         $laatsteLeven = Get-Date
         $vorigeCpu = 0
         $vorigeThreads = @{}
-        while (-not $p.WaitForExit($WaakhondMeetSeconden * 1000)) {
+        $remStaat = @{ Gemeld = $null }
+        # De rem meet elke RijRemMeetSeconden, de waakhond elke WaakhondMeetSeconden.
+        $waakhondKlok = [Diagnostics.Stopwatch]::StartNew()
+        while (-not $p.WaitForExit($RijRemMeetSeconden * 1000)) {
+            $rem = Test-RijRem -Plek $plek -Proces $p -Staat $remStaat
+            if ($rem) {
+                $reden = $rem
+                $gestopt = 'geheugen'
+                try { $p.Kill() } catch { }
+                break
+            }
+            if ($waakhondKlok.Elapsed.TotalSeconds -lt $WaakhondMeetSeconden) { continue }
+            $periode = $waakhondKlok.Elapsed.TotalSeconds
+            $waakhondKlok.Restart()
             # Processortijd van het proces en per thread sinds de vorige meting, alleen voor de melding als hij vastloopt.
             $p.Refresh()
-            $cpuKernen = ($p.TotalProcessorTime.TotalSeconds - $vorigeCpu) / $WaakhondMeetSeconden
+            $cpuKernen = ($p.TotalProcessorTime.TotalSeconds - $vorigeCpu) / $periode
             $vorigeCpu = $p.TotalProcessorTime.TotalSeconds
             $threadsBezig = 0
             $nuThreads = @{}
@@ -290,7 +379,7 @@ function Invoke-GeoDmsRun {
                 try { $s = $th.TotalProcessorTime.TotalSeconds } catch { continue }
                 $nuThreads[$th.Id] = $s
                 # Bezig: meer dan de helft van de meetperiode op een kern.
-                if ($vorigeThreads.ContainsKey($th.Id) -and ($s - $vorigeThreads[$th.Id]) -gt $WaakhondMeetSeconden / 2) { $threadsBezig++ }
+                if ($vorigeThreads.ContainsKey($th.Id) -and ($s - $vorigeThreads[$th.Id]) -gt $periode / 2) { $threadsBezig++ }
             }
             $vorigeThreads = $nuThreads
             if ($WaakhondMinuten -le 0) { continue }
@@ -314,6 +403,7 @@ function Invoke-GeoDmsRun {
                     $laatste = [string]($staart -split "`r?`n" | Where-Object { $_ -match '\[!\]' } | Select-Object -Last 1)
                 } catch { }
                 $reden = ("vastgelopen: {0:N0} minuten zonder loggroei, I/O of paginafouten; {1} van {2} threads bezig en {3:N1} kernen in gebruik in de laatste minuut; laatste voortgang: {4}; PID {5} gestopt door de waakhond" -f $stil, $threadsBezig, $nuThreads.Count, $cpuKernen, $laatste.Trim(), $p.Id)
+                $gestopt = 'vastgelopen'
                 $p.Kill()
                 break
             }
@@ -324,8 +414,19 @@ function Invoke-GeoDmsRun {
         # GeoDmsRun weg is.
         Remove-Item -LiteralPath $plek.Bestand -ErrorAction SilentlyContinue
     }
+    # Een gestopt proces krijgt zijn reden als [E]-regel onder zijn log, zodat wie het log later opent ziet waarom hij stopte. Een
+    # proces dat midden in een regel stopt, laat het log zonder regeleinde achter; de [E]-regel komt dan op een eigen regel.
+    if ($reden -and $Log) {
+        $regeleinde = ''
+        try {
+            $fs = [IO.File]::Open($Log, 'Open', 'Read', 'ReadWrite')
+            if ($fs.Length -gt 0) { $fs.Seek(-1, 'End') | Out-Null; if ($fs.ReadByte() -ne 10) { $regeleinde = "`r`n" } }
+            $fs.Close()
+        } catch { }
+        ($regeleinde + "[E] Waakhond.ps1: $reden") | Add-Content -LiteralPath $Log -Encoding UTF8
+    }
     # Wie een script aanroept en daarna $LASTEXITCODE leest, krijgt de exitcode van de laatste GeoDmsRun, zoals bij een
     # gewone aanroep met &.
     $global:LASTEXITCODE = $p.ExitCode
-    return [pscustomobject]@{ Code = $p.ExitCode; Reden = $reden; Wacht = $plek.Wacht }
+    return [pscustomobject]@{ Code = $p.ExitCode; Reden = $reden; Gestopt = $gestopt; Wacht = $plek.Wacht }
 }

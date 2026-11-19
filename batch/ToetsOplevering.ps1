@@ -14,8 +14,10 @@
     Elke toets meldt PASS, FAIL of GEEN DATA. GEEN DATA is nadrukkelijk geen PASS.
 
     De GeoDmsRun-stappen van trap C lopen via Invoke-GeoDmsRun (Waakhond.ps1): ze wachten op een plek in de
-    gedeelde rij van zware runs, met -RijSoort, -RijPiekGB en -RijMap zoals bij RunIndicatoren.ps1, en een
-    waakhond stopt een stap die -WaakhondMinuten lang niets doet (standaard 15; 0 zet hem uit).
+    gedeelde rij van zware runs, met -RijSoort, -RijPiekGB en -RijMap zoals bij RunIndicatoren.ps1. Een
+    waakhond stopt een stap die -WaakhondMinuten lang niets doet (standaard 15; 0 zet hem uit), en een
+    geheugenrem een stap die meer dan 25 procent boven -RijPiekGB komt of die het verst boven zijn claim zit
+    als de machine boven 540 GB commit komt (zie Waakhond.ps1). Zo'n stap telt als FAIL, met de reden erbij.
 
 .EXAMPLE
     .\ToetsOplevering.ps1 -Varianten BAU,BAU2

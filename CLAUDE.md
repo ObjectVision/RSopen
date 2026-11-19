@@ -56,6 +56,10 @@ SourceData leest de bronnen in en koppelt ze aan de klassen. Een afleiding hoort
 
 Een harnas dat een vraag uit een issue beantwoordt is tijdelijk en gaat weg zodra het issue dicht is; de meting staat dan in het issue. Wat blijft staat in een thematische container van `cfg/main/Diagnose.dms` (Waterberging, Natuur, Groen, Werken en zo verder) onder een naam die zegt wat er gemeten wordt, draait mee in `GenerateAll` of `GenerateBasisjaar` of zegt in zijn Descr dat het op aanvraag is, en heeft als controlewaarde een norm in de kolommen `norm_onder` en `norm_boven` van `Checks` of `ChecksBasisjaar`. Geen containers of bestanden met een issuenummer als naam.
 
+## Runs
+
+Een sessie start geen run zonder overleg met de coördinatiesessie, of met de gebruiker als er geen coördinatiesessie draait: geen RunAllocatie, RunIndicatoren of ToetsOplevering, en geen GeoDmsRun groter dan een check van een paar items. Toets een wijziging eerst goedkoop (trap 1 of 2 van rs-draaien). Vind je hem goed, commit hem dan op je tak; de coördinatie bundelt de takken van een paar issues in één run, en wat daar niet plausibel uitkomt, wordt een nieuw issue.
+
 ## Takken
 
 `main` is de stam van RSopen. Generiek werk komt op een korte eigen tak vanaf `main` en gaat terug naar `main`: rekenregels, het inlezen van een bron, indicatoren, Descr's, scripts en skills, alles wat in meer dan een project geldt. Een projecttak (`NL2120`, `dgwb-stad`, `dgwb-veenweide` en de andere) haalt `main` binnen wanneer hij het nodig heeft. Wat bij een project hoort blijft op de projecttak: de varianten en hun parameters, het studiegebied, het productieprofiel en de leveringen. Wordt op een projecttak iets generieks gebouwd, zet het dan in een eigen commit en breng die naar `main`.
