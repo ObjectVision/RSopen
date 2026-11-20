@@ -154,14 +154,17 @@ def bronnen(wb, werk, waarde, verdeling, bbg, pijplijn, overgang):
          "afstand is die tot het zwaartepunt van zo'n pand. BBG-jaar X naast de BAG van 1 januari X; tussen BBG 2017 "
          "en NBBG 2020 zit een methodebreuk. ESB_Ruimte/Bouwterrein.", {})
 
-    ovg = pd.DataFrame({"jaar": overgang.jaar, "klasse": overgang.klasse, "oppervlakte (ha)": overgang.ha})
-    ha2012 = f"{ovg[ovg.jaar == ovg.jaar.min()]['oppervlakte (ha)'].sum():,.0f}".replace(",", ".")
+    ovg = pd.DataFrame({"reeks": overgang.reeks, "jaar": overgang.jaar, "vorige jaargang": overgang.vorige_jaargang,
+                        "klasse": overgang.klasse, "oppervlakte (ha)": overgang.ha})
     bron(wb, "Bron_overgang", ovg, {"oppervlakte (ha)": "#,##0"},
-         f"Het bouwterrein van de BBG van 2012 ({ha2012} ha) en zijn grondgebruik in latere jaargangen, naar de "
-         "hoofdklassen van de BBG. Tot 2017 uit de klasse per vlak in het CBS-mutatiebestand BBG 1996–2017; voor 2020 en 2022 een "
-         "overlay van de vlakken van 2012 met het CBS-mutatiebestand NBBG 2022. Tussen BBG 2017 en NBBG 2020 zit een "
-         "methodebreuk. ESB_Ruimte/Bouwterrein_overgang.py.",
-         {"jaar": "ovg_jaar", "klasse": "ovg_klasse", "oppervlakte (ha)": "ovg_ha"}).column_dimensions["B"].width = 34
+         "Het bouwterrein van de BBG en zijn grondgebruik in latere jaargangen, naar de hoofdklassen van de BBG. Reeks "
+         "volgende jaargang: het bouwterrein van de vorige jaargang naar zijn klasse in dit jaar, plus het bouwterrein "
+         "dat er in dit jaar nieuw is. Reeks cohort 2012: het bouwterrein van 2012 naar zijn klasse in elk later jaar. "
+         "Tot 2017 uit de klasse per vlak in het CBS-mutatiebestand BBG 1996–2017, van 2017 naar 2020 een overlay met "
+         "het CBS-mutatiebestand NBBG 2022, en daarna de klasse per vlak in de NBBG. Tussen BBG 2017 en NBBG 2020 zit "
+         "een methodebreuk. ESB_Ruimte/Bouwterrein_overgang.py.",
+         {"reeks": "ovg_reeks", "jaar": "ovg_jaar", "vorige jaargang": "ovg_vorige", "klasse": "ovg_klasse", "oppervlakte (ha)": "ovg_ha"}
+         ).column_dimensions["D"].width = 34
     return jaar_sector, bt
 
 
@@ -279,48 +282,77 @@ def blad_bouwterrein(wb, n):
                  [BLAUW, "8FB8EB", "D0CFCB"], horizontaal=False, gestapeld=True)
 
 
-# Wat het bouwterrein van 2012 later werd: de groepen in de grafiek, met hun klassen uit Bron_overgang en hun kleur.
-# Verkeer, natuur, water en de kleine klassen vormen samen de rest, zodat de grafiek leesbaar blijft.
-OVERGANG = [("nog bouwterrein", ["Nog bouwterrein"], "8C8A84"),
-            ("wonen", ["Wonen"], ORANJE),
-            ("bedrijfsterrein", ["Bedrijfsterrein"], BLAUW),
-            ("voorzieningen, detailhandel en horeca", ["Voorzieningen, detailhandel en horeca"], KLEUR["Zak_dienstverlening"][1:]),
-            ("park, sport en recreatie", ["Park, sport en recreatie"], KLEUR["Detailhandel"][1:]),
-            ("agrarisch", ["Agrarisch"], KLEUR["Ov_consumentendiensten"][1:]),
-            ("verkeer, natuur, water en overig", None, "D0CFCB")]
+# De groepen in de grafieken van Bouwterrein_overgang, met hun klassen uit Bron_overgang en hun kleur. Verkeer,
+# natuur, water en de kleine klassen vormen samen de rest (None), zodat de grafiek leesbaar blijft.
+NAAR = [("wonen", ["Wonen"], ORANJE),
+        ("bedrijfsterrein", ["Bedrijfsterrein"], BLAUW),
+        ("voorzieningen, detailhandel en horeca", ["Voorzieningen, detailhandel en horeca"], KLEUR["Zak_dienstverlening"][1:]),
+        ("park, sport en recreatie", ["Park, sport en recreatie"], KLEUR["Detailhandel"][1:]),
+        ("agrarisch", ["Agrarisch"], KLEUR["Ov_consumentendiensten"][1:]),
+        ("verkeer, natuur, water en overig", None, "DDDCD7")]
+VOORRAAD = [("blijft bouwterrein", ["Bleef bouwterrein"], "52514E")] + NAAR + [("volgende jaargang nog niet bekend", None, "A8A6A0")]
+COHORT = [("nog bouwterrein", ["Nog bouwterrein"], "52514E")] + NAAR
 
 
-def blad_overgang(wb, jaren):
-    """Wat het BBG-bouwterrein van 2012 in de latere jaargangen is, in ha en als aandeel, met SUMIFS uit Bron_overgang."""
-    ws = wb.create_sheet("Bouwterrein_overgang")
-    titel(ws, 1, "Wat werd het bouwterrein van 2012? Grondgebruik in de latere BBG-jaargangen, in ha en daaronder als aandeel")
-    n = len(OVERGANG)
-    kop(ws, 2, ["jaar"] + [g for g, _, _ in OVERGANG] + ["bouwterrein 2012"], KOP_FORMULE)
-    ws.row_dimensions[2].height = 45
+def blok(ws, rij, reeks, jaren, groepen, totaal):
+    """Een tabel met een rij per jaar en een kolom per groep, met SUMIFS uit Bron_overgang voor de reeks; de rest is
+    het totaal van de reeks in dat jaar min de groepen ervoor. Geeft de kolom van het totaal en de laatste rij."""
+    n = len(groepen)
+    kop(ws, rij, ["jaar"] + [g for g, _, _ in groepen] + [totaal], KOP_FORMULE)
+    ws.row_dimensions[rij].height = 45
     tot = get_column_letter(n + 2)
-    for i, jaar in enumerate(jaren, start=3):
+    for i, jaar in enumerate(jaren, start=rij + 1):
         ws.cell(i, 1, int(jaar))
-        for j, (_, klassen, _) in enumerate(OVERGANG, start=2):
-            if klassen is None:  # de rest: het totaal min de groepen ervoor
+        for j, (_, klassen, _) in enumerate(groepen, start=2):
+            if klassen is None:
                 f = f"={tot}{i}-SUM(B{i}:{get_column_letter(j - 1)}{i})"
             else:
-                f = "=" + "+".join(f'SUMIFS(ovg_ha,ovg_jaar,$A{i},ovg_klasse,"{k}")' for k in klassen)
+                f = "=" + "+".join(f'SUMIFS(ovg_ha,ovg_reeks,"{reeks}",ovg_jaar,$A{i},ovg_klasse,"{k}")' for k in klassen)
             ws.cell(i, j, f).number_format = "#,##0"
-        ws.cell(i, n + 2, f"=SUMIFS(ovg_ha,ovg_jaar,$A{i})").number_format = "#,##0"
-    laatste = 2 + len(jaren)
-    # Dezelfde groepen als aandeel van het bouwterrein van 2012.
-    k2 = laatste + 2
-    kop(ws, k2, ["jaar"] + [g for g, _, _ in OVERGANG], KOP_FORMULE)
-    ws.row_dimensions[k2].height = 45
-    for i in range(len(jaren)):
-        r, b = k2 + 1 + i, 3 + i
-        ws.cell(r, 1, f"=A{b}")
-        for j in range(2, n + 2):
-            letter = get_column_letter(j)
-            ws.cell(r, j, f"={letter}{b}/${tot}{b}").number_format = "0%"
+        ws.cell(i, n + 2, f'=SUMIFS(ovg_ha,ovg_reeks,"{reeks}",ovg_jaar,$A{i})').number_format = "#,##0"
+    return n + 2, rij + len(jaren)
+
+
+def blad_overgang(wb, jaren_voorraad, jaren_cohort):
+    """Het bouwterrein per BBG-jaargang, verdeeld naar zijn grondgebruik in de volgende jaargang, en daaronder het
+    cohort van 2012, in ha met SUMIFS uit Bron_overgang."""
+    ws = wb.create_sheet("Bouwterrein_overgang")
+    titel(ws, 1, "Bouwterrein per BBG-jaargang, naar zijn grondgebruik in de volgende jaargang (ha)")
+    n = len(VOORRAAD)
+    tk = n + 2
+    tot = get_column_letter(tk)
+    kop(ws, 2, ["jaar"] + [g for g, _, _ in VOORRAAD] + ["bouwterrein dit jaar", "volgende jaargang",
+                                                         "som overgangen (controle)"], KOP_FORMULE)
+    ws.row_dimensions[2].height = 45
+    laatste = 2 + len(jaren_voorraad)
+    volgende = '"volgende jaargang",ovg_vorige,$A{i}'
+    for i, jaar in enumerate(jaren_voorraad, start=3):
+        ws.cell(i, 1, int(jaar))
+        for j, (g, klassen, _) in enumerate(VOORRAAD, start=2):
+            if g == "volgende jaargang nog niet bekend":  # de laatste jaargang heeft nog geen opvolger
+                f = f"=IF(COUNTIFS(ovg_reeks,{volgende.format(i=i)})=0,{tot}{i},0)"
+            elif klassen is None:  # de rest: de voorraad min de groepen ervoor en het onbekende deel
+                f = f"={tot}{i}-SUM(B{i}:{get_column_letter(j - 1)}{i})-{get_column_letter(n + 1)}{i}"
+            else:
+                f = "=" + "+".join(f'SUMIFS(ovg_ha,ovg_reeks,{volgende.format(i=i)},ovg_klasse,"{k}")' for k in klassen)
+            ws.cell(i, j, f).number_format = "#,##0"
+        # de voorraad van dit jaar: wat bouwterrein bleef plus wat er nieuw bijkwam sinds de vorige jaargang
+        ws.cell(i, tk, '=SUMIFS(ovg_ha,ovg_reeks,"volgende jaargang",ovg_jaar,$A{i},ovg_klasse,"Bleef bouwterrein")'
+                       '+SUMIFS(ovg_ha,ovg_reeks,"volgende jaargang",ovg_jaar,$A{i},ovg_klasse,"Nieuw bouwterrein")'
+                .replace("{i}", str(i))).number_format = "#,##0"
+        ws.cell(i, tk + 1, f'=IFERROR(AVERAGEIFS(ovg_jaar,ovg_reeks,{volgende.format(i=i)}),"")').number_format = "0"
+        ws.cell(i, tk + 2, f'=SUMIFS(ovg_ha,ovg_reeks,{volgende.format(i=i)})-SUMIFS(ovg_ha,ovg_reeks,'
+                           f'{volgende.format(i=i)},ovg_klasse,"Nieuw bouwterrein")').number_format = "#,##0"
+    noot(ws, laatste + 1, "De staaf van een jaar is het bouwterrein in die BBG-jaargang, verdeeld naar wat het in de "
+         "volgende jaargang is. De overgang van 2017 naar 2020 loopt over de methodebreuk tussen BBG en NBBG.")
+    staafgrafiek(ws, list(range(2, n + 2)), 2, laatste, "Bouwterrein en wat het in de volgende BBG-jaargang is", "ha",
+                 f"A{laatste + 3}", [kl for _, _, kl in VOORRAAD], horizontaal=False, gestapeld=True)
+    r2 = laatste + 26
+    titel(ws, r2 - 1, "Wat werd het bouwterrein van 2012? Grondgebruik in de latere BBG-jaargangen (ha)")
+    _, laatste2 = blok(ws, r2, "cohort 2012", jaren_cohort, COHORT, "bouwterrein 2012")
+    staafgrafiek(ws, list(range(2, len(COHORT) + 2)), r2, laatste2, "Wat werd het bouwterrein van 2012", "ha",
+                 f"A{laatste2 + 3}", [kl for _, _, kl in COHORT], horizontaal=False, gestapeld=True)
     breedtes(ws, 8, 15)
-    staafgrafiek(ws, list(range(2, n + 2)), 2, laatste, "Wat werd het bouwterrein van 2012", "deel van de oppervlakte",
-                 f"A{k2 + len(jaren) + 3}", [kl for _, _, kl in OVERGANG], horizontaal=False, gestapeld="procent")
 
 
 def blad_per_jaar(wb, n):
@@ -362,7 +394,8 @@ def main(map_ab, map_g, map_d, uit):
     eind = int(werk[werk.m2_per_baan.notna()].jaar.max())
     blad_per_sector(wb, 2012, eind)
     blad_bouwterrein(wb, len(bt))
-    blad_overgang(wb, sorted(overgang.jaar.unique()))
+    blad_overgang(wb, sorted(overgang[overgang.reeks == "volgende jaargang"].jaar.unique()),
+                  sorted(overgang[overgang.reeks == "cohort 2012"].jaar.unique()))
     blad_per_jaar(wb, len(jaar_sector))
     # de tabellen vooraan, de bronnen erachter
     volgorde = ["Ruimte_per_baan", "Per_sector", "Bouwterrein", "Bouwterrein_overgang", "Per_jaar"]
