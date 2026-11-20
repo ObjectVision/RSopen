@@ -191,7 +191,7 @@ Nagebootst op 2026-09-17 in een losse dms met GeoDms20.17.0.m: een kaart van vie
 Schrijf zo'n kaart daarom met een apart item zonder subitems. In de laag Bronnen van #824 staan de schrijvers van `Grondgebruik/Verandering` in een eigen container:
 
 ```
-container Schrijf
+container Write
 {
 	attribute<UInt8> Verstedelijking (AdminDomain) := UInt8(Verandering/Verstedelijking), StorageName = "=replace(StorageStr, '@V@', 'Verstedelijking')", StorageType = "gdalwrite.grid";
 }

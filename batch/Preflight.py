@@ -96,7 +96,7 @@ BASEDATA = [
 
 # Het profiel zelf eerst: zijn IntegrityCheck noemt de profielen die deze tak kent, en vuurt alleen als
 # de parameter zelf wordt opgevraagd, niet als de domeintabel of de profieltabel hem leest.
-PROFIEL_ITEMS = ["/ModelParameters/Productieprofiel", "/Preflight/Profiel/Schrijf", "/Preflight/Profiel/Afwijkingen"]
+PROFIEL_ITEMS = ["/ModelParameters/Productieprofiel", "/Preflight/Profiel/Write", "/Preflight/Profiel/Afwijkingen"]
 INVOER_ITEMS = ["/Preflight/Invoer/Plancapaciteit", "/Preflight/Invoer/Claims"]
 # De items die RunAll.cmd, RunVariantData.cmd en RunZichtjaren.cmd opvragen, in die volgorde.
 BOOM_ITEMS = [

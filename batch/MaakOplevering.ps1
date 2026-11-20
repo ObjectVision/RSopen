@@ -230,7 +230,7 @@ $Beschrijving = [ordered]@{
 }
 
 # Waar de legenda's staan die de configuratie schrijft. Ze komen uit Export/Legendas en zijn
-# variantonafhankelijk, dus een enkele GeoDmsRun op /Indicatoren/<casus>/Zichtjaren/Export/Legendas/Schrijf
+# variantonafhankelijk, dus een enkele GeoDmsRun op /Indicatoren/<casus>/Zichtjaren/Export/Legendas/Write
 # volstaat voor een hele levering.
 $LegendaBron = Join-Path $Bron 'Legendas'
 $Issue = $Issue.TrimStart('#')
@@ -459,7 +459,7 @@ Get-ChildItem $Doel -Recurse -File -Filter '*.tif' | ForEach-Object {
 if ($metaGeschreven) { Write-Host "  $metaGeschreven legendabestanden geschreven" }
 if ($metaGemist) {
     Write-Warning ("Legenda ontbreekt voor: " + ($metaGemist -join ', ') +
-        ". Draai eerst GeoDmsRun op /Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/Legendas/Schrijf.")
+        ". Draai eerst GeoDmsRun op /Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/Legendas/Write.")
 }
 
 # Wat er in de LEESMIJ komt te staan, komt uit de doelmap zelf en niet uit de variantentabel bovenin.

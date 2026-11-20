@@ -22,6 +22,8 @@ Gebruik geen gedachtenstreepjes (em dash of en dash als leesteken). Herschrijf d
 
 De regel over gedachtenstreepjes geldt ook buiten issues, dus in commit messages, documentatie en antwoorden in de chat. Geen 'authored by Claude' in de comments/commit messages etc.
 
+Vertaal programmeertermen niet letterlijk, ook niet in itemnamen. Rekenen, schrijven en lezen heten `Calc`, `Write` en `Read`, als naam en als voor- of achtervoegsel. Zeg in een naam of Descr wat iets is: een pad en geen wortel, een ondergrens en geen vloer, een voorwaarde en geen vlag, begrenzen en niet klemmen, een controle en geen kanarie, een koppeling en geen haak. Domeintermen blijven Nederlands.
+
 ## Verwijzen naar issues en pull requests
 
 Schrijf verwijzingen altijd met hekje, dus #634 en niet "issue 634". Dit geldt in issues en comments, maar vooral ook in commit messages: zonder hekje herkent GitHub de verwijzing niet en verschijnt de commit niet in de tijdlijn van het issue.

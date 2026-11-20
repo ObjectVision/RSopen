@@ -133,7 +133,7 @@
       - De basisdata van WriteBasedata/Generate_Run3 en Generate_Run4_IndicatorenData en de
         variantdata van WriteVariantData. RunAllocatie.ps1 maakt ze allemaal; de toets hieronder meldt
         wat ontbreekt en welk item het maakt.
-      - De legenda's (Export/Legendas/Schrijf) schrijft dit script zelf, ze zijn casusonafhankelijk.
+      - De legenda's (Export/Legendas/Write) schrijft dit script zelf, ze zijn casusonafhankelijk.
       - De schakelaars in cfg\main\ModelParameters.dms, zie blok B van RunAllocatie.ps1.
 
  ALS HET MISGAAT
@@ -347,8 +347,8 @@ function Test-Invoer {
 function Get-KetenNamen {
     # De namen van de ketentifs van de domeinen die het profiel levert, gelezen uit de schrijfkant in
     # Ketens.dms zodat dit script niet achterloopt als daar een keten bijkomt: elke StorageName daar is
-    # Pad+'<naam>'+Staart, en Ketens/Schrijf/Lijst zet ze per domein. Een tif die in geen domeinlijst staat
-    # zou Ketens/Schrijf/Alles nooit schrijven; dat is een fout in Ketens.dms en geen ontbrekend bestand.
+    # Pad+'<naam>'+Staart, en Ketens/Write/Lijst zet ze per domein. Een tif die in geen domeinlijst staat
+    # zou Ketens/Write/Alles nooit schrijven; dat is een fout in Ketens.dms en geen ontbrekend bestand.
     $dms = Join-Path (Split-Path $Cfg -Parent) 'main\Templates\Indicatoren\Ketens.dms'
     if (-not (Test-Path $dms)) { throw "Ketens.dms niet gevonden naast $Cfg" }
     $tekst = Get-Content $dms -Raw
@@ -356,9 +356,9 @@ function Get-KetenNamen {
     if ($alle.Count -eq 0) { throw "Geen ketentifs gevonden in $dms" }
     # Gezocht op de declaratieregel en met vrije witruimte: de kop van Ketens.dms noemt de container
     # Schrijf ook, en een uitlijning van de configuratie verzet de spaties voor Alles_lijst.
-    $b = [regex]::Match($tekst, '(?m)^\s*container\s+Schrijf\b')
+    $b = [regex]::Match($tekst, '(?m)^\s*container\s+Write\b')
     $e = if ($b.Success) { [regex]::Match($tekst.Substring($b.Index), 'parameter<String>\s+Alles_lijst\b') }
-    if (-not $b.Success -or -not $e.Success) { throw "Ketens/Schrijf/Lijst niet gevonden in $dms" }
+    if (-not $b.Success -or -not $e.Success) { throw "Ketens/Write/Lijst niet gevonden in $dms" }
     $lijst = $tekst.Substring($b.Index, $e.Index)
     $perDomein = @{}
     foreach ($m in [regex]::Matches($lijst, "parameter<String>\s+(\w+)\s*:=(.*?);\s*\r?\n", 'Singleline')) {
@@ -366,7 +366,7 @@ function Get-KetenNamen {
     }
     $ingedeeld = @($perDomein.Values | ForEach-Object { $_ })
     $los = @($alle | Where-Object { $ingedeeld -notcontains $_ })
-    if ($los.Count -gt 0) { throw "Ketentifs zonder domein in Ketens/Schrijf/Lijst: $($los -join ', ')" }
+    if ($los.Count -gt 0) { throw "Ketentifs zonder domein in Ketens/Write/Lijst: $($los -join ', ')" }
     $namen = @($perDomein.Keys | Where-Object { $Domeinen[$_] } | ForEach-Object { $perDomein[$_] })
     return $namen
 }
@@ -463,7 +463,7 @@ function Invoke-Export([string]$stap, [string[]]$items) {
 # oplevering de klassenamen bij elke klassekaart (MaakOplevering.ps1 meldt dat als waarschuwing).
 # Met -Items niet: dan rekent het script alleen de gevraagde items.
 if ($Items.Count -eq 0) {
-    $eerste = "/Indicatoren/${Scenario}_$($Varianten[0])/Zichtjaren/Export/Legendas/Schrijf"
+    $eerste = "/Indicatoren/${Scenario}_$($Varianten[0])/Zichtjaren/Export/Legendas/Write"
     Invoke-Export "legendas" @($eerste)
 }
 
@@ -478,7 +478,7 @@ $regios = @(if ($IndicatorRegio -eq 'Landschappen') { @('Landschap_Kust','Landsc
 
 # Ontkoppeld (#824): eerst de reeks zichtjaren voor het laatste exportzichtjaar, elk in een eigen
 # proces, in volgorde. Zichtjaren/<jaar>/Tijdreeks schrijft de ketentifs van dat jaar en de kaarten
-# van de tijdreeks; het volgende zichtjaar leest die ketentifs via Ketens/Lees. Het eerste zichtjaar
+# van de tijdreeks; het volgende zichtjaar leest die ketentifs via Ketens/Read. Het eerste zichtjaar
 # heeft geen voorganger en leest het basisjaar, net als zonder de schakelaar. Een ontbrekende
 # ketentif geeft GeoDmsRun exit 0 met een gdal-waarschuwing, vandaar de toets voor en na elk jaar.
 if ($Ontkoppeld) {
