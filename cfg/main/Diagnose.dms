@@ -1391,5 +1391,128 @@ container Diagnose
 		, StorageName = "='%LocalDataProjDir%/Diagnose/combinamen_'+/Diagnose/Variant+'.txt'"
 		, StorageType = "str"
 		, Descr = "De namen waaronder de zeef per sector en subsector hangt. Nodig omdat het pad /VariantData/<variant>/Zeef/<jaar>/SectorxSubsectoren/<naam> alleen te raden was; deze uitdraai maakt dat een opzoeking.";
+
+		container IjkingDichtheid
+		: Descr = "De invoer voor batch/IjkDichtheidWerken.py (#907): per blok van 100 m en per werksubsector de pandvoetafdruk uit de BAG van BAG_RecentYear, alles en alleen de panden vanaf Beginjaar, naast de
+					dichtheid waarmee de allocatie nieuwe banen neerzet (Templates/Densities/Werken_T, Result) en dezelfde dichtheid zonder het blok zelf in het omgevingsmaximum, zoals een blok die krijgt dat nog geen
+					werklocatie is. Daarnaast het aandeel van elke werkklasse in BBG 2012 en 2017, zodat het script de werklocaties van na 2012 kan kiezen, en per subsector de dichtheid die zo'n nieuwe werklocatie krijgt van de werklocaties van 2012 (Oud), uitgesplitst naar
+					de termen van de dichtheidsfactor. Op aanvraag; leest de variantdata van Diagnose/Variant en schrijft naar %LocalDataProjDir%/Ijking/werkdichtheid."
+		{
+			parameter<UInt32>  Beginjaar       := 2011, Descr = "Het eerste bouwjaar dat als nieuwbouw telt; met BAG_RecentYear 2026 is dat de nieuwbouw van de vijftien jaar 2011 tot en met 2025.";
+			parameter<String>  Pand_path       := '/SourceData/Vastgoed/BAG/PerJaar/Y'+string(/ModelParameters/BAG_RecentYear)+'/pand/met_vbo', Descr = "De panden met een verblijfsobject op 1 januari van BAG_RecentYear.";
+			parameter<String>  Dichtheid_path  := '/VariantData/'+/Diagnose/Variant+'/Density/Impl/PerZichtjaar_AllocDomain/'+/Diagnose/Jaar+'/Src/Werken/Basisjaar/PandFootprint_perHa', Descr = "De pandvoetafdruk per hectare uit het basisjaar, voor elk zichtjaar dezelfde.";
+
+			container PerDoel := for_each_ne(/Classifications/Vastgoed/vbo_gebruiksdoel_plus/name, 'PerDoel_T('+quote(/Classifications/Vastgoed/vbo_gebruiksdoel_plus/name)+')');
+			container PerSubsector := for_each_ne(/Classifications/Actor/Jobs6/name, 'PerSubsector_T('+quote(/Classifications/Actor/Jobs6/name)+')');
+
+			attribute<Float32> K100   (/Geography/AllocDomain) := mean(float32(/BaseData/Omgeving/BebouwdGebied/RondBevolkingskern/Is100kPlus), /Geography/AdminDomain/AllocDomain_rel)
+			, StorageName = "%LocalDataProjDir%/Ijking/werkdichtheid/K100_100m.tif", StorageType = "gdalwrite.grid", Descr = "Het deel van het blok in de buffer rond een kern vanaf 100.000 inwoners.";
+			attribute<Float32> K20    (/Geography/AllocDomain) := mean(float32(!/BaseData/Omgeving/BebouwdGebied/RondBevolkingskern/Is100kPlus && /BaseData/Omgeving/BebouwdGebied/RondBevolkingskern/Is20kPlus), /Geography/AdminDomain/AllocDomain_rel)
+			, StorageName = "%LocalDataProjDir%/Ijking/werkdichtheid/K20_100m.tif", StorageType = "gdalwrite.grid", Descr = "Het deel van het blok in de buffer rond een kern van 20.000 tot 100.000 inwoners en niet in een grotere.";
+			attribute<Float32> K20min (/Geography/AllocDomain) := mean(float32(!/BaseData/Omgeving/BebouwdGebied/RondBevolkingskern/Is100kPlus && !/BaseData/Omgeving/BebouwdGebied/RondBevolkingskern/Is20kPlus && /BaseData/Omgeving/BebouwdGebied/RondBevolkingskern/Is20kMin), /Geography/AdminDomain/AllocDomain_rel)
+			, StorageName = "%LocalDataProjDir%/Ijking/werkdichtheid/K20min_100m.tif", StorageType = "gdalwrite.grid", Descr = "Het deel van het blok in de buffer rond een kern onder 20.000 inwoners en niet in een grotere.";
+			attribute<Float32> OV     (/Geography/AllocDomain) := mean(float32(/BaseData/Omgeving/OV_Reistijd/TotRailHalte/Smoothed), /Geography/AdminDomain/AllocDomain_rel)
+			, StorageName = "%LocalDataProjDir%/Ijking/werkdichtheid/OV_100m.tif", StorageType = "gdalwrite.grid", Descr = "De nabijheid van een railhalte waarmee de dichtheidsfactor de opslag voor OV schaalt, gemiddeld per blok.";
+			attribute<Float32> Water  (/Geography/AllocDomain) := mean(float32(/BaseData/StartState/Landgebruik/NabijGrootWaterInBBG/Smoothed), /Geography/AdminDomain/AllocDomain_rel)
+			, StorageName = "%LocalDataProjDir%/Ijking/werkdichtheid/Water_100m.tif", StorageType = "gdalwrite.grid", Descr = "De nabijheid van groot water waarmee de dichtheidsfactor de opslag voor water schaalt, gemiddeld per blok.";
+
+			parameter<Float32> GrensOud := 0.5f, Descr = "Het deel van een blok dat in BBG 2012 van de klasse moet zijn om als bestaande werklocatie mee te tellen in de omgevingsdichtheid van Oud.";
+			attribute<SourceData/Grondgebruik/BBG/BBG_Reeks_1996_2017> Reeks (/Geography/AdminDomain) := poly2grid(/SourceData/Grondgebruik/BBG/BBG_Reeks_1996_2017/geometry, /Geography/AdminDomain), Descr = "Het vlak van de BBG-reeks 1996 tot en met 2017 per cel. Zonder opslag, want de modus per 100 meter in BaseData/Grondgebruik/BBG schrijft naar de brondata.";
+			attribute<Classifications/Grondgebruik/CBS2010Klasse> BBG2012 (/Geography/AdminDomain) := /SourceData/Grondgebruik/BBG/BBG_Reeks_1996_2017/CBSKlasse_rel_2012[Reeks], Descr = "De CBS-klasse van BBG 2012 per cel, de stand van voor de nieuwbouw.";
+			attribute<Classifications/Grondgebruik/CBS2010Klasse/Aggr> BBG2012_Aggr (/Geography/AdminDomain) := /Classifications/Grondgebruik/CBS2010Klasse/Aggr_rel[BBG2012];
+			attribute<Classifications/Grondgebruik/CBS2010Klasse/Aggr> BBG2017_Aggr (/Geography/AdminDomain) := /Classifications/Grondgebruik/CBS2010Klasse/Aggr_rel[/SourceData/Grondgebruik/BBG/BBG_Reeks_1996_2017/CBSKlasse_rel_2017[Reeks]], Descr = "De klasse van BBG 2017, uit dezelfde reeks als 2012 en dus zonder het methodeverschil met het BBG van 2022.";
+			attribute<Float32> Uitleg2012 (/Geography/AllocDomain) := mean(float32(IsDefined(BBG2012) && /Classifications/Grondgebruik/CBS2010Klasse/TXLUitleglocatie[BBG2012]), /Geography/AdminDomain/AllocDomain_rel)
+			, StorageName = "%LocalDataProjDir%/Ijking/werkdichtheid/Uitleg2012_100m.tif", StorageType = "gdalwrite.grid", Descr = "Het deel van het blok dat in BBG 2012 natuur, landbouw, water of overig terrein was, dus geen bebouwd gebied.";
+
+			unit<UInt8> WerkKlasse := unique(/Classifications/Grondgebruik/CBSKlasse/Aggr/name[/Classifications/Actor/Jobs6/CBSKlasse_Aggr_rel]), Descr = "De CBS-klassen waarover het model de dichtheid van de werksubsectoren meet.";
+			container PerKlasse := for_each_ne(WerkKlasse/Values, 'PerKlasse_T('+quote(WerkKlasse/Values)+')');
+
+			Template PerKlasse_T
+			{
+				parameter<String> name;
+				//
+
+				parameter<Classifications/Grondgebruik/CBS2010Klasse/Aggr> Klasse_rel := rlookup(lowercase(name), lowercase(/Classifications/Grondgebruik/CBS2010Klasse/Aggr/name));
+				attribute<Float32> Aandeel2012 (/Geography/AllocDomain) := mean(float32(IsDefined(BBG2012_Aggr) && BBG2012_Aggr == Klasse_rel), /Geography/AdminDomain/AllocDomain_rel)
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Aandeel2012_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "Het deel van het blok dat in BBG 2012 van deze klasse was.";
+				attribute<Float32> Aandeel2017 (/Geography/AllocDomain) := mean(float32(IsDefined(BBG2017_Aggr) && BBG2017_Aggr == Klasse_rel), /Geography/AdminDomain/AllocDomain_rel)
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Aandeel2017_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "Het deel van het blok dat in BBG 2017 van deze klasse was.";
+			}
+
+			Template PerDoel_T
+			: Descr = "De pandvoetafdruk van een gebruiksdoel per blok, over alle panden en over de panden vanaf Beginjaar, met dezelfde toedeling van pand naar blok."
+			{
+				parameter<String> name;
+				//
+
+				unit<UInt32> TM := =Pand_path+'/ToedelingsMatrix_AllocDomain';
+				attribute<Units/m2PandFootprint> Footprint (TM) := =Pand_path+'/Oppervlaktes/Footprint_perGebruiksdoel/'+name+'[TM/Pand_rel]';
+				attribute<Bool>                  IsNieuw   (TM) := =Pand_path+'/Bouwjaar_trunc[TM/Pand_rel] >= value(Beginjaar, Units/yr)';
+
+				attribute<Units/m2PandFootprint> Totaal (/Geography/AllocDomain) := sum(Footprint * TM/ToedelingPand, TM/AllocDomain_rel);
+				attribute<Units/m2PandFootprint> Nieuw  (/Geography/AllocDomain) := sum(IsNieuw ? Footprint * TM/ToedelingPand : 0[Units/m2PandFootprint], TM/AllocDomain_rel);
+			}
+
+			Template PerSubsector_T
+			: Descr = "Per werksubsector de voetafdruk van de BAG en de dichtheid van het model per blok, als tif."
+			{
+				parameter<String> name;
+				//
+
+				parameter<String> Doelen_ref := /Classifications/Actor/Jobs6/vbo_gebruiksdoel_plus_ref[rlookup(name, /Classifications/Actor/Jobs6/name)];
+				container         Model      := =Dichtheid_path+'/'+name;
+
+				attribute<Units/m2PandFootprint>    Totaal         (/Geography/AllocDomain) := ='MakeDefined('+replace(Doelen_ref, '@', 'PerDoel/', '#', '/Totaal')+', 0[Units/m2PandFootprint])'
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Totaal_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De voetafdruk van alle panden van deze subsector in het blok.";
+				attribute<Units/m2PandFootprint>    Nieuw          (/Geography/AllocDomain) := ='MakeDefined('+replace(Doelen_ref, '@', 'PerDoel/', '#', '/Nieuw')+', 0[Units/m2PandFootprint])'
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Nieuw_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De voetafdruk van de panden van deze subsector vanaf Beginjaar in het blok.";
+				attribute<Units/m2PandFootprint_ha> Result         (/Geography/AllocDomain) := Model/Result
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Result_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De dichtheid waarmee de allocatie nieuwe banen van deze subsector in het blok neerzet.";
+				attribute<Units/m2PandFootprint_ha> Omgeving       (/Geography/AllocDomain) := value(potential(max_elem(Model/Buurt, Model/Wijk, Model/Gemeente, Model/NVM, Model/COROP, Model/Provincie) * Model/DichtheidFactor, /Geography/Distmatrices_100m/pot2000m/rev_dist_scaled / sum(/Geography/Distmatrices_100m/pot2000m/rev_dist_scaled)), Units/m2PandFootprint_ha)
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Omgeving_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "Result zonder de eigen dichtheid van het blok in het omgevingsmaximum, de dichtheid die een blok krijgt dat in het basisjaar geen werklocatie van deze klasse is.";
+				attribute<UInt8>                    InKlasse       (/Geography/AllocDomain) := uint8(Model/NoemerBasisjaar > 0[Units/ha])
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/InKlasse_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "Is het blok in het basisjaar van de CBS-klasse waarover het model de dichtheid van deze subsector meet?";
+				attribute<Float32>                  Factor         (/Geography/AllocDomain) := Model/DichtheidFactor
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Factor_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De dichtheidsfactor van het blok, met de opslagen voor OV, groot water en de kerngrootte.";
+				attribute<Units/m2PandFootprint_ha> Eigen          (/Geography/AllocDomain) := Model/per_domain
+				, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Eigen_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De voetafdruk per hectare van het blok zelf in het basisjaar, zoals het model de dichtheid van een blok meet.";
+
+				parameter<String> Klasse := /Classifications/Grondgebruik/CBSKlasse/Aggr/name[/Classifications/Actor/Jobs6/CBSKlasse_Aggr_rel[rlookup(name, /Classifications/Actor/Jobs6/name)]];
+
+				container Oud
+				: Descr = "Omgeving zoals een nieuwe werklocatie hem krijgt van de werklocaties die er in 2012 al waren: het omgevingsmaximum over de blokken die in BBG 2012 voor minstens GrensOud van de klasse waren, uitgesmeerd over 2 km. Uitgesplitst naar de termen van de dichtheidsfactor, zodat de omgevingsdichtheid bij andere factoren de som is van Basis maal de generieke factor en de andere termen maal hun opslag."
+				{
+					attribute<Float32>                  Aandeel2012 (/Geography/AllocDomain) := ='/Diagnose/Werken/IjkingDichtheid/PerKlasse/'+Klasse+'/Aandeel2012';
+					attribute<Units/m2PandFootprint_ha> per_domain  (/Geography/AllocDomain) := Aandeel2012 >= GrensOud ? Model/per_domain : (0f/0f)[Units/m2PandFootprint_ha];
+					attribute<Units/m2PandFootprint_ha> Buurt       (/Geography/AllocDomain) := mean(per_domain, /SourceData/RegioIndelingen/CBS/Gekozen/Buurt/per_AllocDomain)[/SourceData/RegioIndelingen/CBS/Gekozen/Buurt/per_AllocDomain];
+					attribute<Units/m2PandFootprint_ha> Wijk        (/Geography/AllocDomain) := mean(per_domain, /SourceData/RegioIndelingen/CBS/Gekozen/Wijk/per_AllocDomain)[/SourceData/RegioIndelingen/CBS/Gekozen/Wijk/per_AllocDomain];
+					attribute<Units/m2PandFootprint_ha> Gemeente    (/Geography/AllocDomain) := mean(per_domain, /SourceData/RegioIndelingen/CBS/Gekozen/Gemeente/per_AllocDomain)[/SourceData/RegioIndelingen/CBS/Gekozen/Gemeente/per_AllocDomain];
+					attribute<Units/m2PandFootprint_ha> NVM         (/Geography/AllocDomain) := mean(per_domain, /SourceData/RegioIndelingen/NVM/per_AllocDomain)[/SourceData/RegioIndelingen/NVM/per_AllocDomain];
+					attribute<Units/m2PandFootprint_ha> COROP       (/Geography/AllocDomain) := mean(per_domain, /SourceData/RegioIndelingen/CBS/Gekozen/COROP/per_AllocDomain)[/SourceData/RegioIndelingen/CBS/Gekozen/COROP/per_AllocDomain];
+					attribute<Units/m2PandFootprint_ha> Provincie   (/Geography/AllocDomain) := mean(per_domain, /SourceData/RegioIndelingen/CBS/Gekozen/Provincie/per_AllocDomain)[/SourceData/RegioIndelingen/CBS/Gekozen/Provincie/per_AllocDomain];
+					attribute<Units/m2PandFootprint_ha> Max         (/Geography/AllocDomain) := max_elem(Buurt, Wijk, Gemeente, NVM, COROP, Provincie);
+
+					unit<SPoint> Kern := /Geography/Distmatrices_100m/pot2000m;
+					attribute<Float32> Gewicht (Kern) := Kern/rev_dist_scaled / sum(Kern/rev_dist_scaled);
+
+					attribute<Units/m2PandFootprint_ha> Omgeving (/Geography/AllocDomain) := value(potential(Max * Model/DichtheidFactor, Gewicht), Units/m2PandFootprint_ha)
+					, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Oud_Omgeving_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "Met de huidige dichtheidsfactor; de controle dat de termen samen deze omgevingsdichtheid geven.";
+					attribute<Units/m2PandFootprint_ha> Basis    (/Geography/AllocDomain) := value(potential(Max, Gewicht), Units/m2PandFootprint_ha)
+					, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Oud_Basis_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De term van de generieke factor.";
+					attribute<Units/m2PandFootprint_ha> OV       (/Geography/AllocDomain) := value(potential(Max * /Diagnose/Werken/IjkingDichtheid/OV, Gewicht), Units/m2PandFootprint_ha)
+					, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Oud_OV_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De term van de opslag voor OV.";
+					attribute<Units/m2PandFootprint_ha> Water    (/Geography/AllocDomain) := value(potential(Max * /Diagnose/Werken/IjkingDichtheid/Water, Gewicht), Units/m2PandFootprint_ha)
+					, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Oud_Water_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De term van de opslag voor groot water.";
+					attribute<Units/m2PandFootprint_ha> K100     (/Geography/AllocDomain) := value(potential(Max * /Diagnose/Werken/IjkingDichtheid/K100, Gewicht), Units/m2PandFootprint_ha)
+					, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Oud_K100_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De term van de opslag voor een kern vanaf 100.000 inwoners.";
+					attribute<Units/m2PandFootprint_ha> K20      (/Geography/AllocDomain) := value(potential(Max * /Diagnose/Werken/IjkingDichtheid/K20, Gewicht), Units/m2PandFootprint_ha)
+					, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Oud_K20_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De term van de opslag voor een kern van 20.000 tot 100.000 inwoners.";
+					attribute<Units/m2PandFootprint_ha> K20min   (/Geography/AllocDomain) := value(potential(Max * /Diagnose/Werken/IjkingDichtheid/K20min, Gewicht), Units/m2PandFootprint_ha)
+					, StorageName = "='%LocalDataProjDir%/Ijking/werkdichtheid/Oud_K20min_'+name+'_100m.tif'", StorageType = "gdalwrite.grid", Descr = "De term van de opslag voor een kern onder 20.000 inwoners.";
+				}
+			}
+
+			parameter<String> Generate := 'Ready', ExplicitSuppliers = "=AsList('PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Totaal;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Nieuw;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Result;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Omgeving;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/InKlasse;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Factor;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Eigen', ';')+';'+AsList('PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Oud/Omgeving;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Oud/Basis;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Oud/OV;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Oud/Water;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Oud/K100;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Oud/K20;PerSubsector/'+/Classifications/Actor/Jobs6/name+'/Oud/K20min', ';')+';'+AsList('PerKlasse/'+WerkKlasse/Values+'/Aandeel2012;PerKlasse/'+WerkKlasse/Values+'/Aandeel2017', ';')+';K100;K20;K20min;OV;Water;Uitleg2012'", Descr = "Schrijft alle tifs van deze container.";
+		}
 	}
 }
