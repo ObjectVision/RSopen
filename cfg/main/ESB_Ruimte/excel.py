@@ -1,8 +1,8 @@
 """Zet de data achter de kernfiguren voor het ESB-artikel in een Excel. De tabbladen Bron_* bevatten de uitvoer van
 GeoDMS (ESB_Ruimte/*) zoals hij is, in m², euro en hectare. De tabellen bij de figuren rekenen daar met Excel-formules
 uit, zodat de berekening in de Excel te volgen is: de voetafdruk per baan, de ontleding van de groei, de waarde per
-baan en per m², de verdeling over IBIS en de UAI-klassen en de afstand van het bouwterrein tot de pijplijn. Bij elke
-tabel staat een Excel-grafiek als begin.
+baan en per m², de verdeling over IBIS en de UAI-klassen, de afstand van het bouwterrein tot de pijplijn en wat het
+bouwterrein van 2012 later werd. Bij elke tabel staat een Excel-grafiek als begin.
 
 Gebruik: python excel.py <map A en B> <map G> <map D> <uitvoer.xlsx>
 De mappen zijn die van WerkenPerBaan en WaardePerM2, van Bouwterrein en van IbisTerreinen, zoals bij dossier.py.
@@ -99,8 +99,10 @@ def staafgrafiek(ws, kolommen, kop_rij, laatste, tekst, eenheid, plek, kleuren, 
     ch = BarChart()
     ch.type = "bar" if horizontaal else "col"
     ch.title = tekst
-    if gestapeld:
-        ch.grouping, ch.overlap = "stacked", 100
+    if gestapeld:  # True: gestapeld; "procent": gestapeld tot 100%
+        ch.grouping, ch.overlap = ("percentStacked" if gestapeld == "procent" else "stacked"), 100
+        if gestapeld == "procent":
+            ch.y_axis.number_format = "0%"
     for k, kl in zip(kolommen, kleuren):
         ch.add_data(Reference(ws, min_col=k, min_row=kop_rij, max_row=laatste), titles_from_data=True)
         kleur(ch.series[-1], kl)
@@ -116,7 +118,7 @@ def staafgrafiek(ws, kolommen, kop_rij, laatste, tekst, eenheid, plek, kleuren, 
     ws.add_chart(ch, plek)
 
 
-def bronnen(wb, werk, waarde, verdeling, bbg, pijplijn):
+def bronnen(wb, werk, waarde, verdeling, bbg, pijplijn, overgang):
     df = werk.merge(waarde[["jaar", "sector", "btw_euro"]], on=["jaar", "sector"], how="left")
     jaar_sector = pd.DataFrame({"jaar": df.jaar, "sector": df.sector.map(SECTOREN), "banen": df.banen,
                                 "voetafdruk (m²)": df.voetafdruk_m2, "toegevoegde waarde (euro)": df.btw_euro})
@@ -138,7 +140,7 @@ def bronnen(wb, werk, waarde, verdeling, bbg, pijplijn):
          "Reistijd_OV K1 de plekken die het dichtst bij een OV-knooppunt liggen. Een pand of vestiging telt op de plek "
          "van zijn zwaartepunt of punt. ESB_Ruimte/IbisTerreinen.",
          {"indeling": "ibis_indeling", "klasse": "ibis_klasse", "sector": "ibis_sector", "banen": "ibis_banen",
-          "voetafdruk (m²)": "ibis_voetafdruk"})
+          "voetafdruk (m²)": "ibis_voetafdruk"}).column_dimensions["A"].width = 21.7
 
     b = bbg.set_index("jaar")
     p = pijplijn.set_index("jaar")
@@ -151,6 +153,15 @@ def bronnen(wb, werk, waarde, verdeling, bbg, pijplijn):
          "bouwvergunning verleend of bouw gestart op 1 januari, met een vergunning van hooguit vijf jaar oud; de "
          "afstand is die tot het zwaartepunt van zo'n pand. BBG-jaar X naast de BAG van 1 januari X; tussen BBG 2017 "
          "en NBBG 2020 zit een methodebreuk. ESB_Ruimte/Bouwterrein.", {})
+
+    ovg = pd.DataFrame({"jaar": overgang.jaar, "klasse": overgang.klasse, "oppervlakte (ha)": overgang.ha})
+    ha2012 = f"{ovg[ovg.jaar == ovg.jaar.min()]['oppervlakte (ha)'].sum():,.0f}".replace(",", ".")
+    bron(wb, "Bron_overgang", ovg, {"oppervlakte (ha)": "#,##0"},
+         f"Het bouwterrein van de BBG van 2012 ({ha2012} ha) en zijn grondgebruik in latere jaargangen, naar de "
+         "hoofdklassen van de BBG. Tot 2017 uit de klasse per vlak in het CBS-mutatiebestand BBG 1996–2017; voor 2020 en 2022 een "
+         "overlay van de vlakken van 2012 met het CBS-mutatiebestand NBBG 2022. Tussen BBG 2017 en NBBG 2020 zit een "
+         "methodebreuk. ESB_Ruimte/Bouwterrein_overgang.py.",
+         {"jaar": "ovg_jaar", "klasse": "ovg_klasse", "oppervlakte (ha)": "ovg_ha"}).column_dimensions["B"].width = 34
     return jaar_sector, bt
 
 
@@ -188,17 +199,15 @@ def blad_per_sector(wb, begin, eind):
         c = ws.cell(r, 2, v)
         c.fill = INVOER
         wb.defined_names[naam] = DefinedName(naam, attr_text=f"Per_sector!$B${r}")
-    noot(ws, 1, "Verander de jaren in de gele cellen; LISA loopt tot 2023, de toegevoegde waarde van 2012 tot 2023.",
-         kol=3)
     K = 4  # rij van de kop
     kolommen = [
         ("sector", None, None),
         ('="banen "&beginjaar', "#,##0", 'SUMIFS(banen,jaar,beginjaar,sector,$A{r})'),
         ('="banen "&eindjaar', "#,##0", 'SUMIFS(banen,jaar,eindjaar,sector,$A{r})'),
-        ('="voetafdruk "&beginjaar&" (km²)"', "#,##0.0", 'SUMIFS(voetafdruk,jaar,beginjaar,sector,$A{r})/10^6'),
-        ('="voetafdruk "&eindjaar&" (km²)"', "#,##0.0", 'SUMIFS(voetafdruk,jaar,eindjaar,sector,$A{r})/10^6'),
-        ('="m² per baan "&beginjaar', "#,##0.0", '$D{r}*10^6/$B{r}'),
-        ('="m² per baan "&eindjaar', "#,##0.0", '$E{r}*10^6/$C{r}'),
+        ('="voetafdruk "&beginjaar&" (km²)"', "#,##0.0", 'SUMIFS(voetafdruk,jaar,beginjaar,sector,$A{r})/1000000'),
+        ('="voetafdruk "&eindjaar&" (km²)"', "#,##0.0", 'SUMIFS(voetafdruk,jaar,eindjaar,sector,$A{r})/1000000'),
+        ('="m² per baan "&beginjaar', "#,##0.0", '$D{r}*1000000/$B{r}'),
+        ('="m² per baan "&eindjaar', "#,##0.0", '$E{r}*1000000/$C{r}'),
         ("groei voetafdruk (km²)", "#,##0.0", '$E{r}-$D{r}'),
         ("door meer banen (km²)", "#,##0.0", '$H{r}*LN($C{r}/$B{r})/LN($E{r}/$D{r})'),
         ("door m² per baan (km²)", "#,##0.0", '$H{r}-$I{r}'),
@@ -236,8 +245,6 @@ def blad_per_sector(wb, begin, eind):
             c = ws.cell(i, j, "=" + f.format(r=i))
             c.number_format = fmt
     laatste = K + len(rijen)
-    noot(ws, laatste + 1, "Zes sectoren samen: opgeteld, of totaal gedeeld door totaal. Formules uit Bron_jaar_sector "
-                          "en Bron_IBIS; de hoogste UAI is klasse K5 in Bron_IBIS.")
     breedtes(ws, 26, 12)
     plek = laatste + 4
     staafgrafiek(ws, [9, 10], K, laatste - 1, "Groei van de voetafdruk ontleed", "km²", f"A{plek}", [BLAUW, ORANJE])
@@ -267,11 +274,53 @@ def blad_bouwterrein(wb, n):
             c = ws.cell(r, j, "=" + f.format(r=r, b=b))
             c.number_format = fmt
     laatste = 2 + n
-    noot(ws, laatste + 1, "Tussen BBG 2017 en NBBG 2020 zit een methodebreuk. Formules uit Bron_bouwterrein; "
-                          "ESB_Ruimte/Bouwterrein.")
     breedtes(ws, 8, 15)
     staafgrafiek(ws, [2, 3, 4], 2, laatste, "Bouwterrein en de pijplijn van de BAG", "ha", f"A{laatste + 4}",
                  [BLAUW, "8FB8EB", "D0CFCB"], horizontaal=False, gestapeld=True)
+
+
+# Wat het bouwterrein van 2012 later werd: de groepen in de grafiek, met hun klassen uit Bron_overgang en hun kleur.
+# Verkeer, natuur, water en de kleine klassen vormen samen de rest, zodat de grafiek leesbaar blijft.
+OVERGANG = [("nog bouwterrein", ["Nog bouwterrein"], "8C8A84"),
+            ("wonen", ["Wonen"], ORANJE),
+            ("bedrijfsterrein", ["Bedrijfsterrein"], BLAUW),
+            ("voorzieningen, detailhandel en horeca", ["Voorzieningen, detailhandel en horeca"], KLEUR["Zak_dienstverlening"][1:]),
+            ("park, sport en recreatie", ["Park, sport en recreatie"], KLEUR["Detailhandel"][1:]),
+            ("agrarisch", ["Agrarisch"], KLEUR["Ov_consumentendiensten"][1:]),
+            ("verkeer, natuur, water en overig", None, "D0CFCB")]
+
+
+def blad_overgang(wb, jaren):
+    """Wat het BBG-bouwterrein van 2012 in de latere jaargangen is, in ha en als aandeel, met SUMIFS uit Bron_overgang."""
+    ws = wb.create_sheet("Bouwterrein_overgang")
+    titel(ws, 1, "Wat werd het bouwterrein van 2012? Grondgebruik in de latere BBG-jaargangen, in ha en daaronder als aandeel")
+    n = len(OVERGANG)
+    kop(ws, 2, ["jaar"] + [g for g, _, _ in OVERGANG] + ["bouwterrein 2012"], KOP_FORMULE)
+    ws.row_dimensions[2].height = 45
+    tot = get_column_letter(n + 2)
+    for i, jaar in enumerate(jaren, start=3):
+        ws.cell(i, 1, int(jaar))
+        for j, (_, klassen, _) in enumerate(OVERGANG, start=2):
+            if klassen is None:  # de rest: het totaal min de groepen ervoor
+                f = f"={tot}{i}-SUM(B{i}:{get_column_letter(j - 1)}{i})"
+            else:
+                f = "=" + "+".join(f'SUMIFS(ovg_ha,ovg_jaar,$A{i},ovg_klasse,"{k}")' for k in klassen)
+            ws.cell(i, j, f).number_format = "#,##0"
+        ws.cell(i, n + 2, f"=SUMIFS(ovg_ha,ovg_jaar,$A{i})").number_format = "#,##0"
+    laatste = 2 + len(jaren)
+    # Dezelfde groepen als aandeel van het bouwterrein van 2012.
+    k2 = laatste + 2
+    kop(ws, k2, ["jaar"] + [g for g, _, _ in OVERGANG], KOP_FORMULE)
+    ws.row_dimensions[k2].height = 45
+    for i in range(len(jaren)):
+        r, b = k2 + 1 + i, 3 + i
+        ws.cell(r, 1, f"=A{b}")
+        for j in range(2, n + 2):
+            letter = get_column_letter(j)
+            ws.cell(r, j, f"={letter}{b}/${tot}{b}").number_format = "0%"
+    breedtes(ws, 8, 15)
+    staafgrafiek(ws, list(range(2, n + 2)), 2, laatste, "Wat werd het bouwterrein van 2012", "deel van de oppervlakte",
+                 f"A{k2 + len(jaren) + 3}", [kl for _, _, kl in OVERGANG], horizontaal=False, gestapeld="procent")
 
 
 def blad_per_jaar(wb, n):
@@ -302,18 +351,21 @@ def main(map_ab, map_g, map_d, uit):
     map_ab, map_g, map_d = Path(map_ab), Path(map_g), Path(map_d)
     werk = lees(map_ab / "WerkenPerBaan_reeks.csv")
     waarde = lees(map_ab / "WaardePerM2_reeks.csv")
+    overgang = lees(map_g / "Bouwterrein_overgang_BBG.csv")  # van Bouwterrein_overgang.py
     wb = Workbook()
     eerste = wb.active
     jaar_sector, bt = bronnen(wb, werk, waarde, lees(map_d / "IbisTerreinen_verdeling.csv"),
                               lees(map_g / "Bouwterrein_overlay_BBG.csv"),
-                              lees(map_g / "Bouwterrein_pijplijn_totaal.csv"))
+                              lees(map_g / "Bouwterrein_pijplijn_totaal.csv"), overgang)
     wb.remove(eerste)
     blad_ruimte_per_baan(wb, jaar_sector)
     eind = int(werk[werk.m2_per_baan.notna()].jaar.max())
     blad_per_sector(wb, 2012, eind)
     blad_bouwterrein(wb, len(bt))
+    blad_overgang(wb, sorted(overgang.jaar.unique()))
     blad_per_jaar(wb, len(jaar_sector))
-    volgorde = ["Ruimte_per_baan", "Per_sector", "Bouwterrein", "Per_jaar"]  # de tabellen vooraan, de bronnen erachter
+    # de tabellen vooraan, de bronnen erachter
+    volgorde = ["Ruimte_per_baan", "Per_sector", "Bouwterrein", "Bouwterrein_overgang", "Per_jaar"]
     for naam in volgorde:
         wb.move_sheet(naam, offset=volgorde.index(naam) - wb.sheetnames.index(naam))
     wb.active = 0

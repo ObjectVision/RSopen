@@ -65,5 +65,12 @@ os.makedirs(UIT, exist_ok=True)
 t.round(0).to_csv(os.path.join(UIT, "bouwterrein_overgang_ha.csv"), sep=";", decimal=",")
 pct.round(1).to_csv(os.path.join(UIT, "bouwterrein_overgang_pct.csv"), sep=";", decimal=",")
 sinds.round(0).to_csv(os.path.join(UIT, "bouwterrein2012_sinds.csv"), sep=";", decimal=",")
+# Het cohort van 2012 in lange vorm voor excel.py: in 2012 is alles nog bouwterrein.
+lang = t.drop(index="Totaal")[["12->15", "12->17", "12->20 (NBBG)", "12->22 (NBBG)"]]
+lang.columns = [2015, 2017, 2020, 2022]
+lang.insert(0, 2012, 0.0)
+lang.loc["Nog bouwterrein", 2012] = t.loc["Totaal", "12->15"]
+lang = lang.rename_axis("klasse").reset_index().melt(id_vars="klasse", var_name="jaar", value_name="ha")
+lang[["jaar", "klasse", "ha"]].round(1).to_csv(os.path.join(UIT, "Bouwterrein_overgang_BBG.csv"), index=False)
 pd.set_option("display.width", 250)
 print(t.round(0)); print(pct.round(1)); print(sinds.round(0)); print(f"dekking overlay NBBG: {dek:.4f}")
