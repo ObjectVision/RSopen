@@ -227,7 +227,7 @@ Neem een zelftoets op zodra je een samengestelde toets met de hand nabouwt, bijv
 
 ## Trap 3: de ketentriggers (minuten)
 
-`CommitChecks` in `cfg/main.dms` dwingt hele deelketens af via ExplicitSuppliers: `MaakBaseData1`, `MaakBaseData2`, `MaakVariantData1`, `MaakVariantData2`, `MaakAllocatieFirstZichtjaar`, plus de drie claimrealisatie-checks. Bedoeld om voor een commit te zien of het model nog loopt, niet voor productie.
+`CommitChecks` in `cfg/main.dms` dwingt hele deelketens af via ExplicitSuppliers: `MakeBaseData1`, `MakeBaseData2`, `MakeVariantData1`, `MakeVariantData2`, `MakeAllocatieFirstZichtjaar`, plus de drie claimrealisatie-checks. Bedoeld om voor een commit te zien of het model nog loopt, niet voor productie.
 
 `Diagnose.dms` levert de inhoudelijke controlewaarden. Aansturing via de omgevingsvariabelen `DiagCasus` en `DiagJaar`. Zie de skill rs-toetsen voor wat je met die waarden doet.
 
@@ -377,7 +377,7 @@ Die geeft per run het configpad, het item en het logpad, en dat logpad wijst mee
 
 ### Twee processen op dezelfde LocalData
 
-Draai geen `CommitChecks/MaakBaseData*` of iets anders dat ontkoppelde bestanden genereert zolang een ander GeoDMS-proces op dezelfde `%LocalDataProjDir%` actief is, ook niet met een openstaande GeoDmsGuiQt. De toets is of er uberhaupt een ander proces op die LocalData draait, niet of dat proces het bestand in kwestie schrijft: een lezer is net zo hard geraakt als een schrijver. Draait er iets, herstel dan niet zelf maar meld het en wacht.
+Draai geen `CommitChecks/MakeBaseData*` of iets anders dat ontkoppelde bestanden genereert zolang een ander GeoDMS-proces op dezelfde `%LocalDataProjDir%` actief is, ook niet met een openstaande GeoDmsGuiQt. De toets is of er uberhaupt een ander proces op die LocalData draait, niet of dat proces het bestand in kwestie schrijft: een lezer is net zo hard geraakt als een schrijver. Draait er iets, herstel dan niet zelf maar meld het en wacht.
 
 De botsing heeft twee gezichten. Schrijvende kant: de generator verwijdert het doelbestand en schrijft het opnieuw; houdt een ander proces het open, dan faalt de delete met `Permission denied`, faalt GDAL op `cannot open dataset` en blijft een stub achter. Volgende runs vallen dan om op de IntegrityCheck van een heel ander item. Lezende kant: een run die het bestand inleest terwijl het net wordt weggeschreven valt om met `gdal Error: Using code not yet in table`. Dat lijkt een fout in een klassificatie, terwijl config en bestand achteraf heel zijn. Gemeten op 2026-08-27: een BBG-tif van 8,2 MB werd teruggeschreven naar 970 KB nullen en een allocatierun van 87 minuten viel erop om. Herstellen is het schrijvende item los opvragen, meestal een halve minuut.
 

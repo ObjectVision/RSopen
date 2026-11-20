@@ -675,7 +675,7 @@ arg2 of type DataItem<string>
 
 Deze variant faalt luid en niet stil, dus hij is minder venijnig dan de som hierboven. Wat hem duur maakt is WAAR hij faalt: een `ExplicitSuppliers` hangt aan een schrijfstap, en die draai je zelden als je aan de leeskant werkt. Op 2026-09-09 stond hij in `WriteVariantData/per_Variant_T/Impl/Veenbouwstenen` en viel `Generate_Run2` daardoor voor elke variant om, na drie seconden en zonder een enkele opbrengstentif. De wijziging die hem veroorzaakte was getoetst met twaalf leesitems over vier varianten, allemaal exit 0.
 
-Twee regels die dit afvangen. Bouw een variantvlag in zo'n property niet op uit `V/`+naam maar lees hem langs `[Variant_rel]`, in een gewone parameter naast de property; dan staat er geen pad meer in de tekstexpressie. En draai na een wijziging aan een variantvlag altijd `CommitChecks/MaakVariantData1` en `MaakVariantData2`: dat kost een paar minuten en raakt de schrijfkant, die geen enkel leesitem aanraakt.
+Twee regels die dit afvangen. Bouw een variantvlag in zo'n property niet op uit `V/`+naam maar lees hem langs `[Variant_rel]`, in een gewone parameter naast de property; dan staat er geen pad meer in de tekstexpressie. En draai na een wijziging aan een variantvlag altijd `CommitChecks/MakeVariantData1` en `MakeVariantData2`: dat kost een paar minuten en raakt de schrijfkant, die geen enkel leesitem aanraakt.
 
 ## De pijl volgt een alias-unit tot de onderliggende unit
 
