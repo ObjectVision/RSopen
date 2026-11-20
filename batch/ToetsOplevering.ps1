@@ -196,12 +196,12 @@ function TrapB([string]$variant, [string]$jaar) {
         # PASS of FAIL: er is geen norm voor. Ze staan hier omdat een dekkingsgraad die zonder deze
         # twee getallen wordt overgenomen een puntgetal suggereert dat het niet is.
         if ($v['aanbod_totaal'] -gt 0) {
-            $klemAandeel   = $v['aanbod_zonder_opgave'] / $v['aanbod']
+            $begrensdAandeel = $v['aanbod_zonder_opgave'] / $v['aanbod']
             $buitenAandeel = $v['aanbod_buiten_bbg'] / $v['aanbod_totaal']
             $dekking       = $v['gedekt'] / $v['opgave']
             $dekkingOngekl = [math]::Min($v['aanbod'], $v['opgave']) / $v['opgave']
-            Meld 'B' $casus "$j dekkingsgraad piekbui, bandbreedte" 'INFO' ("{0:P1} geklemd op blok, {1:P1} ongeklemd" -f $dekking, $dekkingOngekl) 'lees als bandbreedte'
-            Meld 'B' $casus "$j aanbod dat de dekking niet haalt" 'INFO' ("{0:P1} valt door de blokklemming, {1:P1} ligt buiten bebouwd gebied" -f $klemAandeel, $buitenAandeel) 'zie #720 en #741'
+            Meld 'B' $casus "$j dekkingsgraad piekbui, bandbreedte" 'INFO' ("{0:P1} begrensd op blok, {1:P1} onbegrensd" -f $dekking, $dekkingOngekl) 'lees als bandbreedte'
+            Meld 'B' $casus "$j aanbod dat de dekking niet haalt" 'INFO' ("{0:P1} valt door de blokbegrenzing, {1:P1} ligt buiten bebouwd gebied" -f $begrensdAandeel, $buitenAandeel) 'zie #720 en #741'
         }
     }
 
