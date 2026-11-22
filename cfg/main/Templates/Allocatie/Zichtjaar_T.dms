@@ -184,10 +184,10 @@ Template Zichtjaar_T
 				container          Claim                          :=
 					for_each_nedv(
 						Jobs6/name
-						, replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/'+/ModelParameters/SectorAllocRegio/WerkenEersteAllocRegio_name+'_Werken/'+Jobs6/name, '@Z@', Context/ThisZichtjaar_name)
+						, replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/AllocRegios/'+/ModelParameters/SectorAllocRegio/WerkenEersteAllocRegio_name+'/Werken/'+Jobs6/name, '@Z@', Context/ThisZichtjaar_name)
 						, WerkenRegio
 						, float32
-					);
+					), Descr = "De banenclaim zoals de indicatoren hem lezen, AllocRegios/<regio>/Werken en niet SectorAllocRegios: met ModelParameters/ClaimBasisjaar/VerdelingVerzorgend op Woningen hangt die van de allocatie van dit zichtjaar af, en deze kant leest de woningen dan uit het weggeschreven bestand (Impl/WoningenVoorWerken).";
 				container          Stand                          :=
 					for_each_nedv(
 						Jobs6/name
@@ -254,11 +254,12 @@ Template Zichtjaar_T
 	
 	container Impl := Impl0
 	{
-		parameter<String> Generate                       := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+';WriteStand/Legenda'+Extra_str+Extra_prev", Descr = "Generate-parameter die het wegschrijven van de standbestanden van dit zichtjaar aanstuurt. WriteStand/Legenda staat er onvoorwaardelijk bij en niet in Extra_str, want die is voor het
+		parameter<String> Generate                       := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+';WriteStand/Legenda'+Extra_str+Extra_werken+Extra_prev", Descr = "Generate-parameter die het wegschrijven van de standbestanden van dit zichtjaar aanstuurt. WriteStand/Legenda staat er onvoorwaardelijk bij en niet in Extra_str, want die is voor het
 					voorwaardelijke geval en de legenda hangt niet aan een sector; het pad wijst naar het kind zelf en niet naar de container, want ExplicitSuppliers op een container lift niet mee wanneer je
 					een los kind opvraagt. Zonder deze regel wordt het zijbestand nooit geschreven, en de leeskant weigert een stand zonder kloppend zijbestand (#721).";
 		
 		parameter<string> Extra_str                      := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';WriteStand/wonen/Footprint' : '';
+		parameter<string> Extra_werken                   := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector && lowercase(/ModelParameters/ClaimBasisjaar/VerdelingVerzorgend) == 'woningen' ? ';WoningenVoorWerken/Write/Woningen' : '', Descr = "Schrijft de woningen per gemeente mee waaruit de verzorgende banen van dit zichtjaar hun verdeling halen, zie WoningenVoorWerken.";
 		parameter<Bool>   IsEersteZichtjaar              := first(lowercase(Time/Zichtjaar/name)) == lowercase(name);
 		parameter<String> PrevZichtjaar_name             := rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevName);
 		parameter<string> Extra_prev                     := Ontkoppeld || IsEersteZichtjaar ? '' : ';'+PrevZichtjaar_name+'/Impl/Generate', Descr = "Trekt in de gekoppelde stand het Generate van het vorige zichtjaar mee, en daarmee diens WriteStand/Legenda. Zonder deze term krijgt alleen het zichtjaar dat werkelijk wordt opgevraagd een
@@ -569,6 +570,32 @@ Template Zichtjaar_T
 			container wonen
 			{
 				attribute<m2PandFootprint> Footprint (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, WriteStand/Wonen/Footprint);
+			}
+		}
+
+		container WoningenVoorWerken
+		: Descr = "De woningen per gemeente nadat wonen in de eerste sequentie van dit zichtjaar is gealloceerd en voordat werken begint; daaruit halen de verzorgende banen hun verdeling
+					(ModelParameters/ClaimBasisjaar/VerdelingVerzorgend). De eerste sequentie en niet de laatste, want in de latere sequenties hangt wonen al van de allocatie van werken af. De allocatie
+					leest Calc. Wie de claim daarbuiten leest, zoals de indicatoren en de diagnose, leest Bron, en dat is in de ontkoppelde stand het bestand dat Generate naast de standkaarten schrijft,
+					zodat de woonallocatie daar niet opnieuw wordt gerekend."
+		{
+			unit<UInt32>      Gemeente           := /PrivData/TrendBasisjaar/Gemeente;
+			parameter<String> FileName           := replace(replace(AllocatieFileName, '@STANDPATH@', 'WoningenVoorWerken'), '.tif', '.csv');
+			parameter<String> State              := 'Sequences/Seq_0/SectorAllocRegios/'+/ModelParameters/SectorAllocRegio/WerkenEersteAllocRegio_name+'_Werken/StateVoorAllocatie/Wonen/';
+			attribute<Woning> Calc    (Gemeente) := ='sum(add('+AsList(State+WP2xVSSH/name, ',')+'), Gemeente/Per_CompactedAdminDomain)';
+			attribute<Woning> Bron    (Gemeente) := = Ontkoppeld ? 'Read/Woningen' : 'Calc';
+
+			container Write
+			: StorageName = "=FileName", StorageType = "gdalwrite.vect"
+			{
+				attribute<Woning> Woningen (Gemeente) := Calc, ExplicitSuppliers = "gem_nr";
+				attribute<UInt32> gem_nr   (Gemeente) := Gemeente/gem_nr;
+			}
+			container Read
+			: StorageName = "=FileName", StorageType = "gdal.vect", StorageReadOnly = "TRUE"
+			{
+				attribute<Woning> Woningen (Gemeente);
+				attribute<UInt32> gem_nr   (Gemeente);
 			}
 		}
 

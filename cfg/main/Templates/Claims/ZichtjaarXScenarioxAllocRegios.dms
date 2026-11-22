@@ -27,8 +27,9 @@ Template Zichtjaar_T
 	unit<UInt8>       AllocRegio        := /Classifications/Modellering/AllocRegiosK;
 	unit<UInt8>       SectorAllocRegio  := CaseClassifications/Actor/SectorAllocRegio;
 	
-	container         SectorAllocRegios := for_each_ne(SectorAllocRegio/name, 'AllocRegios/'+SectorAllocRegio/AllocRegio_name+'/'+(lowercase(SectorAllocRegio/Sector_name) == 'wonen' ? 'Wonen_Bouwbaar' : SectorAllocRegio/Sector_name))
-	, Descr = "Wat elke combinatie van sector en allocatieregio alloceert. Voor wonen is dat niet de vraag (AllocRegios/<regio>/Wonen) maar het deel ervan dat tot het zichtjaar gebouwd kan worden (Wonen_Bouwbaar, #448); de claimrealisatie meet tegen de vraag.";
+	container         SectorAllocRegios := for_each_ne(SectorAllocRegio/name, 'AllocRegios/'+SectorAllocRegio/AllocRegio_name+'/'+(lowercase(SectorAllocRegio/Sector_name) == 'wonen' ? 'Wonen_Bouwbaar' : lowercase(SectorAllocRegio/Sector_name) == 'werken' ? 'Werken_Allocatie' : SectorAllocRegio/Sector_name))
+	, Descr = "Wat elke combinatie van sector en allocatieregio alloceert. Voor wonen is dat niet de vraag (AllocRegios/<regio>/Wonen) maar het deel ervan dat tot het zichtjaar gebouwd kan worden (Wonen_Bouwbaar, #448); de claimrealisatie meet tegen de vraag. Voor werken is
+				het Werken_Allocatie: dezelfde claim als Werken, maar met de woningen die de allocatie zelf rekent en niet uit het weggeschreven bestand (VerzorgendUitWoningen_T).";
 
 	container         AllocRegios       :=
 		for_each_ne(
@@ -109,6 +110,53 @@ Template Zichtjaar_T
 
 		attribute<Float32>   MaxPerCel            (AdminDomain) := ='max_elem(const(0f, AdminDomain)'+AsList(', PerIndeling/'+Indeling/name+'/PerCel', '')+')', Descr = "Per cel de grootste omzetting over de indelingen; de som per regio is wat de restclaim hooguit verrekent (Wonen_Bouwbaar/MeegeteldMax).";
 	}
+
+	Template VerzorgendUitWoningen_T
+	: Descr = "De banenclaim per gemeente en subsector waarmee de verzorgende subsectoren hun verdeling krijgen (ModelParameters/ClaimBasisjaar/VerdelingVerzorgend, #911): het landelijke totaal van de
+				claim maal het aandeel van de gemeente, waarbij het aandeel de waargenomen trend van het basisjaar is maal de groei van de woningen van de gemeente sinds het basisjaar. Banen volgen zo een
+				op een de woningen die het model bouwt. Een gemeente buiten het studiegebied heeft geen cellen en krijgt de
+				groei van de woonclaim van haar regio in de fijnste indeling van wonen, zodat het landelijke totaal zijn betekenis houdt."
+	{
+		parameter<String>     Versie;
+		// end case parameters
+
+		unit<UInt32>          Gemeente                         := /PrivData/TrendBasisjaar/Gemeente;
+		parameter<String>     R                                := 'AllocRegios/'+/ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_name+'/';
+		unit<UInt32>          WonenRegio                       := =R+'RegioUnit';
+
+		attribute<Woning>     Woningen_Basisjaar    (Gemeente) := sum(ThisVariant/StateBasisjaar/wonen/Totaal, Gemeente/Per_CompactedAdminDomain), Descr = "De woningen in het basisjaar, op de cellen van het studiegebied.";
+		attribute<Woning>     Woningen_Zichtjaar    (Gemeente) := ='/Allocatie/'+Casus_name+'/Zichtjaren/'+Zichtjaar_name+'/Impl/WoningenVoorWerken/'+Versie, Descr = "De woningen na wonen in de eerste sequentie van dit zichtjaar, zie Allocatie/<casus>/Zichtjaren/<zichtjaar>/Impl/WoningenVoorWerken.";
+		attribute<Bool>       InStudiegebied        (Gemeente) := Woningen_Basisjaar > 0[Woning];
+		attribute<WonenRegio> WonenRegio_rel        (Gemeente) := point_in_polygon(Gemeente/Zwaartepunt, WonenRegio/geometry);
+		attribute<Float32>    Groei_Woonclaim     (WonenRegio) := ='MakeDefined(value('+R+'Wonen/Totaal, Float32) / value('+R+'Read_Wonen_Basisjaar_Regio_CSV/Totaal, Float32), 1f)', Descr = "De groei van de woonclaim van TIGRIS sinds het basisjaar.";
+		attribute<Float32>    Groei                 (Gemeente) := InStudiegebied ? value(Woningen_Zichtjaar, Float32) / value(Woningen_Basisjaar, Float32) : MakeDefined(Groei_Woonclaim[WonenRegio_rel], 1f), Descr = "De groei van de woningen sinds het basisjaar: in het studiegebied die van het model, daarbuiten die van de woonclaim van de regio.";
+
+		container Basis :=
+			for_each_nedv(
+				Jobs6/name
+				, 'MakeDefined(/PrivData/TrendBasisjaar/Waarde/'+Jobs6/name+'[Gemeente/Trend_rel], 0[Job])'
+				, Gemeente
+				, Job
+			), Descr = "De waargenomen trend van het basisjaar per gemeente, PrivData/TrendBasisjaar.";
+
+		container Gewicht :=
+			for_each_nedv(
+				Jobs6/name
+				, 'value(Basis/'+Jobs6/name+', Float32) * Groei'
+				, Gemeente
+				, Float32
+			);
+
+		container Claim :=
+			for_each_nedv(
+				Jobs6/name
+				, 'value(value(sum(AllocRegios/NL/Werken_TIGRIS/'+Jobs6/name+'), Float32) * Gewicht/'+Jobs6/name+' / sum(Gewicht/'+Jobs6/name+'), Job)'
+				, Gemeente
+				, Job
+			), Descr = "Het landelijke totaal van de claim, AllocRegios/NL/Werken_TIGRIS, verdeeld naar het gewicht van de gemeente; per subsector telt dit precies op tot dat totaal.";
+	}
+	container VerzorgendUitWoningen            := VerzorgendUitWoningen_T('Bron'), Descr = "De claim per gemeente voor wie hem buiten de allocatie leest; in de ontkoppelde stand met de woningen uit het weggeschreven bestand.";
+	container VerzorgendUitWoningen_Allocatie  := VerzorgendUitWoningen_T('Calc'), Descr = "De claim per gemeente die de allocatie zelf leest, met de woningen die zij in dit zichtjaar rekent.";
 
 	Template AllocRegio_T
 	{
@@ -193,12 +241,41 @@ Template Zichtjaar_T
 		container             Wonen_Bouwbaar                  := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector && IsTigrisRegio ? 'Wonen_Bouwbaar_T()' : '/Templates/Leeg'
 		, Descr = "Het deel van de woonclaim dat tot dit zichtjaar gebouwd kan worden: de vraag in Wonen min de groei die op de uitbreiding van het net wacht (#448), met eengezinsgroei die naar meergezins gaat waar de grond niet genoeg is (#879, EengezinsOmzetting). Een rem op het aanbod en geen andere vraag: de allocatie leest dit via SectorAllocRegios, de claimrealisatie meet tegen Wonen. Wat in een zichtjaar wacht, zit in het volgende weer in de vraag. Leeg waar Wonen leeg is (pbl-nl/model-RSopen#53).";
 
-		container             Werken                          := = lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
+		container             Werken_TIGRIS                   := = lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
 		                                                         ? 'Read_werken_CSV'
 		                                                         : lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TrendLISARegio')
 		                                                             ? 'Werken_Geankerd_Regio'
 		                                                             : 'Werken_Geankerd'
-		, Descr = "De banenclaim per regio. Welke van de twee geldt staat in ModelParameters/ClaimBasisjaar/Anker; op de terugvalstand is dit letterlijk Read_werken_CSV en verandert er niets ten opzichte van voor #667.";
+		, Descr = "De banenclaim per regio met de verdeling van TIGRIS. Welk anker geldt staat in ModelParameters/ClaimBasisjaar/Anker; op de terugvalstand is dit letterlijk Read_werken_CSV en verandert er niets ten opzichte van voor #667.";
+
+		parameter<Bool>       VerzorgendUitWoningenActief     := lowercase(/ModelParameters/ClaimBasisjaar/VerdelingVerzorgend) == 'woningen' && lowercase(AllocRegio_name) != 'nl', Descr = "Krijgen de verzorgende subsectoren in deze indeling hun verdeling uit de woningen? Nooit op NL, want daar is de claim het landelijke totaal zelf.";
+		attribute<RegioUnit>  Gemeente_rel (/PrivData/TrendBasisjaar/Gemeente) := MakeDefined(point_in_polygon(/PrivData/TrendBasisjaar/Gemeente/Zwaartepunt, RegioUnit/geometry), point_in_polygon(/PrivData/TrendBasisjaar/Gemeente/Zwaartepunt, RegioUnit/geometry_buffered)), Descr = "Elke gemeente naar de regio waar haar zwaartepunt in valt, met de buffer van RegioUnit als terugval, zoals PrivData/TrendBasisjaar/PerRegio_T.";
+
+		container             Werken                          := = VerzorgendUitWoningenActief ? 'Werken_Woningen' : 'Werken_TIGRIS'
+		, Descr = "De banenclaim per regio: Werken_TIGRIS, of met ModelParameters/ClaimBasisjaar/VerdelingVerzorgend op Woningen Werken_Woningen. Dit is de claim die de indicatoren en de diagnose lezen; de allocatie leest Werken_Allocatie.";
+		container             Werken_Allocatie                := = VerzorgendUitWoningenActief ? 'Werken_Woningen_Allocatie' : 'Werken_TIGRIS';
+
+		container Werken_Woningen :=
+			for_each_nedv(
+				Jobs6/name
+				, Jobs6/IsVerzorgend ? 'sum(VerzorgendUitWoningen/Claim/'+Jobs6/name+', Gemeente_rel)' : 'Werken_TIGRIS/'+Jobs6/name
+				, RegioUnit
+				, job
+			), Descr = "De verzorgende subsectoren opgeteld uit de claim per gemeente (VerzorgendUitWoningen), de andere uit Werken_TIGRIS."
+		{
+			attribute<job> Totaal (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
+		}
+
+		container Werken_Woningen_Allocatie :=
+			for_each_nedv(
+				Jobs6/name
+				, Jobs6/IsVerzorgend ? 'sum(VerzorgendUitWoningen_Allocatie/Claim/'+Jobs6/name+', Gemeente_rel)' : 'Werken_TIGRIS/'+Jobs6/name
+				, RegioUnit
+				, job
+			), Descr = "Als Werken_Woningen, met de woningen die de allocatie zelf rekent."
+		{
+			attribute<job> Totaal (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
+		}
 		
 		Template Verblijfsrecreatie_T
 		{
@@ -513,6 +590,17 @@ Template Zichtjaar_T
 			), StorageName = "=File_csv_name+'/Werken.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE"
 		{
 			attribute<job> Totaal (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
+		}
+
+		container             Read_Wonen_Basisjaar_Regio_CSV  :=
+		for_each_ndv(
+				WP2/name
+				, RegioUnit
+				, Woning
+			), StorageName = "=File_csv_basisjaar_regio+'/Wonen.csv'", StorageType = "gdal.vect", StorageReadOnly = "TRUE"
+		, Descr = "De woonclaim van TIGRIS in het claimbasisjaar, voor de groei van de woonclaim buiten het studiegebied in VerzorgendUitWoningen_T."
+		{
+			attribute<Woning> Totaal (RegioUnit) := ='add('+asList(WP2/name,',')+')';
 		}
 
 		// #667: de claim kan op de waargenomen trend van het basisjaar worden geankerd in plaats van op het
