@@ -199,6 +199,12 @@ container Write
 
 Kijk bij elke nieuwe `StorageName` of het item een blok met subitems opent. Grep een log op `Domain should be 2-dimensional`, en tel bij een geschreven tabel de kolommen tegen de configuratie.
 
+## Een kolom van een geschreven tabel die een andere kolom leest
+
+Een tabel met `StorageType = "gdalwrite.vect"` schrijft al zijn attributen in een keer. Leest een van die attributen een ander attribuut van dezelfde tabel, zoals `verhouding := claim_woningen / claim_tigris`, dan kan het schrijven omvallen op `check failure: self->HasInterest()` en `Unable to complete calculating data when trying to store it`, met de naam van het gelezen attribuut in de foutregel. De csv staat dan vaak toch helemaal op schijf, dus een blik op het bestand zegt niet dat het goed ging. Gezien op 22 november 2026 op GeoDms20.28.0.m in `Diagnose/Claims/Verzorgend` (#911): een tussencontainer voor de gelezen kolommen hielp niet, kolommen die alleen buiten de tabel lezen wel. Reken een afgeleide kolom dus buiten de tabel uit en neem hem op met `union_data`, net als de andere kolommen.
+
+Bij hetzelfde werk gaf de valkuil van een kolom met de naam van wat hij leest (zie Naamafscherming) twee keer Invalid Recursion: een kolom `regio` naast een unit `Regio`, en een kolom `verhouding` naast een container `Verhouding`.
+
 ## Een handmatige lijst die korter is dan het domein wordt stil aangevuld
 
 Een unit met `nrofrows` en attributen als uitgeschreven lijst, zoals de tabel `Checks` in `Diagnose.dms`, moet met de hand in de pas blijven, en dat faalt op twee manieren waarvan er maar een luid is. Een lijst die LANGER is dan het domein valt om met exit 1 en `DoArrayAssignment: Index N out of range`. Een lijst die KORTER is geeft exit 0: GeoDMS vult de rest stil aan met nulls, de stap meldt succes en de uitdraai ziet er normaal uit.
