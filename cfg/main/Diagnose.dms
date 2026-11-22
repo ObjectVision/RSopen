@@ -1837,5 +1837,316 @@ container Diagnose
 				}
 			}
 		}
+
+		container VergelijkingWerkgelegenheid
+		: Descr = "Op aanvraag. De werkgelegenheidsvergelijking van TIGRIS (vergelijking 6.1 in de documentatie van TIGRIS XL 7.1.1) per gemeente zelf geschat op de elf sectoren van TIGRIS en getoetst
+					buiten de schattingsperiode (#912). Per sector een gewogen regressie van de jaarlijkse verandering van het banenaandeel op die van het woningaandeel van de gemeente en van haar aandeel
+					in de naar afstand gewogen woningen van de andere gemeenten, gepoold en met een vast effect per gemeente in plaats van de correctiefactor van TIGRIS. Zes regels voorspellen daarna de
+					banenaandelen van het eindjaar vanuit het toetsjaar. De BAG is op het studiegebied geknipt, dus dit vraagt StudyArea Nederland."
+		{
+			parameter<UInt32>  Trendjaar     := 2004, Descr = "Het eerste jaar van de lange trend van regel R6, het eerste jaar van de LISA-reeks waarop TIGRIS geschat is.";
+			parameter<UInt32>  Beginjaar     := 2012, Descr = "Het eerste jaar van de schatting, het eerste jaar van de BAG-reeks (SourceData/Vastgoed/BAG/BAG_jaren).";
+			parameter<UInt32>  Toetsjaar     := 2018, Descr = "De schatting gebruikt de jaarlijkse veranderingen van het beginjaar tot dit jaar; de toets voorspelt de aandelen van het eindjaar vanuit dit jaar.";
+			parameter<UInt32>  Eindjaar      := /ModelParameters/LISA_FileYear, Descr = "Het laatste jaar, de laatste LISA-jaargang.";
+			parameter<Float64> Drempel       := 50d, Descr = "Een gemeente telt voor een sector mee als ze in elk jaar meer banen van die sector heeft dan dit; bij minder banen is de verandering van het aandeel vooral toeval.";
+			parameter<Float64> Vervalafstand := 20000d, Descr = "De afstand in meter tussen de zwaartepunten waarop het gewicht van de woningen van een andere gemeente tot 1/e is gedaald. Een aanname: TIGRIS weegt met de reisweerstand uit het LMS (vergelijking 6.6).";
+
+			unit<UInt32> Gemeente := /SourceData/RegioIndelingen/CBS/Gekozen/Gemeente;
+
+			attribute</Geography/rdc_meter> Zwaartepunt (Gemeente) := centroid_or_mid(Gemeente/geometry);
+			attribute<Float64> Zwaartepunt_X (Gemeente) := PointCol(Zwaartepunt);
+			attribute<Float64> Zwaartepunt_Y (Gemeente) := PointRow(Zwaartepunt);
+			attribute</SourceData/RegioIndelingen/Stadregio> Stadregio_rel (Gemeente) := /SourceData/RegioIndelingen/Pendelregio_Gemeente/Stadregio_rel[rlookup(Gemeente/statcode, /SourceData/RegioIndelingen/Pendelregio_Gemeente/GM_code)], IntegrityCheck = "IsDefined(this)", Descr = "De stadregio van de gemeente, via de toewijzingstabel.";
+
+			unit<UInt32> Paar := combine(Gemeente, Gemeente)
+			, Descr = "Alle paren van gemeenten, voor de naar afstand gewogen woningen in de omgeving van een gemeente."
+			{
+				attribute<Float64> DX      := Zwaartepunt_X[first_rel] - Zwaartepunt_X[second_rel];
+				attribute<Float64> DY      := Zwaartepunt_Y[first_rel] - Zwaartepunt_Y[second_rel];
+				attribute<Float64> Afstand := sqrt(DX * DX + DY * DY);
+				attribute<Float64> Gewicht := first_rel == second_rel ? 0d : exp(0d - Afstand / Vervalafstand), Descr = "Het gewicht van de woningen van de tweede gemeente in de omgeving van de eerste; de eigen gemeente telt niet mee, want die zit in het woningaandeel.";
+			}
+
+			unit<UInt32> LISAJaar := range(UInt32, Trendjaar, Eindjaar + 1)
+			, Descr = "De jaren waarvan de banen gelezen worden."
+			{
+				attribute<UInt32> Jaartal := id(.);
+				attribute<String> name    := 'Y'+string(Jaartal);
+			}
+			unit<UInt32> BAGJaar := range(UInt32, Beginjaar, Eindjaar + 1)
+			, Descr = "De jaren waarvan ook de woningen gelezen worden."
+			{
+				attribute<UInt32> Jaartal := id(.);
+				attribute<String> name    := 'Y'+string(Jaartal);
+			}
+			unit<UInt32> Schattingsjaar := range(UInt32, Beginjaar + 1, Toetsjaar + 1)
+			, Descr = "De jaren t van de jaarlijkse veranderingen van t - 1 naar t waarop geschat wordt."
+			{
+				attribute<UInt32> Jaartal    := id(.);
+				attribute<String> name       := 'Y'+string(Jaartal);
+				attribute<String> Vorig_name := 'Y'+string(Jaartal - 1);
+			}
+			unit<UInt8> Regel : nrofrows = 6
+			, Descr = "De regels die de banenaandelen van het eindjaar voorspellen vanuit die van het toetsjaar. R1 houdt de aandelen vast, R2 laat ze de woningen volgen met elasticiteit 1, R3 neemt de
+						gepoolde schatting, R4 de schatting met vast effect en dat effect voor elk jaar tot het eindjaar, R5 de coëfficiënten van TIGRIS met een eigen vast effect, R6 trekt de
+						gemiddelde jaarlijkse verandering van het banenaandeel van het trendjaar tot het toetsjaar door, zonder de woningen."
+			{
+				attribute<String> name : ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
+			}
+			unit<UInt8> CoefficientTIGRIS : nrofrows = 11
+			, Descr = "De coëfficiënten van de bevolkingsgroei (Dbevolking) en van de groei van de potentiële bestedingen (Dpotbbv) in de werkgelegenheidsvergelijking van TIGRIS. Regel R5 legt beide op het
+						woningaandeel van de gemeente. Landbouw zit niet in de vergelijking van TIGRIS."
+			, Source = "Technische documentatie TIGRIS XL 7.1.1, tabel 6-5."
+			{
+				attribute<String>  Sector_name : ['industrie', 'Nijverheid', 'transport', 'Ov_consumentendiensten', 'dir_consumentendiensten', 'Zak_dienstverlening', 'Detailhandel', 'Logistiek', 'zorg', 'overheid_onderwijs', 'Landbouw'];
+				attribute<Float64> Dbevolking  : [0.45412, 0.58847, 0.0, 0.0, 0.43114, 0.0, 0.546, 0.33376, 0.52592, 0.41766, 0.0];
+				attribute<Float64> Dpotbbv     : [0.0, 0.24445, 0.0, 0.93374, 0.0, 0.0, 0.0, 0.0, 0.0, 0.27278, 0.0];
+			}
+
+			container BanenPerJaar := for_each_ne(LISAJaar/name, 'BanenJaar_T('+quote(string(LISAJaar/Jaartal))+')');
+			container PerJaar      := for_each_ne(BAGJaar/name, 'PerJaar_T('+quote(string(BAGJaar/Jaartal))+')');
+			container PerSector := for_each_ne(/Classifications/Actor/TXLJobs11/name, 'Sector_T('+quote(/Classifications/Actor/TXLJobs11/name)+')');
+
+			unit<UInt8> Tabel := /Classifications/Actor/TXLJobs11
+			, StorageName = "%LocalDataProjDir%/Diagnose/VergelijkingWerkgelegenheid_toets.csv"
+			, StorageType = "gdalwrite.vect"
+			, Descr = "Een rij per sector. n is het aantal gemeenten dat meetelt, aandeel_telt hun deel van de banen in het eindjaar. b1 is de coëfficiënt van het woningaandeel, b2 die van de gewogen
+						woningen van de andere gemeenten, se de geclusterde standaardfout en r2 de verklaarde variantie, gepoold en met vast effect. fout_gem en fout_stad zijn per regel het deel van de
+						banen in het eindjaar dat in de verkeerde gemeente of stadregio staat."
+			{
+				attribute<String>  sector       := /Classifications/Actor/TXLJobs11/name;
+				attribute<UInt32>  n            := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/G', ',')+')';
+				attribute<Float64> banen_eind   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/BanenEind', ',')+')';
+				attribute<Float64> aandeel_telt := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/AandeelTelt', ',')+')';
+				attribute<Float64> b1_gepoold   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Gepoold/B1', ',')+')';
+				attribute<Float64> se1_gepoold  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Gepoold/Se1', ',')+')';
+				attribute<Float64> b2_gepoold   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Gepoold/B2', ',')+')';
+				attribute<Float64> se2_gepoold  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Gepoold/Se2', ',')+')';
+				attribute<Float64> r2_gepoold   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Gepoold/VerklaardeVariantie', ',')+')';
+				attribute<Float64> b1_vast      := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Vast/B1', ',')+')';
+				attribute<Float64> se1_vast     := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Vast/Se1', ',')+')';
+				attribute<Float64> b2_vast      := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Vast/B2', ',')+')';
+				attribute<Float64> se2_vast     := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Vast/Se2', ',')+')';
+				attribute<Float64> r2_vast      := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Vast/VerklaardeVariantie', ',')+')';
+				attribute<Float64> beta_tigris  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Beta_TIGRIS', ',')+')';
+				attribute<Float64> fout_gem_1   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R1/Fout_Gemeente', ',')+')';
+				attribute<Float64> fout_gem_2   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R2/Fout_Gemeente', ',')+')';
+				attribute<Float64> fout_gem_3   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R3/Fout_Gemeente', ',')+')';
+				attribute<Float64> fout_gem_4   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R4/Fout_Gemeente', ',')+')';
+				attribute<Float64> fout_gem_5   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R5/Fout_Gemeente', ',')+')';
+				attribute<Float64> fout_gem_6   := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R6/Fout_Gemeente', ',')+')';
+				attribute<Float64> fout_stad_1  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R1/Fout_Stadregio', ',')+')';
+				attribute<Float64> fout_stad_2  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R2/Fout_Stadregio', ',')+')';
+				attribute<Float64> fout_stad_3  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R3/Fout_Stadregio', ',')+')';
+				attribute<Float64> fout_stad_4  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R4/Fout_Stadregio', ',')+')';
+				attribute<Float64> fout_stad_5  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R5/Fout_Stadregio', ',')+')';
+				attribute<Float64> fout_stad_6  := ='union_data(., '+AsList('PerSector/'+/Classifications/Actor/TXLJobs11/name+'/Toets/R6/Fout_Stadregio', ',')+')';
+			}
+
+			unit<UInt32> JaarSector := combine(LISAJaar, /Classifications/Actor/TXLJobs11)
+			{
+				attribute<String> Jaar_name   := LISAJaar/name[first_rel];
+				attribute<UInt32> Jaartal     := LISAJaar/Jaartal[first_rel];
+				attribute<String> Sector_name := /Classifications/Actor/TXLJobs11/name[second_rel];
+			}
+			unit<UInt32> PaneelBanen := ='union_unit('+AsList(const('Gemeente', JaarSector), ',')+')'
+			, StorageName = "%LocalDataProjDir%/Diagnose/VergelijkingWerkgelegenheid_banen.csv"
+			, StorageType = "gdalwrite.vect"
+			, Descr = "De banen per gemeente, voor een controle buiten GeoDMS: een rij per jaar, sector en gemeente."
+			{
+				attribute<String>  gm_code := ='union_data(., '+AsList(const('Gemeente/statcode', JaarSector), ',')+')';
+				attribute<UInt32>  jaar    := ='union_data(., '+AsList('const('+string(JaarSector/Jaartal)+', Gemeente, UInt32)', ',')+')';
+				attribute<String>  sector  := ='union_data(., '+AsList('const('+quote(JaarSector/Sector_name)+', Gemeente)', ',')+')';
+				attribute<Float64> banen   := ='union_data(., '+AsList('BanenPerJaar/'+JaarSector/Jaar_name+'/Banen/'+JaarSector/Sector_name, ',')+')';
+			}
+			unit<UInt32> PaneelWoningen := ='union_unit('+AsList(const('Gemeente', BAGJaar), ',')+')'
+			, StorageName = "%LocalDataProjDir%/Diagnose/VergelijkingWerkgelegenheid_woningen.csv"
+			, StorageType = "gdalwrite.vect"
+			, Descr = "De woningen per gemeente, voor een controle buiten GeoDMS: een rij per jaar en gemeente met de woningen, de gewogen woningen van de andere gemeenten en het zwaartepunt."
+			{
+				attribute<String>  gm_code  := ='union_data(., '+AsList(const('Gemeente/statcode', BAGJaar), ',')+')';
+				attribute<UInt32>  jaar     := ='union_data(., '+AsList('const('+string(BAGJaar/Jaartal)+', Gemeente, UInt32)', ',')+')';
+				attribute<Float64> woningen := ='union_data(., '+AsList('PerJaar/'+BAGJaar/name+'/Woningen', ',')+')';
+				attribute<Float64> omgeving := ='union_data(., '+AsList('PerJaar/'+BAGJaar/name+'/Omgeving', ',')+')';
+				attribute<Float64> x        := ='union_data(., '+AsList(const('Zwaartepunt_X', BAGJaar), ',')+')';
+				attribute<Float64> y        := ='union_data(., '+AsList(const('Zwaartepunt_Y', BAGJaar), ',')+')';
+			}
+
+			parameter<String> Generate := 'Ready', ExplicitSuppliers = "Tabel/fout_stad_6;PaneelBanen/banen;PaneelWoningen/omgeving", Descr = "Schrijft de toets per sector en de twee panelen.";
+
+			Template BanenJaar_T
+			: Descr = "De banen per sector en per gemeente in een jaar."
+			{
+				parameter<String> JaarStr;
+				//
+
+				unit<UInt32> LISA
+				: StorageName     = "='%PrivDataDir%/LISA/LISA'+string(/ModelParameters/LISA_FileYear)+'_'+JaarStr+'_bas.csv'"
+				, StorageType     = "gdal.vect"
+				, StorageReadOnly = "True"
+				, Descr           = "De LISA-vestigingen van dit jaar uit de jaargang LISA_FileYear."
+				{
+					attribute<Float64>   x_alt;
+					attribute<Float64>   y_alt;
+					attribute<Float64>   banen;
+					attribute<String>    sbi08;
+					attribute</Geography/rdc_meter> geometry := point_xy(x_alt, y_alt, /Geography/rdc_meter);
+					attribute<Gemeente>  Gemeente_rel := point_in_polygon(geometry, Gemeente/geometry);
+					attribute</Classifications/Actor/TXLJobs11> TXLJobs11_rel := MakeDefined(
+					                                                                  rjoin(lowercase(sbi08), lowercase(/Classifications/Actor/SBI08/SBI2008), /Classifications/Actor/SBI08/TXLJobs11_rel)
+					                                                                , rjoin(lowercase(left(sbi08, 4)), lowercase(/Classifications/Actor/SBI08/SBI2008), /Classifications/Actor/SBI08/TXLJobs11_rel)
+					                                                                , rjoin(lowercase(left(sbi08, 3)), lowercase(/Classifications/Actor/SBI08/SBI2008), /Classifications/Actor/SBI08/TXLJobs11_rel)
+					                                                                , rjoin(lowercase(left(sbi08, 2)), lowercase(/Classifications/Actor/SBI08/SBI2008), /Classifications/Actor/SBI08/TXLJobs11_rel)
+					                                                              ), Descr = "De sector van de SBI-code, en anders van de langste voorloper van de code die in de tabel staat.";
+				}
+
+				container Banen :=
+					for_each_nedv(
+						/Classifications/Actor/TXLJobs11/name
+						, 'sum(MakeDefined(LISA/TXLJobs11_rel == value('+string(id(/Classifications/Actor/TXLJobs11))+', /Classifications/Actor/TXLJobs11), FALSE) ? LISA/banen : 0d, LISA/Gemeente_rel)'
+						, Gemeente
+						, Float64
+					), Descr = "De banen per gemeente en per sector.";
+
+				parameter<Float64> AandeelZonderSector   := sum(IsDefined(LISA/TXLJobs11_rel) ? 0d : LISA/banen) / sum(LISA/banen), Descr = "Het deel van de banen met een SBI-code zonder sector.";
+				parameter<Float64> AandeelZonderGemeente := sum(IsDefined(LISA/Gemeente_rel) ? 0d : LISA/banen) / sum(LISA/banen), Descr = "Het deel van de banen op een punt buiten de gemeenten.";
+			}
+
+			Template PerJaar_T
+			: Descr = "De woningen en de naar afstand gewogen woningen van de andere gemeenten, per gemeente in een jaar."
+			{
+				parameter<String> JaarStr;
+				//
+
+				unit<UInt32>        Woon                    := ='/SourceData/Vastgoed/BAG/PerJaar/Y'+JaarStr+'/vbo/Per_gebruiksdoel/woon/select', Descr = "De verblijfsobjecten met een woonfunctie in de voorraad op 1 januari.";
+				attribute<Gemeente> Woon_Gemeente_rel (Woon) := point_in_polygon(Woon/geometry, Gemeente/geometry);
+				attribute<Float64>  Woningen (Gemeente)      := float64(pcount(Woon_Gemeente_rel)), Descr = "De woningen per gemeente.";
+				attribute<Float64>  Omgeving (Gemeente)      := sum(Paar/Gewicht * Woningen[Paar/second_rel], Paar/first_rel), Descr = "De naar afstand gewogen woningen van de andere gemeenten.";
+				attribute<Float64>  LogAandeelWoningen (Gemeente) := log(Woningen / sum(Woningen)), Descr = "De logaritme van het aandeel van de gemeente in de landelijke woningen.";
+				attribute<Float64>  LogAandeelOmgeving (Gemeente) := log(Omgeving / sum(Omgeving)), Descr = "De logaritme van het aandeel van de gemeente in de som van de gewogen woningen.";
+			}
+
+			Template Sector_T
+			: Descr = "De schatting en de toets voor een sector. Een gemeente telt mee als ze vanaf het trendjaar in elk jaar meer banen van de sector heeft dan Drempel en vanaf het beginjaar woningen
+						heeft; haar gewicht is haar aantal banen van de sector in het beginjaar. De aandelen zijn die in de landelijke banen en woningen."
+			{
+				parameter<String> Sector_name;
+				//
+
+				container Banen := for_each_nedv(LISAJaar/name, 'BanenPerJaar/'+LISAJaar/name+'/Banen/'+Sector_name, Gemeente, Float64), Descr = "De banen van de sector per gemeente en jaar.";
+
+				attribute<Bool>    TeltGemeente    (Gemeente) := ='('+AsList('Banen/'+LISAJaar/name+' > Drempel', ' && ')+' && '+AsList('PerJaar/'+BAGJaar/name+'/Woningen > 0d', ' && ')+')', Descr = "Of de gemeente meetelt.";
+				attribute<Float64> GewichtGemeente (Gemeente) := ='TeltGemeente ? Banen/Y'+string(Beginjaar)+' : 0d', Descr = "De banen van de sector in het beginjaar, het gewicht in de schatting.";
+				parameter<UInt32>  G := sum(uint32(TeltGemeente)), Descr = "Het aantal gemeenten dat meetelt.";
+
+				container LogAandeel := for_each_nedv(LISAJaar/name, 'TeltGemeente ? log(Banen/'+LISAJaar/name+' / sum(Banen/'+LISAJaar/name+')) : 0d', Gemeente, Float64), Descr = "De logaritme van het aandeel van de gemeente in de landelijke banen van de sector, per jaar.";
+
+				unit<UInt32> Obs := ='union_unit('+AsList(const('Gemeente', Schattingsjaar), ',')+')'
+				, Descr = "Een waarneming per schattingsjaar en gemeente: y is de verandering van de logaritme van het banenaandeel van t - 1 naar t, x1 die van het woningaandeel en x2 die van het aandeel in
+							de gewogen woningen van de andere gemeenten."
+				{
+					attribute<Gemeente> Gemeente_rel := ='union_data(., '+AsList(const('id(Gemeente)', Schattingsjaar), ',')+')';
+					attribute<Bool>     Telt         := TeltGemeente[Gemeente_rel];
+					attribute<Float64>  w            := GewichtGemeente[Gemeente_rel];
+					attribute<Float64>  y            := ='union_data(., '+AsList('LogAandeel/'+Schattingsjaar/name+' - LogAandeel/'+Schattingsjaar/Vorig_name, ',')+')';
+					attribute<Float64>  x1           := ='Telt ? union_data(., '+AsList('PerJaar/'+Schattingsjaar/name+'/LogAandeelWoningen - PerJaar/'+Schattingsjaar/Vorig_name+'/LogAandeelWoningen', ',')+') : 0d';
+					attribute<Float64>  x2           := ='Telt ? union_data(., '+AsList('PerJaar/'+Schattingsjaar/name+'/LogAandeelOmgeving - PerJaar/'+Schattingsjaar/Vorig_name+'/LogAandeelOmgeving', ',')+') : 0d';
+				}
+
+				parameter<Float64> Jaren  := float64(#Schattingsjaar);
+				attribute<Float64> Gem_y  (Gemeente) := sum(Obs/y,  Obs/Gemeente_rel) / Jaren, Descr = "Het gemiddelde van y per gemeente over de schattingsjaren.";
+				attribute<Float64> Gem_x1 (Gemeente) := sum(Obs/x1, Obs/Gemeente_rel) / Jaren;
+				attribute<Float64> Gem_x2 (Gemeente) := sum(Obs/x2, Obs/Gemeente_rel) / Jaren;
+				parameter<Float64> Tot_y  := sum(Obs/w * Obs/y)  / sum(Obs/w), Descr = "Het gewogen gemiddelde van y over alle waarnemingen.";
+				parameter<Float64> Tot_x1 := sum(Obs/w * Obs/x1) / sum(Obs/w);
+				parameter<Float64> Tot_x2 := sum(Obs/w * Obs/x2) / sum(Obs/w);
+
+				container Gepoold := Regressie_T('Gepoold');
+				container Vast    := Regressie_T('Vast');
+
+				parameter<CoefficientTIGRIS> Coef_rel := rlookup(Sector_name, CoefficientTIGRIS/Sector_name), IntegrityCheck = "IsDefined(this)";
+				parameter<Float64> Beta_TIGRIS := CoefficientTIGRIS/Dbevolking[Coef_rel] + CoefficientTIGRIS/Dpotbbv[Coef_rel], Descr = "De som van de coëfficiënten van TIGRIS, die regel R5 op het woningaandeel legt.";
+
+				parameter<String>  T0  := 'Y'+string(Toetsjaar);
+				parameter<String>  T1  := 'Y'+string(Eindjaar);
+				parameter<Float64> H   := float64(Eindjaar - Toetsjaar), Descr = "Het aantal jaren van de toets.";
+				attribute<Float64> L0  (Gemeente) := ='LogAandeel/'+T0;
+				attribute<Float64> Dx1 (Gemeente) := ='TeltGemeente ? PerJaar/'+T1+'/LogAandeelWoningen - PerJaar/'+T0+'/LogAandeelWoningen : 0d', Descr = "De verandering van het woningaandeel van het toetsjaar naar het eindjaar.";
+				attribute<Float64> Dx2 (Gemeente) := ='TeltGemeente ? PerJaar/'+T1+'/LogAandeelOmgeving - PerJaar/'+T0+'/LogAandeelOmgeving : 0d', Descr = "Hetzelfde voor de gewogen woningen van de andere gemeenten.";
+				attribute<Float64> C_Vast   (Gemeente) := TeltGemeente ? Gem_y - Vast/B1 * Gem_x1 - Vast/B2 * Gem_x2 : 0d, Descr = "Het vaste effect per gemeente: de gemiddelde jaarlijkse verandering van het banenaandeel die de woningen niet verklaren.";
+				attribute<Float64> C_TIGRIS (Gemeente) := TeltGemeente ? Gem_y - Beta_TIGRIS * Gem_x1 : 0d, Descr = "Hetzelfde met de coëfficiënten van TIGRIS.";
+				attribute<Float64> Trend    (Gemeente) := ='(LogAandeel/'+T0+' - LogAandeel/Y'+string(Trendjaar)+') / float64(Toetsjaar - Trendjaar)', Descr = "De gemiddelde jaarlijkse verandering van het banenaandeel van het trendjaar tot het toetsjaar.";
+
+				container LogP
+				: Descr = "De logaritme van het voorspelde aandeel in het eindjaar per regel, nog niet herschaald."
+				{
+					attribute<Float64> R1 (Gemeente) := L0;
+					attribute<Float64> R2 (Gemeente) := L0 + Dx1;
+					attribute<Float64> R3 (Gemeente) := L0 + Gepoold/B1 * Dx1 + Gepoold/B2 * Dx2;
+					attribute<Float64> R4 (Gemeente) := L0 + Vast/B1 * Dx1 + Vast/B2 * Dx2 + H * C_Vast;
+					attribute<Float64> R5 (Gemeente) := L0 + Beta_TIGRIS * Dx1 + H * C_TIGRIS;
+					attribute<Float64> R6 (Gemeente) := L0 + H * Trend;
+				}
+
+				attribute<Float64> Q (Gemeente) := ='TeltGemeente ? Banen/'+T1+' / sum(TeltGemeente ? Banen/'+T1+' : 0d) : 0d', Descr = "Het werkelijke aandeel van de gemeente in het eindjaar, binnen de gemeenten die meetellen.";
+				parameter<Float64> BanenEind   := ='sum(TeltGemeente ? Banen/'+T1+' : 0d)', Descr = "De banen van de sector in het eindjaar in de gemeenten die meetellen.";
+				parameter<Float64> AandeelTelt := ='BanenEind / sum(Banen/'+T1+')', Descr = "Het deel van de landelijke banen van de sector in het eindjaar dat in de gemeenten staat die meetellen.";
+
+				container Toets := for_each_ne(Regel/name, 'Toets_T('+quote(Regel/name)+')');
+
+				Template Regressie_T
+				: Descr = "De gewogen kleinste-kwadratenschatting van y op x1 en x2. Gepoold valt de constante weg door om het gewogen gemiddelde over alle waarnemingen te nemen, met een vast effect door om
+							het gemiddelde per gemeente te nemen. De standaardfouten zijn geclusterd per gemeente, met de correctie G / (G - 1) * (N - 1) / (N - K)."
+				{
+					parameter<String> Soort;
+					//
+
+					parameter<String>  Gemiddelde := Soort == 'Vast' ? 'Gem_' : 'Tot_';
+					parameter<String>  Koppeling  := Soort == 'Vast' ? '[Obs/Gemeente_rel]' : '';
+					attribute<Float64> Dy (Obs) := ='Obs/Telt ? Obs/y - '+Gemiddelde+'y'+Koppeling+' : 0d';
+					attribute<Float64> D1 (Obs) := ='Obs/Telt ? Obs/x1 - '+Gemiddelde+'x1'+Koppeling+' : 0d';
+					attribute<Float64> D2 (Obs) := ='Obs/Telt ? Obs/x2 - '+Gemiddelde+'x2'+Koppeling+' : 0d';
+
+					parameter<Float64> S11 := sum(Obs/w * D1 * D1);
+					parameter<Float64> S12 := sum(Obs/w * D1 * D2);
+					parameter<Float64> S22 := sum(Obs/w * D2 * D2);
+					parameter<Float64> S1y := sum(Obs/w * D1 * Dy);
+					parameter<Float64> S2y := sum(Obs/w * D2 * Dy);
+					parameter<Float64> Syy := sum(Obs/w * Dy * Dy);
+					parameter<Float64> Det := S11 * S22 - S12 * S12;
+					parameter<Float64> A11 := S22 / Det;
+					parameter<Float64> A12 := 0d - S12 / Det;
+					parameter<Float64> A22 := S11 / Det;
+					parameter<Float64> B1  := A11 * S1y + A12 * S2y, Descr = "De coëfficiënt van de verandering van het woningaandeel van de gemeente.";
+					parameter<Float64> B2  := A12 * S1y + A22 * S2y, Descr = "De coëfficiënt van de verandering van het aandeel in de gewogen woningen van de andere gemeenten.";
+
+					attribute<Float64> r  (Obs)      := Dy - B1 * D1 - B2 * D2;
+					attribute<Float64> U1 (Gemeente) := sum(Obs/w * D1 * r, Obs/Gemeente_rel), Descr = "De bijdrage van de gemeente aan de afgeleide naar B1, voor de geclusterde standaardfouten.";
+					attribute<Float64> U2 (Gemeente) := sum(Obs/w * D2 * r, Obs/Gemeente_rel);
+					parameter<Float64> M11 := sum(U1 * U1);
+					parameter<Float64> M12 := sum(U1 * U2);
+					parameter<Float64> M22 := sum(U2 * U2);
+					parameter<Float64> N   := float64(sum(uint32(Obs/Telt))), Descr = "Het aantal waarnemingen dat meetelt.";
+					parameter<Float64> K   := Soort == 'Vast' ? 2d : 3d, Descr = "Het aantal geschatte coëfficiënten naast de vaste effecten.";
+					parameter<Float64> Correctie := float64(G) / (float64(G) - 1d) * (N - 1d) / (N - K);
+					parameter<Float64> Se1 := sqrt((A11 * A11 * M11 + 2d * A11 * A12 * M12 + A12 * A12 * M22) * Correctie);
+					parameter<Float64> Se2 := sqrt((A12 * A12 * M11 + 2d * A12 * A22 * M12 + A22 * A22 * M22) * Correctie);
+					parameter<Float64> VerklaardeVariantie := 1d - sum(Obs/w * r * r) / Syy;
+				}
+
+				Template Toets_T
+				: Descr = "De voorspelling van een regel, herschaald naar de som van de gemeenten die meetellen, en de fout: de helft van de som van de absolute verschillen met het werkelijke aandeel, dus
+							het deel van de banen dat in de verkeerde gemeente of stadregio staat."
+				{
+					parameter<String> Regel_name;
+					//
+
+					attribute<Float64> Ruw (Gemeente) := ='TeltGemeente ? exp(LogP/'+Regel_name+') : 0d';
+					attribute<Float64> P   (Gemeente) := Ruw / sum(Ruw);
+					parameter<Float64> Fout_Gemeente  := 0.5d * sum(abs(P - Q));
+					parameter<Float64> Fout_Stadregio := 0.5d * sum(abs(sum(P, Stadregio_rel) - sum(Q, Stadregio_rel)));
+				}
+			}
+		}
 	}
 }
