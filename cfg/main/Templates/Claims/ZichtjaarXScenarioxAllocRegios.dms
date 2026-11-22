@@ -24,6 +24,12 @@ Template Zichtjaar_T
 	parameter<String> TIGRIS_Jaar_name  := 'Y' + string(Zichtjaar_jaartal >= ModelParameters/Advanced/FromWhichDoWeKeepTIGRISconstant ? ModelParameters/Advanced/FromWhichDoWeKeepTIGRISconstant : Zichtjaar_jaartal), Descr = "Uit welk TIGRIS-jaar dit zichtjaar zijn wonen- en werkenclaim haalt. Vanaf FromWhichDoWeKeepTIGRISconstant blijft de claim staan, dus 2070 tot en met 2120 lezen allemaal de map Y2060.
 				Dezelfde begrenzing als aan de schrijfkant in Classifications/Time/ModelJaar/TIGRIS_Jaar_value, zodat er geen kopie van de 2060-cijfers per later zichtjaar nodig is en de claimreeks niet stil kan
 				uiteenlopen met wat de begrenzing voorschrijft.";
+	parameter<String> WerkenBron        := lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
+	                                       ? 'Read_werken_CSV'
+	                                       : lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TrendLISARegio')
+	                                           ? 'Werken_Geankerd_Regio'
+	                                           : 'Werken_Geankerd'
+	, Descr = "Welke banenclaim per regio het anker in ModelParameters/ClaimBasisjaar kiest. AllocRegio_T/Werken_TIGRIS neemt hem over, of met een grens in ModelParameters/Werken/MaxGroeiTovNL Werken_TIGRIS_Begrensd (#911).";
 	unit<UInt8>       AllocRegio        := /Classifications/Modellering/AllocRegiosK;
 	unit<UInt8>       SectorAllocRegio  := CaseClassifications/Actor/SectorAllocRegio;
 	
@@ -158,6 +164,44 @@ Template Zichtjaar_T
 	container VerzorgendUitWoningen            := VerzorgendUitWoningen_T('Bron'), Descr = "De claim per gemeente voor wie hem buiten de allocatie leest; in de ontkoppelde stand met de woningen uit het weggeschreven bestand.";
 	container VerzorgendUitWoningen_Allocatie  := VerzorgendUitWoningen_T('Calc'), Descr = "De claim per gemeente die de allocatie zelf leest, met de woningen die zij in dit zichtjaar rekent.";
 
+	container GroeigrensWerken
+	: Descr = "De grens op de groei van de banenclaim ten opzichte van de landelijke groei (ModelParameters/Werken/MaxGroeiTovNL, #911), voor de subsectoren met Jobs6/IsVerzorgend FALSE. De grens geldt
+				per regio van de eerste indeling waarop werken alloceert. Wat een regio daar boven de grens krijgt, gaat naar de regio's eronder naar verhouding van hun claim, tot geen regio er meer boven
+				uitkomt, zodat de som over de regio's gelijk blijft. De verschuiving per regio gaat over de cellen naar de banen van de subsector in het basisjaar, en elke andere indeling telt haar per
+				regio op. Zo houdt elke indeling haar som, en brengt de overloop naar een grotere regio de groei die de grens weghaalt niet terug."
+	{
+		parameter<String>  R              := 'AllocRegios/'+/ModelParameters/SectorAllocRegio/WerkenEersteAllocRegio_name+'/';
+		unit<UInt32>       Regio          := =R+'RegioUnit';
+		unit<UInt32>       Paar           := combine(Regio, Regio), Descr = "Elke regio als kandidaat voor de drempel (first_rel) naast elke regio (second_rel), voor de herverdeling in Subsector_T.";
+		unit<UInt8>        NietVerzorgend := select_with_attr_by_cond(/Classifications/Actor/Jobs6, !/Classifications/Actor/Jobs6/IsVerzorgend), Descr = "De subsectoren waarop de grens kan gelden.";
+
+		Template Subsector_T
+		{
+			parameter<String>  Subsector_name;
+			// end case parameters
+
+			parameter<Float64> k                     := ='value(/ModelParameters/Werken/MaxGroeiTovNL/'+Subsector_name+', Float64)';
+			attribute<Float64> Claim         (Regio) := ='value('+R+WerkenBron+'/'+Subsector_name+', Float64)', Descr = "De banenclaim van dit zichtjaar zonder grens, met het anker van ModelParameters/ClaimBasisjaar.";
+			attribute<Float64> TIGRIS        (Regio) := ='value('+R+'Read_Werken_CSV/'+Subsector_name+', Float64)';
+			attribute<Float64> TIGRIS_Basis  (Regio) := ='value('+R+'Read_Werken_Basisjaar_Regio_CSV/'+Subsector_name+', Float64)';
+			attribute<Float64> Basis         (Regio) := TIGRIS > 0d ? Claim * TIGRIS_Basis / TIGRIS : TIGRIS_Basis, Descr = "De claim van het basisjaar met hetzelfde anker. Elk anker vermenigvuldigt de levering van het zichtjaar en die van het basisjaar met dezelfde factor, dus de groei van de claim is die van TIGRIS.";
+			parameter<Float64> Totaal                := sum(Claim), Descr = "De som over de regio's, die de herverdeling gelijk houdt.";
+			parameter<Float64> GroeiNL               := Totaal / sum(Basis), Descr = "De groei van de claim sinds het basisjaar over de regio's samen; in een landelijke run de landelijke groei.";
+			parameter<Float64> MaxGroei              := 1d + k * abs(GroeiNL - 1d), Descr = "De grootste groei sinds het basisjaar die een regio mag hebben: de toename is hooguit k keer de landelijke verandering, ook als het land krimpt. Zo loopt de grens bij nul groei zonder sprong door, houdt een regio bij krimp ruimte om te groeien, en past het totaal er met k van ten minste 1 altijd in.";
+			attribute<Float64> Grens         (Regio) := Basis * MaxGroei;
+			attribute<Float64> Drempel       (Regio) := Claim > 0d ? Grens / Claim : null_d, Descr = "Bij welke factor op de claim de regio de grens bereikt; onder 1 zit hij er zonder herverdeling al boven. Leeg zonder claim, want zo'n regio krijgt niets van de herverdeling.";
+			attribute<Float64> SomBijDrempel (Regio) := sum(min_elem(Drempel[Paar/first_rel] * Claim[Paar/second_rel], Grens[Paar/second_rel]), Paar/first_rel), Descr = "De som over alle regio's van de claim maal de drempel van deze regio, elke regio hooguit tot zijn grens.";
+			attribute<Bool>    Begrensd      (Regio) := IsDefined(Drempel) && SomBijDrempel <= Totaal, Descr = "Eindigt de regio op zijn grens? De som groeit met de factor, dus dat zijn de regio's waarbij de som op hun drempel het totaal nog niet haalt.";
+			parameter<Float64> Schaal                := (Totaal - sum(Begrensd ? Grens : 0d)) / sum(Begrensd ? 0d : Claim), IntegrityCheck = "IsDefined(this) && this > 0d", Descr = "De factor op de claim van de regio's onder de grens, zodat de som gelijk blijft. Leeg als die regio's samen geen claim hebben.";
+			attribute<Float64> Resultaat     (Regio) := Begrensd ? Grens : Schaal * Claim
+			, IntegrityCheck = "abs(sum(this) - Totaal) <= 1e-9d * Totaal && all(this <= Grens * (1d + 1e-9d))"
+			, Descr = "De claim per regio na de grens en de herverdeling; de IntegrityCheck houdt de som gelijk aan Totaal en elke regio onder zijn grens.";
+			attribute<Float32> Banen_Basisjaar (CompactedAdminDomain) := ='value(ThisVariant/StateBasisjaar/Werken/'+Subsector_name+', Float32)';
+			attribute<Float32> PerCel          (CompactedAdminDomain) := MakeDefined(value(Resultaat - Claim, Float32)[Regio/Per_CompactedAdminDomain] * Banen_Basisjaar / sum(Banen_Basisjaar, Regio/Per_CompactedAdminDomain)[Regio/Per_CompactedAdminDomain], 0f), Descr = "De verschuiving van de regio over zijn cellen naar de banen van de subsector in het basisjaar.";
+		}
+		container PerSubsector := for_each_ne(NietVerzorgend/name, 'Subsector_T('+quote(NietVerzorgend/name)+')');
+	}
+
 	Template AllocRegio_T
 	{
 		parameter<AllocRegio> AllocRegio_rel;
@@ -241,12 +285,25 @@ Template Zichtjaar_T
 		container             Wonen_Bouwbaar                  := = /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector && IsTigrisRegio ? 'Wonen_Bouwbaar_T()' : '/Templates/Leeg'
 		, Descr = "Het deel van de woonclaim dat tot dit zichtjaar gebouwd kan worden: de vraag in Wonen min de groei die op de uitbreiding van het net wacht (#448), met eengezinsgroei die naar meergezins gaat waar de grond niet genoeg is (#879, EengezinsOmzetting). Een rem op het aanbod en geen andere vraag: de allocatie leest dit via SectorAllocRegios, de claimrealisatie meet tegen Wonen. Wat in een zichtjaar wacht, zit in het volgende weer in de vraag. Leeg waar Wonen leeg is (pbl-nl/model-RSopen#53).";
 
-		container             Werken_TIGRIS                   := = lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TIGRIS')
-		                                                         ? 'Read_werken_CSV'
-		                                                         : lowercase(/ModelParameters/ClaimBasisjaar/Anker) == lowercase('TrendLISARegio')
-		                                                             ? 'Werken_Geankerd_Regio'
-		                                                             : 'Werken_Geankerd'
-		, Descr = "De banenclaim per regio met de verdeling van TIGRIS. Welk anker geldt staat in ModelParameters/ClaimBasisjaar/Anker; op de terugvalstand is dit letterlijk Read_werken_CSV en verandert er niets ten opzichte van voor #667.";
+		container             Werken_TIGRIS                   := = /ModelParameters/Werken/MaxGroeiTovNL/Actief ? 'Werken_TIGRIS_Begrensd' : WerkenBron
+		, Descr = "De banenclaim per regio met de verdeling van TIGRIS. Welk anker geldt staat in ModelParameters/ClaimBasisjaar/Anker (WerkenBron); op de terugvalstand is dit letterlijk Read_werken_CSV en verandert er niets ten opzichte van voor #667. Met een grens in ModelParameters/Werken/MaxGroeiTovNL is het Werken_TIGRIS_Begrensd (#911).";
+
+		parameter<Bool>       IsEersteWerkenIndeling          := lowercase(AllocRegio_name) == lowercase(/ModelParameters/SectorAllocRegio/WerkenEersteAllocRegio_name), Descr = "Is dit de indeling waarop de grens op de groei van de banenclaim per regio wordt bepaald (GroeigrensWerken)?";
+
+		container             Werken_TIGRIS_Begrensd          :=
+			for_each_nedv(
+				Jobs6/name
+				, !Jobs6/IsVerzorgend && IsDefined(/ModelParameters/Werken/MaxGroeiTovNL/PerSubsector)
+					? (IsEersteWerkenIndeling
+						? 'value(GroeigrensWerken/PerSubsector/'+Jobs6/name+'/Resultaat, Job)'
+						: WerkenBron+'/'+Jobs6/name+' + value(sum(GroeigrensWerken/PerSubsector/'+Jobs6/name+'/PerCel, RegioUnit/Per_CompactedAdminDomain), Job)')
+					: WerkenBron+'/'+Jobs6/name
+				, RegioUnit
+				, job
+			), Descr = "De banenclaim van WerkenBron met de grens van GroeigrensWerken (#911): op de eerste indeling van werken de claim na de herverdeling, op elke andere indeling de claim plus de verschuiving opgeteld over de cellen van de regio. Subsectoren zonder grens nemen WerkenBron letterlijk over."
+		{
+			attribute<job> Totaal (RegioUnit) := ='add('+asList(Jobs6/name,',')+')';
+		}
 
 		parameter<Bool>       VerzorgendUitWoningenActief     := lowercase(/ModelParameters/ClaimBasisjaar/VerdelingVerzorgend) == 'woningen' && lowercase(AllocRegio_name) != 'nl', Descr = "Krijgen de verzorgende subsectoren in deze indeling hun verdeling uit de woningen? Nooit op NL, want daar is de claim het landelijke totaal zelf.";
 		attribute<RegioUnit>  Gemeente_rel (/PrivData/TrendBasisjaar/Gemeente) := MakeDefined(point_in_polygon(/PrivData/TrendBasisjaar/Gemeente/Zwaartepunt, RegioUnit/geometry), point_in_polygon(/PrivData/TrendBasisjaar/Gemeente/Zwaartepunt, RegioUnit/geometry_buffered)), Descr = "Elke gemeente naar de regio waar haar zwaartepunt in valt, met de buffer van RegioUnit als terugval, zoals PrivData/TrendBasisjaar/PerRegio_T.";
