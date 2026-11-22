@@ -87,7 +87,7 @@ OPERATOR_SUBITEM = ("Unknown identifier 'Districts'", "Unknown identifier 'Landu
 BASEDATA = [
     ("BaseData/Vastgoed/BAG_{bag}_History/WP5/*.mmd",        "WP5-pandtypering",        "/WriteBaseData/Generate_Run1"),
     ("BaseData/Grondgebruik/BBG/BBG*_25m_Modus_*.tif",       "BBG-vergridding",         "/WriteBaseData/Generate_Run2"),
-    ("BaseData/Vastgoed/Verwervingskosten_Woningen_*.tif",   "verwervingskosten",       "/WriteBaseData/Generate_Run2"),
+    ("BaseData/Vastgoed/Verwervingskosten_Woningen_*.tif",   "verwervingskosten",       "/WriteBaseData/Generate_Run3"),
     ("BaseData/StandBasisjaar/Wonen/*.tif",                  "stand basisjaar",         "/WriteBaseData/Generate_Run3"),
     ("BaseData/Vastgoed/WP2xVSSH_Proxy/*",                   "woningsubsector-proxies", "/WriteBaseData/Generate_Run3"),
     ("BaseData/Vastgoed/Sloopkosten_Woningen_*.tif",         "sloopkosten",             "/WriteBaseData/Generate_Run3"),
