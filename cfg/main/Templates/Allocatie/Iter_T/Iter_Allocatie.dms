@@ -69,10 +69,8 @@ container Allocatie
 
 	attribute<Bool>              Gealloceerd_EerdereIters      (AdminDomain) := =lowercase(Sector_name) == lowercase('waterberging')
 	                                                                            ? 'Gealloceerd_DitZichtjaar_EigenSector'
-	                                                                            : lowercase(Sector_name) == lowercase('StedelijkGroen')
-	                                                                                ? 'Gealloceerd_DitZichtjaar_AlleSectoren || IsBAGnieuwbouw || Context/ThisZichtjaar/Impl/StedelijkGroenClaim/BestaandGroenInVormtoets'
-	                                                                                : 'Gealloceerd_DitZichtjaar_AlleSectoren || IsBAGnieuwbouw'
-	, Descr = "Waterberging telt alleen zijn eigen cellen mee: de minimale clusteromvang is daar een functionele eis, want een bergingsgebied moet zelf groot genoeg zijn om water vast te houden, en dat wordt niet anders van woningen ernaast. Voor de overige sectoren gaat het om versnippering in het landschap, en dan telt elke nieuwe ontwikkeling van dit zichtjaar als aanhechting, en de BAG-nieuwbouw (#899). Stedelijk groen telt daarnaast het bestaande groen en water mee, als ModelParameters/StedelijkGroen/VormtoetsTeltBestaandGroenEnWater aanstaat: een strook tegen een park of watergang is een verbreding daarvan (#906).";
+	                                                                            : 'Gealloceerd_DitZichtjaar_AlleSectoren || IsBAGnieuwbouw'
+	, Descr = "Waterberging telt alleen zijn eigen cellen mee: de minimale clusteromvang is daar een functionele eis, want een bergingsgebied moet zelf groot genoeg zijn om water vast te houden, en dat wordt niet anders van woningen ernaast. Voor de overige sectoren gaat het om versnippering in het landschap, en dan telt elke nieuwe ontwikkeling van dit zichtjaar als aanhechting, en de BAG-nieuwbouw (#899). Het bestaande groen en water van stedelijk groen telt hier niet mee maar alleen voor de omvang, in OmvangBasis (#906).";
 
 	attribute<Bool>              Gealloceerd_Basis             (AdminDomain) := IsDefined(per_SectorxSubsector_recoll) || Gealloceerd_EerdereIters
 	, Descr = "De verzameling waarop de erosie, de dilatie en de districten bepaald worden: de cellen van deze iteratie plus alles wat er dit zichtjaar al ligt en, behalve bij waterberging, de BAG-nieuwbouw, zodat een cluster kan aangroeien. De bestaande bebouwing uit het basisjaar telt hier nooit in mee: zou dat wel zo zijn, dan haalt elke losse cel naast een dorp de toets en is de minimale clusteromvang betekenisloos.";
@@ -90,10 +88,16 @@ container Allocatie
 	attribute<Bool>              Cleaned                       (AdminDomain) := Gealloceerd_Basis && Dilated, Descr = "Originele allocatie AND binnen gedilateerd gebied.";
 	attribute<bool>              IsAfgewezen_dmv_Morfologie    (AdminDomain) := IsDefined(per_SectorxSubsector_recoll) && NOT(Cleaned) && !IsVrijgekomenPerceel, Descr = "Afgewezen door morfologische cleaning, behalve op een vrijgekomen perceel (IsVrijgekomenPerceel, #869). Alleen cellen van deze iteratie kunnen worden afgewezen; wat al gealloceerd was blijft staan.";
 
-	unit<uint32> VindAangeslotenCellen := district_8(Cleaned), Descr = "Districten van aaneengesloten gealloceerde cellen."
+	// Stap 4: de omvang, waarvoor stedelijk groen ook het bestaande groen en water meetelt
+	attribute<Bool>              BestaandGroenVoorOmvang       (AdminDomain) := = lowercase(Sector_name) == lowercase('StedelijkGroen') ? 'Context/ThisZichtjaar/Impl/StedelijkGroenClaim/BestaandGroenInVormtoets' : 'const(FALSE, AdminDomain)'
+	, Descr = "Het bestaande groen en water dat stedelijk groen meetelt voor de minimale omvang van een park, als ModelParameters/StedelijkGroen/VormtoetsTeltBestaandGroenEnWater aanstaat; voor de andere sectoren niets. Het telt niet mee voor de breedte, want dan haalt een losse cel langs een sloot of plantsoen de beukmaat al door wat er naast ligt (#906).";
+	attribute<Bool>              OmvangBasis                   (AdminDomain) := Cleaned || (BestaandGroenVoorOmvang && !IsDefined(per_SectorxSubsector_recoll))
+	, Descr = "De cellen waarop de districten voor de minimale omvang bepaald worden: wat de breedte-eis haalt, plus bij stedelijk groen het bestaande groen en water, zodat een park dat aan een bestaand park of een watergang grenst diens omvang meekrijgt. Een cel die deze iteratie alloceert telt alleen als hij de breedte-eis haalt.";
+
+	unit<uint32> VindAangeslotenCellen := district_8(OmvangBasis), Descr = "Districten van aaneengesloten gealloceerde cellen."
 	{
 		attribute<ha>   Oppervlakte                (AdminDomain) := (pcount(Districts)[float32] * AdminDomain/NrHaPerCell)[Districts];
-		attribute<bool> IsNonGroup                 (AdminDomain) := Oppervlakte == const(max(Oppervlakte), AdminDomain) && max(Oppervlakte) >= 0.5f * rdc_meter/areaal;
+		attribute<bool> IsNonGroup                 (AdminDomain) := !OmvangBasis && Oppervlakte == const(max(Oppervlakte), AdminDomain) && max(Oppervlakte) >= 0.5f * rdc_meter/areaal, Descr = "Het grootste district als het de helft van het gebied beslaat: de achtergrond van niet-gealloceerde cellen. Alleen een district buiten OmvangBasis kan dat zijn, zodat een groot aaneengesloten stelsel van bestaand groen en water bij stedelijk groen niet als achtergrond geldt.";
 		
 		parameter<bool> IsWaterbergingSector                     := lowercase(sector_name) == lowercase('waterberging');
 		attribute<bool> IsWoonkern                 (AdminDomain) := /BaseData/Grondgebruik/BRT/IsWoonkern/Per_AdminDomain;
