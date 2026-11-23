@@ -315,6 +315,28 @@ function Get-Productieprofiel {
     return $m.Groups[1].Value
 }
 
+function Get-PendelregioDefinitie {
+    # SourceData/RegioIndelingen/Pendelregio_Gemeente/Definitie, met dezelfde formule uit dezelfde csv's: het
+    # aantal gemeenten en per indeling de som over de gemeenten van het kwadraat van het nummer uit de
+    # gemeentecode maal de rij van de regio in de codelijst. Hij staat in de naam van de claimmap van de
+    # pendelregio's en stadregio's (AllocRegio_ClaimMap, #585).
+    $map = Join-Path (Split-Path (Split-Path $Cfg -Parent) -Parent) 'data\Pendelregio'
+    $gem = @(Import-Csv (Join-Path $map 'Pendelregio_gemeente.csv'))
+    $pr  = [uint32[]]@(Import-Csv (Join-Path $map 'Pendelregio.csv') | ForEach-Object { $_.Pendelregio_code })
+    $sr  = [uint32[]]@(Import-Csv (Join-Path $map 'Stadregio.csv')   | ForEach-Object { $_.Stadregio_code })
+    [uint64]$somP = 0
+    [uint64]$somS = 0
+    foreach ($g in $gem) {
+        $nr = [uint64][uint32]$g.GM_code.Substring(2, 4)
+        $p  = [array]::IndexOf($pr, [uint32]$g.Pendelregio_code)
+        $s  = [array]::IndexOf($sr, [uint32]$g.Stadregio_code)
+        if ($p -lt 0 -or $s -lt 0) { throw "Gemeente $($g.GM_code) heeft een regiocode die niet in de codelijst in $map staat" }
+        $somP += $nr * $nr * [uint64]$p
+        $somS += $nr * $nr * [uint64]$s
+    }
+    return "$($gem.Count)-$somP-$somS"
+}
+
 function Test-SectorActief([string]$Sector) {
     # Staat de sector als actieve regel in ModelParameters/SectorAllocRegio? Uit de tekst, zoals de leentoets
     # hieronder dat voor Landbouw doet; een uitgecommentarieerde regel telt niet.
@@ -355,22 +377,30 @@ function Test-Invoer {
     if ($bron -ne 'Heuristiek' -or $env:NatuurOpleggen -eq 'TRUE' -or $metLandschap) {
         $eisen += ,@('BaseData\Grondgebruik\MNP\*.tif',                 'MNP-planpotentieel',          '/WriteBasedata/Generate_Run2')
     }
+    # De claims staan in LocalData en komen uit Run3. De TIGRIS-claims worden getoetst in de map van de
+    # stadregio's en pendelregio's van de huidige indeling (AllocRegio_ClaimMap, #585): claims van een
+    # eerdere indeling staan in een andere map en tellen niet. Ook in de fase basedata, zodat een run met
+    # -SkipBasedata al voor de variantdata stopt.
+    $claimMappen = @('Stadregio', 'Pendelregio') | ForEach-Object { "$($_)_$(Get-PendelregioDefinitie)" }
+    if (Test-SectorActief 'Wonen') {
+        if ((Get-Productieprofiel) -eq 'RuimteVoorWoningbouw') {
+            $eisen += ,@('BaseData\Beleid\Claims\NWK_*\*\*\Wonen.csv',         'woonclaims woningbouwkaart',  '/WriteBasedata/Generate_Run3')
+        } else {
+            foreach ($c in $claimMappen) {
+                $eisen += ,@("BaseData\Beleid\Claims\TXL_*\*\*\*\$c\Wonen.csv",  "woonclaims TIGRIS, $c",       '/WriteBasedata/Generate_Run3')
+            }
+        }
+    }
+    if (Test-SectorActief 'Werken') {
+        foreach ($c in $claimMappen) {
+            $eisen += ,@("BaseData\Beleid\Claims\TXL_*\*\*\*\$c\Werken.csv",     "werkenclaims TIGRIS, $c",     '/WriteBasedata/Generate_Run3')
+        }
+    }
     if ($Fase -eq 'allocatie') {
         $eisen += ,@('BaseData\StandBasisjaar\Wonen\*.tif',             'stand basisjaar',             '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Vastgoed\WP2xVSSH_Proxy\*',              'woningsubsector-proxies',     '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Vastgoed\Sloopkosten_Woningen_*.tif',    'sloopkosten',                 '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Suitabilities\Werken_raw_*.tif',         'werken-geschiktheid',         '/WriteBasedata/Generate_Run3')
-        # De claims staan in LocalData en komen uit Run3.
-        if (Test-SectorActief 'Wonen') {
-            if ((Get-Productieprofiel) -eq 'RuimteVoorWoningbouw') {
-                $eisen += ,@('BaseData\Beleid\Claims\NWK_*\*\*\Wonen.csv',         'woonclaims woningbouwkaart',  '/WriteBasedata/Generate_Run3')
-            } else {
-                $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Wonen.csv',   'woonclaims TIGRIS',           '/WriteBasedata/Generate_Run3')
-            }
-        }
-        if (Test-SectorActief 'Werken') {
-            $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Werken.csv',  'werkenclaims TIGRIS',         '/WriteBasedata/Generate_Run3')
-        }
         if (Test-SectorActief 'Waterberging') {
             $eisen += ,@('BaseData\Suitabilities\Waterberging\Depth_Norm_*.tif', 'waterbergingsnormen', '/WriteBasedata/Generate_Run3')
         }
