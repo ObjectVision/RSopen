@@ -17,7 +17,9 @@ geeft exit 1 zodra een laag faalt.
 
 1. Profiel: staan de sleutelparameters op de stand die bij deze projectlijn hoort (ModelParameters/
    Productieprofiel). De tabel en de norm staan in cfg/main/Preflight.dms; dit script vraagt eerst de
-   csv op en daarna de telling, zodat de csv er ook staat wanneer de telling de run afbreekt.
+   csv op en daarna de telling, zodat de csv er ook staat wanneer de telling de run afbreekt. In dezelfde
+   laag de toets of elke regio van een allocatie-indeling in gebruik helemaal binnen of buiten het
+   studiegebied ligt (#909), met de regio's die over de grens lopen op het scherm.
 2. Invoer: staan de bestanden er die pas laat in de run gelezen worden? De ontkoppelde basedata (een
    representatief bestand per stap, met de stap die het maakt), de plancapaciteitsgrids per zichtjaar
    en de claim-CSV van het eerste zichtjaar. Zonder deze laag stranden die pas na een uur rekenen, en
@@ -97,6 +99,7 @@ BASEDATA = [
 # Het profiel zelf eerst: zijn IntegrityCheck noemt de profielen die deze tak kent, en vuurt alleen als
 # de parameter zelf wordt opgevraagd, niet als de domeintabel of de profieltabel hem leest.
 PROFIEL_ITEMS = ["/ModelParameters/Productieprofiel", "/Preflight/Profiel/Write", "/Preflight/Profiel/Afwijkingen"]
+STUDIEGEBIED_ITEMS = ["/Preflight/Studiegebied/Write", "/Preflight/Studiegebied/RegiosOverGrens"]
 INVOER_ITEMS = ["/Preflight/Invoer/Plancapaciteit", "/Preflight/Invoer/Claims"]
 # De items die RunAll.cmd, RunVariantData.cmd en RunZichtjaren.cmd opvragen, in die volgorde.
 BOOM_ITEMS = [
@@ -284,6 +287,7 @@ def main(argv: list[str]) -> int:
         print(f"[{oordeel}] {laag}/{naam}  ({time.time() - t:.1f} s{staart})" + (f"\n       {melding}" if melding else ""))
 
     toets("1_profiel", "sleutelparameters", PROFIEL_ITEMS)
+    toets("1_profiel", "studiegebied", STUDIEGEBIED_ITEMS)
 
     bag = bag_datum(cfg)
     ontbreekt = [(o, stap) for patroon, o, stap in BASEDATA if not list(localdata().glob(patroon.format(bag=bag)))]
@@ -323,6 +327,17 @@ def main(argv: list[str]) -> int:
             for r in fails:
                 naam, verwacht, werkelijk, _ = next(csv.reader([r]))
                 print(f"  {naam}: staat op {werkelijk}, profiel verwacht {verwacht}")
+
+    # De jongste, want een eerdere preflight met een ander studiegebied laat zijn eigen csv achter.
+    gebied_csv = max(uit.glob("studiegebied_*.csv"), key=lambda p: p.stat().st_mtime, default=None)
+    if gebied_csv:
+        # GDAL neemt de hoofdletters van de kolomnamen niet altijd over uit de configuratie, dus de sleutels in kleine letters.
+        rijen = [{k.lower(): v for k, v in r.items()} for r in csv.DictReader(gebied_csv.read_text(encoding="utf-8").splitlines())]
+        over = [r for r in rijen if r["in_gebruik"] == "1" and r["aantal"] != "0"]
+        if over:
+            print("\nAllocatieregio's die maar voor een deel in het studiegebied liggen:")
+            for r in over:
+                print(f"  {r['indeling']}: {r['regios']}")
 
     mislukt = [r for r in regels if r["oordeel"] == "FAIL"]
     print(f"\n{len(regels) - len(mislukt)} van {len(regels)} toetsen geslaagd.")
