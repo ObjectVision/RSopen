@@ -109,14 +109,25 @@ Template IterSubsector_T
 
 	unit<UInt32> AllocRegio := Context/ThisSectorAllocRegio/AllocRegio
 	{
-		attribute<Float32> RestClaim             := = replace(
+		attribute<Float32> RestClaim_Eigen       := = replace(
 		                                                'ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/@AS@/@S@'+AllocRegio_StudyArea_orgrel+' - sum(StateVoorAllocatie/@SP@, Per_CompactedAdminDomain)',
 		                                                '@Z@' , Zichtjaar_name,
 		                                                '@AS@', Context/ThisSectorAllocRegio/name,
 		                                                '@S@' , Context/ThisSubsector/name,
 		                                                '@SP@', Subsector_pathname
-		                                            ), Descr = "Hier de restclaim C_jr bepaald, door van de claim voor deze regio en subsector de stand voor deze allocatie stap af te trekken.";
-		
+		                                            ), Descr = "De restclaim van de regio zelf: de claim voor deze regio en subsector min de stand voor deze allocatiestap; negatief als de regio al boven haar claim zit.";
+
+		unit<UInt32>       VerrekenRegio         := = Context/ThisSectorAllocRegio/VerrekenRegio_path != '' ? '/SourceData/'+Context/ThisSectorAllocRegio/VerrekenRegio_path : '/SourceData/RegioIndelingen/NL'
+		, Descr = "De regio's van de volgende regel van deze sector, waarbinnen het overschot verrekend wordt (#910); bij de laatste regel Nederland, maar dan verrekent RestClaim niets.";
+		attribute<VerrekenRegio> Verreken_rel    := modus(VerrekenRegio/Per_CompactedAdminDomain, Per_CompactedAdminDomain), Descr = "In welke regio van de volgende regel deze regio ligt; de indelingen zijn opgebouwd uit hele gemeenten, dus elke regio ligt in een.";
+		attribute<Float32> Overschot (VerrekenRegio) := sum(max_elem(-RestClaim_Eigen, 0f), Verreken_rel), Descr = "Wat de regio's van deze regel samen boven hun claim zitten, per regio van de volgende regel.";
+		attribute<Float32> Tekort    (VerrekenRegio) := sum(max_elem(RestClaim_Eigen, 0f), Verreken_rel), Descr = "Wat de regio's van deze regel samen onder hun claim zitten, per regio van de volgende regel.";
+		attribute<Float32> Verrekenfactor        := MakeDefined(Tekort[Verreken_rel] > 0f ? max_elem(1f - Overschot[Verreken_rel] / Tekort[Verreken_rel], 0f) : 1f, 1f), Descr = "Welk deel van haar eigen restclaim een regio onder haar claim nog krijgt nadat het overschot van de andere regio's is verrekend.";
+		attribute<Float32> RestClaim             := = Context/ThisSectorAllocRegio/VerrekenRegio_path != ''
+		                                              ? 'RestClaim_Eigen > 0f ? RestClaim_Eigen * Verrekenfactor : RestClaim_Eigen'
+		                                              : 'RestClaim_Eigen'
+		, Descr = "Hier de restclaim C_jr bepaald: de eigen restclaim, waarvan binnen elke regio van de volgende regel van deze sector het overschot van de regio's boven hun claim afgaat, naar rato van de eigen restclaim van de regio's eronder. Er gaan geen banen weg, maar de regio's onder hun claim krijgen minder bij, zodat de volgende regel haar regio niet boven de claim vult en de regio als geheel op haar claim uitkomt waar dat kan (#910). De laatste regel van een sector verrekent niets.";
+
 		attribute<Ha>      Beschikbaar           := sum_uint32(CompactedAdminDomain/Beschikbaar, Per_CompactedAdminDomain)[float32] * AdminDomain/NrHaPerCell, Descr = "Aggregatie van beschikbaarheid in AdminDomain middels R_ir uitgedrukt in hectare.";
 		attribute<Bool>    GeenRuimteOfRestclaim := Beschikbaar == 0[ha] || RestClaim <= 0[float32], Descr = "Is geen ruimte in deze regio, of er geen of een negatieve restclaim?";
 		
