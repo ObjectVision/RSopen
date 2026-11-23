@@ -1,0 +1,362 @@
+container PendelregioIndeling
+: Descr = "De indeling van Nederland in pendelregio's en stadregio's op hele gemeenten, volgens de methode voor functional urban areas (FUA) van de Europese Commissie, het JRC en de OECD, met een grens per provincie en een ommeland per stad (#392). Generate schrijft de indeling naar data/Pendelregio in de werkkopie, waar Classifications/Modellering en SourceData/RegioIndelingen haar lezen; het model rekent haar dus niet bij elke run opnieuw uit, en een nieuwe indeling is een commit met een leesbare diff."
+{
+	container Par := /ModelParameters/PendelregioIndeling;
+
+	parameter<String> Generate := 'Ready', ExplicitSuppliers = "Write_Pendelregio_gemeente;Write_Pendelregio;Write_Stadregio", Descr = "Schrijft de drie tabellen van de indeling naar data/Pendelregio.";
+
+	unit<UInt32> Gemeente := /SourceData/RegioIndelingen/CBS/Gekozen/Gemeente_Gegeneraliseerd
+	, Descr = "De gemeenten van de gekozen CBS-jaargang; de pendel moet dezelfde gemeente-indeling hebben."
+	{
+		attribute<String>    code     := /SourceData/RegioIndelingen/CBS/Gekozen/Gemeente_Gegeneraliseerd/statcode;
+		attribute<String>    naam     := /SourceData/RegioIndelingen/CBS/Gekozen/Gemeente_Gegeneraliseerd/statnaam;
+		attribute<String>    naam_csv := strcount(naam, ',') > 0 ? '"' + naam + '"' : naam;
+		attribute<rdc_meter> geometry (poly) := /SourceData/RegioIndelingen/CBS/Gekozen/Gemeente_Gegeneraliseerd/geometry_org, Descr = "De gemeentegrens zonder de toevoeging van IJburg, die in het water ligt en bij Amsterdam hoort.";
+		attribute<rdc_meter> geometry_metIJburg (poly) := /SourceData/RegioIndelingen/CBS/Gekozen/Gemeente_Gegeneraliseerd/geometry;
+		attribute<rdc_meter> geometry_buffer (poly) := geos_buffer_multi_polygon(geometry, Par/Buur_Afstand, 4b);
+		attribute<rdc_meter> punt     := centroid_or_mid(geometry);
+		attribute</SourceData/RegioIndelingen/CBS/Gekozen/Provincie> Provincie_rel := point_in_polygon(punt, /SourceData/RegioIndelingen/CBS/Gekozen/Provincie/geometry), IntegrityCheck = "all(IsDefined(this))";
+		attribute</SourceData/RegioIndelingen/CBS/Gekozen/COROP>     COROP_rel     := point_in_polygon(punt, /SourceData/RegioIndelingen/CBS/Gekozen/COROP/geometry), IntegrityCheck = "all(IsDefined(this))";
+		attribute<Float64>   Inwoners := sum(Vierkant/Inwoners, Vierkant/Gemeente_rel);
+		attribute<Float64>   Woningen := sum(Vierkant/Woningen, Vierkant/Gemeente_rel);
+	}
+
+	unit<UInt32> Buren_ruw := dms_polygon_connectivity(Gemeente/geometry_buffer), Descr = "De paren van gemeenten die binnen Buur_Afstand van elkaar liggen.";
+
+	unit<UInt32> Buren := union_unit(Buren_ruw, Buren_ruw)
+	, Descr = "De burenparen in beide richtingen: Van is de gemeente, Naar haar buur."
+	{
+		attribute<Gemeente> Van  := union_data(., Buren_ruw/first_rel, Buren_ruw/second_rel);
+		attribute<Gemeente> Naar := union_data(., Buren_ruw/second_rel, Buren_ruw/first_rel);
+	}
+	attribute<UInt32> AantalBuren (Gemeente) := pcount(Buren/Van);
+
+	container VierkantBron := ='/SourceData/Bevolking/CBS_vierkanten/Read/Y' + Par/Vierkant_Jaar, Descr = "De CBS-vierkantstatistiek van Vierkant_Jaar.";
+
+	unit<UInt32> Vierkant := VierkantBron/domain
+	, Descr = "De vierkanten van 100 meter van de CBS-vierkantstatistiek, met hun gemeente en hun vierkant van 1 km."
+	{
+		attribute<Float64>   Inwoners     := float64(VierkantBron/aantal_inwoners);
+		attribute<Float64>   Woningen     := float64(VierkantBron/aantal_woningen);
+		attribute<rdc_meter> punt         := centroid_or_mid(VierkantBron/domain/geometry[rdc_meter]);
+		attribute<Gemeente>  Gemeente_rel := point_in_polygon(punt, Gemeente/geometry_metIJburg), Descr = "De gemeente van het vierkant, met de vierkanten van IJburg bij Amsterdam.";
+		attribute<Km>        Km_rel       := punt[Km];
+		attribute<Centrum>   Centrum_rel  := Km/Centrum_rel[Km_rel];
+	}
+
+	unit<IPoint> Km :=
+		range(
+			 gridset(rdc_meter, point_yx(-1000d, 1000d, rdc_meter), point_yx(Geography/min_max/y_max_Nederland, Geography/min_max/x_min_Nederland, rdc_meter), ipoint)
+			,point_yx(0i, 0i)
+			,point_yx(int32((Geography/min_max/y_max_Nederland - Geography/min_max/y_min_Nederland) / 1000d), int32((Geography/min_max/x_max_Nederland - Geography/min_max/x_min_Nederland) / 1000d))
+		)
+	, Descr = "Vierkanten van 1 km over heel Nederland, op de kilometerlijnen van het RD-stelsel en los van het studiegebied."
+	{
+		attribute<Float64> Inwoners    := sum(Vierkant/Inwoners, Vierkant/Km_rel);
+		attribute<Bool>    IsDicht     := Inwoners >= Par/Centrum_Dichtheid;
+		attribute<Centrum> Centrum_rel := rlookup(Dichtgebied/Districts, Centrum/org_rel);
+	}
+
+	unit<UInt32> Dichtgebied := district(Km/IsDicht)
+	, Descr = "De aaneengesloten stukken van vierkanten van 1 km met dezelfde waarde van IsDicht, met vier buren per vierkant."
+	{
+		attribute<Bool>    IsDicht  := sum(uint32(Km/IsDicht), Districts) > 0;
+		attribute<Float64> Inwoners := sum(Km/Inwoners, Districts);
+	}
+
+	unit<UInt32> Centrum := select_with_org_rel(Dichtgebied/IsDicht && Dichtgebied/Inwoners >= Par/Centrum_MinInwoners)
+	, Descr = "Stap 1: de stedelijke centra, aaneengesloten dichte vierkanten van 1 km met samen minstens Centrum_MinInwoners inwoners. De stap van de officiele methode die gaten in een centrum opvult, zit er niet in."
+	{
+		attribute<Float64> Inwoners := org_rel -> Inwoners;
+	}
+
+	container Stappen
+	{
+		container PendelBron
+		{
+			attribute<Gemeente> Woon_rel (/SourceData/Actoren/Pendel/Banen) := rlookup(/SourceData/Actoren/Pendel/Banen/Woon_code, Gemeente/code), IntegrityCheck = "all(IsDefined(this))", Descr = "De woongemeente; de controle eist dat de pendel dezelfde gemeente-indeling heeft als RegioIndelingen_CBSjaar.";
+			attribute<Gemeente> Werk_rel (/SourceData/Actoren/Pendel/Banen) := rlookup(/SourceData/Actoren/Pendel/Banen/Werk_code, Gemeente/code), IntegrityCheck = "all(IsDefined(this))";
+		}
+
+		unit<UInt32> Pendel := combine(Gemeente, Gemeente)
+		, Descr = "De pendel tussen twee gemeenten, gemiddeld over de jaren; first_rel is de woongemeente, second_rel de werkgemeente."
+		{
+			attribute<Float64>  Aantal   := sum(/SourceData/Actoren/Pendel/Banen/Aantal, combine_data(., PendelBron/Woon_rel, PendelBron/Werk_rel)) / float64(#/SourceData/Actoren/Pendel/Banen/Jaren);
+			attribute<Gemeente> Woon_rel := first_rel;
+			attribute<Gemeente> Werk_rel := second_rel;
+		}
+		attribute<Float64> Rw (Gemeente) := sum(Pendel/Aantal, Pendel/Woon_rel), Descr = "De werkende inwoners van de gemeente: alle banen van werknemers die er wonen.";
+
+		unit<UInt32> GemxCentrum := combine(Gemeente, Centrum)
+		{
+			attribute<Float64> Inwoners := sum(Vierkant/Inwoners, combine_data(., Vierkant/Gemeente_rel, Vierkant/Centrum_rel)), Descr = "Inwoners van de gemeente in het centrum.";
+			attribute<Bool>    IsLid    := Inwoners / max_elem(Gemeente/Inwoners[first_rel], 1d) >= Par/Stad_Aandeel;
+			attribute<Float64> NaarStad := sum(Pendel/Aantal, combine_data(., Pendel/Woon_rel, Stad/Centrum_rel[Pendel/Werk_rel])), Descr = "De pendel van de gemeente naar de stad van het centrum.";
+			attribute<Float64> Aandeel  := Rw[first_rel] > 0d ? NaarStad / Rw[first_rel] : 0d;
+		}
+
+		container Stad
+		: Descr = "Stap 2: een stad is de gemeente met minstens Stad_Aandeel van haar inwoners in een centrum; heeft een centrum er geen, dan de gemeente met de meeste inwoners in dat centrum."
+		{
+			attribute<GemxCentrum> LidVan_rel    (Gemeente) := max_index(float64(GemxCentrum/IsLid), GemxCentrum/first_rel);
+			attribute<Centrum>     LidVan        (Gemeente) := GemxCentrum/IsLid[LidVan_rel] ? GemxCentrum/second_rel[LidVan_rel] : (0/0)[Centrum];
+			attribute<UInt32>      AantalLeden   (Centrum)  := sum(uint32(GemxCentrum/IsLid), GemxCentrum/second_rel);
+			attribute<Gemeente>    Grootste      (Centrum)  := GemxCentrum/first_rel[max_index(GemxCentrum/Inwoners, GemxCentrum/second_rel)];
+			unit<UInt32>           ZonderLeden              := select_with_org_rel(AantalLeden == 0)
+			{
+				attribute<Gemeente> Gemeente_rel := Grootste[org_rel];
+			}
+			attribute<Centrum>     Centrum_rel   (Gemeente) := IsDefined(LidVan) ? LidVan : ZonderLeden/org_rel[rlookup(id(Gemeente), ZonderLeden/Gemeente_rel)], Descr = "Het centrum waarvan de gemeente de stad is, of niets.";
+			attribute<Gemeente>    Grootste_Stad (Centrum)  := max_index(Gemeente/Inwoners, Centrum_rel), Descr = "De grootste gemeente van de stad; hij geeft de stad haar naam.";
+			attribute<String>      Naam          (Centrum)  := Gemeente/naam[Grootste_Stad];
+		}
+
+		container EigenZone
+		: Descr = "Een stad heeft een eigen pendelzone als minstens een gemeente die zelf geen stad is en in dezelfde provincie ligt als de grootste gemeente van de stad, het grootste deel van haar werkende inwoners naar deze stad stuurt en dat minstens Pendel_Drempel is. Zo'n stad gaat niet op in een andere stad: Hoorn, waar West-Friesland op leunt, blijft dan los van Amsterdam. Gemeenten over de provinciegrens tellen niet mee, want de provincie is de grens van de pendelregio; anders blijft de Haarlemmermeer los van Amsterdam op de pendel uit Hillegom en Lisse (#392)."
+		{
+			attribute<GemxCentrum> Beste_rel    (Gemeente) := max_index(GemxCentrum/Aandeel, GemxCentrum/first_rel);
+			attribute<Centrum>     Beste        (Gemeente) := GemxCentrum/second_rel[Beste_rel];
+			attribute<Float64>     BesteAandeel (Gemeente) := GemxCentrum/Aandeel[Beste_rel];
+			attribute<Bool>        HoortBij     (Gemeente) := IsNull(Stad/Centrum_rel) && Rw > 0d && BesteAandeel >= Par/Pendel_Drempel, Descr = "De gemeente is geen stad en stuurt minstens Pendel_Drempel van haar werkende inwoners naar de stad Beste, meer dan naar elke andere stad.";
+			attribute<Bool>        Telt         (Gemeente) := HoortBij && Gemeente/Provincie_rel == Gemeente/Provincie_rel[Stad/Grootste_Stad[Beste]], Descr = "De gemeente hoort bij de stad Beste en ligt in dezelfde provincie als de grootste gemeente van die stad.";
+			attribute<Bool>        Heeft        (Centrum)  := sum(uint32(Telt), Beste) > 0;
+		}
+
+		unit<UInt32> CentrumxCentrum := combine(Centrum, Centrum)
+		{
+			attribute<Float64> Tussen := sum(Pendel/Aantal, combine_data(., Stad/Centrum_rel[Pendel/Woon_rel], Stad/Centrum_rel[Pendel/Werk_rel]));
+			attribute<Float64> Uit    := sum(Pendel/Aantal, Stad/Centrum_rel[Pendel/Woon_rel])[first_rel], Descr = "De werkende inwoners van de eerste stad.";
+			attribute<Bool>    IsBand := first_rel != second_rel && !EigenZone/Heeft[first_rel] && Tussen / max_elem(Uit, 1d) >= Par/Pendel_Drempel, Descr = "De eerste stad stuurt minstens Pendel_Drempel van haar werkende inwoners naar de tweede en heeft geen eigen pendelzone.";
+		}
+		unit<UInt32> Band := select_with_org_rel(CentrumxCentrum/IsBand)
+		{
+			attribute<Centrum> F1 := CentrumxCentrum/first_rel[org_rel];
+			attribute<Centrum> F2 := CentrumxCentrum/second_rel[org_rel];
+		}
+
+		unit<UInt32> FUA := connected_parts(Band/F1, Band/F2)
+		, Descr = "De steden na het samenvoegen: twee steden met een band horen bij elkaar, en ketens van zulke banden worden een stad."
+		{
+			attribute<Gemeente> Grootste := max_index(Gemeente/Inwoners, Gemeente_FUA);
+			attribute<String>   Naam     := Gemeente/naam[Grootste];
+		}
+		attribute<FUA> Gemeente_FUA (Gemeente) := FUA/part_rel[Stad/Centrum_rel], Descr = "De samengevoegde stad van een stadgemeente.";
+
+		attribute<FUA> Pendelzone_Start (Gemeente) := IsDefined(Gemeente_FUA) ? Gemeente_FUA : EigenZone/HoortBij ? FUA/part_rel[EigenZone/Beste] : (0/0)[FUA]
+		, Descr = "Stap 3: een gemeente die geen stad is, hoort bij de stad uit stap 2 waar het grootste deel van haar werkende inwoners werkt, als dat minstens Pendel_Drempel is, en daarmee bij de FUA van die stad. De vergelijking gaat per stad en niet per FUA, zodat een kleinere stad naast een grote FUA haar eigen pendelzone houdt: Velsen en Bloemendaal werken vaker in Haarlem dan in Amsterdam (#392).";
+
+		unit<UInt32> RondeK := range(uint32, 0, Par/AantalRondes_Pendelzone)
+		{
+			attribute<String> name   := 'R' + string(id(.) + 1);
+			attribute<String> vorige := id(.) == 0 ? 'Pendelzone_Start' : 'Pendelzone_Rondes/R' + string(id(.)) + '/Uit';
+		}
+		container Pendelzone_Rondes := for_each_ne(RondeK/name, 'Pendelzone_Ronde_T(' + RondeK/vorige + ')')
+		, Descr = "Per ronde verliest een pendelzone de losliggende delen zonder stad, en krijgt hij de gemeenten die helemaal door hem zijn ingesloten.";
+		attribute<FUA> Pendelzone (Gemeente) := ='Pendelzone_Rondes/' + last(RondeK/name) + '/Uit';
+
+		Template Pendelzone_Ronde_T
+		{
+			attribute<FUA> In (Gemeente);
+			///
+			unit<UInt32> Lijn := select_with_org_rel(IsDefined(In[Buren/Van]) && In[Buren/Van] == In[Buren/Naar])
+			{
+				attribute<Gemeente> F1 := Buren/Van[org_rel];
+				attribute<Gemeente> F2 := Buren/Naar[org_rel];
+			}
+			unit<UInt32> Deel := connected_parts(Lijn/F1, Lijn/F2)
+			{
+				attribute<Bool> HeeftKern := sum(uint32(IsDefined(In) && Gemeente_FUA == In), part_rel) > 0;
+			}
+			attribute<FUA>    Schoon   (Gemeente) := Deel/HeeftKern[Deel/part_rel] ? In : (0/0)[FUA];
+			attribute<UInt32> BurenMet (Gemeente) := sum(uint32(IsDefined(Schoon[Buren/Naar])), Buren/Van);
+			attribute<UInt32> BurenMin (Gemeente) := min(uint32(Schoon[Buren/Naar]), Buren/Van);
+			attribute<UInt32> BurenMax (Gemeente) := max(uint32(Schoon[Buren/Naar]), Buren/Van);
+			attribute<FUA>    Uit      (Gemeente) := IsNull(Schoon) && AantalBuren > 0 && BurenMet == AantalBuren && BurenMin == BurenMax ? BurenMin[FUA] : Schoon;
+		}
+
+		unit<UInt32> FUAxProv := combine(FUA, /SourceData/RegioIndelingen/CBS/Gekozen/Provincie)
+		, Descr = "Stap 4: een FUA blijft binnen de provincie. Het deel in de provincie van zijn grootste gemeente houdt de naam van de stad; een deel in een andere provincie met een eigen stad wordt een eigen regio met de naam van zijn grootste stad, en een deel zonder stad gaat naar de rest."
+		{
+			attribute<.>        Gemeente_rel (Gemeente) := combine_data(., Pendelzone, Gemeente/Provincie_rel);
+			attribute<.>        Stad_rel     (Gemeente) := IsDefined(Stad/Centrum_rel) ? Gemeente_rel : (0/0)[.];
+			attribute<UInt32>   AantalLeden  := pcount(Gemeente_rel);
+			attribute<UInt32>   AantalStad   := pcount(Stad_rel);
+			attribute<Bool>     IsHoofd      := second_rel == Gemeente/Provincie_rel[FUA/Grootste[first_rel]];
+			attribute<Bool>     IsRegio      := AantalLeden > 0 && (IsHoofd || AantalStad > 0);
+			attribute<Gemeente> GrootsteStad := max_index(Gemeente/Inwoners, Stad_rel);
+			attribute<String>   Naam         := IsHoofd ? FUA/Naam[first_rel] : Gemeente/naam[GrootsteStad];
+		}
+		unit<UInt32> FUARegio := select_with_org_rel(FUAxProv/IsRegio);
+
+		attribute<UInt32> AantalFUARegios (/SourceData/RegioIndelingen/CBS/Gekozen/Provincie) := pcount(FUAxProv/second_rel[FUARegio/org_rel]);
+		unit<UInt32> RestProvincie := select_with_org_rel(AantalFUARegios == 0)
+		, Descr = "De provincies zonder FUA-regio; hun gemeenten vormen samen een restregio."
+		{
+			attribute<String> Naam := 'Rest ' + /SourceData/RegioIndelingen/CBS/Gekozen/Provincie/statnaam[org_rel];
+		}
+
+		unit<UInt32> Regio := union_unit(FUARegio, RestProvincie)
+		{
+			attribute<String> Naam  := union_data(., FUAxProv/Naam[FUARegio/org_rel], RestProvincie/Naam);
+			attribute<String> Soort := union_data(., const('FUA', FUARegio), const('rest', RestProvincie));
+			attribute</SourceData/RegioIndelingen/CBS/Gekozen/Provincie> Provincie_rel := union_data(., FUAxProv/second_rel[FUARegio/org_rel], RestProvincie/org_rel);
+		}
+		attribute<Regio> Regio_Start (Gemeente) := AantalFUARegios[Gemeente/Provincie_rel] == 0
+			? (rlookup(Gemeente/Provincie_rel, RestProvincie/org_rel) + #FUARegio)[Regio]
+			: rlookup(FUAxProv/Gemeente_rel, FUARegio/org_rel)[Regio];
+
+		unit<UInt32> GemxRegio := combine(Gemeente, Regio);
+
+		unit<UInt32> BuurRondeK := range(uint32, 0, Par/AantalRondes_Buren)
+		{
+			attribute<String> name   := 'R' + string(id(.) + 1);
+			attribute<String> vorige := id(.) == 0 ? 'Regio_Start' : 'Buur_Rondes/R' + string(id(.)) + '/Uit';
+		}
+		container Buur_Rondes := for_each_ne(BuurRondeK/name, 'Buur_Ronde_T(' + BuurRondeK/vorige + ')')
+		, Descr = "Stap 5: per ronde gaat elke gemeente buiten een regio met een buur die al een regio heeft naar de buurregio in dezelfde provincie waar ze de meeste pendel naartoe stuurt.";
+		attribute<Regio> Regio_Voorlaatst (Gemeente) := ='Buur_Rondes/R' + string(Par/AantalRondes_Buren - 1) + '/Uit';
+		attribute<Regio> Regio_NaBuren    (Gemeente) := ='Buur_Rondes/' + last(BuurRondeK/name) + '/Uit'
+		, IntegrityCheck = "sum(uint32(IsNull(this))) == sum(uint32(IsNull(Regio_Voorlaatst)))"
+		, Descr = "De controle eist dat de laatste ronde niets meer veranderde; wat dan nog open is, grenst aan geen regio in de eigen provincie.";
+
+		Template Buur_Ronde_T
+		{
+			attribute<Regio> In (Gemeente);
+			///
+			attribute<Float64> PendelNaar (GemxRegio) := sum(Pendel/Aantal, combine_data(GemxRegio, Pendel/Woon_rel, In[Pendel/Werk_rel]));
+			unit<UInt32> Kand := select_with_org_rel(IsNull(In[Buren/Van]) && IsDefined(In[Buren/Naar]) && Gemeente/Provincie_rel[Buren/Van] == Gemeente/Provincie_rel[Buren/Naar])
+			{
+				attribute<Gemeente> Gemeente_rel := Buren/Van[org_rel];
+				attribute<Regio>    Regio_rel    := In[Buren/Naar[org_rel]];
+				attribute<Float64>  Score        := PendelNaar[combine_data(GemxRegio, Gemeente_rel, Regio_rel)];
+			}
+			attribute<Kand>  Beste (Gemeente) := max_index(Kand/Score, Kand/Gemeente_rel);
+			attribute<Regio> Uit   (Gemeente) := IsDefined(In) ? In : Kand/Regio_rel[Beste];
+		}
+
+		container Rest
+		: Descr = "Wat na de rondes nog open is, grenst aan geen regio in de eigen provincie, zoals een Waddeneiland; het gaat naar de regio in de provincie waar het de meeste pendel naartoe stuurt."
+		{
+			attribute<Float64>   PendelNaar (GemxRegio) := sum(Pendel/Aantal, combine_data(GemxRegio, Pendel/Woon_rel, Regio_NaBuren[Pendel/Werk_rel]));
+			attribute<Float64>   Score      (GemxRegio) := Regio/Provincie_rel[GemxRegio/second_rel] == Gemeente/Provincie_rel[GemxRegio/first_rel] ? PendelNaar : -1d;
+			attribute<GemxRegio> Beste      (Gemeente)  := max_index(Score, GemxRegio/first_rel);
+			attribute<Regio>     Regio_rel  (Gemeente)  := IsDefined(Regio_NaBuren) ? Regio_NaBuren : GemxRegio/second_rel[Beste], IntegrityCheck = "all(IsDefined(this))";
+		}
+		attribute<Regio> Regio_rel (Gemeente) := Rest/Regio_rel;
+
+		container Stadregio_Bouw
+		: Descr = "Stap 6: binnen elke pendelregio is elke stad uit stap 2 een stadregio met een eigen ommeland. Een stad die over twee pendelregio's valt, krijgt per regio een eigen stadregio. Een gemeente die geen stad is, gaat naar het ommeland van de stad in haar pendelregio waar ze de meeste pendel naartoe stuurt; komt ze daarmee los van die stad te liggen, dan gaat ze naar de aangrenzende stadregio met de meeste pendel naar zijn stad. Zo gaat Castricum naar Beverwijk en niet naar Amsterdam. Een pendelregio zonder stad is als geheel een ommeland (#392)."
+		{
+			unit<UInt32> CentrumxRegio := combine(Centrum, Regio)
+			{
+				attribute<UInt32> Aantal := pcount(combine_data(., Stad/Centrum_rel, Regio_rel));
+			}
+			attribute<UInt32> AantalRegios (Centrum) := sum(uint32(CentrumxRegio/Aantal > 0), CentrumxRegio/first_rel);
+
+			unit<UInt32> Kern := select_with_org_rel(CentrumxRegio/Aantal > 0)
+			, Descr = "De steden per pendelregio, elk de kern van een stadregio."
+			{
+				attribute<Centrum> Centrum_rel := CentrumxRegio/first_rel[org_rel];
+				attribute<Regio>   Regio_rel   := CentrumxRegio/second_rel[org_rel];
+				attribute<String>  StadNaam    := Stad/Naam[Centrum_rel] + (AantalRegios[Centrum_rel] > 1 ? ' (' + Regio/Naam[Regio_rel] + ')' : '');
+			}
+			attribute<Kern> Kern_rel (Gemeente) := rlookup(combine_data(CentrumxRegio, Stad/Centrum_rel, Regio_rel), Kern/org_rel), Descr = "De kern waartoe de stadgemeente hoort.";
+
+			unit<UInt32> GemxKern := combine(Gemeente, Kern)
+			{
+				attribute<Float64> NaarStad := sum(Pendel/Aantal, combine_data(., Pendel/Woon_rel, Kern_rel[Pendel/Werk_rel])), Descr = "De pendel van de gemeente naar de stadgemeenten van de kern.";
+				attribute<Float64> Score    := Kern/Regio_rel[second_rel] == Regio_rel[first_rel] ? NaarStad : -1d, Descr = "De pendel naar de stad, alleen voor een stad in de eigen pendelregio.";
+			}
+
+			attribute<GemxKern> Beste    (Gemeente) := max_index(GemxKern/Score, GemxKern/first_rel);
+			attribute<Kern>     Voorkeur (Gemeente) := IsDefined(Kern_rel) ? Kern_rel : GemxKern/Score[Beste] >= 0d ? GemxKern/second_rel[Beste] : (0/0)[Kern]
+			, Descr = "De stad in de eigen pendelregio waar de gemeente de meeste pendel naartoe stuurt; voor een stadgemeente haar eigen kern.";
+
+			unit<UInt32> Lijn := select_with_org_rel(IsDefined(Voorkeur[Buren/Van]) && Voorkeur[Buren/Van] == Voorkeur[Buren/Naar])
+			{
+				attribute<Gemeente> F1 := Buren/Van[org_rel];
+				attribute<Gemeente> F2 := Buren/Naar[org_rel];
+			}
+			unit<UInt32> Deel := connected_parts(Lijn/F1, Lijn/F2)
+			, Descr = "De aaneengesloten stukken van gemeenten met dezelfde voorkeur."
+			{
+				attribute<Bool> HeeftKern := sum(uint32(IsDefined(Kern_rel)), part_rel) > 0;
+			}
+			attribute<Kern> Aaneengesloten (Gemeente) := Deel/HeeftKern[Deel/part_rel] ? Voorkeur : (0/0)[Kern], Descr = "De voorkeur, alleen waar de gemeente via gemeenten met dezelfde voorkeur aan haar stad vastzit.";
+
+			container Ommeland_Rondes := for_each_ne(BuurRondeK/name, 'Ommeland_Ronde_T(' + replace(BuurRondeK/vorige, 'Regio_Start', 'Aaneengesloten', 'Buur_Rondes', 'Ommeland_Rondes') + ')')
+			, Descr = "Per ronde gaat elke gemeente zonder stadregio met een buur in dezelfde pendelregio die er al een heeft, naar de stadregio van zo'n buur met de stad waar ze de meeste pendel naartoe stuurt.";
+			attribute<Kern> Kern_Voorlaatst (Gemeente) := ='Ommeland_Rondes/R' + string(Par/AantalRondes_Buren - 1) + '/Uit';
+			attribute<Kern> Kern_NaBuren    (Gemeente) := ='Ommeland_Rondes/' + last(BuurRondeK/name) + '/Uit'
+			, IntegrityCheck = "sum(uint32(IsNull(this))) == sum(uint32(IsNull(Kern_Voorlaatst)))"
+			, Descr = "De controle eist dat de laatste ronde niets meer veranderde.";
+
+			Template Ommeland_Ronde_T
+			{
+				attribute<Kern> In (Gemeente);
+				///
+				unit<UInt32> Kand := select_with_org_rel(IsNull(In[Buren/Van]) && IsDefined(In[Buren/Naar]) && Regio_rel[Buren/Van] == Regio_rel[Buren/Naar])
+				{
+					attribute<Gemeente> Gemeente_rel := Buren/Van[org_rel];
+					attribute<Kern>     Kern_rel     := In[Buren/Naar[org_rel]];
+					attribute<Float64>  Score        := GemxKern/NaarStad[combine_data(GemxKern, Gemeente_rel, Kern_rel)];
+				}
+				attribute<Kand> Beste (Gemeente) := max_index(Kand/Score, Kand/Gemeente_rel);
+				attribute<Kern> Uit   (Gemeente) := IsDefined(In) ? In : Kand/Kern_rel[Beste];
+			}
+
+			attribute<Kern>     Ommeland (Gemeente) := IsDefined(Kern_NaBuren) ? Kern_NaBuren : Voorkeur
+			, Descr = "De kern van de stadregio; wat na de rondes geen kern heeft en niet aan een stad in de eigen pendelregio grenst, zoals een Waddeneiland, gaat naar de stad in de pendelregio waar het de meeste pendel naartoe stuurt. In een pendelregio zonder stad blijft het leeg.";
+
+			attribute<String> Naam (Gemeente) := IsDefined(Kern_rel)
+				? 'Stad ' + Kern/StadNaam[Kern_rel]
+				: IsDefined(Ommeland) ? 'Ommeland ' + Kern/StadNaam[Ommeland] : 'Ommeland ' + Regio/Naam[Regio_rel];
+		}
+	}
+
+	unit<UInt32> Pendelregio := unique(Stappen/Regio/Naam[Stappen/Regio_rel])
+	, Descr = "De pendelregio's op volgorde van hun naam; de code is het rangnummer."
+	{
+		attribute<String> Naam     := Values;
+		attribute<String> Naam_csv := strcount(Naam, ',') > 0 ? '"' + Naam + '"' : Naam;
+		attribute<UInt32> Code     := id(.) + 1, IntegrityCheck = "#Pendelregio == #Stappen/Regio", Descr = "De controle eist dat elke regio een eigen naam heeft.";
+		attribute<String> Soort    := Stappen/Regio/Soort[rlookup(Naam, Stappen/Regio/Naam)];
+	}
+
+	unit<UInt32> Stadregio := unique(Stappen/Stadregio_Bouw/Naam)
+	, Descr = "De stadregio's op volgorde van hun naam; de code is het rangnummer."
+	{
+		attribute<String>      Naam            := Values;
+		attribute<String>      Naam_csv        := strcount(Naam, ',') > 0 ? '"' + Naam + '"' : Naam;
+		attribute<UInt32>      Code            := id(.) + 1;
+		attribute<Pendelregio> Pendelregio_rel := Gemeente_Uit/Pendelregio_rel[rlookup(Naam, Stappen/Stadregio_Bouw/Naam)];
+	}
+
+	container Gemeente_Uit
+	{
+		attribute<Pendelregio> Pendelregio_rel (Gemeente) := rlookup(Stappen/Regio/Naam[Stappen/Regio_rel], Pendelregio/Naam);
+		attribute<Stadregio>   Stadregio_rel   (Gemeente) := rlookup(Stappen/Stadregio_Bouw/Naam, Stadregio/Naam), IntegrityCheck = "all(Stadregio/Pendelregio_rel[this] == Pendelregio_rel)", Descr = "De controle eist dat elke stadregio in een pendelregio ligt.";
+	}
+
+	parameter<String> Write_Pendelregio_gemeente := 'GM_code,Gemeente,Pendelregio_code,Pendelregio,Soort,Stadregio_code,Stadregio,COROP,Provincie,Inwoners,Woningen\n'
+		+ AsList(
+			  Gemeente/code + ',' + Gemeente/naam_csv
+			+ ',' + string(Pendelregio/Code[Gemeente_Uit/Pendelregio_rel]) + ',' + Pendelregio/Naam_csv[Gemeente_Uit/Pendelregio_rel] + ',' + Pendelregio/Soort[Gemeente_Uit/Pendelregio_rel]
+			+ ',' + string(Stadregio/Code[Gemeente_Uit/Stadregio_rel]) + ',' + Stadregio/Naam_csv[Gemeente_Uit/Stadregio_rel]
+			+ ',' + /SourceData/RegioIndelingen/CBS/Gekozen/COROP/statcode[Gemeente/COROP_rel] + ',' + /SourceData/RegioIndelingen/CBS/Gekozen/Provincie/statcode[Gemeente/Provincie_rel]
+			+ ',' + string(int32(Gemeente/Inwoners)) + ',' + string(int32(Gemeente/Woningen))
+			, '\n') + '\n'
+	, StorageName = "%ProjDir%/data/Pendelregio/Pendelregio_gemeente.csv"
+	, StorageType = "str"
+	, Descr = "Per gemeente de pendelregio en de stadregio, met de COROP, de provincie en de inwoners en woningen uit de vierkantstatistiek.";
+
+	parameter<String> Write_Pendelregio := 'Pendelregio_code,Pendelregio,Soort\n' + AsList(string(Pendelregio/Code) + ',' + Pendelregio/Naam_csv + ',' + Pendelregio/Soort, '\n') + '\n'
+	, StorageName = "%ProjDir%/data/Pendelregio/Pendelregio.csv"
+	, StorageType = "str"
+	, Descr = "De codelijst van de pendelregio's, die Classifications/Modellering/PendelregioK leest.";
+
+	parameter<String> Write_Stadregio := 'Stadregio_code,Stadregio,Pendelregio_code\n' + AsList(string(Stadregio/Code) + ',' + Stadregio/Naam_csv + ',' + string(Pendelregio/Code[Stadregio/Pendelregio_rel]), '\n') + '\n'
+	, StorageName = "%ProjDir%/data/Pendelregio/Stadregio.csv"
+	, StorageType = "str"
+	, Descr = "De codelijst van de stadregio's, die Classifications/Modellering/StadregioK leest.";
+}
