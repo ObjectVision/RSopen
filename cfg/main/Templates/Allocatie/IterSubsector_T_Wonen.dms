@@ -91,9 +91,10 @@ Template IterSubsector_T_Wonen
 		                                                               && !RestrictiesVoorSectorenAlsGevolgVanWind/Restrictief_voor_kwestbare_gebouwen, Descr = "Is land unit i beschikbaar voor een OP en niet al eerder dit of vorige zichtjaren gealloceerd, en niet niet nog een additionele restrictie door wind allocatie?";
 		
 		attribute<Bool>         Beschikbaar_NaAfgewezenClusters     := = Context/IsFirstIter ? 'Beschikbaar_Init' : 'Beschikbaar_Init && NOT('+Context/PrevItername+'/Allocatie/IsAfgewezen_Cumulatief)', Descr = "Een afgewezen cel blijft de rest van deze sector-allocregio uitgesloten. Twee mildere varianten zijn geprobeerd en allebei afgevallen, zie ObjectVision/RSopen#643: terugkomen zodra er een gealloceerde buur is laat de allocatie volledig vastlopen, en terugkomen zodra de erosiedrempel gehaald zou worden levert per saldo niets op.";
-		attribute<Bool>         Beschikbaar                         := = Context/ThisIter_rel >= ModelParameters/Advanced/IterVanafWaarWeAfgewezenCellenUitsluitenInAlloc
+		attribute<Bool>         Beschikbaar_VoorBegrenzing          := = Context/ThisIter_rel >= ModelParameters/Advanced/IterVanafWaarWeAfgewezenCellenUitsluitenInAlloc
 		                                                               ? 'Beschikbaar_NaAfgewezenClusters'
 		                                                               : 'Beschikbaar_Init';
+		attribute<Bool>         Beschikbaar                         := Beschikbaar_VoorBegrenzing && BegrenzingStadregio/Binnen, Descr = "Beschikbaar, en in een ronde boven de stadregio binnen wat de stadregio van de cel daar nog mag krijgen (BegrenzingStadregio, #904).";
 		
 		attribute<Float32>      PotentieleStateNaAllocatie          := MakeDefined(OP/Dichtheid[Geschiktheid_ArgMax_OP], 0f) * float32(Beschikbaar) * AdminDomain/NrHaPerCell, Descr = "Zoek bij het OP met die kan en de hoogste S heeft de bijbehorende dichtheid op, check nog eens op beschikbaarheid, en vertaal dichtheid per ha naar AdminDomain naar ", IntegrityCheck = "Check_of_IsBestOPOokDaarBeschikbaar";
 		attribute<Bool>         Check_of_IsBestOPOokDaarBeschikbaar := ='IsNull(Geschiktheid_ArgMax_OP_sub)' //of er niks in die cell
@@ -116,8 +117,44 @@ Template IterSubsector_T_Wonen
 		                                                               : 'Geschiktheid > AllocRegio/Afkapgrens[AllocRegio/per_CompactedAdminDomain]', Descr = "Wil deze subsector de cel in deze iteratie hebben? Zonder quotum ligt de geschiktheid boven de zaaglijn van de regio, met quotum boven die van een van de woningtypegroepen. Iter_Allocatie kiest daarna tussen de subsectoren.";
 	}
 
+	container BegrenzingStadregio
+	: Descr = "Hoeveel een stadregio krijgt in de rondes boven de fijnste indeling van wonen (#904). Zonder begrenzing wint een stadregio die al boven zijn claim zit daar elke periode opnieuw de overloop
+				van de hele pendelregio of provincie, als zijn dorpsranden het beste saldo hebben. Per stadregio en subsector mogen die rondes samen dit zichtjaar hooguit de groei van de eigen claim keer
+				ModelParameters/Wonen/OverloopFactorStadregio neerzetten. De cellen daarboven vallen uit de beschikbaarheid, zodat de zaaglijn van de regio dieper gaat in de andere stadregio's; wat nergens past,
+				blijft restclaim. Met quotum rangschikt de begrenzing op het beste pakket van de subsector en niet per woningtypegroep."
+	{
+		parameter<Bool>      Actief                             := lowercase(AllocRegio_name) != lowercase(/ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_name) && IsDefined(/ModelParameters/Wonen/OverloopFactorStadregio), Descr = "Is dit een ronde boven de fijnste indeling van wonen, met een factor? In de eigen ronde van de stadregio, en met een lege factor, geldt de begrenzing niet.";
+		unit<UInt32>         Stadregio                          := Context/ThisZichtjaar/WonenRegio;
+		parameter<String>    EigenRonde_name                    := /ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_name + '_Wonen';
+		parameter<String>    ClaimPad                           := 'ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/SectorAllocRegios/'+EigenRonde_name+'/'+Subsector_name;
+		container            StandNaEigenRonde                  := = Actief ? 'Context/ThisZichtjaar/Sequences/Seq_0/SectorAllocRegios/'+EigenRonde_name+'/StateNaAllocatie' : 'StateVoorAllocatie', Descr = "De stand na de eigen ronde van de stadregio in de eerste sequentie, waarna de hogere rondes beginnen.";
+
+		attribute<Float32>   ClaimNu                (Stadregio) := = replace(ClaimPad, '@Z@', Zichtjaar_name);
+		attribute<Float32>   ClaimVorig             (Stadregio) := = Context/ThisZichtjaar/Impl/IsEersteZichtjaar
+		                                                            ? 'sum(Context/ThisZichtjaar/StateVoorAllocatie/'+Subsector_pathname+', Stadregio/Per_CompactedAdminDomain)'
+		                                                            : replace(ClaimPad, '@Z@', Context/ThisZichtjaar/Impl/PrevZichtjaar_name)
+		, Descr = "De claim van het vorige zichtjaar; in het eerste zichtjaar de stand aan het begin, want de claims beginnen bij het eerste zichtjaar.";
+		attribute<Float32>   Groei                  (Stadregio) := max_elem(ClaimNu - ClaimVorig, 0f);
+		attribute<Bool>      IsNieuwHoger (CompactedAdminDomain) := IsDefined(StateVoorAllocatie/OP_rel) && IsNull(StandNaEigenRonde/OP_rel), Descr = "Draagt de cel een pakket dat zij na de eigen ronde van de stadregio nog niet droeg? Dan kreeg zij het dit zichtjaar in een hogere ronde.";
+		attribute<Float32>   Gekregen               (Stadregio) := = 'sum(StateVoorAllocatie/'+Subsector_pathname+' * float32(IsNieuwHoger), Stadregio/Per_CompactedAdminDomain)', Descr = "De woningen van deze subsector die de hogere rondes dit zichtjaar al in de stadregio hebben gezet.";
+		attribute<Float32>   Ruimte                 (Stadregio) := /ModelParameters/Wonen/OverloopFactorStadregio * Groei - Gekregen;
+
+		attribute<OP_subdomain> ArgMax_OP_sub (CompactedAdminDomain) := = HeeftQuotum ? 'ArgMax_ifdefined('+asItemList(GeschiktheidExpr/Geschiktheid_perOP_expr)+')[OP_subdomain]' : 'CompactedAdminDomain/Geschiktheid_ArgMax_OP_sub', Descr = "Het beste pakket van de subsector over alle woningtypegroepen; met quotum apart gerekend, want het pakket van het quotum hangt van de beschikbaarheid af.";
+		attribute<UInt64>    Geschiktheid  (CompactedAdminDomain) := UInt64(CompactedAdminDomain/Beschikbaar_VoorBegrenzing) * (UInt64(CompactedAdminDomain/TredeScore) * CompactedAdminDomain/Geschiktheid_Ordered_range + UInt64(CompactedAdminDomain/Geschiktheid_Rang)), Descr = "De opbouw van CompactedAdminDomain/Geschiktheid, op de beschikbaarheid voor de begrenzing.";
+		attribute<Float32>   Potentieel    (CompactedAdminDomain) := MakeDefined(OP/Dichtheid[ArgMax_OP_sub -> org_rel], 0f) * float32(CompactedAdminDomain/Beschikbaar_VoorBegrenzing) * AdminDomain/NrHaPerCell;
+		parameter<UInt64>    MaxGeschiktheid_value              := max(Geschiktheid);
+		attribute<UInt64>    Afkapgrens0            (Stadregio) := MaxGeschiktheid_value - nth_element_weighted(
+		                                                                MaxGeschiktheid_value - Geschiktheid
+		                                                                , max_elem(Ruimte, 0f)
+		                                                                , Potentieel
+		                                                                , collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, Stadregio/Per_AdminDomain)
+		                                                            ), Descr = "De zaaglijn binnen de stadregio waarboven de beste cellen samen de ruimte vullen, zoals AllocRegio/Afkapgrens0.";
+		attribute<UInt64>    Afkapgrens             (Stadregio) := Ruimte <= 0f ? null_u64 : MakeDefined(Afkapgrens0, 0u64), Descr = "Leeg als de ruimte op is, nul als de stadregio minder cellen heeft dan de ruimte vraagt.";
+		attribute<Bool>      Binnen        (CompactedAdminDomain) := = Actief ? 'MakeDefined(Geschiktheid > Afkapgrens[Stadregio/Per_CompactedAdminDomain], FALSE)' : 'const(TRUE, CompactedAdminDomain)', Descr = "Mag de cel in deze ronde nog naar deze subsector? In de eigen ronde van de stadregio altijd.";
+	}
+
 	container Quotum
-	: Descr = "Het quotum per woningtype binnen eengezins (#847), alleen in gebruik als HeeftQuotum. De restclaim van deze subsector wordt per regio verdeeld over de groepen uit
+	: Descr ="Het quotum per woningtype binnen eengezins (#847), alleen in gebruik als HeeftQuotum. De restclaim van deze subsector wordt per regio verdeeld over de groepen uit
 				ModelParameters/Wonen/WoningtypeEengezins naar het gebouwde aandeel, en elke groep krijgt een eigen zaaglijn over de pakketten van haar type. Binnen een iteratie kiest een groep alleen uit de
 				cellen die de groepen ervoor hebben laten liggen, zodat geen cel naar twee groepen gaat. Het vrijstaande deel van de eengezinsclaim van sociale huur en vrije sector samen komt bij de vrije sector.
 				Waar de grond opraakt, schuift SchaarseGrond een deel van het vrijstaande doel naar de groep die per woning de minste grond vraagt."
