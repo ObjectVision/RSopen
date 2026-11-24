@@ -28,8 +28,9 @@
 [CmdletBinding()]
 param(
     # Standaard de LocalData en de configuratie van de werkkopie waarin dit script staat, net als bij
-    # RunAllocatie.ps1.
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    # RunAllocatie.ps1. Een andere map geldt voor alle trappen: de GeoDmsRun van trap C krijgt hem mee
+    # (ObjectVision/RSopen#911).
+    [string]   $LocalData  = '',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Scenario   = 'WLO_hoog',
@@ -53,6 +54,7 @@ param(
 $ErrorActionPreference = 'Continue'
 # Invoke-GeoDmsRun: de gedeelde rij en de waakhond voor de stappen van trap C.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+$LocalData = Resolve-LocalData $Cfg $LocalData
 if (-not $Rapport) { $Rapport = Join-Path $LocalData 'toets_oplevering.md' }
 $vers = if ($RunGestartOp) { [datetime]::ParseExact($RunGestartOp, 'yyyy-MM-dd HH:mm', $null) } else { $null }
 
@@ -231,12 +233,11 @@ function TrapC([string]$variant, [string]$jaar) {
     $j = $jaar -replace '^Stand',''
     $env:DiagCasus = $casus
     $env:DiagJaar  = "'$j'"
-    $env:LocalDataProjDir = $LocalData
     $log = Join-Path $env:TEMP "toets_${casus}_$j.log"
     if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
 
     $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten @("/L$log", $Cfg, '/Diagnose/GenerateAll') -Log $log -WaakhondMinuten $WaakhondMinuten `
-                -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "ToetsOplevering GenerateAll $casus $j" -RijMap $RijMap
+                -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "ToetsOplevering GenerateAll $casus $j" -RijMap $RijMap -LocalData $LocalData
     $code = $run.Code
     $errs = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
     Meld 'C' $casus "$j diagnoseharnas gedraaid" $(if ($code -eq 0 -and $errs.Count -eq 0 -and -not $run.Reden) {'PASS'} else {'FAIL'}) "exit $code, $($errs.Count) foutregels$(if ($run.Reden) { ", $($run.Reden)" })" 'exit 0, geen foutregels'
@@ -245,12 +246,11 @@ function TrapC([string]$variant, [string]$jaar) {
 function TrapCBasisjaar([string]$variant) {
     $casus = "${Scenario}_$variant"
     $env:DiagCasus = $casus
-    $env:LocalDataProjDir = $LocalData
     $log = Join-Path $env:TEMP "toets_${casus}_basisjaar.log"
     if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
 
     $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten @("/L$log", $Cfg, '/Diagnose/GenerateBasisjaar') -Log $log -WaakhondMinuten $WaakhondMinuten `
-                -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "ToetsOplevering GenerateBasisjaar $casus" -RijMap $RijMap
+                -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "ToetsOplevering GenerateBasisjaar $casus" -RijMap $RijMap -LocalData $LocalData
     $code = $run.Code
     $errs = @(Select-String -Path $log -Pattern '\[E\]' -ErrorAction SilentlyContinue)
     Meld 'C' $casus 'basisjaarcontroles gedraaid' $(if ($code -eq 0 -and $errs.Count -eq 0 -and -not $run.Reden) {'PASS'} else {'FAIL'}) "exit $code, $($errs.Count) foutregels$(if ($run.Reden) { ", $($run.Reden)" })" 'exit 0, geen foutregels'

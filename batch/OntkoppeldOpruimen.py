@@ -28,6 +28,7 @@ de indicatoren hebben geen fingerprint en geen hash en vallen erbuiten.
 
 import argparse
 import csv
+import json
 import re
 import shutil
 import subprocess
@@ -42,6 +43,8 @@ GRONDTAL = 16807
 ZIJBESTAND = ".params.txt"
 HASH = re.compile(r"^(?P<basis>.*)_(?P<hash>[0-9a-f]{8})$")
 MAPPEN = ("BaseData", "VariantData")
+# De gedeelde rij van batch/Waakhond.ps1 ($RijStandaardMap): een json-bestand per GeoDmsRun die wacht of loopt.
+RIJ = Path("C:/LocalData/Coordinatie/rij")
 VELDEN = ["pad", "bytes", "mtime"]
 
 
@@ -162,10 +165,12 @@ def lees_in_gebruik(bestanden: list[Path]) -> set[str]:
     return uit
 
 
-def geodms_op(root: Path) -> list[str]:
+def geodms_op(root: Path, rij: Path = RIJ) -> list[str]:
     """GeoDMS-processen op deze LocalData. GeoDMS leidt de LocalData af uit C:/LocalData plus de naam van de map boven
     cfg; een proces waarvan die naam gelijk is aan die van root, of een GUI zonder configuratie op de commandoregel,
-    houdt het verwijderen tegen."""
+    houdt het verwijderen tegen. Een run die RunAllocatie.ps1 of een ander batchscript met -LocalData in een andere map
+    laat rekenen, is aan zijn commandoregel niet te herkennen; zijn claim in de rij noemt de map wel, en die houdt het
+    verwijderen ook tegen."""
     cmd = ("Get-CimInstance Win32_Process -Filter \"Name='GeoDmsRun.exe' or Name='GeoDmsGuiQt.exe'\" | "
            "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }")
     r = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True)
@@ -176,6 +181,13 @@ def geodms_op(root: Path) -> list[str]:
         m = re.search(r"([^\\/\"]+)[\\/]cfg[\\/][^\\/\"]+\.dms", regel, re.I)
         if m is None or m.group(1).lower() == root.name.lower():
             bezet.append(regel.strip()[:200])
+    for claim in sorted(rij.glob("*.json")):
+        try:
+            c = json.loads(claim.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if c.get("localdata") and Path(c["localdata"]).resolve() == root.resolve():
+            bezet.append(f"claim {claim.name} in de rij: {c.get('wat', '')} ({c.get('status', '')})")
     return bezet
 
 

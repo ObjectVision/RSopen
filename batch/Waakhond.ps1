@@ -54,6 +54,16 @@
  meting in 3 minuten tot boven 150 GB. De reden komt als [E]-regel onder het log. RunAllocatie.ps1 en
  RunIndicatoren.ps1 starten een stap die de rem stopte niet opnieuw, want hij groeit dan weer tot dezelfde grens;
  geef hem een hogere claim.
+
+ DE LOCALDATA
+ Invoke-GeoDmsRun -LocalData laat GeoDmsRun lezen en schrijven in die map, via de omgevingsvariabele
+ GEODMS_directories_localDataProjDir, die GeoDMS laat voorgaan op zijn eigen afleiding (ObjectVision/RSopen#911). De
+ variabele gaat alleen naar het proces van GeoDmsRun: in het venster van het script zou hij blijven staan, en dan rekent
+ een latere GeoDMS uit dat venster ongemerkt in dezelfde map, ook voor een andere werkkopie. De claim in de rij noemt de
+ map, zodat OntkoppeldOpruimen.py ziet welke LocalData bezet is. Staat er al een claim op dezelfde map, lopend of
+ wachtend, dan stopt Invoke-GeoDmsRun met een melding: twee GeoDmsRun-processen op dezelfde LocalData botsen op
+ bestanden die ze allebei openen. Een GeoDMS zonder claim, zoals een GUI, ziet hij daarbij niet. Get-GeoDmsLocalData
+ leidt de map af zoals GeoDMS dat zonder -LocalData doet.
 ================================================================================================
 #>
 
@@ -167,10 +177,21 @@ function Format-RijClaim($c, [switch]$VoorDeze) {
     return ("{0} in {1} ({2}, {3} GB, {4}{5})" -f $c.wat, $kopie, $c.soort, [math]::Round([math]::Max([double]$c.piekGB, [double]$c.EigenGB), 1), $proces, $wacht)
 }
 
+function Test-RijZelfdeMap($c, [string]$LocalData) {
+    # Rekent claim c in de map LocalData? Een claim van voor het veld localdata krijgt de map die GeoDMS uit zijn werkkopie
+    # afleidt. Zonder hoofdlettergevoeligheid en met beide soorten schuine streep.
+    $zijn = $c.localdata
+    if (-not $zijn -and $c.werkkopie) { try { $zijn = Get-GeoDmsLocalData (Join-Path $c.werkkopie 'cfg\main.dms') } catch { } }
+    if (-not $zijn) { return $false }
+    $vol = { param($p) [IO.Path]::GetFullPath($p).TrimEnd('\') }
+    return [string]::Equals((& $vol $zijn), (& $vol $LocalData), [StringComparison]::OrdinalIgnoreCase)
+}
+
 function Wait-RijPlek {
     # Zet een claim in de rij en wacht tot hij past (zie de kop). Geeft een object terug met het claimbestand, de claim en
-    # de seconden die hij wachtte. Breekt het wachten af, dan haalt hij de claim weg.
-    param([double]$PiekGB, [string]$Soort, [string]$Wat, [string]$Werkkopie, [string]$Log, [string]$Map)
+    # de seconden die hij wachtte. Breekt het wachten af, dan haalt hij de claim weg. Staat er al een claim op dezelfde
+    # LocalData, lopend of wachtend, dan stopt hij met een melding (zie de kop).
+    param([double]$PiekGB, [string]$Soort, [string]$Wat, [string]$Werkkopie, [string]$LocalData, [string]$Log, [string]$Map)
 
     if ($PiekGB -le 0 -or @('landelijk', 'regionaal') -notcontains $Soort) {
         throw "Invoke-GeoDmsRun: geef -RijPiekGB (de verwachte piek van het eigen geheugen in GB) en -RijSoort (landelijk of regionaal) mee; zie de kop van Waakhond.ps1"
@@ -181,6 +202,7 @@ function Wait-RijPlek {
     $claim = [ordered]@{
         wat         = $Wat
         werkkopie   = $Werkkopie
+        localdata   = $LocalData
         soort       = $Soort
         piekGB      = $PiekGB
         status      = 'wacht'
@@ -204,6 +226,7 @@ function Wait-RijPlek {
             try {
                 if (-not (Test-Path -LiteralPath $bestand)) { Write-RijClaim $bestand $claim }
                 $t = Get-RijToestand $Map
+                $botsing = @(if ($LocalData) { $t.Claims | Where-Object { $_.Bestand -ne $bestand -and (Test-RijZelfdeMap $_ $LocalData) } })
                 $losGB = [double](($t.ZonderClaim | Measure-Object EigenGB -Sum).Sum)
                 # Wie loopt telt mee, en wie eerder vroeg en nu past ook, alsof hij al liep: die gaat voor. Een eerdere claim
                 # die niet past, houdt deze niet op.
@@ -213,7 +236,7 @@ function Wait-RijPlek {
                     if (-not (Test-RijPast $w $voor $losGB $RijBudgetGB)) { $voor += $w }
                 }
                 $reden = Test-RijPast ([pscustomobject]$claim) $voor $losGB $RijBudgetGB
-                if (-not $reden) {
+                if (-not $reden -and $botsing.Count -eq 0) {
                     $claim.status  = 'loopt'
                     $claim.gestart = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
                     Write-RijClaim $bestand $claim
@@ -221,6 +244,11 @@ function Wait-RijPlek {
             } finally { $slot.Dispose() }
 
             foreach ($d in $t.Dood) { Write-Regel "rij       : dode claim opgeruimd: $(Format-RijClaim $d), aangevraagd $($d.aangevraagd)" }
+            if ($botsing.Count -gt 0) {
+                Write-Regel ("GESTOPT   : {0} rekent in {1}, en daar staat al een claim: {2}. Twee GeoDmsRun-processen op dezelfde LocalData botsen op bestanden die ze allebei openen; wacht tot die klaar is, of kies een andere -LocalData." -f
+                    $Wat, $LocalData, (($botsing | ForEach-Object { Format-RijClaim $_ }) -join '; '))
+                throw "Invoke-GeoDmsRun: er staat al een claim op LocalData $LocalData"
+            }
             if (-not $reden) { break }
             # Melden als de reden of wie er voor gaat verandert, en anders elke RijMeldMinuten. De reden zonder getallen,
             # want het geheugen van de processen zonder claim verandert bij elke meting.
@@ -318,16 +346,17 @@ function Invoke-GeoDmsRun {
     # WaakhondMinuten 0 zet de waakhond uit, niet de rem.
     # RijPiekGB (de verwachte piek van het eigen geheugen in GB) en RijSoort (landelijk of regionaal) zijn verplicht. RijWat
     # zegt in de rij wat er draait, standaard het laatste argument; RijMap is alleen voor een toets een andere map dan de
-    # gedeelde.
+    # gedeelde. LocalData is de map waarin GeoDmsRun leest en schrijft; leeg laat GeoDMS hem zelf afleiden (zie de kop).
     param([string]$Exe, [string[]]$Argumenten, [string]$Log, [int]$WaakhondMinuten,
-          [double]$RijPiekGB, [string]$RijSoort, [string]$RijWat = '', [string]$RijMap = '')
+          [double]$RijPiekGB, [string]$RijSoort, [string]$RijWat = '', [string]$RijMap = '', [string]$LocalData = '')
 
     if (-not $RijMap) { $RijMap = $RijStandaardMap }
     if (-not $RijWat) { $RijWat = [string]($Argumenten | Select-Object -Last 1) }
     # De werkkopie is de map boven cfg van de configuratie in de argumenten.
     $dms = [string]($Argumenten | Where-Object { $_ -like '*.dms' } | Select-Object -First 1)
     $werkkopie = if ($dms) { Split-Path (Split-Path $dms -Parent) -Parent } else { '' }
-    $plek = Wait-RijPlek -PiekGB $RijPiekGB -Soort $RijSoort -Wat $RijWat -Werkkopie $werkkopie -Log $Log -Map $RijMap
+    $ld = if ($LocalData) { $LocalData } elseif ($dms) { try { Get-GeoDmsLocalData $dms } catch { '' } } else { '' }
+    $plek = Wait-RijPlek -PiekGB $RijPiekGB -Soort $RijSoort -Wat $RijWat -Werkkopie $werkkopie -LocalData $ld -Log $Log -Map $RijMap
 
     $reden = ''
     $gestopt = ''
@@ -340,6 +369,7 @@ function Invoke-GeoDmsRun {
         # en wacht GeoDmsRun op een lezer.
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError  = $true
+        if ($LocalData) { $psi.Environment['GEODMS_directories_localDataProjDir'] = $LocalData }
         $p = [Diagnostics.Process]::Start($psi)
         $p.BeginOutputReadLine()
         $p.BeginErrorReadLine()
@@ -429,4 +459,29 @@ function Invoke-GeoDmsRun {
     # gewone aanroep met &.
     $global:LASTEXITCODE = $p.ExitCode
     return [pscustomobject]@{ Code = $p.ExitCode; Reden = $reden; Gestopt = $gestopt; Wacht = $plek.Wacht }
+}
+
+function Get-GeoDmsLocalData([string]$Cfg) {
+    # De map die GeoDMS voor %LocalDataProjDir% neemt bij deze configuratie, op dezelfde manier afgeleid als GeoDMS dat doet
+    # (GetLocalDataProjDir en GetConvertedGeoDmsRegKey in de broncode): de omgevingsvariabele GEODMS_directories_localDataProjDir
+    # als die er is, anders LocalDataDir plus de naam van de map boven cfg. LocalDataDir komt uit GEODMS_directories_LocalDataDir
+    # of uit het register, eerst de sleutel met de machinenaam en dan die van DMS. Een kale omgevingsvariabele LocalDataProjDir
+    # leest GeoDMS niet. Zo gemeten met GeoDMS 20.28.0.m op 24 november 2026.
+    if ($env:GEODMS_directories_localDataProjDir) { return $env:GEODMS_directories_localDataProjDir }
+    $wortel = $env:GEODMS_directories_LocalDataDir
+    $sleutels = @("HKCU:\Software\ObjectVision\$env:COMPUTERNAME\GeoDMS", 'HKCU:\Software\ObjectVision\DMS')
+    foreach ($s in $sleutels) {
+        if ($wortel) { break }
+        $wortel = (Get-ItemProperty -LiteralPath $s -Name LocalDataDir -ErrorAction SilentlyContinue).LocalDataDir
+    }
+    if (-not $wortel) { throw "LocalDataDir staat niet in het register ($($sleutels -join ' of ')) en GEODMS_directories_LocalDataDir is leeg" }
+    return Join-Path $wortel (Get-Item -LiteralPath $Cfg -ErrorAction Stop).Directory.Parent.Name
+}
+
+function Resolve-LocalData([string]$Cfg, [string]$LocalData) {
+    # De -LocalData van een script als volledig pad: leeg wordt de map die GeoDMS zelf afleidt, een relatief pad telt vanaf
+    # de map waarin het script gestart is. Het script toetst invoer, standen en uitdraaien in deze map en geeft hem met
+    # Invoke-GeoDmsRun -LocalData aan elke GeoDmsRun mee (ObjectVision/RSopen#911).
+    if (-not $LocalData) { return Get-GeoDmsLocalData $Cfg }
+    return [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LocalData)).TrimEnd('\')
 }

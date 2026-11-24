@@ -33,9 +33,13 @@
       -Cfg            De configuratie, cfg\main.dms van de werkkopie waarmee je rekent. Standaard die
                       van de werkkopie waarin dit script staat. Het script heette tot 11 november 2026
                       Run2120.ps1; op een tak die main sindsdien niet binnenhaalde heet het nog zo.
-      -LocalData      Waar de uitvoer staat. Standaard C:\LocalData\<naam van de werkkopie>; het script
-                      zet de omgevingsvariabele LocalDataProjDir bewust NIET, GeoDMS leidt dit pad
-                      zelf af uit de registersleutel LocalDataDir plus de mapnaam boven cfg.
+      -LocalData      Waar de uitvoer staat. Leeg laten geeft de map die GeoDMS zelf afleidt: de
+                      registersleutel LocalDataDir plus de mapnaam boven cfg, op OVSRV08 dus
+                      C:\LocalData\<naam van de werkkopie>. Een andere map, bijvoorbeeld de LocalData van een
+                      projecttak voor een run uit een worktree, krijgt elke GeoDmsRun mee via de
+                      omgevingsvariabele GEODMS_directories_localDataProjDir, alleen in zijn eigen proces
+                      (zie Waakhond.ps1, ObjectVision/RSopen#911). Draai ook dan nooit twee runs tegelijk op
+                      dezelfde LocalData, zie ALS HET MISGAAT.
       -Scenario       Het WLO-scenario, standaard WLO_hoog. Casusnamen worden <scenario>_<variant>.
       -Varianten      Welke varianten, als lijst: -Varianten BAU,BAU2,NbSGenuanceerd. De namen
                       staan in cfg\main\VariantParameters\VariantK.dms, kolom name.
@@ -97,7 +101,8 @@
 
    C. Omgevingsvariabelen die dit script zelf zet, zodat de run niet afhangt van wat er in een
       venster toevallig staat: StandAllocatieOntkoppeld=TRUE en VariantDataOntkoppeld=TRUE.
-      LocalDataProjDir wordt juist gewist, zie -LocalData.
+      GEODMS_directories_localDataProjDir krijgt alleen het proces van GeoDmsRun, zie -LocalData.
+      LocalDataProjDir wordt gewist; GeoDMS leest hem niet.
 
  ALS HET MISGAAT
    Kijk in status.tsv (kolom exit) en in het log van de stap; regels met [E] zijn de fouten.
@@ -106,6 +111,8 @@
    Ontbreekt er basisdata, dan zegt het script welke WriteBasedata-stap die maakt.
    Draai nooit twee GeoDmsRun-processen tegelijk op dezelfde LocalData: ze botsen op bestanden
    die ze allebei openen, en het log zegt dan "being used by another process" of blijft stil.
+   Staat er in de rij al een claim op dezelfde LocalData, dan stopt de stap met een melding die
+   de andere claim noemt (Waakhond.ps1); een GUI op die LocalData ziet de rij niet.
    Een GeoDmsRun kan ook vastlopen zonder ooit te eindigen. Daarom kijkt een waakhond elke minuut
    of het proces nog leeft: groeit het log, of leest of schrijft het proces bytes of maakt het een
    paginafout. Blijft dat -WaakhondMinuten lang uit, dan stopt het script het proces op zijn PID,
@@ -128,7 +135,7 @@
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LocalData  = '',
     [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\runallocatie'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
@@ -181,6 +188,7 @@ function Write-Regel([string]$Tekst) {
 
 # Invoke-GeoDmsRun: GeoDmsRun met een plek in de gedeelde rij en een waakhond op voortgang, zie Waakhond.ps1.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+$LocalData = Resolve-LocalData $Cfg $LocalData
 
 function Invoke-Stap {
     # NietFataal is voor stappen die meten en niets produceren waar een latere stap op leunt.
@@ -209,7 +217,7 @@ function Invoke-Stap {
         # die elkaars bestanden niet lezen: GeoDMS bindt een te lezen bestand wanneer het de configuratie
         # laadt, dus wat een item schrijft is voor een volgend item in hetzelfde proces niet te lezen.
         $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $Item) -Log $log -WaakhondMinuten $WaakhondMinuten `
-                    -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "RunAllocatie $Stap" -RijMap $RijMap
+                    -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "RunAllocatie $Stap" -RijMap $RijMap -LocalData $LocalData
         $code = $run.Code
         $sw.Stop()
         $sec = [math]::Round($sw.Elapsed.TotalSeconds - $run.Wacht, 1)
@@ -250,7 +258,11 @@ function Get-Zichtjaren {
     # exitcode toetst; wie hier ooit een grep op [E] aan toevoegt vindt ook de fouten van vorige
     # runs. Zet er dan eerst een tijdstempel in, zoals Invoke-Stap hierboven doet.
     $log = Join-Path $LogDir 'zichtjaren.log'
-    $uit = & $Exe "/L$log" $Cfg '@statistics' '/Classifications/Time/Zichtjaar/YearRange_rel' 2>&1
+    # Ook deze GeoDmsRun rekent in -LocalData; de variabele staat alleen zolang hij loopt, zie Waakhond.ps1.
+    $vorige = $env:GEODMS_directories_localDataProjDir
+    $env:GEODMS_directories_localDataProjDir = $LocalData
+    try     { $uit = & $Exe "/L$log" $Cfg '@statistics' '/Classifications/Time/Zichtjaar/YearRange_rel' 2>&1 }
+    finally { $env:GEODMS_directories_localDataProjDir = $vorige }
     if ($LASTEXITCODE -ne 0) { throw "Kon de zichtjaren niet uit de configuratie lezen, zie $log" }
 
     $blok  = (($uit -join "`n") -split 'clipboard:')[-1]

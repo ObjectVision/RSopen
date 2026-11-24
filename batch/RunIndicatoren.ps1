@@ -35,8 +35,10 @@
  INSTELLINGEN
 
    A. Parameters van dit script (commandoregel; standaardwaarden in het blok param() hieronder).
-      -Exe, -Cfg, -LogDir   Zoals bij RunAllocatie.ps1: de geinstalleerde GeoDMS, cfg\main.dms van de
-                            werkkopie, en de logmap.
+      -Exe, -Cfg, -LocalData, -LogDir   Zoals bij RunAllocatie.ps1: de geinstalleerde GeoDMS, cfg\main.dms
+                            van de werkkopie, de LocalData en de logmap. Leeg laten geeft de LocalData
+                            die GeoDMS zelf afleidt; een andere map krijgt elke GeoDmsRun mee
+                            (ObjectVision/RSopen#911).
       -Scenario             Standaard WLO_hoog; casusnamen zijn <scenario>_<variant>.
       -Varianten            Lijst, bijvoorbeeld BAU,BAU2,NbSGenuanceerd. De namen staan in
                             cfg\main\VariantParameters\VariantK.dms, kolom name.
@@ -123,8 +125,8 @@
    B. Omgevingsvariabelen die dit script zelf zet: StandAllocatieOntkoppeld=TRUE (stand uit de tifs),
       VariantDataOntkoppeld=TRUE, IndicatorenOntkoppeld (TRUE met -Ontkoppeld, anders FALSE),
       TabellenUitExport (per stap: TRUE alleen voor de tabelstappen van -TabellenUitExport),
-      IndicatorRegio en ExportZichtjaar. LocalDataProjDir wordt gewist, GeoDMS leidt het pad af uit
-      LocalDataDir plus de mapnaam boven cfg.
+      IndicatorRegio en ExportZichtjaar. GEODMS_directories_localDataProjDir krijgt alleen het proces van
+      GeoDmsRun, zie -LocalData bij RunAllocatie.ps1. LocalDataProjDir wordt gewist; GeoDMS leest hem niet.
 
    C. Wat dit script NIET regelt en je vooraf moet nalopen:
       - De stand moet er staan voor ELK zichtjaar tot en met het exportzichtjaar, want cumulatieve
@@ -156,7 +158,7 @@
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LocalData  = '',
     [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\indicatoren'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
@@ -199,6 +201,7 @@ if (-not (Test-Path $status)) { "tijd`tstap`texit`tseconden" | Set-Content $stat
 function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $T" }
 # Invoke-GeoDmsRun: GeoDmsRun met een plek in de gedeelde rij en een waakhond op voortgang, zie Waakhond.ps1.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+$LocalData = Resolve-LocalData $Cfg $LocalData
 
 function Get-BagDatum {
     # ModelParameters/BAG_file_date uit de tekst: de BAG-levering waaronder AfleidingPandtype/Write_WP5 de WP5-typering schrijft
@@ -278,7 +281,10 @@ function Get-Zichtjaren {
     # Alle zichtjaren uit de configuratie, nodig om te toetsen of elke stand tot aan het
     # exportzichtjaar er staat. Zelfde aanroep als in RunAllocatie.ps1.
     $log = Join-Path $LogDir 'zichtjaren.log'
-    $uit = & $Exe "/L$log" $Cfg '@statistics' '/Classifications/Time/Zichtjaar/YearRange_rel' 2>&1
+    $vorige = $env:GEODMS_directories_localDataProjDir
+    $env:GEODMS_directories_localDataProjDir = $LocalData
+    try     { $uit = & $Exe "/L$log" $Cfg '@statistics' '/Classifications/Time/Zichtjaar/YearRange_rel' 2>&1 }
+    finally { $env:GEODMS_directories_localDataProjDir = $vorige }
     if ($LASTEXITCODE -ne 0) { throw "Kon de zichtjaren niet uit de configuratie lezen, zie $log" }
     $blok  = (($uit -join "`n") -split 'clipboard:')[-1]
     $jaren = @()
@@ -419,7 +425,7 @@ function Invoke-Export([string]$stap, [string[]]$items) {
         Write-Regel "start     : $stap"
         $sw = [Diagnostics.Stopwatch]::StartNew()
         $run  = Invoke-GeoDmsRun -Exe $Exe -Argumenten (@("/L$log", '/S1', '/S2', '/S3', $Cfg) + $items) -Log $log -WaakhondMinuten $WaakhondMinuten `
-                    -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "RunIndicatoren $stap" -RijMap $RijMap
+                    -RijPiekGB $RijPiekGB -RijSoort $RijSoort -RijWat "RunIndicatoren $stap" -RijMap $RijMap -LocalData $LocalData
         $code = $run.Code
         $sw.Stop()
         $sec = [math]::Round($sw.Elapsed.TotalSeconds - $run.Wacht, 1)
