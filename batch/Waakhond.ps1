@@ -54,6 +54,10 @@
  meting in 3 minuten tot boven 150 GB. De reden komt als [E]-regel onder het log. RunAllocatie.ps1 en
  RunIndicatoren.ps1 starten een stap die de rem stopte niet opnieuw, want hij groeit dan weer tot dezelfde grens;
  geef hem een hogere claim.
+
+ DE LOCALDATA
+ Test-LocalData stopt een script voor zijn eerste GeoDmsRun als -LocalData een andere map is dan die waar GeoDMS
+ schrijft; Get-GeoDmsLocalData leidt die map af zoals GeoDMS dat doet (ObjectVision/RSopen#911).
 ================================================================================================
 #>
 
@@ -429,4 +433,36 @@ function Invoke-GeoDmsRun {
     # gewone aanroep met &.
     $global:LASTEXITCODE = $p.ExitCode
     return [pscustomobject]@{ Code = $p.ExitCode; Reden = $reden; Gestopt = $gestopt; Wacht = $plek.Wacht }
+}
+
+function Get-GeoDmsLocalData([string]$Cfg) {
+    # De map die GeoDMS voor %LocalDataProjDir% neemt bij deze configuratie, op dezelfde manier afgeleid als GeoDMS dat doet
+    # (GetLocalDataProjDir en GetConvertedGeoDmsRegKey in de broncode): de omgevingsvariabele GEODMS_directories_localDataProjDir
+    # als die er is, anders LocalDataDir plus de naam van de map boven cfg. LocalDataDir komt uit GEODMS_directories_LocalDataDir
+    # of uit het register, eerst de sleutel met de machinenaam en dan die van DMS. Een kale omgevingsvariabele LocalDataProjDir
+    # leest GeoDMS niet. Zo gemeten met GeoDMS 20.28.0.m op 24 november 2026.
+    if ($env:GEODMS_directories_localDataProjDir) { return $env:GEODMS_directories_localDataProjDir }
+    $wortel = $env:GEODMS_directories_LocalDataDir
+    $sleutels = @("HKCU:\Software\ObjectVision\$env:COMPUTERNAME\GeoDMS", 'HKCU:\Software\ObjectVision\DMS')
+    foreach ($s in $sleutels) {
+        if ($wortel) { break }
+        $wortel = (Get-ItemProperty -LiteralPath $s -Name LocalDataDir -ErrorAction SilentlyContinue).LocalDataDir
+    }
+    if (-not $wortel) { throw "LocalDataDir staat niet in het register ($($sleutels -join ' of ')) en GEODMS_directories_LocalDataDir is leeg" }
+    return Join-Path $wortel (Get-Item -LiteralPath $Cfg -ErrorAction Stop).Directory.Parent.Name
+}
+
+function Test-LocalData([string]$Cfg, [string]$LocalData) {
+    # Stopt als -LocalData een andere map is dan die waar GeoDMS deze configuratie naar schrijft. De scripts toetsen invoer,
+    # standen en uitdraaien in -LocalData, terwijl GeoDMS in zijn eigen map leest en schrijft en daar een andere reeks kan
+    # overschrijven (ObjectVision/RSopen#911). Hoort voor de eerste GeoDmsRun van een script.
+    $geodms = Get-GeoDmsLocalData $Cfg
+    $vol = { param($p) [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p)).TrimEnd('\') }
+    if (-not [string]::Equals((& $vol $LocalData), (& $vol $geodms), [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Regel "GESTOPT: -LocalData is $LocalData, maar GeoDMS leest en schrijft deze configuratie in $geodms."
+        Write-Regel "GeoDMS leidt die map af uit LocalDataDir in het register plus de naam van de map boven cfg, en het script verlegt hem niet."
+        Write-Regel "Laat -LocalData weg, of reken vanuit een werkkopie waarvan de map heet zoals de LocalData die je wilt."
+        throw "-LocalData wijkt af van de map van GeoDMS ($geodms)"
+    }
+    Write-Regel "controle  : GeoDMS schrijft ook naar $geodms"
 }

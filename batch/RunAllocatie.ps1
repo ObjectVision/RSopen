@@ -33,9 +33,13 @@
       -Cfg            De configuratie, cfg\main.dms van de werkkopie waarmee je rekent. Standaard die
                       van de werkkopie waarin dit script staat. Het script heette tot 11 november 2026
                       Run2120.ps1; op een tak die main sindsdien niet binnenhaalde heet het nog zo.
-      -LocalData      Waar de uitvoer staat. Standaard C:\LocalData\<naam van de werkkopie>; het script
-                      zet de omgevingsvariabele LocalDataProjDir bewust NIET, GeoDMS leidt dit pad
-                      zelf af uit de registersleutel LocalDataDir plus de mapnaam boven cfg.
+      -LocalData      Waar de uitvoer staat. Dat kan alleen de map zijn die GeoDMS zelf afleidt: de
+                      registersleutel LocalDataDir plus de mapnaam boven cfg, op OVSRV08 dus
+                      C:\LocalData\<naam van de werkkopie>. Leeg laten geeft die map. Het script verlegt hem
+                      niet: GeoDMS leest de omgevingsvariabele LocalDataProjDir niet, en het script zet hem
+                      dus ook niet. Een andere map laat het script voor de eerste GeoDmsRun stoppen, met
+                      beide paden in de melding (ObjectVision/RSopen#911). Een eigen LocalData krijg je met
+                      een werkkopie die zo heet.
       -Scenario       Het WLO-scenario, standaard WLO_hoog. Casusnamen worden <scenario>_<variant>.
       -Varianten      Welke varianten, als lijst: -Varianten BAU,BAU2,NbSGenuanceerd. De namen
                       staan in cfg\main\VariantParameters\VariantK.dms, kolom name.
@@ -128,7 +132,7 @@
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LocalData  = '',
     [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\runallocatie'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
@@ -181,6 +185,7 @@ function Write-Regel([string]$Tekst) {
 
 # Invoke-GeoDmsRun: GeoDmsRun met een plek in de gedeelde rij en een waakhond op voortgang, zie Waakhond.ps1.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+if (-not $LocalData) { $LocalData = Get-GeoDmsLocalData $Cfg }
 
 function Invoke-Stap {
     # NietFataal is voor stappen die meten en niets produceren waar een latere stap op leunt.
@@ -482,6 +487,7 @@ Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
 Write-Regel "rij       : $RijSoort, verwachte piek $RijPiekGB GB per stap, budget $RijBudgetGB GB, $(if ($RijMap) { $RijMap } else { $RijStandaardMap })"
 
+Test-LocalData $Cfg $LocalData
 Show-Schakelaars
 Test-StedelijkeKlassen
 

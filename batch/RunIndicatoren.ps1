@@ -35,8 +35,10 @@
  INSTELLINGEN
 
    A. Parameters van dit script (commandoregel; standaardwaarden in het blok param() hieronder).
-      -Exe, -Cfg, -LogDir   Zoals bij RunAllocatie.ps1: de geinstalleerde GeoDMS, cfg\main.dms van de
-                            werkkopie, en de logmap.
+      -Exe, -Cfg, -LocalData, -LogDir   Zoals bij RunAllocatie.ps1: de geinstalleerde GeoDMS, cfg\main.dms
+                            van de werkkopie, de LocalData en de logmap. -LocalData kan alleen de map zijn
+                            die GeoDMS zelf afleidt, en leeg laten geeft die map; een andere laat het
+                            script voor de eerste GeoDmsRun stoppen (ObjectVision/RSopen#911).
       -Scenario             Standaard WLO_hoog; casusnamen zijn <scenario>_<variant>.
       -Varianten            Lijst, bijvoorbeeld BAU,BAU2,NbSGenuanceerd. De namen staan in
                             cfg\main\VariantParameters\VariantK.dms, kolom name.
@@ -123,8 +125,8 @@
    B. Omgevingsvariabelen die dit script zelf zet: StandAllocatieOntkoppeld=TRUE (stand uit de tifs),
       VariantDataOntkoppeld=TRUE, IndicatorenOntkoppeld (TRUE met -Ontkoppeld, anders FALSE),
       TabellenUitExport (per stap: TRUE alleen voor de tabelstappen van -TabellenUitExport),
-      IndicatorRegio en ExportZichtjaar. LocalDataProjDir wordt gewist, GeoDMS leidt het pad af uit
-      LocalDataDir plus de mapnaam boven cfg.
+      IndicatorRegio en ExportZichtjaar. LocalDataProjDir wordt gewist; GeoDMS leest hem niet en leidt
+      het pad af uit LocalDataDir plus de mapnaam boven cfg.
 
    C. Wat dit script NIET regelt en je vooraf moet nalopen:
       - De stand moet er staan voor ELK zichtjaar tot en met het exportzichtjaar, want cumulatieve
@@ -156,7 +158,7 @@
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LocalData  = '',
     [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\indicatoren'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
@@ -199,6 +201,7 @@ if (-not (Test-Path $status)) { "tijd`tstap`texit`tseconden" | Set-Content $stat
 function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $T" }
 # Invoke-GeoDmsRun: GeoDmsRun met een plek in de gedeelde rij en een waakhond op voortgang, zie Waakhond.ps1.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+if (-not $LocalData) { $LocalData = Get-GeoDmsLocalData $Cfg }
 
 function Get-BagDatum {
     # ModelParameters/BAG_file_date uit de tekst: de BAG-levering waaronder AfleidingPandtype/Write_WP5 de WP5-typering schrijft
@@ -392,6 +395,7 @@ function Assert-Ketens([string]$casus, [string]$jaar, [string]$standVan) {
     }
 }
 
+Test-LocalData $Cfg $LocalData
 $totaal = [Diagnostics.Stopwatch]::StartNew()
 # @() houdt een lijst met een zichtjaar een lijst; anders wordt hij een tekst en pakken IndexOf en [0..0] de eerste letter
 $alleJaren = @(Get-Zichtjaren)

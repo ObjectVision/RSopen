@@ -28,8 +28,9 @@
 [CmdletBinding()]
 param(
     # Standaard de LocalData en de configuratie van de werkkopie waarin dit script staat, net als bij
-    # RunAllocatie.ps1.
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    # RunAllocatie.ps1. Trap A en B lezen alleen, dus daar mag -LocalData elke map zijn; met -TrapC rekent
+    # GeoDMS in zijn eigen map, en een andere -LocalData laat het script dan stoppen (ObjectVision/RSopen#911).
+    [string]   $LocalData  = '',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Scenario   = 'WLO_hoog',
@@ -53,6 +54,7 @@ param(
 $ErrorActionPreference = 'Continue'
 # Invoke-GeoDmsRun: de gedeelde rij en de waakhond voor de stappen van trap C.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+if (-not $LocalData) { $LocalData = Get-GeoDmsLocalData $Cfg }
 if (-not $Rapport) { $Rapport = Join-Path $LocalData 'toets_oplevering.md' }
 $vers = if ($RunGestartOp) { [datetime]::ParseExact($RunGestartOp, 'yyyy-MM-dd HH:mm', $null) } else { $null }
 
@@ -231,7 +233,6 @@ function TrapC([string]$variant, [string]$jaar) {
     $j = $jaar -replace '^Stand',''
     $env:DiagCasus = $casus
     $env:DiagJaar  = "'$j'"
-    $env:LocalDataProjDir = $LocalData
     $log = Join-Path $env:TEMP "toets_${casus}_$j.log"
     if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
 
@@ -245,7 +246,6 @@ function TrapC([string]$variant, [string]$jaar) {
 function TrapCBasisjaar([string]$variant) {
     $casus = "${Scenario}_$variant"
     $env:DiagCasus = $casus
-    $env:LocalDataProjDir = $LocalData
     $log = Join-Path $env:TEMP "toets_${casus}_basisjaar.log"
     if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
 
@@ -259,6 +259,7 @@ function TrapCBasisjaar([string]$variant) {
 # ----------------------------------------------------------------------------------- uitvoeren
 Write-Host ""
 Write-Host "LocalData : $LocalData"
+if ($TrapC) { Test-LocalData $Cfg $LocalData }
 Write-Host "varianten : $($Varianten -join ', ')"
 if ($vers) { Write-Host "vers vanaf: $($vers.ToString('yyyy-MM-dd HH:mm'))" } else { Write-Host "vers vanaf: niet gezet, verouderde uitdraaien worden NIET ontmaskerd" -ForegroundColor Yellow }
 Write-Host ""
