@@ -121,7 +121,8 @@ Template IterSubsector_T_Wonen
 				ModelParameters/Wonen/WoningtypeEengezins naar het gebouwde aandeel, en elke groep krijgt een eigen zaaglijn over de pakketten van haar type. Binnen een iteratie kiest een groep alleen uit de
 				cellen die de groepen ervoor hebben laten liggen, zodat geen cel naar twee groepen gaat. Het vrijstaande deel van de eengezinsclaim van sociale huur en vrije sector samen komt bij de vrije sector.
 				Waar de grond opraakt, schuift SchaarseGrond een deel van het vrijstaande doel naar de groep die per woning de minste grond vraagt. Het quotum telt over het hele zichtjaar: wat een groep
-				op een lager allocatieniveau al bouwde gaat af van haar doel op dit niveau, zodat een tekort aan rij in de overloop niet opnieuw voor een deel vrijstaand wordt (#914)."
+				op een lager allocatieniveau al bouwde gaat af van haar doel op dit niveau, zodat een tekort aan rij in de overloop niet opnieuw voor een deel vrijstaand wordt. Op een hoger niveau telt het ook per regio van de fijnste indeling,
+				zodat de overloop de mix volgt van de regio waar hij landt (#914)."
 	{
 		unit<UInt8>             Groep                                := /ModelParameters/Wonen/WoningtypeEengezins/Groep;
 
@@ -164,6 +165,17 @@ Template IterSubsector_T_Wonen
 		attribute<Float32>      SomRestClaimVorige      (AllocRegio) := ='const(0f, AllocRegio)'+AsList(' + max_elem(Groepen/'+ActieveGroep/name+'/RestClaimVorigeOnbegrensd, 0f)', '');
 		attribute<Float32>      Begrenzing              (AllocRegio) := SomRestClaim > max_elem(AllocRegio/RestClaim, 0f) ? max_elem(AllocRegio/RestClaim, 0f) / SomRestClaim : 1f, Descr = "De factor waarmee de restclaims van de groepen samen op de restclaim van deze subsector uitkomen (#914). Een groep die op een lager niveau al boven haar aandeel bouwde, telt niet mee in de som, zodat de andere groepen anders meer zouden bouwen dan de subsector nog moet.";
 		attribute<Float32>      BegrenzingVorige        (AllocRegio) := SomRestClaimVorige > max_elem(AllocRegio/RestClaim, 0f) ? max_elem(AllocRegio/RestClaim, 0f) / SomRestClaimVorige : 1f, Descr = "Hetzelfde als Begrenzing, voor het doel met de verschuiving tot en met de vorige iteratie.";
+
+		parameter<Bool>         PerWonenRegio                        := HeeftQuotum && AllocRegio_name != /ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_name, Descr = "Telt het quotum hier ook per regio van de fijnste indeling van wonen (#914)? Op elk hoger allocatieniveau, zodat de overloop de mix volgt van de regio waar hij landt en niet die van de hele allocatieregio.";
+		unit<UInt32>            WonenRegio                           := ='/SourceData/'+/ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_path, Descr = "De fijnste indeling waarop wonen alloceert, uit de eerste woonregel van ModelParameters/SectorAllocRegio.";
+		attribute<WonenRegio>   WonenRegio_rel (CompactedAdminDomain) := WonenRegio/Per_CompactedAdminDomain;
+		attribute<AllocRegio>   AllocRegioVanWonenRegio (WonenRegio) := modus(AllocRegio/Per_CompactedAdminDomain, WonenRegio_rel), Descr = "De allocatieregio waarin de regio ligt; bij een regio over de grens die met de meeste cellen.";
+		attribute<Float32>      GealloceerdWonenRegio   (WonenRegio) := ='sum(StateVoorAllocatie/'+Subsector_pathname+' * float32(IsNieuw), WonenRegio_rel)', Descr = "De woningen van deze subsector die dit zichtjaar al in de regio zijn gealloceerd, op elk allocatieniveau.";
+		attribute<Float32>      DoelWonenRegio          (WonenRegio) := GealloceerdWonenRegio + MakeDefined(max_elem(AllocRegio/RestClaim[AllocRegioVanWonenRegio], 0f), 0f), Descr = "Wat deze subsector dit zichtjaar in de regio bouwt als de hele restclaim van haar allocatieregio er landt: de grootste overloop die de regio kan krijgen.";
+		attribute<Float32>      DoelEengezinsWonenRegio (WonenRegio) := ='add('+AsItemList('Context/ThisIter/Subsectoren/'+EengezinsSubsector/name+'/Quotum/DoelWonenRegio')+')', Descr = "DoelWonenRegio van vrije sector en sociale huur samen, zoals DoelEengezins.";
+		attribute<Float32>      AandeelExclusiefWonenRegio    (WonenRegio) := ='const(0f, WonenRegio)'+AsList(ActieveGroep/IsExclusief ? ' + Groepen/'+ActieveGroep/name+'/AandeelWonenRegio' : '', '');
+		attribute<Float32>      AandeelNietExclusiefWonenRegio (WonenRegio) := ='const(0f, WonenRegio)'+AsList(ActieveGroep/IsExclusief ? '' : ' + Groepen/'+ActieveGroep/name+'/AandeelWonenRegio', '');
+		attribute<Float32>      DoelExclusiefWonenRegio (WonenRegio) := min_elem(AandeelExclusiefWonenRegio * DoelEengezinsWonenRegio, DoelWonenRegio), Descr = "DoelExclusief per regio van de fijnste indeling.";
 
 		container               Groepen                              :=
 			for_each_ne(
@@ -244,7 +256,25 @@ Template IterSubsector_T_Wonen
 			parameter<UInt64>       Geschiktheid_Ordered_range                  := UInt64(max(Geschiktheid_Rang)+100);
 
 			attribute<Bool>         BezetVoor            (CompactedAdminDomain) := = Vorige_name == '' ? 'const(FALSE, CompactedAdminDomain)' : 'Groepen/'+Vorige_name+'/BezetNa', Descr = "De cellen die een eerdere groep in deze iteratie al kiest.";
-			attribute<Bool>         Beschikbaar          (CompactedAdminDomain) := CompactedAdminDomain/Beschikbaar && IsDefined(ArgMax_OP_groep) && !BezetVoor, Descr = "Beschikbaar voor deze subsector, met een beschikbaar pakket van deze groep, en niet al door een eerdere groep gekozen.";
+			attribute<Bool>         BeschikbaarVoorRuimte (CompactedAdminDomain) := CompactedAdminDomain/Beschikbaar && IsDefined(ArgMax_OP_groep) && !BezetVoor, Descr = "Beschikbaar voor deze subsector, met een beschikbaar pakket van deze groep, en niet al door een eerdere groep gekozen.";
+			attribute<UInt64>       GeschiktheidVoorRuimte (CompactedAdminDomain) := UInt64(BeschikbaarVoorRuimte) * (UInt64(CompactedAdminDomain/TredeScore) * Geschiktheid_Ordered_range + UInt64(Geschiktheid_Rang));
+			attribute<Float32>      PotentieelVoorRuimte (CompactedAdminDomain) := MakeDefined(OP/Dichtheid[ArgMax_OP_sub -> org_rel], 0f) * float32(BeschikbaarVoorRuimte) * AdminDomain/NrHaPerCell;
+			parameter<UInt64>       MaxGeschiktheidVoorRuimte                   := max(GeschiktheidVoorRuimte);
+
+			attribute<Float32>      AandeelWonenRegio              (WonenRegio) := ='/BaseData/StartState/WoningtypeEengezins/PerIndeling/'+/ModelParameters/SectorAllocRegio/WonenEersteAllocRegio_name+'/Aandeel/'+Groep_name, Descr = "Het gebouwde aandeel van deze groep in de eengezinsnieuwbouw van de regio van de fijnste indeling.";
+			attribute<Float32>      DoelAandeelWonenRegio          (WonenRegio) := = IsExclusief
+			                                                                       ? '(Quotum/AandeelExclusiefWonenRegio > 0f ? AandeelWonenRegio / Quotum/AandeelExclusiefWonenRegio : 0f) * Quotum/DoelExclusiefWonenRegio'
+			                                                                       : '(Quotum/AandeelNietExclusiefWonenRegio > 0f ? AandeelWonenRegio / Quotum/AandeelNietExclusiefWonenRegio : 1f / float32(Quotum/AantalNietExclusief)) * (Quotum/DoelWonenRegio - Quotum/DoelExclusiefWonenRegio)'
+			, Descr = "DoelAandeel per regio van de fijnste indeling, met het aandeel van die regio.";
+			attribute<Float32>      GealloceerdWonenRegio          (WonenRegio) := ='sum(StateVoorAllocatie/'+Subsector_pathname+' * float32(Quotum/IsNieuw && OP/WP4_rel[StateVoorAllocatie/OP_rel] == Groep/WP4_rel[Groep_rel]), Quotum/WonenRegio_rel)';
+			attribute<Float32>      RuimteWonenRegio               (WonenRegio) := max_elem(DoelAandeelWonenRegio - GealloceerdWonenRegio, 0f), Descr = "Hoeveel deze groep in de regio nog mag bouwen zonder boven het aandeel van die regio uit te komen, ook als de hele restclaim van de allocatieregio er landt (#914).";
+			attribute<UInt64>       AfkapgrensWonenRegio0          (WonenRegio) := MaxGeschiktheidVoorRuimte - nth_element_weighted(MaxGeschiktheidVoorRuimte - GeschiktheidVoorRuimte, RuimteWonenRegio, PotentieelVoorRuimte, Quotum/WonenRegio_rel), Descr = "De zaaglijn van deze groep per regio van de fijnste indeling, op RuimteWonenRegio.";
+			attribute<UInt64>       AfkapgrensWonenRegio           (WonenRegio) := RuimteWonenRegio <= 0f ? null_u64 : MakeDefined(AfkapgrensWonenRegio0, 0u64);
+			attribute<Bool>         BinnenRuimte         (CompactedAdminDomain) := = Quotum/PerWonenRegio
+			                                                                       ? 'MakeDefined(GeschiktheidVoorRuimte > AfkapgrensWonenRegio[Quotum/WonenRegio_rel], FALSE)'
+			                                                                       : 'const(TRUE, CompactedAdminDomain)'
+			, Descr = "Ligt de cel binnen de ruimte van deze groep in haar regio van de fijnste indeling? Op het fijnste niveau altijd.";
+			attribute<Bool>         Beschikbaar          (CompactedAdminDomain) := BeschikbaarVoorRuimte && BinnenRuimte, Descr = "Beschikbaar voor deze groep, en op een hoger allocatieniveau binnen de ruimte van haar regio van de fijnste indeling (#914).";
 			attribute<UInt64>       Geschiktheid         (CompactedAdminDomain) := UInt64(Beschikbaar) * (UInt64(CompactedAdminDomain/TredeScore) * Geschiktheid_Ordered_range + UInt64(Geschiktheid_Rang)), Descr = "Dezelfde opbouw als CompactedAdminDomain/Geschiktheid: eerst de trede, daarbinnen het saldo.";
 			attribute<Float32>      PotentieleStateNaAllocatie (CompactedAdminDomain) := MakeDefined(OP/Dichtheid[ArgMax_OP_sub -> org_rel], 0f) * float32(Beschikbaar) * AdminDomain/NrHaPerCell, Descr = "De woningen die het pakket van deze groep op de cel zet.";
 
