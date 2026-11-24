@@ -120,7 +120,8 @@ Template IterSubsector_T_Wonen
 	: Descr = "Het quotum per woningtype binnen eengezins (#847), alleen in gebruik als HeeftQuotum. De restclaim van deze subsector wordt per regio verdeeld over de groepen uit
 				ModelParameters/Wonen/WoningtypeEengezins naar het gebouwde aandeel, en elke groep krijgt een eigen zaaglijn over de pakketten van haar type. Binnen een iteratie kiest een groep alleen uit de
 				cellen die de groepen ervoor hebben laten liggen, zodat geen cel naar twee groepen gaat. Het vrijstaande deel van de eengezinsclaim van sociale huur en vrije sector samen komt bij de vrije sector.
-				Waar de grond opraakt, schuift SchaarseGrond een deel van het vrijstaande doel naar de groep die per woning de minste grond vraagt."
+				Waar de grond opraakt, schuift SchaarseGrond een deel van het vrijstaande doel naar de groep die per woning de minste grond vraagt. Het quotum telt over het hele zichtjaar: wat een groep
+				op een lager allocatieniveau al bouwde gaat af van haar doel op dit niveau, zodat een tekort aan rij in de overloop niet opnieuw voor een deel vrijstaand wordt (#914)."
 	{
 		unit<UInt8>             Groep                                := /ModelParameters/Wonen/WoningtypeEengezins/Groep;
 
@@ -150,15 +151,19 @@ Template IterSubsector_T_Wonen
 			attribute<String> name := /Classifications/Vastgoed/WP2xVSSH/name[org_rel];
 		}
 
-		attribute<Bool>         IsNieuw       (CompactedAdminDomain) := IsDefined(StateVoorAllocatie/OP_rel) && IsNull(Context/ThisSectorAllocRegio/StateVoorAllocatie/OP_rel), Descr = "Draagt de cel een pakket dat zij aan het begin van deze sectorallocregio nog niet droeg? Dan is zij in een eerdere iteratie van deze regel gealloceerd.";
+		attribute<Bool>         IsNieuw       (CompactedAdminDomain) := IsDefined(StateVoorAllocatie/OP_rel) && IsNull(Context/ThisZichtjaar/StateVoorAllocatie/OP_rel), Descr = "Draagt de cel een pakket dat zij aan het begin van dit zichtjaar nog niet droeg? Dan is zij dit zichtjaar gealloceerd, op dit of een lager allocatieniveau of in een eerdere sequentie (#914).";
 
-		attribute<Float32>      Gealloceerd             (AllocRegio) := ='sum(StateVoorAllocatie/'+Subsector_pathname+' * float32(IsNieuw), AllocRegio/Per_CompactedAdminDomain)', Descr = "De woningen van deze subsector die deze sectorallocregio al heeft gealloceerd.";
-		attribute<Float32>      Doel                    (AllocRegio) := max_elem(AllocRegio/RestClaim + Gealloceerd, 0f), Descr = "Wat deze subsector in deze sectorallocregio bouwt: de restclaim plus wat al gealloceerd is, dus de restclaim aan het begin van de regel plus wat er sindsdien is gesloopt.";
+		attribute<Float32>      Gealloceerd             (AllocRegio) := ='sum(StateVoorAllocatie/'+Subsector_pathname+' * float32(IsNieuw), AllocRegio/Per_CompactedAdminDomain)', Descr = "De woningen van deze subsector die dit zichtjaar al in de regio zijn gealloceerd.";
+		attribute<Float32>      Doel                    (AllocRegio) := max_elem(AllocRegio/RestClaim + Gealloceerd, 0f), Descr = "Wat deze subsector dit zichtjaar in de regio bouwt: de restclaim plus wat er dit zichtjaar al is gealloceerd, ook op een lager allocatieniveau (#914).";
 		attribute<Float32>      DoelEengezins           (AllocRegio) := ='add('+AsItemList('Context/ThisIter/Subsectoren/'+EengezinsSubsector/name+'/Quotum/Doel')+')', Descr = "Het doel van vrije sector en sociale huur samen, waarover het aandeel van een groep die alleen de vrije sector vult wordt genomen.";
 
 		attribute<Float32>      AandeelExclusief        (AllocRegio) := ='const(0f, AllocRegio)'+AsList(ActieveGroep/IsExclusief ? ' + Groepen/'+ActieveGroep/name+'/Aandeel' : '', '');
 		attribute<Float32>      AandeelNietExclusief    (AllocRegio) := ='const(0f, AllocRegio)'+AsList(ActieveGroep/IsExclusief ? '' : ' + Groepen/'+ActieveGroep/name+'/Aandeel', '');
 		attribute<Float32>      DoelExclusief           (AllocRegio) := min_elem(AandeelExclusief * DoelEengezins, Doel), Descr = "Het deel voor de groepen die alleen de vrije sector vult: hun aandeel in het eengezinsdoel van vrije sector en sociale huur samen, begrensd op het doel van deze subsector. Nul bij sociale huur.";
+		attribute<Float32>      SomRestClaim            (AllocRegio) := ='const(0f, AllocRegio)'+AsList(' + max_elem(Groepen/'+ActieveGroep/name+'/RestClaimOnbegrensd, 0f)', '');
+		attribute<Float32>      SomRestClaimVorige      (AllocRegio) := ='const(0f, AllocRegio)'+AsList(' + max_elem(Groepen/'+ActieveGroep/name+'/RestClaimVorigeOnbegrensd, 0f)', '');
+		attribute<Float32>      Begrenzing              (AllocRegio) := SomRestClaim > max_elem(AllocRegio/RestClaim, 0f) ? max_elem(AllocRegio/RestClaim, 0f) / SomRestClaim : 1f, Descr = "De factor waarmee de restclaims van de groepen samen op de restclaim van deze subsector uitkomen (#914). Een groep die op een lager niveau al boven haar aandeel bouwde, telt niet mee in de som, zodat de andere groepen anders meer zouden bouwen dan de subsector nog moet.";
+		attribute<Float32>      BegrenzingVorige        (AllocRegio) := SomRestClaimVorige > max_elem(AllocRegio/RestClaim, 0f) ? max_elem(AllocRegio/RestClaim, 0f) / SomRestClaimVorige : 1f, Descr = "Hetzelfde als Begrenzing, voor het doel met de verschuiving tot en met de vorige iteratie.";
 
 		container               Groepen                              :=
 			for_each_ne(
@@ -255,9 +260,11 @@ Template IterSubsector_T_Wonen
 			attribute<Float32>      Ontvangen                      (AllocRegio) := OntvangenVorige + float32(Quotum/SchaarseGrond/Ontvanger == Ontvanger_id) * Quotum/SchaarseGrond/Erbij, Descr = "De woningen die deze groep tot en met deze iteratie van de wijkende groepen kreeg; nul voor een wijkende groep, want die staat niet in OntvangendeGroep.";
 			attribute<Float32>      DoelVorige                     (AllocRegio) := = !Quotum/Verschuift ? 'DoelAandeel' : Wijkt ? 'DoelAandeel - DeelWijkend * Quotum/SchaarseGrond/Vorige' : 'DoelAandeel + OntvangenVorige', Descr = "Het doel met de verschuiving tot en met de vorige iteratie, waarop deze iteratie het ruimtebeslag meet.";
 			attribute<Float32>      Doel                           (AllocRegio) := = !Quotum/Verschuift ? 'DoelAandeel' : Wijkt ? 'DoelAandeel - DeelWijkend * Quotum/SchaarseGrond/Verschuiving' : 'DoelAandeel + Ontvangen', Descr = "Het doel van deze groep: het deel naar het gebouwde aandeel, met de verschuiving op schaarse grond. Waar niets verschuift, of met de schakelaar uit, is het DoelAandeel.";
-			attribute<Float32>      Gealloceerd                    (AllocRegio) := ='sum(StateVoorAllocatie/'+Subsector_pathname+' * float32(Quotum/IsNieuw && OP/WP4_rel[StateVoorAllocatie/OP_rel] == Groep/WP4_rel[Groep_rel]), AllocRegio/Per_CompactedAdminDomain)', Descr = "De woningen van deze groep die deze sectorallocregio al heeft gealloceerd.";
-			attribute<Float32>      RestClaim                      (AllocRegio) := Doel - Gealloceerd;
-			attribute<Float32>      RestClaimVorige                (AllocRegio) := DoelVorige - Gealloceerd;
+			attribute<Float32>      Gealloceerd                    (AllocRegio) := ='sum(StateVoorAllocatie/'+Subsector_pathname+' * float32(Quotum/IsNieuw && OP/WP4_rel[StateVoorAllocatie/OP_rel] == Groep/WP4_rel[Groep_rel]), AllocRegio/Per_CompactedAdminDomain)', Descr = "De woningen van deze groep die dit zichtjaar al in de regio zijn gealloceerd, ook op een lager allocatieniveau (#914).";
+			attribute<Float32>      RestClaimOnbegrensd            (AllocRegio) := Doel - Gealloceerd, Descr = "Wat deze groep nog moet bouwen om in het zichtjaar op haar aandeel uit te komen; negatief als zij op een lager niveau al meer bouwde.";
+			attribute<Float32>      RestClaimVorigeOnbegrensd      (AllocRegio) := DoelVorige - Gealloceerd;
+			attribute<Float32>      RestClaim                      (AllocRegio) := max_elem(RestClaimOnbegrensd, 0f) * Quotum/Begrenzing, Descr = "De restclaim van deze groep, met de groepen samen begrensd op de restclaim van de subsector.";
+			attribute<Float32>      RestClaimVorige                (AllocRegio) := max_elem(RestClaimVorigeOnbegrensd, 0f) * Quotum/BegrenzingVorige;
 
 			attribute<Bool>         Kan                  (CompactedAdminDomain) := CompactedAdminDomain/Beschikbaar && IsDefined(ArgMax_OP_groep), Descr = "Kan deze groep de cel nemen, wat de groepen ervoor in deze iteratie ook kiezen? De grondmaat van SchaarseGrond; die mag niet van de zaaglijnen afhangen, want het doel hangt van haar af.";
 			attribute<Ha>           Kan_ha                         (AllocRegio) := sum_uint32(Kan, AllocRegio/Per_CompactedAdminDomain)[float32] * AdminDomain/NrHaPerCell;
