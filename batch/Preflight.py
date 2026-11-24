@@ -334,9 +334,15 @@ def main(argv: list[str]) -> int:
         # GDAL neemt de hoofdletters van de kolomnamen niet altijd over uit de configuratie, dus de sleutels in kleine letters.
         rijen = [{k.lower(): v for k, v in r.items()} for r in csv.DictReader(gebied_csv.read_text(encoding="utf-8").splitlines())]
         over = [r for r in rijen if r["in_gebruik"] == "1" and r["aantal"] != "0"]
-        if over:
+        stop = [r for r in over if r.get("waarschuwing") != "1"]
+        waarschuw = [r for r in over if r.get("waarschuwing") == "1"]
+        if stop:
             print("\nAllocatieregio's die maar voor een deel in het studiegebied liggen:")
-            for r in over:
+            for r in stop:
+                print(f"  {r['indeling']}: {r['regios']}")
+        if waarschuw:
+            print("\nWaarschuwing: deze regio's liggen maar voor een deel in het studiegebied. De run gaat door, maar de sector op deze indeling hoort niet gelezen te worden:")
+            for r in waarschuw:
                 print(f"  {r['indeling']}: {r['regios']}")
 
     mislukt = [r for r in regels if r["oordeel"] == "FAIL"]
