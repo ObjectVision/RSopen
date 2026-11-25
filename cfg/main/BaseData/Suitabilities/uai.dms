@@ -18,15 +18,17 @@ container UrbanAttractivityIndex
 : Descr = "Berekening van de Urban Attractivity Index (UAI) op basis van de potentie en afstand tot voorzieningen en monumenten"
 {
 	attribute<Float32> R_5000m_AbsWeight (AllocDomain) := C_5000m_AbsWeight/Resultaat;
+	parameter<String>  FingerprintDeel_Maxima          := 'uai_max=' + string(/ModelParameters/Werken/UAIMaximum/Detailhandel) + '_' + string(/ModelParameters/Werken/UAIMaximum/BijeenkomstLogies) + '_' + string(/ModelParameters/Werken/UAIMaximum/Monumentaal), Descr = "De landelijke maxima waarop R_5000m_AbsWeight normeert, voor de fingerprint van elk ontkoppeld bestand dat deze UAI leest (#888).";
 	
-	container C_5000m_AbsWeight := CalculateUAI(5000, 'AbsWeight', BAG_RecentYear);
-	
+	container C_5000m_AbsWeight := CalculateUAI(5000, 'AbsWeight', BAG_RecentYear, TRUE), Descr = "De UAI die het model toepast, genormeerd op de landelijke maxima uit ModelParameters/Werken/UAIMaximum, zodat een regionale run dezelfde waarden krijgt als een landelijke (#888).";
+
 	Template CalculateUAI
-	: Descr = "Template voor het berekenen van de UAI op basis van een bepaalde potentiaal en afstandsvervalfunctie, uit de BAG-stand van 1 januari van BAG_jaar"
+	: Descr = "Template voor het berekenen van de UAI op basis van een bepaalde potentiaal en afstandsvervalfunctie, uit de BAG-stand van 1 januari van BAG_jaar. NormeerLandelijk kiest of elke potentiaal op zijn landelijke maximum uit ModelParameters/Werken/UAIMaximum normeert of op het maximum in het studiegebied (#888)."
 	{
 		parameter<UInt32> potentiaal;
 		parameter<String> distance_decay;
 		parameter<UInt32> BAG_jaar;
+		parameter<Bool>   NormeerLandelijk;
 		///
 
 		attribute<Float32> Resultaat    (AllocDomain)        := Detailhandel/norm + BijeenkomstLogies/norm + Monumentaal/norm, Descr = "De UAI is de som van de genormaliseerde potentiaal van detailhandel, bijeenkomst/logies en monumentaal vastgoed.";
@@ -34,9 +36,9 @@ container UrbanAttractivityIndex
 		parameter<Float32> max                               := max(resultaat_ln), Descr = "De maximale waarde van de UAI in het studiegebied.";
 		attribute<Float32> Resultaat_ln_scaled (AllocDomain) := Resultaat_ln / max, Descr = "De UAI wordt geschaald op een maximum van 1.";
 		
-		container Detailhandel      := T(Count/Detailhandel, potentiaal, distance_decay), Descr = "De potentiaal van detailhandel op basis van een bepaalde potentiaal en afstandsvervalfunctie.";
-		container BijeenkomstLogies := T(Count/BijeenkomstLogies, potentiaal, distance_decay), Descr = "De potentiaal van bijeenkomst- en logiesobjecten op basis van een bepaalde potentiaal en afstandsvervalfunctie.";
-		container Monumentaal       := T(Count/Monumentaal, potentiaal, distance_decay), Descr = "De potentiaal van monumentale panden op basis van een bepaalde potentiaal en afstandsvervalfunctie.";
+		container Detailhandel      := T(Count/Detailhandel, potentiaal, distance_decay, NormeerLandelijk, /ModelParameters/Werken/UAIMaximum/Detailhandel), Descr = "De potentiaal van detailhandel op basis van een bepaalde potentiaal en afstandsvervalfunctie.";
+		container BijeenkomstLogies := T(Count/BijeenkomstLogies, potentiaal, distance_decay, NormeerLandelijk, /ModelParameters/Werken/UAIMaximum/BijeenkomstLogies), Descr = "De potentiaal van bijeenkomst- en logiesobjecten op basis van een bepaalde potentiaal en afstandsvervalfunctie.";
+		container Monumentaal       := T(Count/Monumentaal, potentiaal, distance_decay, NormeerLandelijk, /ModelParameters/Werken/UAIMaximum/Monumentaal), Descr = "De potentiaal van monumentale panden op basis van een bepaalde potentiaal en afstandsvervalfunctie.";
 		
 		container Count
 		{
@@ -51,10 +53,15 @@ container UrbanAttractivityIndex
 			attribute<Float32> Count (AllocDomain);
 			parameter<UInt32>  potentiaal;
 			parameter<String>  distance_decay;
+			parameter<Bool>    NormeerLandelijk;
+			parameter<Float32> Max_Landelijk;
 			//
-			
+
 			attribute<Float32> Potential (AllocDomain) := ='potential(Count, Distmatrices_100m/pot'+string(potentiaal)+'m/'+distance_decay+')', Descr = "Berekening van de potentiaal op basis van de afstandsvervalfunctie.";
-			parameter<Float32> Max                     := max(Potential), Descr = "De maximale waarde van de potentiaal in het studiegebied.";
+			parameter<Float32> Max_Studiegebied        := max(Potential), Descr = "De maximale waarde van de potentiaal in het studiegebied.";
+			parameter<Float32> Max                     := NormeerLandelijk ? Max_Landelijk : Max_Studiegebied
+			, IntegrityCheck = "!NormeerLandelijk || (/ModelParameters/Werken/UAIMaximum/BAG_Jaar == /ModelParameters/BAG_RecentYear && (/ModelParameters/StudyArea != 'Nederland' || abs(Max_Studiegebied / Max_Landelijk - 1f) < 1e-4f))"
+			, Descr = "Het maximum waarop de potentiaal normeert: het landelijke maximum uit ModelParameters/Werken/UAIMaximum of dat van het studiegebied (#888). De controle eist dat de landelijke maxima bij BAG_RecentYear horen en in een landelijke run gelijk zijn aan Max_Studiegebied, zodat een nieuwe BAG-stand niet op verouderde maxima normeert.";
 			attribute<Float32> Max_regio (AllocDomain) := max(Potential, SourceData/RegioIndelingen/CBS/Gekozen/Gemeente/Per_AllocDomain)[SourceData/RegioIndelingen/CBS/Gekozen/Gemeente/Per_AllocDomain], Descr = "De maximale waarde van de potentiaal per gemeente.";
 			attribute<Float32> norm      (AllocDomain) := (Potential / Max) / 3f, Descr = "De genormaliseerde potentiaal, gedeeld door 3 om de drie componenten van de UAI gelijk te wegen.";
 		}

@@ -65,7 +65,7 @@ Op geldige polygonen geven de `dms_`- en de `geos_`-operatoren hetzelfde, op ong
 
 Luid in plaats van stil, maar ook alleen bij `dms_`: een unie of split-unie neemt zijn raster uit het opgegeven bereik van de values unit en weigert een operand daarbuiten (`lies outside the fixed frame of this fold`); overlay en difference zijn daarop niet nagekeken. `geos_` kijkt niet naar dat bereik. Daarom heeft `rdc_meter` altijd het bereik van Nederland, ook met een provincie als `StudyArea`: de bronnen worden landelijk ingelezen, en met de omhullende van de provincie als bereik vielen de unies van landelijke invoer om, zoals de CBS-grenzen, de BGT-klaverbladen en de Stichtse Rotonde. Het studiegebied bepaalt alleen de omvang van de rasters, via `Geography/x_min` tot en met `y_max`; een berekening die het studiegebied in rechthoeken of tegels deelt, neemt die vier en niet `LowerBound(rdc_meter)`. Ontloop het bereik niet met een cast naar `rdc_meter_base`: GeoDMS wil het juist valideren (ObjectVision/GeoDMS#1353, gesloten als not planned), en een vast bereik laat de dms-folds voor opeenvolgende bewerkingen hetzelfde raster gebruiken. Een buffer kadert elk element op zijn eigen omvang en heeft hier geen last van.
 
-Ook bij geldige invoer verschilt de buffer: GEOS vereenvoudigt de invoer eerst met 1 procent van de afstand, dms houdt elk hoekpunt. Bij 350 m rond twee miljoen panden scheelt het xor-oppervlak 0,1 procent, en de buffer van 250 m rond de grote kernen (`BaseData/Omgeving/GroteKern`) geeft na poly2grid 814 van de 145,6 miljoen cellen van Nederland anders. In de pandtypering wisselt landelijk een paar panden onder dms van twee-onder-een-kap naar vrijstaand, waarschijnlijk omdat hun buffers van 20 cm elkaar daar net niet meer raken. Na een wissel van operatorfamilie is een ontkoppeld bestand dus niet meer hetzelfde, terwijl zijn fingerprint niet verandert; maak de betrokken basedata opnieuw met `AlwaysRemakeDecoupledFiles`.
+Ook bij geldige invoer verschilt de buffer: GEOS vereenvoudigt de invoer eerst met 1 procent van de afstand, dms houdt elk hoekpunt. Bij 350 m rond twee miljoen panden scheelt het xor-oppervlak 0,1 procent, en de buffer van 250 m rond de grote kernen (`BaseData/Omgeving/BebouwdGebied/GroteKern`) geeft na poly2grid 814 van de 145,6 miljoen cellen van Nederland anders. In de pandtypering wisselt landelijk een paar panden onder dms van twee-onder-een-kap naar vrijstaand, waarschijnlijk omdat hun buffers van 20 cm elkaar daar net niet meer raken. Na een wissel van operatorfamilie is een ontkoppeld bestand dus niet meer hetzelfde, terwijl zijn fingerprint niet verandert; maak de betrokken basedata opnieuw met `AlwaysRemakeDecoupledFiles`.
 
 ## ExplicitSuppliers op een container
 
@@ -191,13 +191,19 @@ Nagebootst op 2026-09-17 in een losse dms met GeoDms20.17.0.m: een kaart van vie
 Schrijf zo'n kaart daarom met een apart item zonder subitems. In de laag Bronnen van #824 staan de schrijvers van `Grondgebruik/Verandering` in een eigen container:
 
 ```
-container Schrijf
+container Write
 {
 	attribute<UInt8> Verstedelijking (AdminDomain) := UInt8(Verandering/Verstedelijking), StorageName = "=replace(StorageStr, '@V@', 'Verstedelijking')", StorageType = "gdalwrite.grid";
 }
 ```
 
 Kijk bij elke nieuwe `StorageName` of het item een blok met subitems opent. Grep een log op `Domain should be 2-dimensional`, en tel bij een geschreven tabel de kolommen tegen de configuratie.
+
+## Een kolom van een geschreven tabel die een andere kolom leest
+
+Een tabel met `StorageType = "gdalwrite.vect"` schrijft al zijn attributen in een keer. Leest een van die attributen een ander attribuut van dezelfde tabel, zoals `verhouding := claim_woningen / claim_tigris`, dan kan het schrijven omvallen op `check failure: self->HasInterest()` en `Unable to complete calculating data when trying to store it`, met de naam van het gelezen attribuut in de foutregel. De csv staat dan vaak toch helemaal op schijf, dus een blik op het bestand zegt niet dat het goed ging. Gezien op 22 november 2026 op GeoDms20.28.0.m in `Diagnose/Claims/Verzorgend` (#911): een tussencontainer voor de gelezen kolommen hielp niet, kolommen die alleen buiten de tabel lezen wel. Reken een afgeleide kolom dus buiten de tabel uit en neem hem op met `union_data`, net als de andere kolommen.
+
+Bij hetzelfde werk gaf de valkuil van een kolom met de naam van wat hij leest (zie Naamafscherming) twee keer Invalid Recursion: een kolom `regio` naast een unit `Regio`, en een kolom `verhouding` naast een container `Verhouding`.
 
 ## Een handmatige lijst die korter is dan het domein wordt stil aangevuld
 
@@ -338,7 +344,7 @@ Beslis dus voor je een ondergrens zet wat een lege invoer betekent, en schrijf d
 
 `Classify(x, ClassBreaks)` geeft null voor elke waarde onder de laagste klassegrens, en een klassegrens die zelf `null_f` is slaat hij over. Dat is de rekenkundige helft van hierboven in een andere gedaante: `combine_data` is rekenkundig, dus een null op een van de assen maakt de hele combinatie-index null en de `rjoin` erachter geeft niets terug. Op de kaart is dat een witte cel, en die leest als een lage waarde in plaats van als een ontbrekende. Zo verloor de SOMERS-emissiekaart bij #619 percelen, en verschillend per variant: alleen de variant die de gemeten drooglegging uit de peilvakken leest kwam onder de natste grens uit, de varianten met een constante niet, zodat elk vernattingseffect een verschil van twee sommen over een ander areaal was.
 
-Klem een gemeten invoer op `min(ClassBreaks)` voordat hij de `Classify` in gaat, met een `IsDefined`-guard zodat een echt ontbrekende waarde null blijft, en geef de laagste klasse een numerieke ondergrens in plaats van `null_f`; zo staat het sinds #619 in `SourceData/Landbouw/SOMERS.dms`. Vergelijk bij een variantvergelijking eerst het gedekte areaal per variant en pas daarna de totalen. Niet-oplopende ClassBreaks zijn geen bug: `Classify` bouwt dan zelf een gesorteerde index.
+Begrens een gemeten invoer op `min(ClassBreaks)` voordat hij de `Classify` in gaat, met een `IsDefined`-guard zodat een echt ontbrekende waarde null blijft, en geef de laagste klasse een numerieke ondergrens in plaats van `null_f`; zo staat het sinds #619 in `SourceData/Landbouw/SOMERS.dms`. Vergelijk bij een variantvergelijking eerst het gedekte areaal per variant en pas daarna de totalen. Niet-oplopende ClassBreaks zijn geen bug: `Classify` bouwt dan zelf een gesorteerde index.
 
 ### Een vergelijking omdraaien klapt de betekenis van null om
 
@@ -346,7 +352,7 @@ Omdat `null < x` en `null > x` allebei FALSE geven, betekent een null in een weg
 
 Zo ging het bij #723, dat de dieptetoets van de zeef omdraaide naar een voldoettoets per bouwwijze. Op de 20.864 ha binnen de gevaarzone waar de LIWO-kaarten geen waarde geven viel daarna elke bouwwijze af en sloot de zeef alle woningbouw uit, terwijl de kostenkant diezelfde cellen met een `MakeDefined` op nul meter bleef lezen. Exitcode 0, geen waarschuwing, en het stond ruim een week in een oplevering. Gerepareerd in #734 met een `MakeDefined` in het sjabloon zelf, zodat de afspraak op een plek staat.
 
-Draai je een vergelijking om, stel dan expliciet vast wat er op een null hoort te gebeuren, en schrijf dat als `MakeDefined` of als een aparte `IsNull`-tak op. Twee dingen om te weten bij het beoordelen hoe ver zo'n fout reikt. Een toets die op een null voor elke variant faalt is onafhankelijk van de maskers en de drempels eromheen, dus latere wijzigingen daaraan veranderen de uitkomst niet en de fout reikt terug tot de commit die de vergelijking omdraaide. En de nullen zitten zelden waar je ze zoekt: hier kwamen ze niet uit de brondata maar uit een plausibiliteitsklem die onzinwaarden op null zet.
+Draai je een vergelijking om, stel dan expliciet vast wat er op een null hoort te gebeuren, en schrijf dat als `MakeDefined` of als een aparte `IsNull`-tak op. Twee dingen om te weten bij het beoordelen hoe ver zo'n fout reikt. Een toets die op een null voor elke variant faalt is onafhankelijk van de maskers en de drempels eromheen, dus latere wijzigingen daaraan veranderen de uitkomst niet en de fout reikt terug tot de commit die de vergelijking omdraaide. En de nullen zitten zelden waar je ze zoekt: hier kwamen ze niet uit de brondata maar uit een plausibiliteitsgrens die onzinwaarden op null zet.
 
 ### Op een Bool doet MakeDefined niets
 
@@ -548,7 +554,7 @@ De snelste toets is een grep op de Aggr3-waarde in de twee klassentabellen: `Agr
 
 ## Een uitgeschakelde sector breekt een naamexpansie
 
-De sectorlijst in `ModelParameters/SectorAllocRegio/Elements/Text` bepaalt welke sectoren meedoen. Staat een sector uitgecommentarieerd, dan bestaan zijn afgeleide namen niet: geen `LU_ModelType/V/Verblijfsrecreatie_Totaal`, geen `Subsector/v/Verblijfsrecreatie_Totaal`. Elke `=`-expansie die zo'n naam uit een sectornaam opbouwt valt dan om op Unknown identifier.
+De sectorlijst in `ModelParameters/SectorAllocRegioTabel/Elements/Text` bepaalt welke sectoren meedoen. Staat een sector uitgecommentarieerd, dan bestaan zijn afgeleide namen niet: geen `LU_ModelType/V/Verblijfsrecreatie_Totaal`, geen `Subsector/v/Verblijfsrecreatie_Totaal`. Elke `=`-expansie die zo'n naam uit een sectornaam opbouwt valt dan om op Unknown identifier.
 
 Het model vangt dat af met een schakelaar per sector, `Uq_Sectors/Has<Sector>Sector`, in de vorm
 
@@ -675,7 +681,7 @@ arg2 of type DataItem<string>
 
 Deze variant faalt luid en niet stil, dus hij is minder venijnig dan de som hierboven. Wat hem duur maakt is WAAR hij faalt: een `ExplicitSuppliers` hangt aan een schrijfstap, en die draai je zelden als je aan de leeskant werkt. Op 2026-09-09 stond hij in `WriteVariantData/per_Variant_T/Impl/Veenbouwstenen` en viel `Generate_Run2` daardoor voor elke variant om, na drie seconden en zonder een enkele opbrengstentif. De wijziging die hem veroorzaakte was getoetst met twaalf leesitems over vier varianten, allemaal exit 0.
 
-Twee regels die dit afvangen. Bouw een variantvlag in zo'n property niet op uit `V/`+naam maar lees hem langs `[Variant_rel]`, in een gewone parameter naast de property; dan staat er geen pad meer in de tekstexpressie. En draai na een wijziging aan een variantvlag altijd `CommitChecks/MaakVariantData1` en `MaakVariantData2`: dat kost een paar minuten en raakt de schrijfkant, die geen enkel leesitem aanraakt.
+Twee regels die dit afvangen. Bouw een variantvlag in zo'n property niet op uit `V/`+naam maar lees hem langs `[Variant_rel]`, in een gewone parameter naast de property; dan staat er geen pad meer in de tekstexpressie. En draai na een wijziging aan een variantvlag altijd `CommitChecks/MakeVariantData1` en `MakeVariantData2`: dat kost een paar minuten en raakt de schrijfkant, die geen enkel leesitem aanraakt.
 
 ## De pijl volgt een alias-unit tot de onderliggende unit
 

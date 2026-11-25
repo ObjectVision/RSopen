@@ -10,7 +10,7 @@ REM Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectv
 REM Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
 REM
 REM Start een volledige RSopen modelrun: stelt paden en GeoDMS-versie in, vraagt of basedata hergebruikt kan
-REM worden en of alleen het eindjaar berekend moet worden, en roept daarna de deelscripts (PrepareBasedata,
+REM worden, en roept daarna de deelscripts (PrepareBasedata,
 REM RunScenarios, RunVariantData) aan.
 REM
 REM ================================================================================
@@ -46,27 +46,13 @@ REM ========= EINDE PARAMETER INSTELLINGEN ===========
 REM deletes the old log file; each run adds the timed version to it.
 del log\log.txt
 
-REM Default is sequentieel doorrekenen, dus alle zichtjaren. De padafhankelijkheid doet dan mee, en dat is
-REM nodig voor onder meer de geschiktheid voor wonen: die gebruikt de natuur en het water die aan het begin
-REM van een zichtjaar liggen, en dat kan alleen als de tussenliggende zichtjaren echt doorgerekend worden (#637).
-REM Geef J als eerste argument mee om toch alleen het eindjaar te rekenen.
-set AlleenEindjaar=FALSE
-
-if "%1%" neq "" goto zichtjarenKeuzeGemaakt
-CHOICE /M "Wil je alleen het eindjaar uitrekenen, dus de tussenliggende zichtjaren overslaan?"
-if ErrorLevel 2 goto zichtjarenKeuzeGemaakt
-set AlleenEindjaar=TRUE
-:zichtjarenKeuzeGemaakt
-if "%1%" equ "J" set AlleenEindjaar=TRUE
-if "%1%" equ "N" set AlleenEindjaar=FALSE
-
-if "%2%" equ ""  CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
+if "%1%" equ ""  CHOICE /M "Wil je eerder gemaakte Basedata hergebruiken en dus draaien van PrepareBasedata overslaan?"
 if ErrorLevel 2 goto runPrepareBasedata
-if "%2%" equ "N" goto runPrepareBasedata
+if "%1%" equ "N" goto runPrepareBasedata
 
-if "%3%" equ ""  CHOICE /M "Wil je eerder gemaakte VariantData hergebruiken en dus het (her)genereren hiervan overslaan?"
+if "%2%" equ ""  CHOICE /M "Wil je eerder gemaakte VariantData hergebruiken en dus het (her)genereren hiervan overslaan?"
 if ErrorLevel 2 goto runPrepareVariantdata
-if "%3%" equ "N" goto runPrepareVariantdata
+if "%2%" equ "N" goto runPrepareVariantdata
 goto runScenarios
 
 :runPrepareBasedata

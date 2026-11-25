@@ -216,6 +216,8 @@ $Beschrijving = [ordered]@{
     'Bouwwijze_Areaal'                                                                               = @('tabel, ha', 'BouwwijzeK', 'Hoeveel hectare nieuwbouw er per bouwwijze staat')
     'ClaimRealisatie_NL'                                                                             = @('tabel, verhouding', '', 'Gerealiseerde stand gedeeld door de claim, landelijk')
     'ClaimRealisatie_Provincie'                                                                      = @('tabel, verhouding', '', 'Dezelfde verhouding per provincie')
+    'ClaimRealisatie_Stadregio'                                                                      = @('tabel, verhouding', '', 'Dezelfde verhouding per stadregio: de stad of het ommeland binnen een pendelregio, de eerste indeling waarop wonen en werken worden gealloceerd')
+    'ClaimRealisatie_Pendelregio'                                                                    = @('tabel, verhouding', '', 'Dezelfde verhouding per pendelregio, de tweede indeling waarop wonen en werken worden gealloceerd')
     'ClaimRealisatie_COROP'                                                                          = @('tabel, verhouding', '', 'Dezelfde verhouding per COROP-gebied')
     'ClaimRealisatie_NVM'                                                                            = @('tabel, verhouding', '', 'Dezelfde verhouding per NVM-woningmarktgebied')
     'ClaimRealisatie_Landbouw'                                                                       = @('tabel, verhouding', '', 'Gerealiseerde stand gedeeld door de claim voor de landbouw, per provincie en per gewasklasse')
@@ -237,7 +239,7 @@ $Beschrijving = [ordered]@{
 }
 
 # Waar de legenda's staan die de configuratie schrijft. Ze komen uit Export/Legendas en zijn
-# variantonafhankelijk, dus een enkele GeoDmsRun op /Indicatoren/<casus>/Zichtjaren/Export/Legendas/Schrijf
+# variantonafhankelijk, dus een enkele GeoDmsRun op /Indicatoren/<casus>/Zichtjaren/Export/Legendas/Write
 # volstaat voor een hele levering.
 $LegendaBron = Join-Path $Bron 'Legendas'
 $Issue = $Issue.TrimStart('#')
@@ -469,7 +471,7 @@ Get-ChildItem $Doel -Recurse -File -Filter '*.tif' | ForEach-Object {
 if ($metaGeschreven) { Write-Host "  $metaGeschreven legendabestanden geschreven" }
 if ($metaGemist) {
     Write-Warning ("Legenda ontbreekt voor: " + ($metaGemist -join ', ') +
-        ". Draai eerst GeoDmsRun op /Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/Legendas/Schrijf.")
+        ". Draai eerst GeoDmsRun op /Indicatoren/WLO_hoog_BAU/Zichtjaren/Export/Legendas/Write.")
 }
 
 # Wat er in de LEESMIJ komt te staan, komt uit de doelmap zelf en niet uit de variantentabel bovenin.
@@ -573,7 +575,7 @@ $regels += "  te maken en horen niet bij elkaar opgeteld te worden. Tot #720 hee
 $regels += "  waterberging; in oudere leveringen staan de eerste dus als Waterberging_Vraag,"
 $regels += "  Waterberging_RestvraagPositief en Waterberging_Afname."
 $regels += ""
-$regels += "  Lees Piekbuiberging_Dekkingsgraad nooit los van Piekbuiberging_Dekkingsgraad_Ongeklemd."
+$regels += "  Lees Piekbuiberging_Dekkingsgraad nooit los van Piekbuiberging_Dekkingsgraad_Onbegrensd."
 $regels += "  Opgave en aanbod worden per blok van 500 meter tegen elkaar weggestreept, en aanbod boven de"
 $regels += "  opgave in datzelfde blok vervalt. De twee dekkingsgraden zijn de onder- en bovengrens van"
 $regels += "  dezelfde uitkomst. De blokmaat zelf is een keuze zonder onderbouwing: op 100 meter komt de"

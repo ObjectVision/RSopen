@@ -33,9 +33,13 @@
       -Cfg            De configuratie, cfg\main.dms van de werkkopie waarmee je rekent. Standaard die
                       van de werkkopie waarin dit script staat. Het script heette tot 11 november 2026
                       Run2120.ps1; op een tak die main sindsdien niet binnenhaalde heet het nog zo.
-      -LocalData      Waar de uitvoer staat. Standaard C:\LocalData\<naam van de werkkopie>; het script
-                      zet de omgevingsvariabele LocalDataProjDir bewust NIET, GeoDMS leidt dit pad
-                      zelf af uit de registersleutel LocalDataDir plus de mapnaam boven cfg.
+      -LocalData      Waar de uitvoer staat. Dat kan alleen de map zijn die GeoDMS zelf afleidt: de
+                      registersleutel LocalDataDir plus de mapnaam boven cfg, op OVSRV08 dus
+                      C:\LocalData\<naam van de werkkopie>. Leeg laten geeft die map. Het script verlegt hem
+                      niet: GeoDMS leest de omgevingsvariabele LocalDataProjDir niet, en het script zet hem
+                      dus ook niet. Een andere map laat het script voor de eerste GeoDmsRun stoppen, met
+                      beide paden in de melding (ObjectVision/RSopen#911). Een eigen LocalData krijg je met
+                      een werkkopie die zo heet.
       -Scenario       Het WLO-scenario, standaard WLO_hoog. Casusnamen worden <scenario>_<variant>.
       -Varianten      Welke varianten, als lijst: -Varianten BAU,BAU2,NbSGenuanceerd. De namen
                       staan in cfg\main\VariantParameters\VariantK.dms, kolom name.
@@ -84,7 +88,6 @@
       OntkoppelStedelijkeKlasses   FALSE voor een volle reeks. TRUE laat alleen de landbouw
                                    alloceren en neemt wonen en werken uit bestaande standtifs.
       ExotenActief                 (ModelParameters\Landbouw.dms) Of de exotische gewassen meedoen.
-      AlleenEindjaar               Alleen voor debuggen; in een productierun FALSE.
       SectorAllocRegio             De tabel met sectoren die alloceren. Een sector aan- of
                                    uitzetten verandert het SS-nummer in alle bestandsnamen, en
                                    daarmee zijn bestaande standen onbruikbaar.
@@ -129,7 +132,7 @@
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LocalData  = '',
     [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\runallocatie'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
@@ -182,6 +185,7 @@ function Write-Regel([string]$Tekst) {
 
 # Invoke-GeoDmsRun: GeoDmsRun met een plek in de gedeelde rij en een waakhond op voortgang, zie Waakhond.ps1.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+if (-not $LocalData) { $LocalData = Get-GeoDmsLocalData $Cfg }
 
 function Invoke-Stap {
     # NietFataal is voor stappen die meten en niets produceren waar een latere stap op leunt.
@@ -316,6 +320,28 @@ function Get-Productieprofiel {
     return $m.Groups[1].Value
 }
 
+function Get-PendelregioDefinitie {
+    # SourceData/RegioIndelingen/Pendelregio_Gemeente/Definitie, met dezelfde formule uit dezelfde csv's: het
+    # aantal gemeenten en per indeling de som over de gemeenten van het kwadraat van het nummer uit de
+    # gemeentecode maal de rij van de regio in de codelijst. Hij staat in de naam van de claimmap van de
+    # pendelregio's en stadregio's (AllocRegio_ClaimMap, #585).
+    $map = Join-Path (Split-Path (Split-Path $Cfg -Parent) -Parent) 'data\Pendelregio'
+    $gem = @(Import-Csv (Join-Path $map 'Pendelregio_gemeente.csv'))
+    $pr  = [uint32[]]@(Import-Csv (Join-Path $map 'Pendelregio.csv') | ForEach-Object { $_.Pendelregio_code })
+    $sr  = [uint32[]]@(Import-Csv (Join-Path $map 'Stadregio.csv')   | ForEach-Object { $_.Stadregio_code })
+    [uint64]$somP = 0
+    [uint64]$somS = 0
+    foreach ($g in $gem) {
+        $nr = [uint64][uint32]$g.GM_code.Substring(2, 4)
+        $p  = [array]::IndexOf($pr, [uint32]$g.Pendelregio_code)
+        $s  = [array]::IndexOf($sr, [uint32]$g.Stadregio_code)
+        if ($p -lt 0 -or $s -lt 0) { throw "Gemeente $($g.GM_code) heeft een regiocode die niet in de codelijst in $map staat" }
+        $somP += $nr * $nr * [uint64]$p
+        $somS += $nr * $nr * [uint64]$s
+    }
+    return "$($gem.Count)-$somP-$somS"
+}
+
 function Test-SectorActief([string]$Sector) {
     # Staat de sector als actieve regel in ModelParameters/SectorAllocRegio? Uit de tekst, zoals de leentoets
     # hieronder dat voor Landbouw doet; een uitgecommentarieerde regel telt niet.
@@ -344,7 +370,7 @@ function Test-Invoer {
     $eisen = @()
     $eisen += ,@("BaseData\Vastgoed\BAG_$(Get-BagDatum)_History\WP5\*.mmd", 'WP5-pandtypering',            '/WriteBasedata/Generate_Run1')
     $eisen += ,@('BaseData\Grondgebruik\BBG\BBG*_25m_Modus_*.tif',      'BBG-vergridding',             '/WriteBasedata/Generate_Run2')
-    $eisen += ,@('BaseData\Vastgoed\Verwervingskosten_Woningen_*.tif',  'verwervingskosten',           '/WriteBasedata/Generate_Run2')
+    $eisen += ,@('BaseData\Vastgoed\Verwervingskosten_Woningen_*.tif',  'verwervingskosten',           '/WriteBasedata/Generate_Run3')
     # NBP en MNP alleen wanneer iets ze leest, dezelfde voorwaarden als Impl/MakeNBP en Impl/MakeMNP in
     # WriteBasedata.dms; die kijken naar alle varianten, deze toets naar de varianten van deze run.
     $bron  = Get-BeheertypeBron
@@ -356,22 +382,30 @@ function Test-Invoer {
     if ($bron -ne 'Heuristiek' -or $env:NatuurOpleggen -eq 'TRUE' -or $metLandschap) {
         $eisen += ,@('BaseData\Grondgebruik\MNP\*.tif',                 'MNP-planpotentieel',          '/WriteBasedata/Generate_Run2')
     }
+    # De claims staan in LocalData en komen uit Run3. De TIGRIS-claims worden getoetst in de map van de
+    # stadregio's en pendelregio's van de huidige indeling (AllocRegio_ClaimMap, #585): claims van een
+    # eerdere indeling staan in een andere map en tellen niet. Ook in de fase basedata, zodat een run met
+    # -SkipBasedata al voor de variantdata stopt.
+    $claimMappen = @('Stadregio', 'Pendelregio') | ForEach-Object { "$($_)_$(Get-PendelregioDefinitie)" }
+    if (Test-SectorActief 'Wonen') {
+        if ((Get-Productieprofiel) -eq 'RuimteVoorWoningbouw') {
+            $eisen += ,@('BaseData\Beleid\Claims\NWK_*\*\*\Wonen.csv',         'woonclaims woningbouwkaart',  '/WriteBasedata/Generate_Run3')
+        } else {
+            foreach ($c in $claimMappen) {
+                $eisen += ,@("BaseData\Beleid\Claims\TXL_*\*\*\*\$c\Wonen.csv",  "woonclaims TIGRIS, $c",       '/WriteBasedata/Generate_Run3')
+            }
+        }
+    }
+    if (Test-SectorActief 'Werken') {
+        foreach ($c in $claimMappen) {
+            $eisen += ,@("BaseData\Beleid\Claims\TXL_*\*\*\*\$c\Werken.csv",     "werkenclaims TIGRIS, $c",     '/WriteBasedata/Generate_Run3')
+        }
+    }
     if ($Fase -eq 'allocatie') {
         $eisen += ,@('BaseData\StandBasisjaar\Wonen\*.tif',             'stand basisjaar',             '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Vastgoed\WP2xVSSH_Proxy\*',              'woningsubsector-proxies',     '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Vastgoed\Sloopkosten_Woningen_*.tif',    'sloopkosten',                 '/WriteBasedata/Generate_Run3')
         $eisen += ,@('BaseData\Suitabilities\Werken_raw_*.tif',         'werken-geschiktheid',         '/WriteBasedata/Generate_Run3')
-        # De claims staan in LocalData en komen uit Run3.
-        if (Test-SectorActief 'Wonen') {
-            if ((Get-Productieprofiel) -eq 'RuimteVoorWoningbouw') {
-                $eisen += ,@('BaseData\Beleid\Claims\NWK_*\*\*\Wonen.csv',         'woonclaims woningbouwkaart',  '/WriteBasedata/Generate_Run3')
-            } else {
-                $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Wonen.csv',   'woonclaims TIGRIS',           '/WriteBasedata/Generate_Run3')
-            }
-        }
-        if (Test-SectorActief 'Werken') {
-            $eisen += ,@('BaseData\Beleid\Claims\TXL_*\*\*\*\*\Werken.csv',  'werkenclaims TIGRIS',         '/WriteBasedata/Generate_Run3')
-        }
         if (Test-SectorActief 'Waterberging') {
             $eisen += ,@('BaseData\Suitabilities\Waterberging\Depth_Norm_*.tif', 'waterbergingsnormen', '/WriteBasedata/Generate_Run3')
         }
@@ -435,12 +469,11 @@ function Show-Schakelaars {
     # log van de aanroep.
     $mpDir = Join-Path (Split-Path $Cfg -Parent) 'main'
     $bron = @{
-        'AlleenEindjaar'       = 'ModelParameters.dms'
         'Model_FirstZichtjaar' = 'ModelParameters.dms'
         'Model_FinalYear'      = 'ModelParameters.dms'
         'ExotenActief'         = 'ModelParameters\Landbouw.dms'
     }
-    foreach ($naam in @('Model_FirstZichtjaar','Model_FinalYear','AlleenEindjaar','ExotenActief')) {
+    foreach ($naam in @('Model_FirstZichtjaar','Model_FinalYear','ExotenActief')) {
         $tekst = Get-Content (Join-Path $mpDir $bron[$naam]) -Raw
         $m = [regex]::Match($tekst, "$naam\s*:=\s*=?\s*([^,;\r\n]+)")
         $w = if ($m.Success) { $m.Groups[1].Value.Trim() } else { '(niet gevonden)' }
@@ -454,6 +487,7 @@ Write-Regel "localdata : $LocalData"
 Write-Regel "varianten : $($Varianten -join ', ')"
 Write-Regel "rij       : $RijSoort, verwachte piek $RijPiekGB GB per stap, budget $RijBudgetGB GB, $(if ($RijMap) { $RijMap } else { $RijStandaardMap })"
 
+Test-LocalData $Cfg $LocalData
 Show-Schakelaars
 Test-StedelijkeKlassen
 

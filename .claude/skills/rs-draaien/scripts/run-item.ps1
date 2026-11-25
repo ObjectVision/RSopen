@@ -12,7 +12,7 @@
     .\run-item.ps1 -Item "/Indicatoren/WLO_hoog_BAU/Zichtjaren/Y2030/Stand/Aantal_Woningen_Totaal"
 
 .EXAMPLE
-    .\run-item.ps1 -Item "/CommitChecks/MaakBaseData1" -Version "20.16.0.m" -ShowLog
+    .\run-item.ps1 -Item "/CommitChecks/MakeBaseData1" -Version "20.16.0.m" -ShowLog
 #>
 [CmdletBinding()]
 param(

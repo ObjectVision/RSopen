@@ -28,13 +28,17 @@
        .\RunIndicatoren.ps1 -Varianten BAU -Zichtjaren Y2040,Y2120
    Gekoppeld, zoals voor #824: alle zichtjaren en de tabellen levend, in een proces per variant:
        .\RunIndicatoren.ps1 -Varianten BAU -Ontkoppeld:$false -TabellenUitExport:$false
+   Alleen de items die een inhoudelijke vraag beantwoorden, zonder de rest van de export:
+       .\RunIndicatoren.ps1 -Varianten BAU -Items Export/generates/NieuweNatuur,Export/generates/ClaimRealisatie
    Daarna de oplevering samenstellen met batch\MaakOplevering.ps1.
 
  INSTELLINGEN
 
    A. Parameters van dit script (commandoregel; standaardwaarden in het blok param() hieronder).
-      -Exe, -Cfg, -LogDir   Zoals bij RunAllocatie.ps1: de geinstalleerde GeoDMS, cfg\main.dms van de
-                            werkkopie, en de logmap.
+      -Exe, -Cfg, -LocalData, -LogDir   Zoals bij RunAllocatie.ps1: de geinstalleerde GeoDMS, cfg\main.dms
+                            van de werkkopie, de LocalData en de logmap. -LocalData kan alleen de map zijn
+                            die GeoDMS zelf afleidt, en leeg laten geeft die map; een andere laat het
+                            script voor de eerste GeoDmsRun stoppen (ObjectVision/RSopen#911).
       -Scenario             Standaard WLO_hoog; casusnamen zijn <scenario>_<variant>.
       -Varianten            Lijst, bijvoorbeeld BAU,BAU2,NbSGenuanceerd. De namen staan in
                             cfg\main\VariantParameters\VariantK.dms, kolom name.
@@ -83,7 +87,19 @@
                             werden geschreven; een tabel op zo'n oudere export vraagt -TabellenUitExport:$false.
                             De bereikbaarheid van groen rekent per regio opnieuw, op teruggelezen invoer;
                             alleen de landelijke tabel leest de groenkaarten zelf terug.
-      -GeenToets            Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
+      -Items                Alleen deze items rekenen in plaats van de hele export: een run is er voor een
+                            inhoudelijke vraag, dus reken alleen wat die vraag beantwoordt. De paden zijn
+                            relatief aan /Indicatoren/<casus>/Zichtjaren/, bijvoorbeeld
+                            Export/Tabellen/PerNederland/Tabel, Export/generates/NieuweNatuur of
+                            Export/generates/ClaimRealisatie. Het script slaat dan de legenda's, de reeks en
+                            de vaste stappen over en draait per variant en zichtjaar een GeoDmsRun op alle
+                            items samen (met -Gebundeld per zichtjaar een voor alle varianten). Daarin staan
+                            IndicatorenOntkoppeld en TabellenUitExport op FALSE, zodat er geen ketentifs en
+                            geen geschreven kaarten nodig zijn; een cumulatieve indicator rekent de voorgaande
+                            zichtjaren dan wel in hetzelfde proces mee. Bij Landschappen komt er een run per
+                            gebied. Gaat niet samen met -AlleenExportZichtjaar, -AlleenLandschapstabellen of
+                            een expliciet gegeven -Ontkoppeld of -TabellenUitExport.
+      -GeenToets           Slaat de toets op de invoer over. Alleen voor wie precies weet wat er staat.
       -WaakhondMinuten      Na hoeveel minuten zonder teken van leven het script een GeoDmsRun als vastgelopen
                             stopt, standaard 15; 0 zet de waakhond uit. Zie Waakhond.ps1.
       -HerhalingenNaVastlopen  Hoe vaak het script een stap die de waakhond stopte opnieuw start voordat
@@ -109,8 +125,8 @@
    B. Omgevingsvariabelen die dit script zelf zet: StandAllocatieOntkoppeld=TRUE (stand uit de tifs),
       VariantDataOntkoppeld=TRUE, IndicatorenOntkoppeld (TRUE met -Ontkoppeld, anders FALSE),
       TabellenUitExport (per stap: TRUE alleen voor de tabelstappen van -TabellenUitExport),
-      IndicatorRegio en ExportZichtjaar. LocalDataProjDir wordt gewist, GeoDMS leidt het pad af uit
-      LocalDataDir plus de mapnaam boven cfg.
+      IndicatorRegio en ExportZichtjaar. LocalDataProjDir wordt gewist; GeoDMS leest hem niet en leidt
+      het pad af uit LocalDataDir plus de mapnaam boven cfg.
 
    C. Wat dit script NIET regelt en je vooraf moet nalopen:
       - De stand moet er staan voor ELK zichtjaar tot en met het exportzichtjaar, want cumulatieve
@@ -119,7 +135,7 @@
       - De basisdata van WriteBasedata/Generate_Run3 en Generate_Run4_IndicatorenData en de
         variantdata van WriteVariantData. RunAllocatie.ps1 maakt ze allemaal; de toets hieronder meldt
         wat ontbreekt en welk item het maakt.
-      - De legenda's (Export/Legendas/Schrijf) schrijft dit script zelf, ze zijn casusonafhankelijk.
+      - De legenda's (Export/Legendas/Write) schrijft dit script zelf, ze zijn casusonafhankelijk.
       - De schakelaars in cfg\main\ModelParameters.dms, zie blok B van RunAllocatie.ps1.
 
  ALS HET MISGAAT
@@ -142,11 +158,12 @@
 param(
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    [string]   $LocalData  = '',
     [string]   $LogDir     = (Join-Path $PSScriptRoot 'log\indicatoren'),
     [string]   $Scenario   = 'WLO_hoog',
     [string[]] $Varianten  = @('BAU','BAU2'),
     [string[]] $Zichtjaren = @(),
+    [string[]] $Items      = @(),
     [ValidateSet('NL','Provincie','COROP','Gemeente','NVM','Landschappen',
                  'Landschap_Kust','Landschap_Rivieren','Landschap_Veen','Landschap_Zand')]
     [string]   $IndicatorRegio = 'NL',
@@ -184,6 +201,7 @@ if (-not (Test-Path $status)) { "tijd`tstap`texit`tseconden" | Set-Content $stat
 function Write-Regel([string]$T) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $T" }
 # Invoke-GeoDmsRun: GeoDmsRun met een plek in de gedeelde rij en een waakhond op voortgang, zie Waakhond.ps1.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+if (-not $LocalData) { $LocalData = Get-GeoDmsLocalData $Cfg }
 
 function Get-BagDatum {
     # ModelParameters/BAG_file_date uit de tekst: de BAG-levering waaronder AfleidingPandtype/Write_WP5 de WP5-typering schrijft
@@ -225,6 +243,20 @@ $Set = if ($Profiel -eq 'RuimteVoorWoningbouw') { 'RuimteVoorWoningbouw' } else 
 if ($Set -eq 'RuimteVoorWoningbouw') {
     if (-not $PSBoundParameters.ContainsKey('Ontkoppeld'))        { $Ontkoppeld = $false }
     if (-not $PSBoundParameters.ContainsKey('TabellenUitExport')) { $TabellenUitExport = $false }
+}
+# Met -Items rekent het script alleen de gevraagde items, gekoppeld en met de tabellen levend: zo zijn er
+# geen ketentifs of geschreven kaarten van een eerdere export nodig. De schakelaars die de reeks of de
+# vaste stappen sturen, hebben dan geen betekenis en worden geweigerd als ze expliciet zijn gegeven.
+if ($Items.Count -gt 0) {
+    foreach ($p in @('AlleenExportZichtjaar', 'AlleenLandschapstabellen', 'Ontkoppeld', 'TabellenUitExport')) {
+        if ($PSBoundParameters.ContainsKey($p)) { throw "-$p gaat niet samen met -Items: met -Items rekent het script alleen de gevraagde items, gekoppeld en met de tabellen levend" }
+    }
+    $Ontkoppeld        = $false
+    $TabellenUitExport = $false
+    $Items = @($Items | ForEach-Object { $_.Trim().TrimStart('/') } | Where-Object { $_ })
+    if ($Items.Count -eq 0) { throw "-Items bevat geen itempaden" }
+    $absoluut = @($Items | Where-Object { $_ -match '^Indicatoren/' })
+    if ($absoluut.Count -gt 0) { throw "Geef de items relatief aan /Indicatoren/<casus>/Zichtjaren/, dus zonder Indicatoren/<casus>/Zichtjaren ervoor: $($absoluut -join ', ')" }
 }
 $env:IndicatorenOntkoppeld = if ($Ontkoppeld) { 'TRUE' } else { 'FALSE' }
 
@@ -318,8 +350,8 @@ function Test-Invoer {
 function Get-KetenNamen {
     # De namen van de ketentifs van de domeinen die het profiel levert, gelezen uit de schrijfkant in
     # Ketens.dms zodat dit script niet achterloopt als daar een keten bijkomt: elke StorageName daar is
-    # Pad+'<naam>'+Staart, en Ketens/Schrijf/Lijst zet ze per domein. Een tif die in geen domeinlijst staat
-    # zou Ketens/Schrijf/Alles nooit schrijven; dat is een fout in Ketens.dms en geen ontbrekend bestand.
+    # Pad+'<naam>'+Staart, en Ketens/Write/Lijst zet ze per domein. Een tif die in geen domeinlijst staat
+    # zou Ketens/Write/Alles nooit schrijven; dat is een fout in Ketens.dms en geen ontbrekend bestand.
     $dms = Join-Path (Split-Path $Cfg -Parent) 'main\Templates\Indicatoren\Ketens.dms'
     if (-not (Test-Path $dms)) { throw "Ketens.dms niet gevonden naast $Cfg" }
     $tekst = Get-Content $dms -Raw
@@ -327,9 +359,9 @@ function Get-KetenNamen {
     if ($alle.Count -eq 0) { throw "Geen ketentifs gevonden in $dms" }
     # Gezocht op de declaratieregel en met vrije witruimte: de kop van Ketens.dms noemt de container
     # Schrijf ook, en een uitlijning van de configuratie verzet de spaties voor Alles_lijst.
-    $b = [regex]::Match($tekst, '(?m)^\s*container\s+Schrijf\b')
+    $b = [regex]::Match($tekst, '(?m)^\s*container\s+Write\b')
     $e = if ($b.Success) { [regex]::Match($tekst.Substring($b.Index), 'parameter<String>\s+Alles_lijst\b') }
-    if (-not $b.Success -or -not $e.Success) { throw "Ketens/Schrijf/Lijst niet gevonden in $dms" }
+    if (-not $b.Success -or -not $e.Success) { throw "Ketens/Write/Lijst niet gevonden in $dms" }
     $lijst = $tekst.Substring($b.Index, $e.Index)
     $perDomein = @{}
     foreach ($m in [regex]::Matches($lijst, "parameter<String>\s+(\w+)\s*:=(.*?);\s*\r?\n", 'Singleline')) {
@@ -337,7 +369,7 @@ function Get-KetenNamen {
     }
     $ingedeeld = @($perDomein.Values | ForEach-Object { $_ })
     $los = @($alle | Where-Object { $ingedeeld -notcontains $_ })
-    if ($los.Count -gt 0) { throw "Ketentifs zonder domein in Ketens/Schrijf/Lijst: $($los -join ', ')" }
+    if ($los.Count -gt 0) { throw "Ketentifs zonder domein in Ketens/Write/Lijst: $($los -join ', ')" }
     $namen = @($perDomein.Keys | Where-Object { $Domeinen[$_] } | ForEach-Object { $perDomein[$_] })
     return $namen
 }
@@ -363,6 +395,7 @@ function Assert-Ketens([string]$casus, [string]$jaar, [string]$standVan) {
     }
 }
 
+Test-LocalData $Cfg $LocalData
 $totaal = [Diagnostics.Stopwatch]::StartNew()
 # @() houdt een lijst met een zichtjaar een lijst; anders wordt hij een tekst en pakken IndexOf en [0..0] de eerste letter
 $alleJaren = @(Get-Zichtjaren)
@@ -376,6 +409,7 @@ Write-Regel "zichtjaren: $($Zichtjaren -join ', ')"
 Write-Regel "regio     : $IndicatorRegio$(if ($IndicatorRegio -eq 'Landschappen') { ', de vier landschapsgebieden van #760 na elkaar' })"
 Write-Regel "ketens    : $(if ($Ontkoppeld) { 'ontkoppeld, via tifs per zichtjaar (#824)' } else { 'in een proces, elke export rekent alle voorgaande zichtjaren mee' })"
 Write-Regel "tabellen  : $(if ($TabellenUitExport) { 'uit de geschreven kaarten, in een eigen proces na de kaarten (#824)' } else { 'levend, in hetzelfde proces als de kaarten' })"
+if ($Items.Count -gt 0) { Write-Regel "items     : $($Items -join ', ') (onder Zichtjaren/; geen legenda's, reeks of vaste stappen)" }
 
 foreach ($y in $Zichtjaren) { if ($alleJaren.IndexOf($y) -lt 0) { throw "Zichtjaar $y staat niet in de configuratie ($($alleJaren -join ', '))" } }
 if (-not $GeenToets) { Test-Invoer }
@@ -431,8 +465,11 @@ function Invoke-Export([string]$stap, [string[]]$items) {
 
 # De legenda's zijn casusonafhankelijk en kosten een seconde; zonder deze bestanden mist de
 # oplevering de klassenamen bij elke klassekaart (MaakOplevering.ps1 meldt dat als waarschuwing).
-$eerste = "/Indicatoren/${Scenario}_$($Varianten[0])/Zichtjaren/Export/Legendas/Schrijf"
-Invoke-Export "legendas" @($eerste)
+# Met -Items niet: dan rekent het script alleen de gevraagde items.
+if ($Items.Count -eq 0) {
+    $eerste = "/Indicatoren/${Scenario}_$($Varianten[0])/Zichtjaren/Export/Legendas/Write"
+    Invoke-Export "legendas" @($eerste)
+}
 
 # De regio's om te draaien: Landschappen is de vier aangeleverde gebieden van #760 na elkaar, een
 # proces per gebied, want IndicatorRegio geldt per proces voor alle indicatoren tegelijk. De eerste
@@ -445,7 +482,7 @@ $regios = @(if ($IndicatorRegio -eq 'Landschappen') { @('Landschap_Kust','Landsc
 
 # Ontkoppeld (#824): eerst de reeks zichtjaren voor het laatste exportzichtjaar, elk in een eigen
 # proces, in volgorde. Zichtjaren/<jaar>/Tijdreeks schrijft de ketentifs van dat jaar en de kaarten
-# van de tijdreeks; het volgende zichtjaar leest die ketentifs via Ketens/Lees. Het eerste zichtjaar
+# van de tijdreeks; het volgende zichtjaar leest die ketentifs via Ketens/Read. Het eerste zichtjaar
 # heeft geen voorganger en leest het basisjaar, net als zonder de schakelaar. Een ontbrekende
 # ketentif geeft GeoDmsRun exit 0 met een gdal-waarschuwing, vandaar de toets voor en na elk jaar.
 if ($Ontkoppeld) {
@@ -488,6 +525,24 @@ function Assert-Voorganger([string]$v, [string]$y) {
 for ($r = 0; $r -lt $regios.Count; $r++) {
     $regio = $regios[$r]
     $env:IndicatorRegio = $regio
+    # Met -Items alleen die items, per variant en zichtjaar een proces (gebundeld per zichtjaar een voor alle
+    # varianten), in plaats van de stappen hieronder.
+    if ($Items.Count -gt 0) {
+        $env:TabellenUitExport = 'FALSE'
+        $voorRegio = if ($regios.Count -gt 1) { "$regio-" } else { '' }
+        foreach ($y in $Zichtjaren) {
+            $env:ExportZichtjaar = $y
+            if ($Gebundeld) {
+                $paden = @(foreach ($v in $Varianten) { foreach ($it in $Items) { "/Indicatoren/${Scenario}_$v/Zichtjaren/$it" } })
+                Invoke-Export "items-${voorRegio}gebundeld-$y" $paden
+            } else {
+                foreach ($v in $Varianten) {
+                    Invoke-Export "items-$voorRegio$v-$y" @($Items | ForEach-Object { "/Indicatoren/${Scenario}_$v/Zichtjaren/$_" })
+                }
+            }
+        }
+        continue
+    }
     $alleenTabel = $AlleenLandschapstabellen -or ($r -gt 0)
     # De stappen voor deze regio. Zonder -TabellenUitExport is dat een aanroep: de volledige export, of
     # alleen de regionale tabel. Met de schakelaar gaat de volledige export in twee processen (#824): eerst

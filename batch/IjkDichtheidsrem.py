@@ -61,7 +61,7 @@ De invoer:
                  rem_K20min_100m.tif, elk al zo dat een blok alleen bij zijn grootste kernklasse telt.
   --kernbuffers  %LocalDataProjDir%/BaseData/PopBuffers van een run: de buffers van een kilometer rond de kernen per klasse
                  (UrbanContour_<klasse>_<studiegebied>_25m.tif), die WriteBasedata wegschrijft en het model als
-                 BaseData/Omgeving/RondBevolkingskern leest.
+                 BaseData/Omgeving/BebouwdGebied/RondBevolkingskern leest.
   --bbg          de dominante BBG-klasse per blok van 100 m, BaseData/Grondgebruik/BBG/BBG<jaar>_100m_Modus_<studiegebied>.tif;
                  een blok is woonlocatie als die klasse Woonterrein is. De ijking voor #879 gebruikte de BBG van 2022, het
                  basisjaar van het model, ook bij een periode vanaf 2012; een BBG van het beginjaar is niet uitgeprobeerd.

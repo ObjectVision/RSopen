@@ -28,7 +28,9 @@
      het werkelijke eigen geheugen van de GeoDMS-processen zonder claim (Hestia, een GUI, een meting uit de
      shell), plus de eigen verwachte piek blijven onder RijBudgetGB;
    - een landelijke claim start niet naast een andere landelijke run;
-   - naast een landelijke run loopt hooguit een regionale.
+   - naast een landelijke run loopt hooguit een grote regionale; een regionale claim tot RijKleinGB telt daarbij
+     niet mee en hoeft alleen in het budget te passen. De landelijke allocatie gebruikt meer eigen geheugen dan de
+     machine fysiek heeft, dus een grote run ernaast vertraagt hem; een opvraging van een paar items nauwelijks.
  Wie eerder vroeg, gaat voor zodra hij past; een latere claim die nu past naast de lopende en de eerdere die
  ook passen, gaat ertussendoor. Na afloop verdwijnt de claim. Een claim waarvan het proces weg is (de GeoDmsRun
  als die al loopt, anders het script dat wacht) ruimt de rij zelf op, zodat er na een herstart of een gestopt
@@ -54,6 +56,10 @@
  meting in 3 minuten tot boven 150 GB. De reden komt als [E]-regel onder het log. RunAllocatie.ps1 en
  RunIndicatoren.ps1 starten een stap die de rem stopte niet opnieuw, want hij groeit dan weer tot dezelfde grens;
  geef hem een hogere claim.
+
+ DE LOCALDATA
+ Test-LocalData stopt een script voor zijn eerste GeoDmsRun als -LocalData een andere map is dan die waar GeoDMS
+ schrijft; Get-GeoDmsLocalData leidt die map af zoals GeoDMS dat doet (ObjectVision/RSopen#911).
 ================================================================================================
 #>
 
@@ -67,6 +73,9 @@ $RijStandaardMap = 'C:\LocalData\Coordinatie\rij'
 $RijBudgetGB     = 480
 $RijProcesNamen  = @('GeoDmsRun', 'GeoDmsGuiQt')
 $RijMeetSeconden = 15
+# Tot hoeveel GB verwachte piek een regionale claim klein is: hij mag naast een landelijke en een grote regionale run
+# starten als hij in het budget past.
+$RijKleinGB      = 40
 # Hoe vaak een claim die blijft wachten dat opnieuw in het log zet, in minuten; een verandering in wie er voor gaat
 # meldt hij meteen.
 $RijMeldMinuten  = 15
@@ -146,10 +155,11 @@ function Test-RijPast {
     $voorGB = 0.0
     foreach ($v in $Voor) { $voorGB += [math]::Max([double]$v.piekGB, [double]$v.EigenGB) }
     $landelijk = @($Voor | Where-Object { $_.soort -eq 'landelijk' }).Count
-    $regionaal = @($Voor | Where-Object { $_.soort -ne 'landelijk' }).Count
+    $regionaal = @($Voor | Where-Object { $_.soort -ne 'landelijk' -and [double]$_.piekGB -gt $RijKleinGB }).Count
+    $klein     = $Claim.soort -ne 'landelijk' -and [double]$Claim.piekGB -le $RijKleinGB
     if ($Claim.soort -eq 'landelijk' -and $landelijk -gt 0) { return 'er gaat al een landelijke run voor' }
-    if ($Claim.soort -eq 'landelijk' -and $regionaal -gt 1) { return "er gaan $regionaal regionale runs voor, en naast een landelijke past er hooguit een" }
-    if ($Claim.soort -ne 'landelijk' -and $landelijk -gt 0 -and $regionaal -gt 0) { return 'er gaan al een landelijke en een regionale run voor' }
+    if ($Claim.soort -eq 'landelijk' -and $regionaal -gt 1) { return "er gaan $regionaal grote regionale runs voor, en naast een landelijke past er hooguit een" }
+    if ($Claim.soort -ne 'landelijk' -and -not $klein -and $landelijk -gt 0 -and $regionaal -gt 0) { return "er gaan al een landelijke en een grote regionale run voor (boven $RijKleinGB GB)" }
     $som = $voorGB + $ZonderClaimGB + [double]$Claim.piekGB
     if ($som -gt $BudgetGB) {
         return ("samen {0} GB, boven het budget van {1} GB ({2} GB van de claims voor deze, {3} GB zonder claim, {4} GB voor deze stap)" -f
@@ -429,4 +439,36 @@ function Invoke-GeoDmsRun {
     # gewone aanroep met &.
     $global:LASTEXITCODE = $p.ExitCode
     return [pscustomobject]@{ Code = $p.ExitCode; Reden = $reden; Gestopt = $gestopt; Wacht = $plek.Wacht }
+}
+
+function Get-GeoDmsLocalData([string]$Cfg) {
+    # De map die GeoDMS voor %LocalDataProjDir% neemt bij deze configuratie, op dezelfde manier afgeleid als GeoDMS dat doet
+    # (GetLocalDataProjDir en GetConvertedGeoDmsRegKey in de broncode): de omgevingsvariabele GEODMS_directories_localDataProjDir
+    # als die er is, anders LocalDataDir plus de naam van de map boven cfg. LocalDataDir komt uit GEODMS_directories_LocalDataDir
+    # of uit het register, eerst de sleutel met de machinenaam en dan die van DMS. Een kale omgevingsvariabele LocalDataProjDir
+    # leest GeoDMS niet. Zo gemeten met GeoDMS 20.28.0.m op 24 november 2026.
+    if ($env:GEODMS_directories_localDataProjDir) { return $env:GEODMS_directories_localDataProjDir }
+    $wortel = $env:GEODMS_directories_LocalDataDir
+    $sleutels = @("HKCU:\Software\ObjectVision\$env:COMPUTERNAME\GeoDMS", 'HKCU:\Software\ObjectVision\DMS')
+    foreach ($s in $sleutels) {
+        if ($wortel) { break }
+        $wortel = (Get-ItemProperty -LiteralPath $s -Name LocalDataDir -ErrorAction SilentlyContinue).LocalDataDir
+    }
+    if (-not $wortel) { throw "LocalDataDir staat niet in het register ($($sleutels -join ' of ')) en GEODMS_directories_LocalDataDir is leeg" }
+    return Join-Path $wortel (Get-Item -LiteralPath $Cfg -ErrorAction Stop).Directory.Parent.Name
+}
+
+function Test-LocalData([string]$Cfg, [string]$LocalData) {
+    # Stopt als -LocalData een andere map is dan die waar GeoDMS deze configuratie naar schrijft. De scripts toetsen invoer,
+    # standen en uitdraaien in -LocalData, terwijl GeoDMS in zijn eigen map leest en schrijft en daar een andere reeks kan
+    # overschrijven (ObjectVision/RSopen#911). Hoort voor de eerste GeoDmsRun van een script.
+    $geodms = Get-GeoDmsLocalData $Cfg
+    $vol = { param($p) [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p)).TrimEnd('\') }
+    if (-not [string]::Equals((& $vol $LocalData), (& $vol $geodms), [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Regel "GESTOPT: -LocalData is $LocalData, maar GeoDMS leest en schrijft deze configuratie in $geodms."
+        Write-Regel "GeoDMS leidt die map af uit LocalDataDir in het register plus de naam van de map boven cfg, en het script verlegt hem niet."
+        Write-Regel "Laat -LocalData weg, of reken vanuit een werkkopie waarvan de map heet zoals de LocalData die je wilt."
+        throw "-LocalData wijkt af van de map van GeoDMS ($geodms)"
+    }
+    Write-Regel "controle  : GeoDMS schrijft ook naar $geodms"
 }

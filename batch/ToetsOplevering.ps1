@@ -28,8 +28,9 @@
 [CmdletBinding()]
 param(
     # Standaard de LocalData en de configuratie van de werkkopie waarin dit script staat, net als bij
-    # RunAllocatie.ps1.
-    [string]   $LocalData  = (Join-Path 'C:\LocalData' (Split-Path (Split-Path $PSScriptRoot -Parent) -Leaf)),
+    # RunAllocatie.ps1. Trap A en B lezen alleen, dus daar mag -LocalData elke map zijn; met -TrapC rekent
+    # GeoDMS in zijn eigen map, en een andere -LocalData laat het script dan stoppen (ObjectVision/RSopen#911).
+    [string]   $LocalData  = '',
     [string]   $Cfg        = (Join-Path (Split-Path $PSScriptRoot -Parent) 'cfg\main.dms'),
     [string]   $Exe        = 'C:\Program Files\ObjectVision\GeoDms20.28.0.m\GeoDmsRun.exe',
     [string]   $Scenario   = 'WLO_hoog',
@@ -53,6 +54,7 @@ param(
 $ErrorActionPreference = 'Continue'
 # Invoke-GeoDmsRun: de gedeelde rij en de waakhond voor de stappen van trap C.
 . (Join-Path $PSScriptRoot 'Waakhond.ps1')
+if (-not $LocalData) { $LocalData = Get-GeoDmsLocalData $Cfg }
 if (-not $Rapport) { $Rapport = Join-Path $LocalData 'toets_oplevering.md' }
 $vers = if ($RunGestartOp) { [datetime]::ParseExact($RunGestartOp, 'yyyy-MM-dd HH:mm', $null) } else { $null }
 
@@ -64,8 +66,8 @@ function Meld {
     Write-Host ("{0,-5} {1,-22} {2,-40} {3,-10} {4}" -f $Trap, $Casus, $Toets, $Oordeel, $Gemeten) -ForegroundColor $kleur
 }
 
-# Verwachte setgroottes per variant, uit de OP-tabel na #721 en het stedelijke vrijstaande pakket van #847.
-$OPSetGrootte = @{ 'BAU'=28; 'BAU2'=28; 'NbSGenuanceerder'=40; 'NbSGenuanceerd'=40 }
+# Verwachte setgroottes per variant, uit de OP-tabel na #721, het stedelijke vrijstaande pakket van #847 en SuperStedelijkPlus van #899.
+$OPSetGrootte = @{ 'BAU'=30; 'BAU2'=30; 'NbSGenuanceerder'=42; 'NbSGenuanceerd'=42 }
 
 # De normen voor de controlewaarden van de tabellen Checks en ChecksBasisjaar staan sinds #833 in cfg/main/Diagnose.dms,
 # in de kolommen norm_onder en norm_boven, met de afweging bij de rij. Het harnas schrijft per casus en zichtjaar een csv
@@ -196,12 +198,12 @@ function TrapB([string]$variant, [string]$jaar) {
         # PASS of FAIL: er is geen norm voor. Ze staan hier omdat een dekkingsgraad die zonder deze
         # twee getallen wordt overgenomen een puntgetal suggereert dat het niet is.
         if ($v['aanbod_totaal'] -gt 0) {
-            $klemAandeel   = $v['aanbod_zonder_opgave'] / $v['aanbod']
+            $begrensdAandeel = $v['aanbod_zonder_opgave'] / $v['aanbod']
             $buitenAandeel = $v['aanbod_buiten_bbg'] / $v['aanbod_totaal']
             $dekking       = $v['gedekt'] / $v['opgave']
             $dekkingOngekl = [math]::Min($v['aanbod'], $v['opgave']) / $v['opgave']
-            Meld 'B' $casus "$j dekkingsgraad piekbui, bandbreedte" 'INFO' ("{0:P1} geklemd op blok, {1:P1} ongeklemd" -f $dekking, $dekkingOngekl) 'lees als bandbreedte'
-            Meld 'B' $casus "$j aanbod dat de dekking niet haalt" 'INFO' ("{0:P1} valt door de blokklemming, {1:P1} ligt buiten bebouwd gebied" -f $klemAandeel, $buitenAandeel) 'zie #720 en #741'
+            Meld 'B' $casus "$j dekkingsgraad piekbui, bandbreedte" 'INFO' ("{0:P1} begrensd op blok, {1:P1} onbegrensd" -f $dekking, $dekkingOngekl) 'lees als bandbreedte'
+            Meld 'B' $casus "$j aanbod dat de dekking niet haalt" 'INFO' ("{0:P1} valt door de blokbegrenzing, {1:P1} ligt buiten bebouwd gebied" -f $begrensdAandeel, $buitenAandeel) 'zie #720 en #741'
         }
     }
 
@@ -231,7 +233,6 @@ function TrapC([string]$variant, [string]$jaar) {
     $j = $jaar -replace '^Stand',''
     $env:DiagCasus = $casus
     $env:DiagJaar  = "'$j'"
-    $env:LocalDataProjDir = $LocalData
     $log = Join-Path $env:TEMP "toets_${casus}_$j.log"
     if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
 
@@ -245,7 +246,6 @@ function TrapC([string]$variant, [string]$jaar) {
 function TrapCBasisjaar([string]$variant) {
     $casus = "${Scenario}_$variant"
     $env:DiagCasus = $casus
-    $env:LocalDataProjDir = $LocalData
     $log = Join-Path $env:TEMP "toets_${casus}_basisjaar.log"
     if (Test-Path $log) { Remove-Item -LiteralPath $log -Force }
 
@@ -259,6 +259,7 @@ function TrapCBasisjaar([string]$variant) {
 # ----------------------------------------------------------------------------------- uitvoeren
 Write-Host ""
 Write-Host "LocalData : $LocalData"
+if ($TrapC) { Test-LocalData $Cfg $LocalData }
 Write-Host "varianten : $($Varianten -join ', ')"
 if ($vers) { Write-Host "vers vanaf: $($vers.ToString('yyyy-MM-dd HH:mm'))" } else { Write-Host "vers vanaf: niet gezet, verouderde uitdraaien worden NIET ontmaskerd" -ForegroundColor Yellow }
 Write-Host ""
