@@ -328,6 +328,10 @@ function Get-Herkomst([string]$Pad) {
         # opgeruimd worden, want anders eindigt het script erop en leest een aanroeper dat als mislukt.
         $tag = git -C $Pad describe --tags --exact-match 2>$null
         if ($LASTEXITCODE -ne 0) { $tag = '' }
+        # De modelversie is de laatste versietag van main in de geschiedenis van HEAD, met het aantal
+        # commits erna, zoals v2026.12-37-gabc1234. Zonder versietag in die geschiedenis faalt ook dit.
+        $versie = git -C $Pad describe --tags --match 'v*' 2>$null
+        if ($LASTEXITCODE -ne 0) { $versie = '' }
         $vuil = @(git -C $Pad status --porcelain 2>$null)
         $global:LASTEXITCODE = 0
     }
@@ -338,6 +342,7 @@ function Get-Herkomst([string]$Pad) {
 
     $r = @()
     $r += "Configuratie: commit $commit op branch $branch, " + $(if ($tag) { "getagd als $tag." } else { "niet getagd." })
+    $r += "  Modelversie: " + $(if ($versie) { "$versie." } else { "geen versietag in de geschiedenis van deze commit." })
     $r += "  Gelezen uit werkkopie $Pad."
     if ($vuil.Count -gt 0) {
         # Een commithash beschrijft de gebruikte configuratie alleen volledig als er niets openstond.
