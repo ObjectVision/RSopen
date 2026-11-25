@@ -254,12 +254,13 @@ Template Zichtjaar_T
 	
 	container Impl := Impl0
 	{
-		parameter<String> Generate                       := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+';WriteStand/Legenda'+Extra_str+Extra_werken+Extra_prev", Descr = "Generate-parameter die het wegschrijven van de standbestanden van dit zichtjaar aanstuurt. WriteStand/Legenda staat er onvoorwaardelijk bij en niet in Extra_str, want die is voor het
+		parameter<String> Generate                       := 'Allocatie'+name, ExplicitSuppliers = "=asList('WriteStand/'+StandVar/path, ';')+';WriteStand/Legenda'+Extra_str+Extra_werken+Extra_herkomst+Extra_prev", Descr = "Generate-parameter die het wegschrijven van de standbestanden van dit zichtjaar aanstuurt. WriteStand/Legenda staat er onvoorwaardelijk bij en niet in Extra_str, want die is voor het
 					voorwaardelijke geval en de legenda hangt niet aan een sector; het pad wijst naar het kind zelf en niet naar de container, want ExplicitSuppliers op een container lift niet mee wanneer je
 					een los kind opvraagt. Zonder deze regel wordt het zijbestand nooit geschreven, en de leeskant weigert een stand zonder kloppend zijbestand (#721).";
 		
 		parameter<string> Extra_str                      := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';WriteStand/wonen/Footprint' : '';
 		parameter<string> Extra_werken                   := /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector && lowercase(/ModelParameters/ClaimBasisjaar/VerdelingVerzorgend) == 'woningen' ? ';WoningenVoorWerken/Write/Woningen' : '', Descr = "Schrijft de woningen per gemeente mee waaruit de verzorgende banen van dit zichtjaar hun verdeling halen, zie WoningenVoorWerken.";
+		parameter<string> Extra_herkomst                 := (/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector || /ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector ? ';Herkomst/Kaart;Herkomst/Legenda' : '') + (/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? ';Herkomst/Wonen/Tabel/groei_woningen' : '') + (/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector ? ';Herkomst/Werken/Tabel/groei_banen' : ''), Descr = "Schrijft mee in welk zichtjaar en in welke regel van de allocatievolgorde de nieuwe cellen van wonen en werken hun pakket kregen (Herkomst).";
 		parameter<Bool>   IsEersteZichtjaar              := first(lowercase(Time/Zichtjaar/name)) == lowercase(name);
 		parameter<String> PrevZichtjaar_name             := rjoin(lowercase(name), lowercase(Time/Zichtjaar/name), Time/Zichtjaar/PrevName);
 		parameter<string> Extra_prev                     := Ontkoppeld || IsEersteZichtjaar ? '' : ';'+PrevZichtjaar_name+'/Impl/Generate', Descr = "Trekt in de gekoppelde stand het Generate van het vorige zichtjaar mee, en daarmee diens WriteStand/Legenda. Zonder deze term krijgt alleen het zichtjaar dat werkelijk wordt opgevraagd een
@@ -556,6 +557,111 @@ Template Zichtjaar_T
 				attribute<m2PandFootprint> Footprint (AdminDomain) := =/ModelParameters/SectorAllocRegio/Uq_Sectors/HasWonenSector ? 'CalcStand/Wonen/Footprint' : 'const(null_f, AdminDomain, m2PandFootprint)', StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Wonen/Footprint')", StorageType = "gdalwrite.grid";
 			}
 
+		}
+
+		container Herkomst
+		: Descr = "In welk zichtjaar en in welke regel van de allocatievolgorde elke nieuwe cel van wonen en werken zijn pakket kreeg, als kaart over alle zichtjaren en per sector als tabel per regio van de fijnste
+					indeling (pbl-nl/model-RSopen#4, #904). Een woningcel is nieuw in een regel als hij aan het eind ervan een ontwikkelpakket draagt dat hij aan het begin niet droeg, een werkcel als hij aan
+					het eind een werksubsector heeft die hij aan het begin niet had, want een werkcel draagt zelden een ontwikkelpakket. Wat een latere sequentie erbij zet, hoort bij de eerste regel van zijn
+					sector, want alleen die draait daar mee. De tabellen verdelen de groei van de stand per cel over de regels, met eigen rijen voor wat er op cellen zonder nieuw pakket bijkomt of afgaat en
+					voor wat er aan het begin van het zichtjaar al verandert; de rijen van een regio samen zijn de groei vanaf de stand waarmee het zichtjaar begint. In het eerste zichtjaar bevat die
+					stand al de BAG-nieuwbouw na het basisjaar (StartState_metBAGnieuwbouw), dus die telt in de tabellen niet mee."
+		{
+			unit<UInt8> Regel := /ModelParameters/SectorAllocRegio/WonenWerkenAllocRegio
+			{
+				attribute<String>                        name       := /ModelParameters/SectorAllocRegio/name[org_rel];
+				attribute</Classifications/Actor/Sector> Sector_rel := /ModelParameters/SectorAllocRegio/Sector_rel[org_rel];
+				attribute<String>                        Pad        := 'Sequences/Seq_0/SectorAllocRegios/'+name;
+				attribute<String>                        IsNieuw_expr := Sector_rel == /Classifications/Actor/Sector/V/Wonen
+					? 'IsDefined('+Pad+'/StateNaAllocatie/OP_rel) && IsNull('+Pad+'/StateVoorAllocatie/OP_rel)'
+					: '/Classifications/Actor/Sector/xSubsector/Sector_rel['+Pad+'/StateNaAllocatie/SubSector_rel] == '+string(Sector_rel)+'[/Classifications/Actor/Sector] && (IsNull('+Pad+'/StateVoorAllocatie/SubSector_rel) ? TRUE : '+Pad+'/StateNaAllocatie/SubSector_rel != '+Pad+'/StateVoorAllocatie/SubSector_rel)'
+				, Descr = "Wanneer een cel in de regel een pakket krijgt: bij wonen een nieuw ontwikkelpakket, bij werken een nieuwe werksubsector.";
+			}
+			container IsNieuw := for_each_nedv(Regel/name, Regel/IsNieuw_expr, CompactedAdminDomain, Bool), Descr = "Per regel van wonen en werken in de eerste sequentie de cellen die in die regel een pakket kregen.";
+
+			attribute</Classifications/Actor/Sector> SectorNu (CompactedAdminDomain) := /Classifications/Actor/Sector/xSubsector/Sector_rel[Sequences/LastSequence/StateNaAllocatie/SubSector_rel], Descr = "De sector van de cel aan het eind van het zichtjaar.";
+			attribute<Regel>   EersteRegel      (/Classifications/Actor/Sector) := first(id(Regel), Regel/Sector_rel), Descr = "De eerste regel van elke sector; daar hoort een cel bij die zijn pakket in een latere sequentie kreeg.";
+			attribute<Bool>    IsNieuwZichtjaar (CompactedAdminDomain) := IsDefined(EersteRegel[SectorNu])
+			                                                              && (SectorNu == /Classifications/Actor/Sector/V/Wonen
+			                                                                 ? IsDefined(Sequences/LastSequence/StateNaAllocatie/OP_rel) && IsNull(StateVoorAllocatie/OP_rel)
+			                                                                 : (IsNull(StateVoorAllocatie/SubSector_rel) ? TRUE : Sequences/LastSequence/StateNaAllocatie/SubSector_rel != StateVoorAllocatie/SubSector_rel))
+			, Descr = "Kreeg de cel dit zichtjaar een pakket van wonen of werken, met dezelfde maat als in IsNieuw?";
+			attribute<Regel>   RegelNu          (CompactedAdminDomain) := = 'IsNieuwZichtjaar ? (' + AsList('IsNieuw/'+Regel/name+' && SectorNu == '+string(Regel/Sector_rel)+'[/Classifications/Actor/Sector] ? '+string(id(Regel))+'[Regel] : ', '') + 'EersteRegel[SectorNu]) : null_b'
+			, Descr = "De regel van de sector van nu waarin de cel dit zichtjaar zijn pakket kreeg; leeg voor een cel die geen nieuwe cel van wonen of werken is.";
+			attribute<Float32> GroeiWonen       (CompactedAdminDomain) := = 'add('+AsItemList('MakeDefined(float32(Sequences/LastSequence/StateNaAllocatie/Wonen/'+/Classifications/Vastgoed/WP2xVSSH/name+'), 0f) - MakeDefined(float32(StateVoorAllocatie/Wonen/'+/Classifications/Vastgoed/WP2xVSSH/name+'), 0f)')+')', Descr = "De woningen die de cel in de allocatie van dit zichtjaar erbij kreeg, over de vier woningtypen; negatief bij verdringing.";
+			attribute<Float32> GroeiWerken      (CompactedAdminDomain) := = 'add('+AsItemList('MakeDefined(float32(Sequences/LastSequence/StateNaAllocatie/Werken/'+Jobs6/name+'), 0f) - MakeDefined(float32(StateVoorAllocatie/Werken/'+Jobs6/name+'), 0f)')+')', Descr = "De banen die de cel in de allocatie van dit zichtjaar erbij kreeg, over de werksubsectoren; negatief bij verdringing.";
+			attribute<Float32> GroeiWonenVoorAllocatie  (CompactedAdminDomain) := = 'add('+AsItemList('MakeDefined(float32(StateVoorAllocatie/Wonen/'+/Classifications/Vastgoed/WP2xVSSH/name+'), 0f) - MakeDefined(float32(StateVoorAllocatie0/Wonen/'+/Classifications/Vastgoed/WP2xVSSH/name+'), 0f)')+')', Descr = "De woningen die aan het begin van het zichtjaar afgaan, voordat de allocatie begint: in het eerste zichtjaar de gesloopte cellen en in elk zichtjaar de cellen die de herontwikkelingskans vrijlaat.";
+			attribute<Float32> GroeiWerkenVoorAllocatie (CompactedAdminDomain) := = 'add('+AsItemList('MakeDefined(float32(StateVoorAllocatie/Werken/'+Jobs6/name+'), 0f) - MakeDefined(float32(StateVoorAllocatie0/Werken/'+Jobs6/name+'), 0f)')+')', Descr = "De banen die aan het begin van het zichtjaar bijkomen of afgaan, voordat de allocatie begint: de aanpassing van het aantal banen per bestaande cel aan de verandering van de voetafdruk per baan, en in het eerste zichtjaar de gesloopte cellen.";
+
+			unit<UInt8>        ZichtjaarRegel := Impl0/ZichtjaarSectorAllocRegio;
+			parameter</Classifications/Time/Zichtjaar> Zichtjaar_rel := rlookup(lowercase(Context/ThisZichtjaar_name), lowercase(/Classifications/Time/Zichtjaar/name));
+			attribute<ZichtjaarRegel> RegelVorig (CompactedAdminDomain) := = IsEersteZichtjaar ? 'const(null_b, CompactedAdminDomain, ZichtjaarRegel)'
+			                                                              : Ontkoppeld ? 'collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, ReadVorig/Kaart)'
+			                                                              : PrevZichtjaar_name+'/Impl/Herkomst/RegelTotNu'
+			, Descr = "RegelTotNu van het vorige zichtjaar; ontkoppeld uit zijn bestand, zodat de allocatie van dat zichtjaar niet opnieuw wordt gerekend.";
+			container ReadVorig
+			{
+				attribute<ZichtjaarRegel> Kaart (AdminDomain) : StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Herkomst/ZichtjaarSectorAllocRegio', 'Stand'+Context/ThisZichtjaar_name+'/', 'Stand'+PrevZichtjaar_name+'/')", StorageType = "gdal.grid", StorageReadOnly = "true";
+			}
+			attribute<ZichtjaarRegel> Kandidaat  (CompactedAdminDomain) := MakeDefined(combine_data(ZichtjaarRegel, const(Zichtjaar_rel, CompactedAdminDomain), RegelNu), RegelVorig), Descr = "Het nummer van dit zichtjaar voor een nieuwe cel, anders dat van het vorige zichtjaar.";
+			attribute<ZichtjaarRegel> RegelTotNu (CompactedAdminDomain) := Regel/Sector_rel[ZichtjaarRegel/second_rel[Kandidaat]] == SectorNu ? Kandidaat : null_b
+			, Descr = "Het zichtjaar en de regel waarin de cel tot en met dit zichtjaar voor het laatst een pakket kreeg; leeg als de cel nu bij een andere sector hoort of nooit een nieuw pakket van wonen of werken kreeg.";
+			attribute<ZichtjaarRegel> Kaart (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, RegelTotNu), StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Herkomst/ZichtjaarSectorAllocRegio')", StorageType = "gdalwrite.grid", Descr = "Per cel een nummer voor de combinatie van zichtjaar en regel, over alle zichtjaren tot en met dit zichtjaar (#904).";
+			parameter<String>  Legenda := AsList(string(id(ZichtjaarRegel))+'='+ZichtjaarRegel/name, ';'), StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Herkomst/ZichtjaarSectorAllocRegio', '.tif', '_legenda.txt')", StorageType = "str", Descr = "Welk nummer in de kaart bij welke combinatie van zichtjaar en regel hoort.";
+
+			container Wonen
+			: Descr = "De groei van de woningstand per regio van de fijnste woonindeling, per regel van wonen."
+			{
+				unit<UInt8> SectorRegel := select_with_org_rel(Regel/Sector_rel == /Classifications/Actor/Sector/V/Wonen)
+				{
+					attribute<String> name := Regel/name[org_rel];
+				}
+				container PerRegel :=
+					for_each_nedv(
+						SectorRegel/name
+						, 'sum(GroeiWonen * float32(MakeDefined(RegelNu == '+string(SectorRegel/org_rel)+'[Regel], FALSE)), WonenRegio/Per_CompactedAdminDomain)'
+						, WonenRegio
+						, Float32
+					), Descr = "De groei per regio op de cellen die in de regel hun pakket kregen.";
+				attribute<Float32> ZonderNieuwPakket (WonenRegio) := sum(GroeiWonen * float32(IsNull(rlookup(RegelNu, SectorRegel/org_rel))), WonenRegio/Per_CompactedAdminDomain), Descr = "Wat er per regio in de allocatie bijkomt of afgaat op cellen zonder nieuw pakket van wonen, vooral door verdringing.";
+				attribute<Float32> VoorAllocatie     (WonenRegio) := sum(GroeiWonenVoorAllocatie, WonenRegio/Per_CompactedAdminDomain), Descr = "Wat er per regio aan het begin van het zichtjaar afgaat, voordat de allocatie begint.";
+
+				unit<UInt32> Tabel := ='union_unit('+AsList(const('WonenRegio', SectorRegel), ',')+', WonenRegio, WonenRegio)'
+				, StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Herkomst/SectorAllocRegio_Wonen', '.tif', '.csv')", StorageType = "gdalwrite.vect"
+				, Descr = "Een rij per regio en per regel, met de groei op de cellen die in die regel hun pakket kregen, en per regio een rij ZonderNieuwPakket en een rij VoorAllocatie; de rijen van een regio samen zijn de groei van de woningstand vanaf de stand waarmee het zichtjaar begint. De kolommen lezen alleen buiten de tabel, anders valt het schrijven om."
+				{
+					attribute<String>  regio_naam     := ='union_data(., '+AsList(const('WonenRegio/name', SectorRegel), ',')+', WonenRegio/name, WonenRegio/name)';
+					attribute<String>  allocatieregel := ='union_data(., '+AsList('const('+quote(SectorRegel/name)+', WonenRegio)', ',')+', const('+quote('ZonderNieuwPakket')+', WonenRegio), const('+quote('VoorAllocatie')+', WonenRegio))';
+					attribute<Float32> groei_woningen := ='union_data(., '+AsList('PerRegel/'+SectorRegel/name, ',')+', ZonderNieuwPakket, VoorAllocatie)';
+				}
+			}
+
+			container Werken
+			: Descr = "De groei van de banen per regio van de fijnste werkindeling, per regel van werken."
+			{
+				unit<UInt8> SectorRegel := select_with_org_rel(Regel/Sector_rel == /Classifications/Actor/Sector/V/Werken)
+				{
+					attribute<String> name := Regel/name[org_rel];
+				}
+				container PerRegel :=
+					for_each_nedv(
+						SectorRegel/name
+						, 'sum(GroeiWerken * float32(MakeDefined(RegelNu == '+string(SectorRegel/org_rel)+'[Regel], FALSE)), WerkenRegio/Per_CompactedAdminDomain)'
+						, WerkenRegio
+						, Float32
+					), Descr = "De groei per regio op de cellen die in de regel hun pakket kregen.";
+				attribute<Float32> ZonderNieuwPakket (WerkenRegio) := sum(GroeiWerken * float32(IsNull(rlookup(RegelNu, SectorRegel/org_rel))), WerkenRegio/Per_CompactedAdminDomain), Descr = "Wat er per regio in de allocatie bijkomt of afgaat op cellen zonder nieuw pakket van werken: banen op bestaande werkcellen, op woningcellen en op cellen zonder werksubsector, en verdringing.";
+				attribute<Float32> VoorAllocatie     (WerkenRegio) := sum(GroeiWerkenVoorAllocatie, WerkenRegio/Per_CompactedAdminDomain), Descr = "Wat er per regio aan het begin van het zichtjaar bijkomt of afgaat, voordat de allocatie begint.";
+
+				unit<UInt32> Tabel := ='union_unit('+AsList(const('WerkenRegio', SectorRegel), ',')+', WerkenRegio, WerkenRegio)'
+				, StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Herkomst/SectorAllocRegio_Werken', '.tif', '.csv')", StorageType = "gdalwrite.vect"
+				, Descr = "Een rij per regio en per regel, met de groei op de cellen die in die regel hun pakket kregen, en per regio een rij ZonderNieuwPakket en een rij VoorAllocatie; de rijen van een regio samen zijn de groei van de banen vanaf de stand waarmee het zichtjaar begint. De kolommen lezen alleen buiten de tabel, anders valt het schrijven om."
+				{
+					attribute<String>  regio_naam     := ='union_data(., '+AsList(const('WerkenRegio/name', SectorRegel), ',')+', WerkenRegio/name, WerkenRegio/name)';
+					attribute<String>  allocatieregel := ='union_data(., '+AsList('const('+quote(SectorRegel/name)+', WerkenRegio)', ',')+', const('+quote('ZonderNieuwPakket')+', WerkenRegio), const('+quote('VoorAllocatie')+', WerkenRegio))';
+					attribute<Float32> groei_banen    := ='union_data(., '+AsList('PerRegel/'+SectorRegel/name, ',')+', ZonderNieuwPakket, VoorAllocatie)';
+				}
+			}
 		}
 			
 		container WriteStand_Compacted := 
