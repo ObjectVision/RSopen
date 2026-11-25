@@ -1438,7 +1438,7 @@ container Diagnose
 	: Descr = "Op aanvraag. De zichtjaarzeef per werksubsector, de zeef waar de omgekeerde milieuzonering en de dichtheidsdrempel op werken (#669, #670, #713), de ijking van de werkdichtheid (#907) en hoe de banen meebewegen met de woningen (#911)."
 	{
 		container RestclaimPerIteratie
-		: Descr = "Tijdelijk en op aanvraag (#916). Per iteratie van werken op de stadregio, de pendelregio en de provincie, voor zakelijke dienstverlening in Stad Amsterdam: de restclaim, de cellen boven de zaaglijn, wat de subsectorkeuze en de vormtoets ervan overlaten, en de banen voor en na, in Stad Amsterdam en in de hele allocatieregio van die regel. Gaat weg zodra de meting in #916 staat."
+		: Descr = "Tijdelijk en op aanvraag (#916). Per iteratie van werken op de stadregio, de pendelregio en de provincie, voor zakelijke dienstverlening in Stad Amsterdam: de restclaim, de cellen boven de zaaglijn, wat de subsectorkeuze en de vormtoets ervan overlaten, ook binnen het bestaand bebouwd gebied, en de banen voor en na, in Stad Amsterdam en in de hele allocatieregio van die regel. WerkNaarWonen zegt per cel langs welke weg een werkcel naar wonen ging. Gaat weg zodra de meting in #916 staat."
 		{
 			parameter<String>    Subsector_name := 'Zak_dienstverlening';
 			parameter<String>    Stad_name      := 'Stad_Amsterdam';
@@ -1446,6 +1446,8 @@ container Diagnose
 			parameter<Stadregio> Stad_rel       := rlookup(Stad_name, Stadregio/name);
 			attribute<Bool>      InStad_c (/Geography/CompactedAdminDomain) := Stadregio/Per_CompactedAdminDomain == Stad_rel;
 			attribute<Bool>      InStad_a (/Geography/AdminDomain)          := Stadregio/Per_AdminDomain == Stad_rel;
+			attribute<Bool>      InBBG_a  (/Geography/AdminDomain)          := /BaseData/Omgeving/BebouwdGebied/UrbanContour, Descr = "Het bestaand bebouwd gebied van ModelParameters/BegrenzingBebouwdGebied_jaar.";
+			attribute<Bool>      InBBG_c  (/Geography/CompactedAdminDomain) := collect_by_cond(/Geography/CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, InBBG_a);
 			parameter<UInt32>    N              := uint32(/ModelParameters/Advanced/Default_NrOfIters);
 			parameter<UInt32>    M              := 5, Descr = "AantalItersInLaterSeq van Werken op de stadregio in ModelParameters/SectorAllocRegioTabel.";
 
@@ -1491,15 +1493,80 @@ container Diagnose
 					+ ';' + string(sum(Boven && InStad_c ? Potentie : 0f)) + ';' + string(sum(Behouden && InStad_c ? Potentie : 0f))
 					+ ';' + string(sum(InStad_c ? MakeDefined(BanenVoor, 0f) : 0f)) + ';' + string(sum(InStad_c ? MakeDefined(BanenNa, 0f) : 0f))
 					+ ';' + string(sum(uint32(Boven && InRegio_c))) + ';' + string(sum(uint32(Behouden && InRegio_c)))
-					+ ';' + string(sum(InRegio_c ? MakeDefined(BanenVoor, 0f) : 0f)) + ';' + string(sum(InRegio_c ? MakeDefined(BanenNa, 0f) : 0f));
+					+ ';' + string(sum(InRegio_c ? MakeDefined(BanenVoor, 0f) : 0f)) + ';' + string(sum(InRegio_c ? MakeDefined(BanenNa, 0f) : 0f))
+					+ ';' + string(sum(uint32(Gekozen && InStad_c && InBBG_c))) + ';' + string(sum(uint32(Erosie && InStad_a && InBBG_a))) + ';' + string(sum(uint32(Groep && InStad_a && InBBG_a)));
 			}
 
 			container PerStap := for_each_ne(Stap/name, 'Meting_T(' + quote(Stap/Pad) + ', ' + quote(Stap/Seq + ';' + Stap/Regel + ';' + string(Stap/Iter)) + ')');
 
-			parameter<String> Tabel := = quote('seq;regel;iter;restclaim_eigen;restclaim;zaaglijn;stad_beschikbaar;stad_boven;stad_gekozen;stad_erosie;stad_groep;stad_behouden;stad_potentie_boven;stad_potentie_behouden;stad_banen_voor;stad_banen_na;regio_boven;regio_behouden;regio_banen_voor;regio_banen_na')
+			parameter<String> Tabel := = quote('seq;regel;iter;restclaim_eigen;restclaim;zaaglijn;stad_beschikbaar;stad_boven;stad_gekozen;stad_erosie;stad_groep;stad_behouden;stad_potentie_boven;stad_potentie_behouden;stad_banen_voor;stad_banen_na;regio_boven;regio_behouden;regio_banen_voor;regio_banen_na;stad_gekozen_bbg;stad_erosie_bbg;stad_groep_bbg')
 			                             + ' + ' + AsList(quote('|') + ' + PerStap/' + Stap/name + '/Regel', ' + ')
 			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_restclaim_werken_iteraties.txt'"
 			, StorageType = "str";
+
+			container WerkNaarWonen
+			: Descr = "Per cel die aan het begin van het zichtjaar banen had en aan het eind bij wonen hoort, de weg waarlangs wonen hem kreeg: een perceel dat de herontwikkelingskans in dit zichtjaar leegde (StateVoorAllocatie/Herontwikkeling, #869), een perceel dat ze eerder vrij liet, of de gewone allocatie van wonen. De kolommen zak_ tellen de cellen die hun banen in zakelijke dienstverlening verliezen, de maat van de 662 cellen in #916, ook als ze niet naar wonen gaan. Leest de stand voor en na het zichtjaar, dus rekent met StandAllocatieOntkoppeld en VariantDataOntkoppeld op TRUE geen allocatie. PerRegel leest daarnaast de herkomstkaart van #904."
+			{
+				unit<UInt8> Weg : nrofrows = 4
+				{
+					attribute<String> name : ['Herontwikkeling_dit_zichtjaar', 'Herontwikkeling_eerder_vrij', 'Gewone_allocatie', 'Niet_naar_wonen'], IntegrityCheck = "all(IsDefined(this))";
+				}
+				attribute</Classifications/Actor/Sector/xSubsector> SubVoor (/Geography/CompactedAdminDomain) := = /Diagnose/Pad_A + 'StateVoorAllocatie0/SubSector_rel';
+				attribute</Classifications/Actor/Sector/xSubsector> SubNa   (/Geography/CompactedAdminDomain) := = /Diagnose/Pad_A + 'StateNaAllocatie/SubSector_rel';
+				attribute<Float32> Banen       (/Geography/CompactedAdminDomain) := = 'add(' + AsItemList('MakeDefined(float32(' + /Diagnose/Pad_A + 'StateVoorAllocatie0/Werken/' + /Classifications/Actor/Jobs6/name + '), 0f)') + ')', Descr = "De banen van de cel aan het begin van het zichtjaar, over de werksubsectoren.";
+				attribute<Float32> ZakVoor     (/Geography/CompactedAdminDomain) := = 'MakeDefined(float32(' + /Diagnose/Pad_A + 'StateVoorAllocatie0/Werken/Zak_dienstverlening), 0f)';
+				attribute<Float32> ZakNa       (/Geography/CompactedAdminDomain) := = 'MakeDefined(float32(' + /Diagnose/Pad_A + 'StateNaAllocatie/Werken/Zak_dienstverlening), 0f)';
+				attribute<Bool>    Overgenomen (/Geography/CompactedAdminDomain) := Banen > 0f && !(/Classifications/Actor/Sector/xSubsector/Sector_rel[SubVoor] == /Classifications/Actor/Sector/V/Wonen) && /Classifications/Actor/Sector/xSubsector/Sector_rel[SubNa] == /Classifications/Actor/Sector/V/Wonen, Descr = "Had de cel aan het begin van het zichtjaar banen en geen woonlabel, en hoort hij aan het eind bij wonen? Op banen en niet op de subsector, want de startstand draagt geen subsector.";
+				attribute<Bool>    ZakWeg      (/Geography/CompactedAdminDomain) := ZakVoor > 0f && ZakNa == 0f, Descr = "Verliest de cel in dit zichtjaar al zijn banen in zakelijke dienstverlening?";
+				attribute<Bool>    Vrij        (/Geography/CompactedAdminDomain) := = 'collect_by_cond(/Geography/CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, ' + /Diagnose/Pad_V + 'Herontwikkelingskans/PerZichtjaar/' + /Diagnose/Jaar + '/IsVrij_AdminDomain)', Descr = "Ligt de cel op een perceel dat de herontwikkelingskans uiterlijk in dit zichtjaar vrij liet? Dan staat hij voor wonen bovenaan de ladder en geldt de vormtoets er niet.";
+				attribute<Bool>    Geleegd     (/Geography/CompactedAdminDomain) := = /Diagnose/Pad_A + 'StateVoorAllocatie/Herontwikkeling';
+				attribute<Weg>     Weg_rel     (/Geography/CompactedAdminDomain) := Overgenomen ? (Geleegd ? 0[Weg] : Vrij ? 1[Weg] : 2[Weg]) : ZakWeg ? 3[Weg] : (0/0)[Weg];
+				attribute<Weg>     Kaart       (/Geography/AdminDomain) := recollect_by_cond(/Geography/AdminDomain/IsCompactedDomain, Weg_rel)
+				, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_werk_naar_wonen.tif'", StorageType = "gdalwrite.grid"
+				, Descr = "Per cel de weg uit Weg: 0 een perceel dat de herontwikkelingskans in dit zichtjaar leegde, 1 een perceel dat eerder vrij kwam, 2 de gewone allocatie, 3 een cel die zijn zakelijke dienstverlening verliest zonder naar wonen te gaan; leeg voor de rest.";
+
+				attribute<UInt32>  Cellen_Stad      (Weg) := sum_uint32(InStad_c, Weg_rel);
+				attribute<UInt32>  CellenBBG_Stad   (Weg) := sum_uint32(InStad_c && InBBG_c, Weg_rel);
+				attribute<Float32> Banen_Stad       (Weg) := sum(InStad_c ? Banen : 0f, Weg_rel);
+				attribute<UInt32>  Zak_Stad         (Weg) := sum_uint32(InStad_c && ZakWeg, Weg_rel);
+				attribute<Float32> ZakBanen_Stad    (Weg) := sum(InStad_c && ZakWeg ? ZakVoor : 0f, Weg_rel);
+				attribute<UInt32>  Cellen_Gebied    (Weg) := sum_uint32(IsDefined(Weg_rel), Weg_rel);
+				attribute<UInt32>  CellenBBG_Gebied (Weg) := sum_uint32(InBBG_c, Weg_rel);
+				attribute<Float32> Banen_Gebied     (Weg) := sum(Banen, Weg_rel);
+				attribute<UInt32>  Zak_Gebied       (Weg) := sum_uint32(ZakWeg, Weg_rel);
+				attribute<Float32> ZakBanen_Gebied  (Weg) := sum(ZakWeg ? ZakVoor : 0f, Weg_rel);
+
+				parameter<String> Tabel := 'gebied;weg;cellen;cellen_binnen_bbg;banen;zak_cellen;zak_banen'
+					+ AsList('|' + Stad_name + ';' + Weg/name + ';' + string(Cellen_Stad) + ';' + string(CellenBBG_Stad) + ';' + string(Banen_Stad) + ';' + string(Zak_Stad) + ';' + string(ZakBanen_Stad), '')
+					+ AsList('|' + /ModelParameters/StudyArea + ';' + Weg/name + ';' + string(Cellen_Gebied) + ';' + string(CellenBBG_Gebied) + ';' + string(Banen_Gebied) + ';' + string(Zak_Gebied) + ';' + string(ZakBanen_Gebied), '')
+				, ExplicitSuppliers = "Kaart"
+				, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_werk_naar_wonen.txt'"
+				, StorageType = "str";
+
+				parameter<String> AllocatieFileName := = /Diagnose/Pad_A + 'Impl/AllocatieFileName';
+				unit<UInt8>       ZichtjaarRegel    := = '/Allocatie/' + /Diagnose/Casus + '/Impl/ZichtjaarSectorAllocRegio';
+				attribute<ZichtjaarRegel> Herkomst_a (/Geography/AdminDomain) : StorageName = "=replace(AllocatieFileName, '@STANDPATH@', 'Herkomst/ZichtjaarSectorAllocRegio')", StorageType = "gdal.grid", StorageReadOnly = "true", Descr = "De herkomstkaart van dit zichtjaar (Zichtjaar_T/Impl/Herkomst/Kaart, #904).";
+				attribute<ZichtjaarRegel> Herkomst_c (/Geography/CompactedAdminDomain) := collect_by_cond(/Geography/CompactedAdminDomain, /Geography/AdminDomain/IsCompactedDomain, Herkomst_a);
+				attribute</ModelParameters/SectorAllocRegio/WonenWerkenAllocRegio> Regel_rel (/Geography/CompactedAdminDomain) := ZichtjaarRegel/second_rel[Herkomst_c];
+				attribute<Bool>   HerkomstNu (/Geography/CompactedAdminDomain) := lowercase(/Classifications/Time/Zichtjaar/name[ZichtjaarRegel/first_rel[Herkomst_c]]) == lowercase(/Diagnose/Jaar), Descr = "Kreeg de cel zijn pakket volgens de herkomstkaart in dit zichtjaar? Voor een werkcel naar wonen hoort dat altijd zo te zijn.";
+
+				unit<UInt8> WegRegel := combine_uint8(Weg, /ModelParameters/SectorAllocRegio/WonenWerkenAllocRegio)
+				{
+					attribute<String> Label := Weg/name[first_rel] + ';' + /ModelParameters/SectorAllocRegio/name[/ModelParameters/SectorAllocRegio/WonenWerkenAllocRegio/org_rel[second_rel]];
+				}
+				attribute<WegRegel> WegRegel_rel (/Geography/CompactedAdminDomain) := combine_data(WegRegel, Weg_rel, Regel_rel);
+				attribute<UInt32>   CellenR_Stad   (WegRegel) := sum_uint32(InStad_c, WegRegel_rel);
+				attribute<Float32>  BanenR_Stad    (WegRegel) := sum(InStad_c ? Banen : 0f, WegRegel_rel);
+				attribute<UInt32>   CellenR_Gebied (WegRegel) := sum_uint32(IsDefined(WegRegel_rel), WegRegel_rel);
+				attribute<Float32>  BanenR_Gebied  (WegRegel) := sum(Banen, WegRegel_rel);
+
+				parameter<String> PerRegel := 'gebied;weg;regel_wonen;cellen;banen'
+					+ AsList('|' + Stad_name + ';' + WegRegel/Label + ';' + string(CellenR_Stad) + ';' + string(BanenR_Stad), '')
+					+ AsList('|' + /ModelParameters/StudyArea + ';' + WegRegel/Label + ';' + string(CellenR_Gebied) + ';' + string(BanenR_Gebied), '')
+					+ '|zonder_herkomst_in_dit_zichtjaar;' + string(sum_uint32(IsDefined(Weg_rel) && !HerkomstNu))
+				, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_werk_naar_wonen_per_regel.txt'"
+				, StorageType = "str";
+			}
 		}
 
 		container         Zeef             :=
