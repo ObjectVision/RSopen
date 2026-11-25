@@ -28,7 +28,9 @@
      het werkelijke eigen geheugen van de GeoDMS-processen zonder claim (Hestia, een GUI, een meting uit de
      shell), plus de eigen verwachte piek blijven onder RijBudgetGB;
    - een landelijke claim start niet naast een andere landelijke run;
-   - naast een landelijke run loopt hooguit een regionale.
+   - naast een landelijke run loopt hooguit een grote regionale; een regionale claim tot RijKleinGB telt daarbij
+     niet mee en hoeft alleen in het budget te passen. De landelijke allocatie gebruikt meer eigen geheugen dan de
+     machine fysiek heeft, dus een grote run ernaast vertraagt hem; een opvraging van een paar items nauwelijks.
  Wie eerder vroeg, gaat voor zodra hij past; een latere claim die nu past naast de lopende en de eerdere die
  ook passen, gaat ertussendoor. Na afloop verdwijnt de claim. Een claim waarvan het proces weg is (de GeoDmsRun
  als die al loopt, anders het script dat wacht) ruimt de rij zelf op, zodat er na een herstart of een gestopt
@@ -71,6 +73,9 @@ $RijStandaardMap = 'C:\LocalData\Coordinatie\rij'
 $RijBudgetGB     = 480
 $RijProcesNamen  = @('GeoDmsRun', 'GeoDmsGuiQt')
 $RijMeetSeconden = 15
+# Tot hoeveel GB verwachte piek een regionale claim klein is: hij mag naast een landelijke en een grote regionale run
+# starten als hij in het budget past.
+$RijKleinGB      = 40
 # Hoe vaak een claim die blijft wachten dat opnieuw in het log zet, in minuten; een verandering in wie er voor gaat
 # meldt hij meteen.
 $RijMeldMinuten  = 15
@@ -150,10 +155,11 @@ function Test-RijPast {
     $voorGB = 0.0
     foreach ($v in $Voor) { $voorGB += [math]::Max([double]$v.piekGB, [double]$v.EigenGB) }
     $landelijk = @($Voor | Where-Object { $_.soort -eq 'landelijk' }).Count
-    $regionaal = @($Voor | Where-Object { $_.soort -ne 'landelijk' }).Count
+    $regionaal = @($Voor | Where-Object { $_.soort -ne 'landelijk' -and [double]$_.piekGB -gt $RijKleinGB }).Count
+    $klein     = $Claim.soort -ne 'landelijk' -and [double]$Claim.piekGB -le $RijKleinGB
     if ($Claim.soort -eq 'landelijk' -and $landelijk -gt 0) { return 'er gaat al een landelijke run voor' }
-    if ($Claim.soort -eq 'landelijk' -and $regionaal -gt 1) { return "er gaan $regionaal regionale runs voor, en naast een landelijke past er hooguit een" }
-    if ($Claim.soort -ne 'landelijk' -and $landelijk -gt 0 -and $regionaal -gt 0) { return 'er gaan al een landelijke en een regionale run voor' }
+    if ($Claim.soort -eq 'landelijk' -and $regionaal -gt 1) { return "er gaan $regionaal grote regionale runs voor, en naast een landelijke past er hooguit een" }
+    if ($Claim.soort -ne 'landelijk' -and -not $klein -and $landelijk -gt 0 -and $regionaal -gt 0) { return "er gaan al een landelijke en een grote regionale run voor (boven $RijKleinGB GB)" }
     $som = $voorGB + $ZonderClaimGB + [double]$Claim.piekGB
     if ($som -gt $BudgetGB) {
         return ("samen {0} GB, boven het budget van {1} GB ({2} GB van de claims voor deze, {3} GB zonder claim, {4} GB voor deze stap)" -f
