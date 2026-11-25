@@ -56,10 +56,11 @@ Template Zichtjaar_T
 	container EengezinsOmzetting
 	: Descr = "Hoeveel eengezinswoningen van de groei sinds het basisjaar in de bouwbare claim van dit zichtjaar naar meergezins gaan (#879). Elke allocatieregio van wonen toetst voor zijn eigen regio's
 				(PerIndeling): de groei die na de startstand van de allocatie nog gebouwd moet worden, vraagt grond tegen de dichtheid van de nieuwbouw van de regio in de basisperiode maal een factor per woningtype (#899), en die grond gaat tegen
-				de grond die in dit of een eerder zichtjaar door de woonzeef en de vormtoets van de allocatie komt en niet al in de startstand bebouwd is. Past de groei niet, dan gaat zoveel eengezinsgroei naar
-				meergezins tot hij past, maar het aandeel meergezins in de groei sinds het basisjaar komt niet boven het aandeel in de nieuwbouw van de basisperiode, of in de claim als dat hoger is. Wat een regio
+				de grond die in dit of een eerder zichtjaar door de woonzeef en de vormtoets van de allocatie komt, buiten de buffer rond de windturbines van het basisjaar en niet al in de startstand bebouwd. Past de groei niet, dan gaat zoveel eengezinsgroei naar
+				meergezins tot hij past, maar het aandeel meergezins in de groei sinds het basisjaar komt niet boven het aandeel in de nieuwbouw van de basisperiode, of in de claim als dat hoger is. Elk zichtjaar
+				zet ook minstens het deel van zijn eengezinsgroei om dat het laatste zichtjaar omzet, zodat de grond die het laatste zichtjaar voor meergezins nodig heeft niet eerst met eengezins bebouwd wordt (#918). Wat een regio
 				niet kwijt kan en naar een grotere regio overloopt, krijgt zo de omzetting van de kleinere regio niet mee: de grotere regio zet alleen om wat hij zelf tekortkomt. De omzetting hangt niet af van
-				de allocatie van een eerder zichtjaar; wat al anders gebouwd is dan een indeling vraagt, verrekent de restclaim van de allocatie (IterSubsector_T_Wonen/AllocRegio/Meegeteld)."
+				de allocatie, ook niet in een later zichtjaar; wat al anders gebouwd is dan een indeling vraagt, verrekent de restclaim van de allocatie (IterSubsector_T_Wonen/AllocRegio/Meegeteld)."
 	{
 		unit<UInt8>          Indeling                           := /BaseData/StartState/EengezinsOmzetting/Indeling;
 
@@ -69,7 +70,21 @@ Template Zichtjaar_T
 		attribute<Bool>      InStartstand         (AdminDomain) := StartEengezins + StartMeergezins >= 1[Woning], Descr = "De cellen met BAG-nieuwbouw in de startstand; die zijn al bebouwd.";
 		attribute<Bool>      Vrijgekomen          (AdminDomain) := ='ThisVariant/Herontwikkelingskans/PerZichtjaar/'+Zichtjaar_name+'/IsVrij_AdminDomain', Descr = "De cellen van de percelen die de herontwikkelingskans uiterlijk in dit zichtjaar vrij liet (#869); de vormtoets geldt daar niet.";
 		attribute<Bool>      ZonderVormtoets      (AdminDomain) := Vrijgekomen || !/ModelParameters/Advanced/VormtoetsBinnenBebouwdGebied_Wonen && /BaseData/Omgeving/BebouwdGebied/UrbanContour, Descr = "Waar de vormtoets niet geldt, zoals Iter_Allocatie/IsZonderVormtoets: een vrijgekomen perceel en, met VormtoetsBinnenBebouwdGebied_Wonen op FALSE, het bestaand bebouwd gebied (#920).";
-		attribute<Bool>      Basis                (AdminDomain) := recollect_by_cond(AdminDomain/IsCompactedDomain, Beschikbaar, FALSE) || InStartstand, Descr = "De cellen die door de zeef kwamen, plus de BAG-nieuwbouw wonen, die in de vormtoets van Iter_Allocatie meetelt voor de beukmaat en de clusteromvang (#899).";
+		container            WindBasisjaar
+		: Descr = "De buffer rond de windturbines van het basisjaar, waar de allocatie geen woningen zet, met de maat voor kwetsbare gebouwen uit SectorAllocRegio_T/RestrictiesVoorSectorenAlsGevolgVanWind (#918). Alleen de turbines
+					van het basisjaar, want de omzetting hangt niet af van de allocatie; rond de turbines die de allocatie zelf zet, telt de toets de grond nog als bruikbaar."
+		{
+			container            Bron                                := /BaseData/StartState/StateBasisjaar/src/Wind;
+			unit<UInt64>         Turbine                             := select_with_org_rel(recollect_by_cond(AdminDomain/IsCompactedDomain, Bron/Totaal_Compacted > 0f))
+			{
+				attribute<rdc_meter> geometry                        := org_rel[rdc_meter];
+				parameter<Float32>   AfstandGeluidsnorm              := ='VariantParameters/VariantK/AfstandGeluidsnorm[VariantParameters/VariantK/V/'+Variant_name+']';
+				attribute<Float64>   Buffer                          := max_elem(AfstandGeluidsnorm, Bron/Ashoogte[org_rel] + 0.5f * Bron/Rotordiameter[org_rel], Bron/MaxWerpAfstandNom[org_rel])[Float64], Descr = "De geluidsnorm van de variant, de tiphoogte of de werpafstand, wat het grootst is.";
+				attribute<rdc_meter> Contour                  (poly) := bg_buffer_point(geometry, Buffer, 16b);
+			}
+			attribute<Bool>      Binnen                (AdminDomain) := IsDefined(poly2grid(Turbine/Contour, AdminDomain)), Descr = "Ligt de cel binnen de buffer rond een turbine van het basisjaar?";
+		}
+		attribute<Bool>      Basis                (AdminDomain) := (recollect_by_cond(AdminDomain/IsCompactedDomain, Beschikbaar, FALSE) && !WindBasisjaar/Binnen) || InStartstand, Descr = "De cellen die door de zeef kwamen en buiten de buffer rond de turbines van het basisjaar liggen (WindBasisjaar), plus de BAG-nieuwbouw wonen, die in de vormtoets van Iter_Allocatie meetelt voor de beukmaat en de clusteromvang (#899). De allocatie neemt de cellen in de buffer niet, dus ze tellen ook in de vormtoets niet mee (#918).";
 		attribute<Bool>      Geerodeerd           (AdminDomain) := potential(float32(Basis), /Geography/Distmatrices_25m/pot25m/binair) >= /ModelParameters/Advanced/MorfologischeCleaning_BuurCellen_Wonen + 1f;
 		attribute<Bool>      Opgeschoond          (AdminDomain) := Basis && potential(float32(Geerodeerd), /Geography/Distmatrices_25m/pot25m/binair) >= 1f, Descr = "De erosie en dilatie van Iter_Allocatie, met de beukmaat van wonen.";
 		unit<UInt32>         Cluster                                 := district_8(Opgeschoond)
@@ -102,7 +117,10 @@ Template Zichtjaar_T
 			attribute<Float32>   NodigOmTePassen    (Regio) := Besparing > 0f ? value(max_elem(Grondvraag - Grond, 0[Ha]), Float32) / Besparing : 0f, Descr = "Hoeveel eengezinswoningen naar meergezins moeten om de grondvraag op de grond te laten passen.";
 			attribute<Float32>   AandeelMax         (Regio) := max_elem(Nieuwbouw/AandeelMeergezins, MakeDefined(value(Groei_meergezins, Float32) / value(Groei_eengezins + Groei_meergezins, Float32), 0f)), Descr = "Het hoogste aandeel meergezins in de groei: dat van de nieuwbouw in de basisperiode, of dat van de claim als dat hoger is.";
 			attribute<Float32>   RuimteTotGrens     (Regio) := max_elem(AandeelMax * value(Groei_eengezins + Groei_meergezins, Float32) - value(Groei_meergezins, Float32), 0f);
-			attribute<Woning>    Omzetting          (Regio) := value(min_elem(NodigOmTePassen, RuimteTotGrens, value(NaStart_eengezins, Float32)), Woning), Descr = "De eengezinswoningen die naar meergezins gaan; hooguit de eengezinsgroei die na de startstand nog gebouwd moet worden.";
+			attribute<Woning>    OmzettingEigenJaar (Regio) := value(min_elem(NodigOmTePassen, RuimteTotGrens, value(NaStart_eengezins, Float32)), Woning), Descr = "Wat de toets van dit zichtjaar zelf omzet: zoveel als nodig om te passen, hooguit tot de grens en de eengezinsgroei die na de startstand nog gebouwd moet worden.";
+			parameter<String>    L                          := Zichtjaar_name == last(Time/Zichtjaar/name) ? '' : 'ThisVariant/Claims/'+Scenario_name+'/Zichtjaren/'+last(Time/Zichtjaar/name)+'/EengezinsOmzetting/PerIndeling/'+Regio_name+'/', Descr = "Het pad naar dezelfde toets in het laatste zichtjaar; leeg in het laatste zichtjaar zelf.";
+			attribute<Float32>   DeelLaatsteZichtjaar (Regio) := ='MakeDefined(value('+L+'OmzettingEigenJaar, Float32) / value('+L+'Groei_eengezins, Float32), 0f)', Descr = "Het deel van de eengezinsgroei dat de toets van het laatste zichtjaar omzet (#918).";
+			attribute<Woning>    Omzetting          (Regio) := value(min_elem(max_elem(NodigOmTePassen, DeelLaatsteZichtjaar * value(Groei_eengezins, Float32)), RuimteTotGrens, value(NaStart_eengezins, Float32)), Woning), Descr = "De eengezinswoningen die naar meergezins gaan: wat de eigen toets nodig vindt, of hetzelfde deel van de eengezinsgroei als in het laatste zichtjaar als dat meer is, zodat de allocatie de mix van het laatste zichtjaar al eerder bouwt (#918); hooguit tot de grens en de eengezinsgroei die na de startstand nog gebouwd moet worden.";
 
 			attribute<Float32>   PerCel       (AdminDomain) := MakeDefined(value(Omzetting, Float32)[Regio/Per_AdminDomain] * NetcongestieUitstel/Gewicht / sum(NetcongestieUitstel/Gewicht, Regio/Per_AdminDomain)[Regio/Per_AdminDomain], 0f), Descr = "De omzetting van de regio verdeeld over zijn cellen naar de woningvoorraad van het basisjaar.";
 		}
@@ -229,7 +247,7 @@ Template Zichtjaar_T
 			attribute<Woning>  Groei_eengezins_VrijeSector (RegioUnit) := max_elem(NaUitstel/eengezins_VrijeSector - Wonen/Read_Wonen_WP2xVSSH/eengezins_VrijeSector_Proxy, 0[Woning]), Descr = "De groei sinds het basisjaar die naar meergezins kan.";
 			attribute<Woning>  Groei_eengezins_SocialeHuur (RegioUnit) := max_elem(NaUitstel/eengezins_SocialeHuur - Wonen/Read_Wonen_WP2xVSSH/eengezins_SocialeHuur_Proxy, 0[Woning]);
 			attribute<Woning>  Groei_meergezins            (RegioUnit) := max_elem(NaUitstel/meergezins_VrijeSector - Wonen/Read_Wonen_WP2xVSSH/meergezins_VrijeSector_Proxy, 0[Woning]) + max_elem(NaUitstel/meergezins_SocialeHuur - Wonen/Read_Wonen_WP2xVSSH/meergezins_SocialeHuur_Proxy, 0[Woning]);
-			attribute<Woning>  Omgezet                     (RegioUnit) := = IsDefined(rlookup(lowercase(AllocRegio_name), lowercase(EengezinsOmzetting/Indeling/name))) ? 'EengezinsOmzetting/PerIndeling/'+AllocRegio_name+'/Omzetting' : 'const(0[Woning], RegioUnit)', Descr = "De eengezinswoningen die naar meergezins gaan (#879): de omzetting uit de eigen toets van deze indeling, EengezinsOmzetting/PerIndeling. Nul op een indeling waarop wonen niet alloceert.";
+			attribute<Woning>  Omgezet                     (RegioUnit) := = IsDefined(rlookup(lowercase(AllocRegio_name), lowercase(EengezinsOmzetting/Indeling/name))) ? 'EengezinsOmzetting/PerIndeling/'+AllocRegio_name+'/Omzetting' : 'const(0[Woning], RegioUnit)', Descr = "De eengezinswoningen die naar meergezins gaan (#879): de omzetting uit de toets van deze indeling, EengezinsOmzetting/PerIndeling. Nul op een indeling waarop wonen niet alloceert.";
 			attribute<Woning>  Omgezet_VrijeSector         (RegioUnit) := Omgezet * MakeDefined(value(Groei_eengezins_VrijeSector, Float32) / value(Groei_eengezins_VrijeSector + Groei_eengezins_SocialeHuur, Float32), 0f), Descr = "Het deel van Omgezet in de vrije sector, naar zijn aandeel in de eengezinsgroei; vrije sector blijft vrije sector.";
 			attribute<Woning>  Omgezet_SocialeHuur         (RegioUnit) := Omgezet - Omgezet_VrijeSector;
 			attribute<Woning>  eengezins_VrijeSector       (RegioUnit) := NaUitstel/eengezins_VrijeSector  - Omgezet_VrijeSector;
