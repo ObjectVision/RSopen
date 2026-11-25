@@ -1437,6 +1437,71 @@ container Diagnose
 	container Werken
 	: Descr = "Op aanvraag. De zichtjaarzeef per werksubsector, de zeef waar de omgekeerde milieuzonering en de dichtheidsdrempel op werken (#669, #670, #713), de ijking van de werkdichtheid (#907) en hoe de banen meebewegen met de woningen (#911)."
 	{
+		container RestclaimPerIteratie
+		: Descr = "Tijdelijk en op aanvraag (#916). Per iteratie van werken op de stadregio, de pendelregio en de provincie, voor zakelijke dienstverlening in Stad Amsterdam: de restclaim, de cellen boven de zaaglijn, wat de subsectorkeuze en de vormtoets ervan overlaten, en de banen voor en na, in Stad Amsterdam en in de hele allocatieregio van die regel. Gaat weg zodra de meting in #916 staat."
+		{
+			parameter<String>    Subsector_name := 'Zak_dienstverlening';
+			parameter<String>    Stad_name      := 'Stad_Amsterdam';
+			unit<UInt32>         Stadregio      := /SourceData/RegioIndelingen/Stadregio;
+			parameter<Stadregio> Stad_rel       := rlookup(Stad_name, Stadregio/name);
+			attribute<Bool>      InStad_c (/Geography/CompactedAdminDomain) := Stadregio/Per_CompactedAdminDomain == Stad_rel;
+			attribute<Bool>      InStad_a (/Geography/AdminDomain)          := Stadregio/Per_AdminDomain == Stad_rel;
+			parameter<UInt32>    N              := uint32(/ModelParameters/Advanced/Default_NrOfIters);
+			parameter<UInt32>    M              := 5, Descr = "AantalItersInLaterSeq van Werken op de stadregio in ModelParameters/SectorAllocRegioTabel.";
+
+			unit<UInt32> Stap := range(uint32, 0, 3 * N + M)
+			{
+				attribute<String> Seq   := id(.) < 3 * N ? 'Seq_0' : 'Seq_1';
+				attribute<String> Regel := id(.) < N ? 'Stadregio_Werken' : id(.) < 2 * N ? 'Pendelregio_Werken' : id(.) < 3 * N ? 'Provincie_Werken' : 'Stadregio_Werken';
+				attribute<UInt32> Iter  := id(.) % N, Descr = "Klopt ook voor de vervolgsequentie, omdat M niet groter is dan N.";
+				attribute<String> Pad   := /Diagnose/Pad_A + 'Sequences/' + Seq + '/SectorAllocRegios/' + Regel + '/Iters_Normaal/Iter_' + string(Iter);
+				attribute<String> name  := Seq + '_' + Regel + '_' + string(Iter);
+			}
+
+			Template Meting_T
+			{
+				parameter<String> IterPad;
+				parameter<String> Label;
+
+				parameter<String>  SubPad      := IterPad + '/Subsectoren/' + Subsector_name;
+				parameter</Classifications/Actor/Sector/xSubsector> X := /Classifications/Actor/Sector/xSubsector/V/Werken_Zak_dienstverlening;
+				unit<UInt32>       AllocRegio  := =IterPad + '/AllocRegio';
+				attribute<AllocRegio> Regio_c (/Geography/CompactedAdminDomain) := =IterPad + '/AllocRegio/per_CompactedAdminDomain';
+				parameter<AllocRegio> r        := max(InStad_c ? Regio_c : (0/0)[AllocRegio]), Descr = "De regio van deze regel waarin Stad Amsterdam ligt.";
+				attribute<Bool>    InRegio_c (/Geography/CompactedAdminDomain) := Regio_c == r;
+
+				attribute<Float32> RestClaim_Eigen (AllocRegio) := =SubPad + '/AllocRegio/RestClaim_Eigen';
+				attribute<Float32> RestClaim       (AllocRegio) := =SubPad + '/AllocRegio/RestClaim';
+				attribute<UInt64>  Afkapgrens      (AllocRegio) := =SubPad + '/AllocRegio/Afkapgrens';
+				attribute<Bool>    Beschikbaar     (/Geography/CompactedAdminDomain) := =SubPad + '/CompactedAdminDomain/Beschikbaar';
+				attribute<Bool>    Boven           (/Geography/CompactedAdminDomain) := =SubPad + '/CompactedAdminDomain/LigtBovenAfkapgrens';
+				attribute<Float32> Potentie        (/Geography/CompactedAdminDomain) := =SubPad + '/CompactedAdminDomain/PotentieleStateNaAllocatie';
+				attribute<Bool>    Gekozen         (/Geography/CompactedAdminDomain) := =IterPad + '/Allocatie/per_SectorxSubsector_initial == X';
+				attribute<Bool>    Behouden        (/Geography/CompactedAdminDomain) := =IterPad + '/Allocatie/per_SectorxSubsector == X';
+				attribute<Bool>    Erosie          (/Geography/AdminDomain) := =IterPad + '/Allocatie/IsAfgewezen_dmv_Morfologie && ' + IterPad + '/Allocatie/per_SectorxSubsector_recoll == X';
+				attribute<Bool>    Groep           (/Geography/AdminDomain) := =IterPad + '/Allocatie/VindAangeslotenCellen/IsAfgewezen && ' + IterPad + '/Allocatie/per_SectorxSubsector_recoll == X';
+				attribute<Float32> BanenVoor       (/Geography/CompactedAdminDomain) := =IterPad + '/StateVoorAllocatie/Werken/' + Subsector_name;
+				attribute<Float32> BanenNa         (/Geography/CompactedAdminDomain) := =IterPad + '/StateNaAllocatie/Werken/' + Subsector_name;
+
+				parameter<String> Regel :=
+					Label
+					+ ';' + string(RestClaim_Eigen[r]) + ';' + string(RestClaim[r]) + ';' + string(IsDefined(Afkapgrens[r]))
+					+ ';' + string(sum(uint32(Beschikbaar && InStad_c))) + ';' + string(sum(uint32(Boven && InStad_c))) + ';' + string(sum(uint32(Gekozen && InStad_c)))
+					+ ';' + string(sum(uint32(Erosie && InStad_a))) + ';' + string(sum(uint32(Groep && InStad_a))) + ';' + string(sum(uint32(Behouden && InStad_c)))
+					+ ';' + string(sum(Boven && InStad_c ? Potentie : 0f)) + ';' + string(sum(Behouden && InStad_c ? Potentie : 0f))
+					+ ';' + string(sum(InStad_c ? MakeDefined(BanenVoor, 0f) : 0f)) + ';' + string(sum(InStad_c ? MakeDefined(BanenNa, 0f) : 0f))
+					+ ';' + string(sum(uint32(Boven && InRegio_c))) + ';' + string(sum(uint32(Behouden && InRegio_c)))
+					+ ';' + string(sum(InRegio_c ? MakeDefined(BanenVoor, 0f) : 0f)) + ';' + string(sum(InRegio_c ? MakeDefined(BanenNa, 0f) : 0f));
+			}
+
+			container PerStap := for_each_ne(Stap/name, 'Meting_T(' + quote(Stap/Pad) + ', ' + quote(Stap/Seq + ';' + Stap/Regel + ';' + string(Stap/Iter)) + ')');
+
+			parameter<String> Tabel := = quote('seq;regel;iter;restclaim_eigen;restclaim;zaaglijn;stad_beschikbaar;stad_boven;stad_gekozen;stad_erosie;stad_groep;stad_behouden;stad_potentie_boven;stad_potentie_behouden;stad_banen_voor;stad_banen_na;regio_boven;regio_behouden;regio_banen_voor;regio_banen_na')
+			                             + ' + ' + AsList(quote('|') + ' + PerStap/' + Stap/name + '/Regel', ' + ')
+			, StorageName = "='%LocalDataProjDir%/Diagnose/'+/Diagnose/Casus+'_'+/Diagnose/Jaar+'_restclaim_werken_iteraties.txt'"
+			, StorageType = "str";
+		}
+
 		container         Zeef             :=
 			for_each_nedv(
 				/Classifications/Actor/Jobs6/name
