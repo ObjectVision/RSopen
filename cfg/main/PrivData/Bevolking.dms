@@ -1,0 +1,76 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Inwoners en huishoudens per LMS-zone uit de TIGRIS-run achter de woningclaims, per scenario en modeljaar. Zie #924.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Bevolking
+: Descr = "Inwoners en huishoudens per LMS-zone uit de SEGS-tabel van de TIGRIS-run achter de woningclaims (#924), per scenario, eerst per TIGRIS-jaar en daarna per modeljaar, met dezelfde lineaire interpolatie tussen twee TIGRIS-jaren als de claims (Classifications/Time/ModelJaar). De zichtjaren van de indicatoren verdelen deze aantallen over de cellen, zie Templates/Indicatoren/Bevolking_T."
+{
+	parameter<String> SrcDir := '%PrivDataDir%/Claims/TXL_'+ModelParameters/TIGRIS_filedate+'/@S@_SEGS'
+	, Descr = "De map met per TIGRIS-jaar een submap met segs.dbf, naast de claimbestanden van dezelfde levering; @S@ is het scenario. Alleen de jaren die een modeljaar leest hoeven er te staan."
+	, Source = "TIGRIS XL, run 32 van de WLO-scenario's, levering van 16 december 2025 (TIGRIS_filedate), tabel SEGS met per LMS-zone onder meer INWONERS en HUISH";
+
+	unit<UInt32> LMS := /SourceData/RegioIndelingen/LMSSubzone;
+
+	container Scenarios := for_each_ne(Modellering/ScenarioK/name, 'Scenario_T('+quote(Modellering/ScenarioK/name)+')');
+
+	Template Scenario_T
+	: Descr = "De bevolking per LMS-zone van een scenario: de SEGS-tabel per TIGRIS-jaar, en per modeljaar de interpolatie daartussen."
+	{
+		//
+		parameter<String> Scenario;
+		//
+
+		container TigrisJaren := for_each_ne(Time/TigrisJaar/name, 'TigrisJaar_T('+quote(Scenario)+', '+string(Time/TigrisJaar/Jaar)+'[YearRange])');
+		container ModelJaren  := for_each_ne(Time/ModelJaar/name, 'ModelJaar_T('+quote('Y'+string(Time/ModelJaar/TIGRIS_Jaar_Voor))+', '+quote('Y'+string(Time/ModelJaar/TIGRIS_Jaar_Na))+', '+string(Time/ModelJaar/TIGRIS_Gewicht_Na)+'f)');
+
+		Template ModelJaar_T
+		: Descr = "De bevolking per LMS-zone in een modeljaar, lineair geinterpoleerd tussen het TIGRIS-jaar ervoor en erna; valt het modeljaar op een TIGRIS-jaar, dan is het gewicht nul en is de uitkomst die van dat jaar."
+		{
+			//
+			parameter<String>  Voor_name;
+			parameter<String>  Na_name;
+			parameter<Float32> Gewicht_Na;
+			//
+
+			container Voor := ='TigrisJaren/'+Voor_name;
+			container Na   := ='TigrisJaren/'+Na_name;
+
+			attribute<Persoon>   Inwoners    (LMS) := Voor/Inwoners + Gewicht_Na * (Na/Inwoners - Voor/Inwoners);
+			attribute<Household> Huishoudens (LMS) := Voor/Huishoudens + Gewicht_Na * (Na/Huishoudens - Voor/Huishoudens);
+
+			parameter<Persoon>   Inwoners_Totaal    := sum(Inwoners);
+			parameter<Household> Huishoudens_Totaal := sum(Huishoudens);
+		}
+	}
+
+	Template TigrisJaar_T
+	: Descr = "De SEGS-tabel van een TIGRIS-jaar, gekoppeld aan de LMS-zones. De tabel heeft na de 1.406 zones nog regels met optellingen over zones; die hebben een ZONE_ID dat geen LMS-zone is en vallen bij de koppeling weg."
+	{
+		//
+		parameter<String>    Scenario;
+		parameter<YearRange> Jaar;
+		//
+
+		unit<UInt32> Segs
+		:	StorageName     = "=replace(SrcDir, '@S@', Scenario)+'/'+string(Jaar)+'/segs.dbf'"
+		,	StorageType     = "gdal.vect"
+		,	StorageReadOnly = "True"
+		{
+			attribute<UInt32>    ZONE_ID;
+			attribute<Persoon>   INWONERS;
+			attribute<Household> HUISH;
+		}
+
+		attribute<Persoon>   Inwoners    (LMS) := rjoin(LMS/LmsSubF, Segs/ZONE_ID, Segs/INWONERS), IntegrityCheck = "all(IsDefined(this))", Descr = "Elke LMS-zone hoort een regel in de tabel te hebben.";
+		attribute<Household> Huishoudens (LMS) := rjoin(LMS/LmsSubF, Segs/ZONE_ID, Segs/HUISH), IntegrityCheck = "all(IsDefined(this))";
+	}
+}

@@ -1,0 +1,53 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De bevolkingslaag van een zichtjaar: inwoners en huishoudens per cel, naast de woningen, waar de indicatoren uit
+// lezen (#924). Een sjabloon voor het basisjaar en de zichtjaren, zoals BereikbaarheidGroen_T.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template Bevolking_T
+: Descr = "Inwoners en huishoudens per cel in het basisjaar of een zichtjaar (#924). Het basisjaar neemt BaseData/Bevolking over. Een zichtjaar telt de inwoners en huishoudens van de TIGRIS-run achter de woningclaims (PrivData/Bevolking) op per regio van de laatste woonregel van de allocatie, de provincie, en verdeelt die over de cellen van de regio naar de woningen van dit zichtjaar maal de personen en huishoudens per woning van het basisjaar. Per provincie en niet per LMS-zone of stadregio, omdat de allocatie de woningclaim binnen een stadregio zelf over de zones verdeelt en wat daar niet past laat overlopen naar de pendelregio en de provincie; de inwoners gaan met de woningen mee en pas op de provincie sluit de claim."
+{
+	parameter<String>    Zichtjaar_name;
+	//
+
+	parameter<Bool>      IsStartYear                              := lowercase(Zichtjaar_name) == lowercase('Basisjaar');
+	parameter<String>    ModelJaar_name                           := IsStartYear ? 'Y'+string(/ModelParameters/Model_StartYear) : Zichtjaar_name, Descr = "Het modeljaar van de TIGRIS-bevolking; in het basisjaar het claimbasisjaar, ter vergelijking met de waarneming van het CBS.";
+
+	unit<UInt32>         LMS                                      := /SourceData/RegioIndelingen/LMSSubzone;
+	unit<UInt32>         WonenRegio                               := = '/SourceData/' + /ModelParameters/SectorAllocRegio/AllocRegio_path[last(/ModelParameters/SectorAllocRegio/WonenAllocRegio/org_rel)], Descr = "De grofste indeling waarop wonen alloceert, die van de laatste woonregel; binnen zo'n regio bepaalt de allocatie waar de woningen komen.";
+	container            TIGRIS                                   := ='/PrivData/Bevolking/Scenarios/'+Scenario_name+'/ModelJaren/'+ModelJaar_name, Descr = "De inwoners en huishoudens per LMS-zone van dit modeljaar.";
+	attribute<Bool>      IsInStudiegebied                   (LMS) := uint32(pcount(LMS/Per_AdminDomain)) > 0, Descr = "Heeft de zone cellen in het studiegebied? Een LMS-zone ligt binnen een gemeente en dus vrijwel altijd geheel binnen of buiten een provincie.";
+	attribute<WonenRegio> WonenRegio_rel                    (LMS) := modus(WonenRegio/Per_AdminDomain, LMS/Per_AdminDomain), Descr = "De regio waarin de zone ligt, naar de meeste cellen; een LMS-zone ligt binnen een gemeente en de regio's van de allocatie bestaan uit hele gemeenten. Leeg voor een zone buiten het studiegebied.";
+
+	attribute<Woning>    Woningen                   (AdminDomain) := ThisYear/Stand/Aantal_Woningen_Totaal;
+	attribute<Persoon>   Inwoners_Basisverhouding   (AdminDomain) := Woningen * /BaseData/Bevolking/PersonenPerWoning, Descr = "De woningen van dit jaar maal de personen per woning van het basisjaar: de verdeling over de cellen, nog zonder het totaal van TIGRIS.";
+	attribute<Household> Huishoudens_Basisverhouding (AdminDomain) := Woningen * /BaseData/Bevolking/HuishoudensPerWoning;
+
+	attribute<Persoon>   Inwoners_TIGRIS_PerRegio            (WonenRegio) := sum(TIGRIS/Inwoners, WonenRegio_rel);
+	attribute<Household> Huishoudens_TIGRIS_PerRegio         (WonenRegio) := sum(TIGRIS/Huishoudens, WonenRegio_rel);
+	attribute<Persoon>   Inwoners_Basisverhouding_PerRegio   (WonenRegio) := sum(Inwoners_Basisverhouding, WonenRegio/Per_AdminDomain);
+	attribute<Household> Huishoudens_Basisverhouding_PerRegio (WonenRegio) := sum(Huishoudens_Basisverhouding, WonenRegio/Per_AdminDomain);
+	attribute<Float32>   Factor_Inwoners                     (WonenRegio) := Inwoners_Basisverhouding_PerRegio > 0[Persoon] ? Inwoners_TIGRIS_PerRegio[Float32] / Inwoners_Basisverhouding_PerRegio[Float32] : null_f, Descr = "Waarmee de verdeling van het basisjaar in deze regio vermenigvuldigd wordt om op de inwoners van TIGRIS uit te komen.";
+	attribute<Float32>   Factor_Huishoudens                  (WonenRegio) := Huishoudens_Basisverhouding_PerRegio > 0[Household] ? Huishoudens_TIGRIS_PerRegio[Float32] / Huishoudens_Basisverhouding_PerRegio[Float32] : null_f;
+	parameter<Float32>   Factor_Inwoners_Gemiddeld                := sum(Inwoners_TIGRIS_PerRegio)[Float32] / sum(Inwoners_Basisverhouding)[Float32], Descr = "Voor cellen met woningen buiten elke regio, aan de randen van de gerasterde gemeenten.";
+	parameter<Float32>   Factor_Huishoudens_Gemiddeld             := sum(Huishoudens_TIGRIS_PerRegio)[Float32] / sum(Huishoudens_Basisverhouding)[Float32];
+
+	attribute<Persoon>   Inwoners                   (AdminDomain) := = IsStartYear ? '/BaseData/Bevolking/Inwoners' : 'Inwoners_Basisverhouding * MakeDefined(Factor_Inwoners[WonenRegio/Per_AdminDomain], Factor_Inwoners_Gemiddeld)';
+	attribute<Household> Huishoudens                (AdminDomain) := = IsStartYear ? '/BaseData/Bevolking/Huishoudens' : 'Huishoudens_Basisverhouding * MakeDefined(Factor_Huishoudens[WonenRegio/Per_AdminDomain], Factor_Huishoudens_Gemiddeld)';
+
+	parameter<Persoon>   Inwoners_Totaal                          := sum(Inwoners)
+	, IntegrityCheck = "IsStartYear || abs(Inwoners_Totaal + Inwoners_ZonderWoningen - Inwoners_TIGRIS) < 0.01f * Inwoners_TIGRIS"
+	, Descr = "Controle: in een zichtjaar zijn de inwoners op de kaart en die van de regio's zonder woningen samen de inwoners van TIGRIS in het studiegebied, op de cellen buiten elke regio na. Faalt dit, dan is de koppeling van de SEGS-tabel aan de LMS-zones of van de zones aan de regio's stuk.";
+	parameter<Household> Huishoudens_Totaal                       := sum(Huishoudens);
+	parameter<Persoon>   Inwoners_TIGRIS                          := sum(TIGRIS/Inwoners * float32(IsInStudiegebied)), Descr = "De inwoners van TIGRIS in de zones van het studiegebied; in het basisjaar die van het claimbasisjaar, ter vergelijking met de waarneming van het CBS in Inwoners_Totaal.";
+	parameter<Household> Huishoudens_TIGRIS                       := sum(TIGRIS/Huishoudens * float32(IsInStudiegebied));
+	parameter<Persoon>   Inwoners_ZonderWoningen                  := sum(Inwoners_TIGRIS_PerRegio * float32(Inwoners_Basisverhouding_PerRegio <= 0[Persoon])), Descr = "TIGRIS-inwoners in regio's van het studiegebied waar de stand geen woningen heeft; die kunnen op geen cel terecht.";
+}

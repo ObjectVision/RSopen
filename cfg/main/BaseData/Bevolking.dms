@@ -1,0 +1,58 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// Inwoners en huishoudens per cel in het basisjaar, de bevolkingslaag naast de woningen waar de indicatoren uit
+// lezen (#924). De zichtjaren staan in Templates/Indicatoren/Bevolking_T.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+container Bevolking
+: Descr = "Inwoners en huishoudens per cel in het basisjaar (#924). De inwoners zijn de woningen van de basisjaarstand maal de personen per woning van hun buurt, met het inwonertal van het CBS per buurt als waarneming (#484); de huishoudens volgen de inwoners met het aantal huishoudens per inwoner van de buurt uit de CBS-vierkantstatistiek. Een zichtjaar verdeelt de inwoners en huishoudens van TIGRIS per provincie over de cellen naar de personen en huishoudens per woning van dit basisjaar, zie Templates/Indicatoren/Bevolking_T."
+{
+	unit<UInt32>               BuurtDomain                          := /SourceData/Bevolking/KWB/Buurt/Domain;
+
+	attribute<Woning>          Woningen               (AdminDomain) := /BaseData/StartState/StateBasisjaar/State/Wonen/Aantal_Woningen_Totaal, Descr = "De woningen van de basisjaarstand.";
+	attribute<Woning>          Woningen_PerBuurt      (BuurtDomain) := sum(Woningen, BuurtDomain/Per_AdminDomain), Descr = "De woningvoorraad van het model, opgeteld per buurt.";
+	parameter<Persoon_Woning>  PersonenPerWoning_NL                 := /SourceData/Bevolking/KWB/Inwoners_NL / sum(Woningen_PerBuurt), Descr = "Landelijke huishoudensgrootte volgens dezelfde deling: CBS-inwonertal gedeeld door de modelwoningvoorraad. Vangnet voor buurten en cellen waar de deling per buurt niets oplevert.";
+
+	attribute<Persoon_Woning>  HuishoudensgrootteRuw  (BuurtDomain) := /SourceData/Bevolking/KWB/Buurt/Inwoners / Woningen_PerBuurt, Descr = "Het CBS-inwonertal van de buurt gedeeld door de modelwoningvoorraad van diezelfde buurt.";
+	attribute<Persoon_Woning>  Huishoudensgrootte     (BuurtDomain) :=
+		Woningen_PerBuurt > 0[Woning] && /SourceData/Bevolking/KWB/Buurt/Inwoners > 0[Persoon]
+		? min_elem(max_elem(HuishoudensgrootteRuw, /ModelParameters/Wonen/PersonenPerWoning_Ondergrens), /ModelParameters/Wonen/PersonenPerWoning_Bovengrens)
+		: PersonenPerWoning_NL
+	, Descr = "Begrensd, want in buurten waar het model weinig woningen kent en het CBS veel inwoners telt loopt de ruwe verhouding sterk op. Buurten zonder woningen of zonder inwoners krijgen het landelijke cijfer.";
+
+	attribute<Persoon_Woning>  PersonenPerWoning      (AdminDomain) := MakeDefined(Huishoudensgrootte[BuurtDomain/Per_AdminDomain], PersonenPerWoning_NL), Descr = "Cellen buiten elke buurt, aan de randen van de op 100 meter gerasterde buurtindeling, krijgen het landelijke cijfer.";
+	attribute<Persoon>         Inwoners               (AdminDomain) := Woningen * PersonenPerWoning;
+	parameter<Persoon>         Inwoners_Totaal                      := sum(Inwoners), IntegrityCheck = "abs(Inwoners_Totaal - /SourceData/Bevolking/KWB/Inwoners_NL) < 0.05f * /SourceData/Bevolking/KWB/Inwoners_NL || /ModelParameters/StudyArea != 'Nederland'", Descr = "Controle: de inwoners van het model horen landelijk op te tellen tot ongeveer de bevolking van het CBS (17,9 miljoen in 2024). Faalt dit, dan is de koppeling van de KWB-tabel aan de buurtindeling stuk of is de woningvoorraad ingrijpend veranderd. Voor een studiegebied kleiner dan Nederland toetst dit niets.";
+
+	container Huishoudensgrootte_Vierkant
+	: Descr = "Het aantal huishoudens per inwoner per buurt, uit de CBS-vierkantstatistiek van het jaar in ModelParameters/Wonen/Eigendom/CBS_Vierkant_Jaar. De KWB-tabel van de mortaliteit telt geen huishoudens. Elk vierkant van 100 m telt mee met de cellen die erin liggen; een vierkant waar CBS de inwoners of de huishoudens onderdrukt doet niet mee."
+	{
+		container               Bron                                 := ='/SourceData/Bevolking/CBS_vierkanten/Read/Y'+/ModelParameters/Wonen/Eigendom/CBS_Vierkant_Jaar;
+		unit<UInt32>            Vierkant                             := Bron/domain;
+
+		attribute<Int32>        Huishoudens_Src           (Vierkant) := Bron/domain/aantal_part_huishoudens[Int32], Descr = "Het aantal particuliere huishoudens zoals CBS het levert, negatief waar het is onderdrukt.";
+		attribute<Bool>         IsBekend                  (Vierkant) := Huishoudens_Src >= 0i && Bron/aantal_inwoners > 0i;
+		attribute<Household>    Huishoudens               (Vierkant) := IsBekend ? Huishoudens_Src[Household] : 0[Household];
+		attribute<Persoon>      Inwoners                  (Vierkant) := IsBekend ? Bron/aantal_inwoners[Persoon] : 0[Persoon];
+
+		attribute<Vierkant>     Vierkant_rel           (AdminDomain) := poly2grid(Bron/domain/geometry, AdminDomain);
+		attribute<Float32>      Aandeel                (AdminDomain) := 1f / pcount(Vierkant_rel)[float32][Vierkant_rel], Descr = "Het deel van zijn vierkant dat een cel draagt, zodat een vierkant over al zijn cellen samen een keer meetelt.";
+		attribute<Household>    Huishoudens_PerBuurt   (BuurtDomain) := sum(Huishoudens[Vierkant_rel] * Aandeel, BuurtDomain/Per_AdminDomain);
+		attribute<Persoon>      Inwoners_PerBuurt      (BuurtDomain) := sum(Inwoners[Vierkant_rel] * Aandeel, BuurtDomain/Per_AdminDomain);
+		parameter<Float32>      HuishoudensPerInwoner_NL             := sum(Huishoudens)[Float32] / sum(Inwoners)[Float32], Descr = "Over alle vierkanten met bekende inwoners en huishoudens; het vangnet voor buurten zonder zulke vierkanten.";
+		attribute<Float32>      HuishoudensPerInwoner  (BuurtDomain) := Inwoners_PerBuurt > 0[Persoon] ? Huishoudens_PerBuurt[Float32] / Inwoners_PerBuurt[Float32] : HuishoudensPerInwoner_NL;
+	}
+
+	attribute<Float32>         HuishoudensPerInwoner  (AdminDomain) := MakeDefined(Huishoudensgrootte_Vierkant/HuishoudensPerInwoner[BuurtDomain/Per_AdminDomain], Huishoudensgrootte_Vierkant/HuishoudensPerInwoner_NL), Descr = "Het aantal huishoudens per inwoner van de buurt van de cel, als getal zonder eenheid.";
+	attribute<Household_Woning> HuishoudensPerWoning  (AdminDomain) := value(PersonenPerWoning[Float32] * HuishoudensPerInwoner, Household_Woning);
+	attribute<Household>       Huishoudens            (AdminDomain) := Woningen * HuishoudensPerWoning;
+	parameter<Household>       Huishoudens_Totaal                   := sum(Huishoudens);
+}
