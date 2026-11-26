@@ -1,0 +1,65 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Dit is RSOpen, de open source versie van het model RuimteScanner. Het scipt wordt uitgegeven onder GNU-GPL licentie.
+//
+// RSOpen is ontwikkeld door PBL Planbureau voor de Leefomgeving, i.s.m Object Vision, VU Vrije Universiteit Amsterdam en Deltares
+// Opdrachtgever/ontwikkelaar PBL: Bas van Bemmel (Bas.vanBemmel@pbl.nl)
+// Contactpersoon/ontwikkelaar Object Vision: Jip Claassens (jclaassens@objectvision.nl)
+// Contactpersoon/ontwikkelaar Deltares: Bart Rijken (bart.rijken@deltares.nl)
+//
+// De afweging van nieuw stedelijk groen bij een gegeven groentekort: welke cellen kandidaat zijn, hoeveel tekort
+// een park op een cel oplost, tegen welke prijs, en de geschiktheid die daaruit volgt. Zie ObjectVision/RSopen#480
+// en #925.
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Template StedelijkGroenGeschiktheid_T
+: Descr = "De afweging van nieuw stedelijk groen bij een gegeven groentekort (#480, #925). Zichtjaar_T/Impl/StedelijkGroenClaim/BeginZichtjaar rekent hem op het tekort aan het begin van het zichtjaar, en Iter_T/StedelijkGroenAfweging in elke volgende iteratie
+			op het tekort met de parken uit de iteraties ervoor, zodat een tekort dat een park al heeft opgelost niet nog een park trekt. Wat niet tussen de iteraties verandert, zoals de verwerving en wat wonen voor een cel kan bieden, staat in
+			StedelijkGroenClaim."
+{
+	attribute<meter2> TekortVoorClaim (AdminDomain);
+	attribute<Bool>   NieuwGroen      (AdminDomain);
+	//
+
+	parameter<String>    Kern              := Context/ThisZichtjaar/Impl/StedelijkGroenClaim/Kern, Descr = "De schijf van de straal van de normtoets.";
+	parameter<Eur_m2>    BaatPerM2Tekort   := Context/ThisZichtjaar/Impl/StedelijkGroenClaim/BaatPerM2Tekort, Descr = "De hoogste prijs die nieuw stedelijk groen per vierkante meter opgelost tekort biedt.";
+	attribute<Eur>       KostenMetWonen    (CompactedAdminDomain) := Context/ThisZichtjaar/Impl/StedelijkGroenClaim/KostenMetWonen, Descr = "Wat groen voor de cel moet bieden om hem te winnen, zie StedelijkGroenClaim/KostenMetWonen.";
+	attribute<Bool>      IsOpen            (AdminDomain) := (Context/ThisZichtjaar/Impl/StedelijkGroenClaim/IsVrijeGrond || Context/ThisZichtjaar/Impl/StedelijkGroenClaim/IsBebouwd) && !NieuwGroen, Descr = "Vrije grond of een cel met woningen of banen die de zeef voor een afweging openlaat, waar in dit zichtjaar nog geen park is aangelegd.";
+	attribute<Bool>      Groen             (AdminDomain) := Context/ThisZichtjaar/Impl/StedelijkGroenClaim/IsBestaandGroen || NieuwGroen, Descr = "Het groen en de natuur van het begin van het zichtjaar plus de parken die dit zichtjaar al zijn aangelegd.";
+	attribute<Bool>      GroenOfWater      (AdminDomain) := Context/ThisZichtjaar/Impl/StedelijkGroenClaim/IsBestaandGroenOfWater || NieuwGroen, Descr = "Groen, natuur en water van het begin van het zichtjaar plus de parken die dit zichtjaar al zijn aangelegd.";
+
+	attribute<meter2>    TekortBinnenStraal (AdminDomain) := ='potential(TekortVoorClaim, ' + Kern + ')[meter2]', Descr = "Het hele tekort dat meetelt voor de claim van de woningen binnen de straal van de cel, wat een park hier hooguit kan oplossen.";
+	attribute<Bool>      SluitAanOpGroen   (AdminDomain) := potential(float32(GroenOfWater), /Geography/Distmatrices_25m/pot25m/binair) > 0f && !GroenOfWater
+	, Descr = "Grenst de cel aan groen, natuur of water (GroenOfWater), met dezelfde buren als de vormtoets? Dan krijgt hij de opslag van ModelParameters/StedelijkGroen/OpslagAansluitenBestaandGroen.";
+	unit<UInt32>         Groenplek         := district_8(Groen), Descr = "De aaneengesloten stukken van Groen en de stukken daartussen, met 8-connectiviteit zoals in de vormtoets. Water telt niet als groen: een park tussen een park en een sloot verbindt geen groen.";
+	attribute<Groenplek> Plek              (AdminDomain) := Groen ? Groenplek/Districts : null_u[Groenplek], Descr = "Het stuk groen waar de cel bij hoort; leeg buiten het groen.";
+	parameter<String>    Buren             := AsItemList('Plek[id(AdminDomain) + point_yx(' + Buur/dy + 'i, ' + Buur/dx + 'i, AdminDomain)]'), Descr = "De stukken groen van de acht buren van een cel; een buur buiten het raster is leeg.";
+	unit<UInt8>          Buur              : nrofrows = 8, Descr = "De acht buren van een cel, als verschuiving in rijen en kolommen."
+	{
+		attribute<String> dy : ['-1', '-1', '-1', '0', '0', '1', '1', '1'];
+		attribute<String> dx : ['-1', '0', '1', '-1', '1', '-1', '0', '1'];
+	}
+	attribute<Groenplek> HoogsteBuurplek   (AdminDomain) := ='max_elem(' + Buren + ')', Descr = "Het hoogste nummer onder de stukken groen van de buren.";
+	attribute<Groenplek> LaagsteBuurplek   (AdminDomain) := ='min_elem(' + Buren + ')', Descr = "Het laagste nummer onder de stukken groen van de buren.";
+	attribute<Bool>      VerbindtGroen     (AdminDomain) := !Groen && IsDefined(HoogsteBuurplek) && HoogsteBuurplek != LaagsteBuurplek, Descr = "Verbindt een park op deze cel twee stukken groen die nu los liggen? Dat is zo als aan de cel minstens twee verschillende stukken groen grenzen (#925).";
+	attribute<Float32>   Opslag            (AdminDomain) := 1f + (SluitAanOpGroen ? /ModelParameters/StedelijkGroen/OpslagAansluitenBestaandGroen : 0f) + (VerbindtGroen ? /ModelParameters/StedelijkGroen/OpslagVerbindenGroen : 0f)
+	, Descr = "De factor waarmee de baat en het opgeloste tekort van een park op de cel worden vermenigvuldigd: 1, plus ModelParameters/StedelijkGroen/OpslagAansluitenBestaandGroen als de cel aansluit op groen of water, plus OpslagVerbindenGroen als hij twee stukken groen verbindt.";
+	attribute<Eur>       Baat              (AdminDomain) := min_elem(TekortBinnenStraal, AdminDomain/NrMeter2PerCell) * BaatPerM2Tekort * Opslag
+	, Descr = "Wat een park op deze cel in het gunstigste geval oplevert: het tekort dat hij kan oplossen maal de hoogste prijs, met de opslag. Een m2 park lost hooguit een m2 tekort op, dus niet meer dan het oppervlak van de cel, en niet meer dan er binnen de straal tekort is.";
+	attribute<Bool>      BaatDektKosten    (AdminDomain) := BaatPerM2Tekort > 0[Eur_m2] && Baat >= recollect_by_cond(AdminDomain/IsCompactedDomain, KostenMetWonen, 0[Eur])
+	, Descr = "Kan een park de cel in het gunstigste geval winnen? De baat tegen de hoogste prijs, met al het tekort binnen de straal, dekt de verwerving en sloop en wat wonen er meer voor kan bieden (KostenMetWonen). Woningen of banen die voor een park wijken gaan uit de stand en hun claim blijft staan, zodat wonen en werken, die na stedelijk groen alloceren, ze elders in de regio kunnen terugzetten (#906, #925).";
+	attribute<Bool>      IsKandidaat       (AdminDomain) := IsOpen && BaatDektKosten
+	, Descr = "Kan hier nieuw stedelijk groen komen? Op vrije grond en op een cel met woningen of banen, als de baat in het gunstigste geval opweegt tegen de verwerving en tegen wat wonen voor de cel kan bieden (BaatDektKosten, #925).";
+	attribute<Float32>   KandidatenInOmgeving (AdminDomain) := ='potential(float32(IsKandidaat), ' + Kern + ')', Descr = "Het aantal kandidaatcellen binnen de straal van de cel.";
+	attribute<meter2>    TekortPerKandidaat (AdminDomain) := KandidatenInOmgeving > 0f ? TekortVoorClaim / KandidatenInOmgeving : 0[meter2], Descr = "Het tekort van de woningen in de cel dat meetelt voor de claim, gelijk verdeeld over de kandidaatcellen binnen de straal.";
+	attribute<meter2>    TekortInOmgeving  (AdminDomain) := ='IsKandidaat ? potential(TekortPerKandidaat, ' + Kern + ')[meter2] : 0[meter2]'
+	, Descr = "Het deel van het groentekort binnen de straal dat deze cel krijgt: elke woningcel verdeelt zijn tekort over de kandidaatcellen in zijn omgeving, zoals de normtoets het groen van een cel over de woningen eromheen verdeelt. Over alle kandidaatcellen opgeteld telt het tekort zo een keer, en een cel bij een handvol woningen krijgt alleen hun kleine tekort.";
+	attribute<meter2>    TekortOpgelost    (AdminDomain) := min_elem(TekortInOmgeving, AdminDomain/NrMeter2PerCell) * Opslag, Descr = "Het tekort dat een park op deze cel oplost: het deel van het tekort dat de cel krijgt, hooguit het oppervlak van de cel, met de opslag.";
+	attribute<Eur_m2>    Drempelprijs      (AdminDomain) := IsKandidaat && TekortOpgelost > 0[meter2] ? recollect_by_cond(AdminDomain/IsCompactedDomain, KostenMetWonen, 0[Eur]) / TekortOpgelost : null_f[Eur_m2]
+	, Descr = "De prijs per vierkante meter opgelost tekort waarbij een park deze cel wint van wat er staat en van wonen: KostenMetWonen gedeeld door TekortOpgelost. De allocatie neemt de cellen met de laagste drempelprijs eerst, dus de drempelprijs van de duurste cel die park wordt is de prijs die groen in de regio betaalt (StedelijkGroenClaim/NaAllocatie/Schaduwprijs, #925).";
+	attribute<Bool>      IsGeschikt        (AdminDomain) := TekortInOmgeving >= /ModelParameters/StedelijkGroen/MinTekortAandeelVanCel * AdminDomain/NrMeter2PerCell && MakeDefined(Drempelprijs <= BaatPerM2Tekort, FALSE)
+	, Descr = "Lost een park op deze cel genoeg tekort op, tegen een prijs die groen wil betalen? Alleen als het tekort dat de cel in totaal toebedeeld krijgt minstens ModelParameters/StedelijkGroen/MinTekortAandeelVanCel van zijn oppervlak is, en de drempelprijs niet boven de hoogste prijs ligt (BaatPerM2Tekort, #925). Wat op de geschikte cellen niet past, blijft tekort.";
+	attribute<Float32>   Geschiktheid      (CompactedAdminDomain) := collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, IsGeschikt) && KostenMetWonen > 0[Eur] ? float32(collect_by_cond(CompactedAdminDomain, AdminDomain/IsCompactedDomain, TekortOpgelost)) / float32(KostenMetWonen) : null_f
+	, Descr = "De geschiktheid voor nieuw stedelijk groen: het tekort dat een park op de cel oplost per euro die groen voor de cel moet bieden, dus een gedeeld door de drempelprijs; leeg waar de cel niet geschikt is. Zo legt groen eerst beslag op de cellen waar een m2 opgelost tekort het minst kost, en houdt het op bij de hoogste prijs of bij de claim (#925). De aanleg van het park telt niet mee, want die kost per hectare overal hetzelfde. Gelezen door Templates/Allocatie/IterSubsector_T, dat een lege geschiktheid hier als onbeschikbaar telt.";
+}
