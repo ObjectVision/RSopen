@@ -18,6 +18,10 @@ De [wiki](https://github.com/ObjectVision/RSopen/wiki) is het naslagwerk bij het
 
 RSopen is onderzoekssoftware en volop in ontwikkeling. De uitkomsten zijn verkenningen onder aannames over scenario's en beleid, geen voorspellingen. De software komt zonder garantie en zonder aansprakelijkheid, zoals de artikelen 15 en 16 van de GPL v3 bepalen. Wie uitkomsten gebruikt voor een advies of een besluit, toetst ze zelf en vermeldt welke versie van het model is gebruikt: de tak en de commit of de tag.
 
+## Versies
+
+Een versie van RSopen is een tag op `main` met het jaar en de maand, zoals `v2026.12`. Een versie komt er wanneer een gebundelde run op `main` plausibel uitkomt, niet op een vast moment. Een herstel van een fout in een versie krijgt een volgnummer, zoals `v2026.12.1`, en komt op een korte tak vanaf die tag. Andere takken en tussenstanden krijgen geen eigen nummer: `git describe --tags --match "v*"` noemt elke commit naar de laatste versie in zijn geschiedenis, zoals `v2026.12-37-gabc1234` voor de 37e commit daarna. Een oplevering van een toepassing heeft daarnaast een eigen tag, zoals `oplevering_NL2120_20260914`, en de LEESMIJ van elke oplevering noemt beide.
+
 ## Aan de slag
 
 1. Installeer een release van [GeoDMS](https://github.com/ObjectVision/GeoDMS/releases). De rekenruns gebruiken nu GeoDms20.28.0.m.

@@ -76,19 +76,67 @@ Template Zichtjaar_T
 			                                                               : 'StateVoorAllocatie0/Wonen/Footprint'; //footprint mee legen met de woningen in de gesloopte cellen (#596)
 		}
 		
+		container Werkdichtheid
+		: Descr = "De aanpassing van de werkdichtheid in de bestaande cellen voordat werken alloceert (#784): de banen per cel gedeeld door 1 plus de groeifactor van het ruimtebeslag per baan maal Impl/AantalJarenWerkGroeiAanpassing. Wat de aanpassing
+					toevoegt, wordt per regio van werken begrensd op het tekort vlak voor de aanpassing, de claim min de banen na de BAG-nieuwbouw (#922), want banen gaan in het model niet weg en zonder die
+					begrenzing kwam de stand boven de claim waar die minder groeit dan de aanpassing. Wat de aanpassing weghaalt, blijft onbegrensd. De claim van de verzorgende subsectoren volgt de woningen,
+					en die van dit zichtjaar zijn op dit moment nog niet gealloceerd; daarom begrenst dit op de claim met de woningen van voor de allocatie (Werken_VoorAllocatie in de claims)."
+		{
+			container VoorAanpassing :=
+				for_each_nedv(
+					Jobs6/name
+					, Impl/IsEersteZichtjaar //legen alleen in het eerste zichtjaar, conform wonen; daarna houdt de zeef deze cellen leeg (#596)
+						? 'WordtGesloopt ? 0[Job] : MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+', 0[Job])'
+						: 'MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+', 0[Job])'
+					, CompactedAdminDomain
+					, job
+				), Descr = "De banen per cel na de BAG-nieuwbouw en voor de aanpassing; in het eerste zichtjaar zonder de cellen uit WordtGesloopt.";
+			container Aangepast :=
+				for_each_nedv(
+					Jobs6/name
+					, 'MakeDefined(VoorAanpassing/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/GroeiFootprintPerBaan_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * Impl/AantalJarenWerkGroeiAanpassing)), 0[Job])'
+					, CompactedAdminDomain
+					, job
+				), Descr = "De banen per cel na de aanpassing, nog zonder begrenzing.";
+			container Erbij :=
+				for_each_nedv(
+					Jobs6/name
+					, 'max_elem(Aangepast/'+Jobs6/name+' - VoorAanpassing/'+Jobs6/name+', 0[Job])'
+					, CompactedAdminDomain
+					, job
+				), Descr = "Wat de aanpassing per cel toevoegt; nul bij een subsector waar de aanpassing banen weghaalt.";
+			container Claim :=
+				for_each_nedv(
+					Jobs6/name
+					, replace('ThisVariantData/Claims/'+Scenario_name+'/Zichtjaren/@Z@/AllocRegios/'+/ModelParameters/SectorAllocRegio/WerkenEersteAllocRegio_name+'/Werken_VoorAllocatie/'+Jobs6/name, '@Z@', Context/ThisZichtjaar_name)
+					, WerkenRegio
+					, job
+				), Descr = "De banenclaim per regio van werken, met de woningen van voor de allocatie van dit zichtjaar.";
+			container Tekort :=
+				for_each_nedv(
+					Jobs6/name
+					, 'max_elem(Claim/'+Jobs6/name+' - sum(VoorAanpassing/'+Jobs6/name+', WerkenRegio/Per_CompactedAdminDomain), 0[Job])'
+					, WerkenRegio
+					, job
+				), Descr = "De claim min de banen voor de aanpassing, per regio van werken en nooit negatief.";
+			container Deel :=
+				for_each_nedv(
+					Jobs6/name
+					, 'MakeDefined(min_elem(float32(Tekort/'+Jobs6/name+') / float32(sum(Erbij/'+Jobs6/name+', WerkenRegio/Per_CompactedAdminDomain)), 1f), 1f)'
+					, WerkenRegio
+					, Float32
+				), Descr = "Het deel van wat de aanpassing in de regio toevoegt dat binnen het tekort past, hooguit 1; ook 1 waar de aanpassing niets toevoegt.";
+		}
+
 		container          Werken0                                :=
 			for_each_nedv(
 				Jobs6/name
 				, NOT(ModelParameters/SectorAllocRegio/Uq_Sectors/HasWerkenSector) //om te kunnen rekenen zonder werken als sectorAllocRegio
 					? 'const(0[Job], CompactedAdminDomain)'
-					: first(lowercase(Time/Zichtjaar/name)) == lowercase(name) //legen alleen in het eerste zichtjaar, conform wonen; daarna houdt de zeef deze cellen leeg (#596)
-						? 'WordtGesloopt
-							? 0[Job]
-							: MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/GroeiFootprintPerBaan_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * Impl/AantalJarenWerkGroeiAanpassing)), 0[job])'
-						: 'MakeDefined(StateVoorAllocatie0/Werken/'+Jobs6/name+' / (1f + (VariantParameters/VariantK/GroeiFootprintPerBaan_'+Jobs6/name+'[VariantParameters/VariantK/V/'+Variant_name+'] * Impl/AantalJarenWerkGroeiAanpassing)), 0[job])'
+					: 'Werkdichtheid/Aangepast/'+Jobs6/name+' - (1f - MakeDefined(Werkdichtheid/Deel/'+Jobs6/name+'[WerkenRegio/Per_CompactedAdminDomain], 1f)) * Werkdichtheid/Erbij/'+Jobs6/name
 				, CompactedAdminDomain
 				, job
-			), Descr = "noemer voor verandering door van werkdichtheid (banen/cel) in bestaand gebied. Eenheid is job, maar Impliciet aantal jobs per cell. Dus dichtheid.";
+			), Descr = "De banen per bestaande cel waarmee werken dit zichtjaar de allocatie in gaat: na de aanpassing van de werkdichtheid, met wat die toevoegt begrensd op het tekort van de regio (Werkdichtheid, #922). Een cel buiten de regio's van werken houdt de aanpassing zonder begrenzing.";
 		
 		container Werken := Werken0, Descr = "uitkomst in job/m2, factor gaat over groei m2/job. Src=job/m2"
 		{
@@ -697,6 +745,7 @@ Template Zichtjaar_T
 			parameter<String> State              := 'Sequences/Seq_0/SectorAllocRegios/'+/ModelParameters/SectorAllocRegio/WerkenEersteAllocRegio_name+'_Werken/StateVoorAllocatie/Wonen/';
 			attribute<Woning> Calc    (Gemeente) := ='sum(add('+AsList(State+WP2xVSSH/name, ',')+'), Gemeente/Per_CompactedAdminDomain)';
 			attribute<Woning> Bron    (Gemeente) := = Ontkoppeld ? 'Read/Woningen' : 'Calc';
+			attribute<Woning> VoorAllocatie (Gemeente) := ='sum(add('+AsList('StateVoorAllocatie0/Wonen/'+WP2xVSSH/name, ',')+'), Gemeente/Per_CompactedAdminDomain)', Descr = "De woningen per gemeente aan het begin van dit zichtjaar, voordat wonen alloceert. Daarmee begrenst StateVoorAllocatie/Werkdichtheid de aanpassing van de werkdichtheid op de claim die op dat moment bekend is (#922).";
 
 			container Write
 			: StorageName = "=FileName", StorageType = "gdalwrite.vect"
