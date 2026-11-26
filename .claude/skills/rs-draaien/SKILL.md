@@ -60,6 +60,14 @@ Gemeten op 2026-09-16 met GeoDms20.17.0.m, op de code van #824 in een kopie met 
 
 Op een gedeelde LocalData is zo'n toets dus een schrijvende run; zie Toetsen terwijl een ander draait.
 
+### Een meting naast een allocatie leest alleen geschreven kaarten
+
+Een meting op een gedraaide stand leest alleen wat de allocatie heeft weggeschreven: `ReadStand` of `ReadStand_Compacted` van het zichtjaar, of een losse tif met `StorageReadOnly`. Een item dat de schrijfkant leest, zoals `WriteStand`, `WriteStand_Compacted` of de iteraties onder `Iters/LastIter`, rekent de allocatie van dat zichtjaar opnieuw, ook als de stand er al staat. GeoDMS maakt een te schrijven tif aan het begin van het rekenen opnieuw aan, dus breekt die herberekening af of wordt hij gestopt, dan blijft er een lege kaart achter.
+
+Zo ging het op 2026-11-26 op dgwb-stad bij #925, in twee proefkopieën voor Zuid-Holland op GeoDms20.28.0.m. Een meting vroeg `StedelijkGroenClaim/NaAllocatie/IsNieuwGroen`, dat de schrijfkant van de stand leest. Het proces begon aan de allocatie van 2040 en werd gestopt, en daarna was de subsectorkaart van 2040 leeg. Dezelfde meting op `ReadStand` en de geschreven prijskaart kostte 115 s en 9 GB en liet de stand ongemoeid.
+
+Bewaar voor een meting op een stand die je nog nodig hebt een kopie van de map van de stand; voor Zuid-Holland was dat 23 MB per zichtjaar. Kijk na afloop of er in die map een bestand veranderd is.
+
 ### Een naamcontrole zonder te rekenen: @sourcedescr
 
 GeoDmsRun lost voor een opgevraagd item eerst alle namen in de keten op en begint pas daarna te rekenen; een naam die niet oplost geeft een `[E]`-regel (`Unknown identifier`, of `the specified item ... was not found`). Wil je alleen die naamcontrole, vraag het item dan niet op maar laat het beschrijven met `@sourcedescr` (sinds GeoDMS 20.17.0): GeoDmsRun lost de keten dan op, rekent niets uit en schrijft niets. Gemeten op 2026-10-28 op een kopie van main: de allocatieketen van het laatste zichtjaar in 205 s bij 1,5 GB, de variantdata in 7 s bij 0,2 GB, met vrijwel dezelfde foutregels als een opgevraagde run tot aan het rekenen.
